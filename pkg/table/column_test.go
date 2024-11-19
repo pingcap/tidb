@@ -132,21 +132,25 @@ func TestHandleBadNull(t *testing.T) {
 	col := newCol("a")
 	sc := stmtctx.NewStmtCtx()
 	d := types.Datum{}
-	err := col.HandleBadNull(sc.ErrCtx(), &d, 0)
+	err := col.HandleBadNull(sc.ErrCtx(), &d, 0, false)
 	require.NoError(t, err)
 	cmp, err := d.Compare(sc.TypeCtx(), &types.Datum{}, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	col.AddFlag(mysql.NotNullFlag)
-	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0)
+	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0, false)
 	require.Error(t, err)
 
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 	sc.SetErrLevels(levels)
-	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0)
+	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0, false)
 	require.Error(t, err)
+
+	// INSERT IGNORE
+	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0, true)
+	require.NoError(t, err)
 }
 
 func TestDesc(t *testing.T) {
