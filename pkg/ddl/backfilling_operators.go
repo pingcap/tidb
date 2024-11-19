@@ -175,6 +175,7 @@ func NewAddIndexIngestPipeline(
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 	rm := reorgMeta
 	if rm.IsDistReorg {
+		// Currently, only the batch size of local ingest mode can be adjusted
 		rm = nil
 	}
 
