@@ -656,7 +656,7 @@ type copIterator struct {
 	req                  *kv.Request
 	concurrency          int
 	smallTaskConcurrency int
-	noConcurrent         bool
+	liteReqSender        bool
 	finishCh             chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
@@ -833,7 +833,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
 	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
-		it.noConcurrent = true
+		it.liteReqSender = true
 		return
 	}
 	taskCh := make(chan *copTask, 1)
@@ -848,23 +848,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		} else {
 			ch = smallTaskCh
 		}
-		worker := &copIteratorWorker{
-			taskCh:                     ch,
-			wg:                         &it.wg,
-			store:                      it.store,
-			req:                        it.req,
-			respChan:                   it.respChan,
-			finishCh:                   it.finishCh,
-			vars:                       it.vars,
-			kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
-			memTracker:                 it.memTracker,
-			replicaReadSeed:            it.replicaReadSeed,
-			enableCollectExecutionInfo: enableCollectExecutionInfo,
-			pagingTaskIdx:              &it.pagingTaskIdx,
-			storeBatchedNum:            &it.storeBatchedNum,
-			storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
-			unconsumedStats:            it.unconsumedStats,
-		}
+		worker := newCopIteratorWorker(it, ch, enableCollectExecutionInfo)
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
@@ -884,6 +868,26 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		}
 	})
 	go taskSender.run(it.req.ConnID)
+}
+
+func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask, enableCollectExecutionInfo bool) *copIteratorWorker {
+	return &copIteratorWorker{
+		taskCh:                     taskCh,
+		wg:                         &it.wg,
+		store:                      it.store,
+		req:                        it.req,
+		respChan:                   it.respChan,
+		finishCh:                   it.finishCh,
+		vars:                       it.vars,
+		kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+		memTracker:                 it.memTracker,
+		replicaReadSeed:            it.replicaReadSeed,
+		enableCollectExecutionInfo: enableCollectExecutionInfo,
+		pagingTaskIdx:              &it.pagingTaskIdx,
+		storeBatchedNum:            &it.storeBatchedNum,
+		storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
+		unconsumedStats:            it.unconsumedStats,
+	}
 }
 
 func (sender *copIteratorTaskSender) run(connID uint64) {
@@ -1056,7 +1060,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 
-	if it.noConcurrent {
+	if it.liteReqSender {
 		resp = it.sendReq(ctx)
 		if resp == nil {
 			return nil, nil
@@ -1110,28 +1114,20 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (it *copIterator) sendReq(ctx context.Context) *copResponse {
+func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
 	if len(it.tasks) == 0 {
 		return nil
 	}
-	worker := &copIteratorWorker{
-		//taskCh: make(<-chan *copTask, 1),
-		wg:    &it.wg,
-		store: it.store,
-		req:   it.req,
-		//respChan:        it.respChan,
-		finishCh:        it.finishCh,
-		vars:            it.vars,
-		kvclient:        txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
-		memTracker:      it.memTracker,
-		replicaReadSeed: it.replicaReadSeed,
-		//enableCollectExecutionInfo: enableCollectExecutionInfo,
-		enableCollectExecutionInfo: true,
-		pagingTaskIdx:              &it.pagingTaskIdx,
-		storeBatchedNum:            &it.storeBatchedNum,
-		storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
-		//unconsumedStats:            it.unconsumedStats,
-	}
+	worker := newCopIteratorWorker(it, nil, true)
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.BgLogger().Error("copIteratorWork meet panic",
+				zap.Any("r", r),
+				zap.Stack("stack trace"))
+			resp = &copResponse{err: util2.GetRecoverError(r)}
+		}
+	}()
 
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(it.tasks) > 0 {
@@ -1141,7 +1137,7 @@ func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
-			resp := &copResponse{err: errors.Trace(err)}
+			resp = &copResponse{err: errors.Trace(err)}
 			return resp
 		}
 		if len(tasks) > 0 {
@@ -1150,7 +1146,7 @@ func (it *copIterator) sendReq(ctx context.Context) *copResponse {
 			it.tasks = it.tasks[1:]
 		}
 		select {
-		case resp := <-respCh:
+		case resp = <-respCh:
 			return resp
 		default:
 			continue
