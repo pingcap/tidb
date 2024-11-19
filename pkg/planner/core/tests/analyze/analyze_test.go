@@ -15,9 +15,15 @@
 package analyze
 
 import (
+	"io"
+	"os"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestAnalyzeVirtualColumns(t *testing.T) {
@@ -33,7 +39,19 @@ func TestAnalyzeWithSpecificData(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	// https://github.com/pingcap/tidb/issues/57448
-	tk.MustExec("CREATE TABLE t1 (`COL102` float DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-	tk.MustExec("INSERT INTO t1 (COL102) VALUES (4),(-6),(4),(0),(-6),(4),(6),(0),(0),(-2),(0),(8),(-6),(4),(4),(-6),(4),(6),(6),(-2),(-8),(-2),(6),(8),(-6),(-4),(0),(0),(0),(-4),(-4),(-8),(4),(2),(0),(2),(-8),(8),(-4),(-8),(-4),(-8),(-4),(2),(4),(4),(2),(4),(0),(-4),(-2),(2),(-8),(-2),(4),(37055),(2),(0),(-4),(-8),(8),(6),(2),(-8),(8),(0),(-2),(4),(8),(0),(8),(6),(-8),(-2),(0),(-6),(-2),(0),(-2),(2),(0),(-4),(-4),(6),(8),(-8),(4),(4),(-8),(2),(-2),(8),(6),(8),(-8),(8),(0),(-2),(-6),(-6),(-4),(0);")
+
+	datapath := "./testdata/test_data.csv"
+	content, err := os.ReadFile(datapath)
+	require.NoError(t, err)
+	var reader io.ReadCloser = mydump.NewStringReader(string(content))
+	var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
+		r io.ReadCloser, err error,
+	) {
+		return reader, nil
+	}
+	ctx := tk.Session().(sessionctx.Context)
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+	tk.MustExec(" CREATE TABLE t1 (COL102 float DEFAULT NULL,COL103 float DEFAULT NULL,COL1 float GENERATED ALWAYS AS (COL102 % 10) STORED,COL2 varchar(20) DEFAULT NULL,COL4 datetime DEFAULT NULL,COL3 bigint DEFAULT NULL,COL5 float DEFAULT NULL, KEY UK_COL1 (COL1) /*!80000 INVISIBLE */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
+	tk.MustExec("load data local infile '/tmp/nonexistence.csv' INTO TABLE t1 FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES (COL102,COL103,COL1,COL2,COL4,COL3,COL5) ")
 	tk.MustExec("analyze table t1")
 }

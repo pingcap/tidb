@@ -7,10 +7,15 @@ go_test(
         "analyze_test.go",
         "main_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
     deps = [
+        "//pkg/executor",
+        "//pkg/lightning/mydump",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )
