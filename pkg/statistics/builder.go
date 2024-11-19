@@ -127,7 +127,9 @@ func BuildColumnHist(ctx sessionctx.Context, numBuckets, id int64, collector *Sa
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	samples := collector.Samples
-	err := sortSampleItems(sc, samples)
+	err := sortSampleItemsByBinary(samples, func(datum types.Datum) ([]byte, error) {
+		return getComparedBytesFromColumn(ctx, datum)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +258,12 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 	return BuildColumnHist(ctx, numBuckets, id, collector, tp, collector.Count, collector.FMSketch.NDV(), collector.NullCount)
 }
 
+func getComparedBytesFromColumn(ctx sessionctx.Context, datum types.Datum) ([]byte, error) {
+	encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+	return encoded, err
+}
+
 // BuildHistAndTopN build a histogram and TopN for a column or an index from samples.
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
@@ -278,8 +286,7 @@ func BuildHistAndTopN(
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
-			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
-			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+			encoded, err := getComparedBytesFromColumn(ctx, datum)
 			if memTracker != nil {
 				// tmp memory usage
 				deltaSize := int64(cap(encoded))
