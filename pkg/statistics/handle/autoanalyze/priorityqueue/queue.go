@@ -16,6 +16,7 @@ package priorityqueue
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -798,6 +799,38 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	}
 
 	return pq.syncFields.inner.len(), nil
+}
+
+// Snapshot returns a snapshot of all the jobs in the priority queue.
+func (pq *AnalysisPriorityQueue) Snapshot() (
+	snapshot statstypes.PriorityQueueSnapshot,
+	err error,
+) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return statstypes.PriorityQueueSnapshot{}, errors.New(notInitializedErrMsg)
+	}
+
+	currentJobs := pq.syncFields.inner.list()
+	mustRetryTables := make([]int64, 0, len(pq.syncFields.mustRetryJobs))
+	for tableID := range pq.syncFields.mustRetryJobs {
+		mustRetryTables = append(mustRetryTables, tableID)
+	}
+
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
+	for i, job := range currentJobs {
+		jsonJobs[i] = job.AsJSON()
+	}
+	// Sort by the weight in descending order.
+	sort.Slice(jsonJobs, func(i, j int) bool {
+		return jsonJobs[i].Weight > jsonJobs[j].Weight
+	})
+
+	return statstypes.PriorityQueueSnapshot{
+		CurrentJobs:     jsonJobs,
+		MustRetryTables: mustRetryTables,
+	}, nil
 }
 
 // Close closes the priority queue.
