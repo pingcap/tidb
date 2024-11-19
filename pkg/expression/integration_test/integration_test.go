@@ -3949,3 +3949,15 @@ func TestIssue55885(t *testing.T) {
 
 	tk.MustQuery("SELECT subq_0.c3 as c1 FROM (select c_a90ol as c3, c_a90ol as c4, var_pop(cast(c__qy as double)) over (partition by c_a90ol, c_s order by c_z) as c5 from t_jg8o limit 65) as subq_0 LIMIT 37")
 }
+
+func TestIssue55886(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null);")
+	tk.MustExec("create table t2(c_g7eofzlxn int);")
+	tk.MustExec("set collation_connection='latin1_bin';")
+	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
+		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
+		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
+}
