@@ -484,3 +484,9 @@ SELECT JSON_SCHEMA_VALID('{"properties": {"a": {"exclusiveMinimum": true}}}', '{
 # TestIssue54494
 # https://github.com/pingcap/tidb/issues/54494
 select json_type(cast(cast('2024' as year) as json));
+
+# TestJSONValidForNull
+drop table if exists t;
+create table t(j json, str varchar(255), other int);
+insert into t values (NULL, NULL, NULL);
+select json_valid(j), json_valid(str), json_valid(other) from t;
