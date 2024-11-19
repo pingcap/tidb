@@ -3381,6 +3381,10 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
+	}
 
 	args := &model.ModifyColumnArgs{
 		Column:        newCol,
