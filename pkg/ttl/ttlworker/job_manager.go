@@ -562,16 +562,6 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-<<<<<<< HEAD
-	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
-=======
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
@@ -584,19 +574,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 	}
 
-	cancelJobs := false
-	cancelReason := ""
-	switch {
-	case !variable.EnableTTLJob.Load():
-		cancelJobs = true
-		cancelReason = "tidb_ttl_job_enable turned off"
-	case !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now):
-		cancelJobs = true
-		cancelReason = "out of TTL job schedule window"
-	}
-
-	if cancelJobs {
->>>>>>> afe8a09e928 (ttl: cancel the hearbeat timeout job after disable the TTL (#57452))
+	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
 				logutil.Logger(m.ctx).Info("cancel job because tidb_ttl_job_enable turned off", zap.String("jobID", job.id))
