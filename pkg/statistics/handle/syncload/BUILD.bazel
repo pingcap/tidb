@@ -13,6 +13,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
