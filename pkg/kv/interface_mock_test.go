@@ -75,6 +75,10 @@ func (t *mockTxn) StartTS() uint64 {
 	return uint64(0)
 }
 
+func (t *mockTxn) CommitTS() uint64 {
+	return 0
+}
+
 func (t *mockTxn) Get(ctx context.Context, k Key) ([]byte, error) {
 	return nil, nil
 }
