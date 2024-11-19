@@ -1634,6 +1634,8 @@ insert into t1 values(1, null);
 insert into t1 set id = 1, col1 = null;
 -- error 1048
 insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null;
+insert t1 VALUES (5, 5), (6, null) ON DUPLICATE KEY UPDATE col1 = null;
+select * from t1;
 insert into t1 select * from t2;
 show warnings;
 insert into t1 values(2, null), (3, 3), (4, 4);
