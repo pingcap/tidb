@@ -1199,6 +1199,7 @@ func (do *Domain) Close() {
 	if do == nil {
 		return
 	}
+	//
 	startTime := time.Now()
 	if do.ddl != nil {
 		terror.Log(do.ddl.Stop())

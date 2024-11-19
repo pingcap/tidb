@@ -1905,6 +1905,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// In this case, this TiDB wrongly gets the mdl lock.
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+			logutil.BgLogger().Warn("try to lock table in MDL", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.String("table", tableInfo.Name.O), zap.Int64("id", tableInfo.ID), zap.Int("ver", 0), zap.Any("oldRev", tbl.Meta().Revision))
 			lockedID = tableInfo.ID
 		}
 		dom := domain.GetDomain(sctx)
@@ -1915,6 +1916,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			return nil, err
 		}
 		if !skipLock {
+			logutil.BgLogger().Warn("try to lock table in MDL", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.String("table", tableInfo.Name.O), zap.Int64("id", tableInfo.ID), zap.Int64("ver", domainSchemaVer), zap.Any("newRev", tbl.Meta().Revision), zap.Stack("stack"))
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
 			lockedID = tbl.Meta().ID
 		}

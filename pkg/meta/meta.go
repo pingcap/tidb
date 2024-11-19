@@ -19,6 +19,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"math"
 	"regexp"
 	"strconv"
@@ -956,6 +958,7 @@ func (m *Mutator) UpdateTable(dbID int64, tableInfo *model.TableInfo) error {
 		return errors.Trace(err)
 	}
 
+	logutil.BgLogger().Warn("update table", zap.Int64("tableID", tableInfo.ID), zap.Any("newRev", tableInfo.Revision), zap.Stack("stack"))
 	tableInfo.Revision++
 
 	data, err := json.Marshal(tableInfo)
