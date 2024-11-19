@@ -146,7 +146,7 @@ func TestHandleBadNull(t *testing.T) {
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 	sc.SetErrLevels(levels)
 	err = col.HandleBadNull(sc.ErrCtx(), &types.Datum{}, 0)
-	require.NoError(t, err)
+	require.Error(t, err)
 }
 
 func TestDesc(t *testing.T) {
