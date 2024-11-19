@@ -15,6 +15,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"strconv"
 	"time"
 
@@ -64,6 +65,11 @@ func Row2Task(r chunk.Row) *proto.Task {
 			task.Error = errors.New(string(errBytes))
 		} else {
 			task.Error = stdErr
+		}
+	}
+	if !r.IsNull(14) {
+		if err := json.Unmarshal(r.GetJSON(14).GetString(), &task.ModifyParam); err != nil {
+			logutil.BgLogger().Error("unmarshal task modify param", zap.Error(err))
 		}
 	}
 	return task
