@@ -455,7 +455,8 @@ func TestGeneralLogBinaryText(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set session tidb_general_log = 1")
 	tk.MustExec("select * /*+ no_quoted */ from mysql.user")
-	tk.MustExec(fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b))
+	sqlBinary := fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b)
+	tk.MustExec(sqlBinary)
 
 	getSQLFields := func(s string) (sql zapcore.Field, originText zapcore.Field, ok bool) {
 		for _, fields := range mzc.fields {
@@ -474,9 +475,8 @@ func TestGeneralLogBinaryText(t *testing.T) {
 	sql, originText, ok = getSQLFields("yes_quote")
 	require.True(t, ok)
 	require.NotEmpty(t, sql.String)
-	require.True(t, strings.Contains(sql.String, string(b)))
 	require.NotEmpty(t, originText.String)
-	s, err := strconv.Unquote(originText.String)
+	ot, err := strconv.Unquote(originText.String)
 	require.NoError(t, err)
-	require.Equal(t, sql.String, s)
+	require.Equal(t, sqlBinary, ot)
 }
