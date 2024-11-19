@@ -45,7 +45,6 @@ import (
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -67,7 +66,7 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
+	defaultDDLConcurrency = 100
 	maxSplitKeysOnce      = 10240
 )
 
@@ -184,7 +183,7 @@ func (rc *SnapClient) Close() {
 	rc.closeConn()
 
 	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+		log.Warn("failed to close file importer")
 	}
 
 	log.Info("Restore client closed")
@@ -300,7 +299,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 // storage.
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	g glue.Glue, store kv.Storage,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
@@ -378,7 +377,11 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	}
 
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, rc.db.Session())
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se)
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
@@ -454,6 +457,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
@@ -464,8 +468,8 @@ func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *SnapClient) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
@@ -986,7 +990,7 @@ func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error
 	return nil
 }
 
-func (rc *SnapClient) execChecksum(
+func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -997,13 +1001,14 @@ func (rc *SnapClient) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1043,21 +1048,24 @@ func (rc *SnapClient) execChecksum(
 			}
 		}
 	}
-	table := tbl.OldTable
-	if item.Crc64xor != table.Crc64Xor ||
-		item.TotalKvs != table.TotalKvs ||
-		item.TotalBytes != table.TotalBytes {
+	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
+		item.TotalKvs == expectedChecksumStats.TotalKvs &&
+		item.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
+	logger.Info("success in validating checksum")
 	return nil
 }
 

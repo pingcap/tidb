@@ -15,6 +15,7 @@ go_library(
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/infoschema",
+        "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",

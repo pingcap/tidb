@@ -15,12 +15,15 @@
 package model
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
-// `DistanceMetric` is actually vector functions in ast package. Use `DistanceMetric` to avoid cycle dependency
+// Note that not all distance functions are indexable.
+// See FnNameToDistanceMetric for a list of indexable distance functions.
 type DistanceMetric string
 
 // Note: tipb.VectorDistanceMetric's enum names must be aligned with these constant values.
@@ -29,13 +32,29 @@ const (
 	// DistanceMetricCosine is cosine distance.
 	DistanceMetricCosine DistanceMetric = "COSINE"
 	// DistanceMetricInnerProduct is inner product.
+	// Currently this distance metric is not supported. It is placed here only for
+	// reminding what's the desired naming convension (UPPER_UNDER_SCORE) if this
+	// is going to be implemented.
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
 )
+
+// IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
+// Only indexable distance functions should be listed here!
+var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
+	ast.VecCosineDistance: DistanceMetricCosine,
+	ast.VecL2Distance:     DistanceMetricL2,
+}
+
+// IndexableDistanceMetricToFnName maps a distance metric to the distance function name.
+var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
+	DistanceMetricCosine: ast.VecCosineDistance,
+	DistanceMetricL2:     ast.VecL2Distance,
+}
 
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
 	// Dimension is the dimension of the vector.
-	Dimension uint64 `json:"dimension"` // Set to 0 when initially parsed from comment. Will be assigned to flen later.
+	Dimension uint64 `json:"dimension"`
 	// DistanceMetric is the distance metric used by the index.
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
@@ -51,13 +70,34 @@ type IndexInfo struct {
 	State         SchemaState      `json:"state"`
 	BackfillState BackfillState    `json:"backfill_state"`
 	Comment       string           `json:"comment"`      // Comment
-	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash or Rtree
+	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
 	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
 	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+}
+
+// Hash64 implement HashEquals interface.
+func (index *IndexInfo) Hash64(h base.Hasher) {
+	h.HashInt64(index.ID)
+}
+
+// Equals implements HashEquals interface.
+func (index *IndexInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*IndexInfo)(nil)
+	index2, ok := other.(*IndexInfo)
+	if !ok {
+		return false
+	}
+	if index == nil {
+		return index2 == nil
+	}
+	if index2 == nil {
+		return false
+	}
+	return index.ID == index2.ID
 }
 
 // Clone clones IndexInfo.

@@ -1093,6 +1093,8 @@ import (
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
+	AlterJobOptionList                     "Alter job option list"
+	AlterJobOption                         "Alter job option"
 	AlterTableSpecSingleOpt                "Alter table single option"
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
@@ -2124,7 +2126,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeLastPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2136,8 +2137,6 @@ AlterTableSpecSingleOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			Tp:        ast.AlterTableReorganizeFirstPartition,
 			Partition: &ast.PartitionOptions{PartitionMethod: partitionMethod},
@@ -2318,8 +2317,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			NoWriteToBinlog: noWriteToBinlog,
 			Tp:              ast.AlterTableAddLastPartition,
@@ -2406,8 +2403,6 @@ AlterTableSpec:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionMethod.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionMethod.SetOriginTextPosition(startOffset)
 		$$ = &ast.AlterTableSpec{
 			IfExists:  $8.(bool),
 			Tp:        ast.AlterTableDropFirstPartition,
@@ -2539,12 +2534,11 @@ AlterTableSpec:
 			Name:     $4,
 		}
 	}
-|	"DROP" "FOREIGN" "KEY" IfExists Symbol
+|	"DROP" "FOREIGN" "KEY" Symbol
 	{
 		$$ = &ast.AlterTableSpec{
-			IfExists: $4.(bool),
-			Tp:       ast.AlterTableDropForeignKey,
-			Name:     $5,
+			Tp:   ast.AlterTableDropForeignKey,
+			Name: $4,
 		}
 	}
 |	"ORDER" "BY" AlterOrderList %prec lowerThenOrder
@@ -4713,8 +4707,6 @@ PartitionIntervalOpt:
 		startOffset := parser.yyVAL.offset
 		endOffset := parser.yylval.offset
 		partitionInterval.SetText(parser.lexer.client, parser.src[startOffset:endOffset])
-		// Needed for replacing syntactic sugar with generated partitioning definition string
-		partitionInterval.SetOriginTextPosition(startOffset)
 		$$ = partitionInterval
 	}
 
@@ -11379,6 +11371,33 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminUnsetBDRRole,
+		}
+	}
+|	"ADMIN" "ALTER" "DDL" "JOBS" Int64Num AlterJobOptionList
+	{
+		$$ = &ast.AdminStmt{
+			Tp:              ast.AdminAlterDDLJob,
+			JobNumber:       $5.(int64),
+			AlterJobOptions: $6.([]*ast.AlterJobOption),
+		}
+	}
+
+AlterJobOptionList:
+	AlterJobOption
+	{
+		$$ = []*ast.AlterJobOption{$1.(*ast.AlterJobOption)}
+	}
+|	AlterJobOptionList ',' AlterJobOption
+	{
+		$$ = append($1.([]*ast.AlterJobOption), $3.(*ast.AlterJobOption))
+	}
+
+AlterJobOption:
+	identifier "=" SignedLiteral
+	{
+		$$ = &ast.AlterJobOption{
+			Name:  strings.ToLower($1),
+			Value: $3.(ast.ExprNode),
 		}
 	}
 

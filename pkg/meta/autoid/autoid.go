@@ -180,7 +180,7 @@ type Allocator interface {
 	// AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
 	// the size of sequence cache with it's increment. The returned round indicates the sequence cycle times if it is with
 	// cycle option.
-	AllocSeqCache() (min int64, max int64, round int64, err error)
+	AllocSeqCache() (minv, maxv, round int64, err error)
 
 	// Rebase rebases the autoID base for table with tableID and the new base value.
 	// If allocIDs is true, it will allocate some IDs and save to the cache.
@@ -709,7 +709,7 @@ func NewAllocatorsFromTblInfo(r Requirement, dbID int64, tblInfo *model.TableInf
 // but actually we don't care about it, all we need is to calculate the new autoID corresponding to the
 // increment and offset at this time now. To simplify the rule is like (ID - offset) % increment = 0,
 // so the first autoID should be 9, then add increment to it to get 13.
-func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (min int64, max int64, err error) {
+func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	if alloc.tbID == 0 {
 		return 0, 0, errInvalidTableID.GenWithStackByArgs("Invalid tableID")
 	}
@@ -729,7 +729,7 @@ func (alloc *allocator) Alloc(ctx context.Context, n uint64, increment, offset i
 	return alloc.alloc4Signed(ctx, n, increment, offset)
 }
 
-func (alloc *allocator) AllocSeqCache() (min int64, max int64, round int64, err error) {
+func (alloc *allocator) AllocSeqCache() (minv, maxv int64, round int64, err error) {
 	alloc.mu.Lock()
 	defer alloc.mu.Unlock()
 	return alloc.alloc4Sequence()
@@ -760,48 +760,48 @@ func CalcNeededBatchSize(base, n, increment, offset int64, isUnsigned bool) int6
 }
 
 // CalcSequenceBatchSize calculate the next sequence batch size.
-func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64, error) {
+func CalcSequenceBatchSize(base, size, increment, offset, minv, maxv int64) (int64, error) {
 	// The sequence is positive growth.
 	if increment > 0 {
 		if increment == 1 {
 			// Sequence is already allocated to the end.
-			if base >= max {
+			if base >= maxv {
 				return 0, ErrAutoincReadFailed
 			}
 			// The rest of sequence < cache size, return the rest.
-			if max-base < size {
-				return max - base, nil
+			if maxv-base < size {
+				return maxv - base, nil
 			}
 			// The rest of sequence is adequate.
 			return size, nil
 		}
-		nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
+		nr, ok := SeekToFirstSequenceValue(base, increment, offset, minv, maxv)
 		if !ok {
 			return 0, ErrAutoincReadFailed
 		}
 		// The rest of sequence < cache size, return the rest.
-		if max-nr < (size-1)*increment {
-			return max - base, nil
+		if maxv-nr < (size-1)*increment {
+			return maxv - base, nil
 		}
 		return (nr - base) + (size-1)*increment, nil
 	}
 	// The sequence is negative growth.
 	if increment == -1 {
-		if base <= min {
+		if base <= minv {
 			return 0, ErrAutoincReadFailed
 		}
-		if base-min < size {
-			return base - min, nil
+		if base-minv < size {
+			return base - minv, nil
 		}
 		return size, nil
 	}
-	nr, ok := SeekToFirstSequenceValue(base, increment, offset, min, max)
+	nr, ok := SeekToFirstSequenceValue(base, increment, offset, minv, maxv)
 	if !ok {
 		return 0, ErrAutoincReadFailed
 	}
 	// The rest of sequence < cache size, return the rest.
-	if nr-min < (size-1)*(-increment) {
-		return base - min, nil
+	if nr-minv < (size-1)*(-increment) {
+		return base - minv, nil
 	}
 	return (base - nr) + (size-1)*(-increment), nil
 }
@@ -814,13 +814,13 @@ func CalcSequenceBatchSize(base, size, increment, offset, min, max int64) (int64
 //
 // first := nr*increment + offset
 // Because formula computation will overflow Int64, so we transfer it to uint64 for distance computation.
-func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, bool) {
+func SeekToFirstSequenceValue(base, increment, offset, minv, maxv int64) (int64, bool) {
 	if increment > 0 {
 		// Sequence is already allocated to the end.
-		if base >= max {
+		if base >= maxv {
 			return 0, false
 		}
-		uMax := EncodeIntToCmpUint(max)
+		uMax := EncodeIntToCmpUint(maxv)
 		uBase := EncodeIntToCmpUint(base)
 		uOffset := EncodeIntToCmpUint(offset)
 		uIncrement := uint64(increment)
@@ -839,10 +839,10 @@ func SeekToFirstSequenceValue(base, increment, offset, min, max int64) (int64, b
 		return first, true
 	}
 	// Sequence is already allocated to the end.
-	if base <= min {
+	if base <= minv {
 		return 0, false
 	}
-	uMin := EncodeIntToCmpUint(min)
+	uMin := EncodeIntToCmpUint(minv)
 	uBase := EncodeIntToCmpUint(base)
 	uOffset := EncodeIntToCmpUint(offset)
 	uIncrement := uint64(-increment)
@@ -875,7 +875,7 @@ func SeekToFirstAutoIDUnSigned(base, increment, offset uint64) uint64 {
 	return nr
 }
 
-func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (mini int64, max int64, err error) {
+func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, offset-1, true); err != nil {
@@ -958,12 +958,12 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 			zap.Int64("table ID", alloc.tbID),
 			zap.Int64("database ID", alloc.dbID))
 	}
-	mini = alloc.base
+	minv = alloc.base
 	alloc.base += n1
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
-func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (mini int64, max int64, err error) {
+func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment, offset int64) (minv int64, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, uint64(offset-1), true); err != nil {
@@ -1049,10 +1049,10 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
 		zap.Int64("database ID", alloc.dbID))
-	mini = alloc.base
+	minv = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return mini, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorRuntimeStats, **tikvutil.CommitDetails) {
@@ -1072,7 +1072,7 @@ func getAllocatorStatsFromCtx(ctx context.Context) (context.Context, *AllocatorR
 // 3: sequence allocation may have negative growth.
 // 4: sequence allocation batch length can be dissatisfied.
 // 5: sequence batch allocation will be consumed immediately.
-func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err error) {
+func (alloc *allocator) alloc4Sequence() (minv int64, maxv int64, round int64, err error) {
 	increment := alloc.sequence.Increment
 	offset := alloc.sequence.Start
 	minValue := alloc.sequence.MinValue

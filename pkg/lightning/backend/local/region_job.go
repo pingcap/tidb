@@ -408,7 +408,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		},
 	}
 	for _, peer := range region.GetPeers() {
-		cli, err := clientFactory.Create(ctx, peer.StoreId)
+		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
 			return annotateErr(err, peer, "when create client")
 		}
@@ -664,7 +664,7 @@ func (local *Backend) checkWriteStall(
 ) (bool, *sst.IngestResponse, error) {
 	clientFactory := local.importClientFactory
 	for _, peer := range region.Region.GetPeers() {
-		cli, err := clientFactory.Create(ctx, peer.StoreId)
+		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
@@ -744,7 +744,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 				"region id %d has no leader", j.region.Region.Id)
 		}
 
-		cli, err := clientFactory.Create(ctx, leader.StoreId)
+		cli, err := clientFactory.create(ctx, leader.StoreId)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

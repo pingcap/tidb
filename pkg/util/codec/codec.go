@@ -699,7 +699,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -743,7 +743,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeDuration:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -785,7 +785,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeEnum:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -813,7 +813,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeSet:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -835,7 +835,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeBit:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -856,7 +856,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeJSON:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -876,7 +876,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeTiDBVectorFloat32:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -895,7 +895,7 @@ func HashChunkSelected(typeCtx types.Context, h []hash.Hash64, chk *chunk.Chunk,
 			_, _ = h[i].Write(b)
 		}
 	case mysql.TypeNull:
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			if sel != nil && !sel[i] {
 				continue
 			}
@@ -1198,7 +1198,7 @@ func CutColumnID(b []byte) (remain []byte, n int64, err error) {
 
 // SetRawValues set raw datum values from a row data.
 func SetRawValues(data []byte, values []types.Datum) error {
-	for i := 0; i < len(values); i++ {
+	for i := range values {
 		l, err := peek(data)
 		if err != nil {
 			return errors.Trace(err)
@@ -1491,7 +1491,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 	switch ft.EvalType() {
 	case types.ETInt:
 		i64s := col.Int64s()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1500,7 +1500,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 		}
 	case types.ETReal:
 		f64s := col.Float64s()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1510,7 +1510,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 		}
 	case types.ETDecimal:
 		ds := col.Decimals()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1523,7 +1523,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 		}
 	case types.ETDatetime, types.ETTimestamp:
 		ts := col.Times()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1536,7 +1536,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 		}
 	case types.ETDuration:
 		ds := col.GoDurations()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1545,7 +1545,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 			}
 		}
 	case types.ETJson:
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1554,7 +1554,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 			}
 		}
 	case types.ETString:
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {
@@ -1562,7 +1562,7 @@ func HashGroupKey(loc *time.Location, n int, col *chunk.Column, buf [][]byte, ft
 			}
 		}
 	case types.ETVectorFloat32:
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if col.IsNull(i) {
 				buf[i] = append(buf[i], NilFlag)
 			} else {

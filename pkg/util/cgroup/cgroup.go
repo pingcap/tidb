@@ -95,8 +95,8 @@ func SetGOMAXPROCS() (func(), error) {
 		log.Info("maxprocs: No GOMAXPROCS change to reset")
 	}
 
-	if max, exists := os.LookupEnv(_maxProcsKey); exists {
-		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", max))
+	if maxv, exists := os.LookupEnv(_maxProcsKey); exists {
+		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", maxv))
 		return undoNoop, nil
 	}
 

@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
-	logsplit "github.com/pingcap/tidb/br/pkg/restore/internal/log_split"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -214,8 +213,12 @@ func (rc *LogClient) CleanUpKVFiles(
 	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, rc.se)
+func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, g glue.Glue, store kv.Storage) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
 	return runner, errors.Trace(err)
 }
 
@@ -1715,7 +1718,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 
 type LogFilesIterWithSplitHelper struct {
 	iter   LogIter
-	helper *logsplit.LogSplitHelper
+	helper *split.LogSplitHelper
 	buffer []*LogDataFileInfo
 	next   int
 }
@@ -1725,7 +1728,7 @@ const SplitFilesBufferSize = 4096
 func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
 	return &LogFilesIterWithSplitHelper{
 		iter:   iter,
-		helper: logsplit.NewLogSplitHelper(rules, client, splitSize, splitKeys),
+		helper: split.NewLogSplitHelper(rules, client, splitSize, splitKeys),
 		buffer: nil,
 		next:   0,
 	}

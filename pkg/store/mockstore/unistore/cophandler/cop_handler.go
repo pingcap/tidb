@@ -470,7 +470,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sctx.GetSessionVars().StmtCtx = sc
 	sctx.GetSessionVars().TimeZone = tz
 	return sctx

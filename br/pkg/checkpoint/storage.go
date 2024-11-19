@@ -39,6 +39,8 @@ type checkpointStorage interface {
 	initialLock(ctx context.Context) error
 	updateLock(ctx context.Context) error
 	deleteLock(ctx context.Context)
+
+	close()
 }
 
 // Notice that:
@@ -122,6 +124,12 @@ func chunkInsertCheckpointSQLs(dbName, tableName string, data []byte) ([]string,
 type tableCheckpointStorage struct {
 	se               glue.Session
 	checkpointDBName string
+}
+
+func (s *tableCheckpointStorage) close() {
+	if s.se != nil {
+		s.se.Close()
+	}
 }
 
 func (s *tableCheckpointStorage) initialLock(ctx context.Context) error {

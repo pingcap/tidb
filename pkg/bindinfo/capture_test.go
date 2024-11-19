@@ -253,7 +253,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
-	require.True(t, tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)"))
+	tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)")
 	tk.MustExec("prepare stmt from 'select /*+ use_index(t,idx_c) */ * from t where b = ? and c > ?'")
 	tk.MustExec("set @p = 1")
 	tk.MustExec("execute stmt using @p, @p")
@@ -266,7 +266,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 
-	require.True(t, tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"))
+	tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)")
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -455,12 +455,12 @@ func TestIssue20417(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`", rows[0][1])
-	require.True(t, tk.MustUseIndex("select * from t", "idxb(b)"))
-	require.True(t, tk.MustUseIndex("select * from test.t", "idxb(b)"))
+	tk.MustUseIndex("select * from t", "idxb(b)")
+	tk.MustUseIndex("select * from test.t", "idxb(b)")
 
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541")
-	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
-	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
+	tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)")
+	tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)")
 
 	// Test for capture baseline
 	internal.UtilCleanBindingEnv(tk, dom)

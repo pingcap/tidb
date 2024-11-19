@@ -327,24 +327,24 @@ func TestVectorConstantExplain(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(c VECTOR);")
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
-		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection_3 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
-		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─TableReader 10000.00 root  data:TableFullScan",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
-	tk.MustQuery(`EXPLAIN SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
-		"Projection_6 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
-		"└─Projection_13 10.00 root  test.t.c",
-		"  └─TopN_7 10.00 root  Column#4, offset:0, count:10",
-		"    └─Projection_14 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
-		"      └─TableReader_12 10.00 root  data:TopN_11",
-		"        └─TopN_11 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
-		"          └─TableFullScan_10 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"└─Projection 10.00 root  test.t.c",
+		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
+		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"      └─TableReader 10.00 root  data:TopN",
+		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
+		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// Prepare a large Vector string
@@ -372,13 +372,10 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.NoError(t, err)
 	fmt.Println(planTree)
 	fmt.Println("++++")
-	require.Equal(t, strings.Join([]string{
-		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
-		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
-		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
-	}, "\n"), planTree)
-
+	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
+	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3`))
+	require.True(t, strings.Contains(planTree, `	└─TableReader_5    	root     	10000  	data:TableFullScan_4`))
+	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
 }
@@ -3881,6 +3878,15 @@ func TestIssue51842(t *testing.T) {
 	require.Equal(t, 0, len(res))
 	res = tk.MustQuery("SELECT f1 FROM (SELECT NULLIF(v0.c0, 1371581446) AS f1 FROM v0, t0) AS t WHERE f1 <=> cast('2024-1-1 10:10:10' as datetime);").String() // test datetime
 	require.Equal(t, 0, len(res))
+
+	// Test issue 56744
+	tk.MustExec("drop table if exists lrr;")
+	tk.MustExec("create table lrr(`COL1` time DEFAULT NULL,`COL2` time DEFAULT NULL);")
+	tk.MustExec("insert into lrr(col2) values('-229:53:34');")
+	resultRows := tk.MustQuery("select * from lrr where col1 <=> null;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
+	resultRows = tk.MustQuery("select * from lrr where null <=> col1;").Rows() // test const null
+	require.Equal(t, 1, len(resultRows))
 }
 
 func TestIssue44706(t *testing.T) {
@@ -3893,4 +3899,53 @@ func TestIssue44706(t *testing.T) {
 	tk.MustQuery("SELECT MIN(t0.c2) FROM t0 WHERE false").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT (NULL))))").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT MIN(t0.c2) FROM t0 WHERE false)))").Check(testkit.Rows())
+}
+
+func TestIssue55885(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_jg8o (c_s int not null unique ,c__qy double ,c_z int not null ,c_a90ol text not null);")
+	tk.MustExec("insert into t_jg8o (c_s, c__qy, c_z, c_a90ol) values" +
+		"(-975033779, 85.65, -355481284, 'gnip' ),(-2018599732, 85.86, 1617093413, 'm' )," +
+		"(-960107027, 4.6, -2042358076, 'y1q')," +
+		"(-3, 38.1, -1528586343, 'ex_2')," +
+		"(69386953, 32768.0, -62220810, 'tfkxjj5c')," +
+		"(587181689, -9223372036854775806.3, -1666156943, 'queemvgj')," +
+		"(-218561796, 85.2, -670390288, 'nf990nol')," +
+		"(858419954, 2147483646.0, -1649362344, 'won_9')," +
+		"(-1120115215, 22.100, 1509989939, 'w')," +
+		"(-1388119356, 94.32, -1694148464, 'gu4i4knyhm')," +
+		"(-1016230734, -4294967295.8, 1430313391, 's')," +
+		"(-1861825796, 36.52, -1457928755, 'j')," +
+		"(1963621165, 88.87, 18928603, 'gxbsloff' )," +
+		"(1492879828, cast(null as double), 759883041, 'zwue')," +
+		"(-1607192175, 12.36, 1669523024, 'qt5zch71a')," +
+		"(1534068569, 46.79, -392085130, 'bc')," +
+		"(155707446, 9223372036854775809.4, 1727199557, 'qyghenu9t6')," +
+		"(-1524976778, 75.99, 335492222, 'sdgde0z')," +
+		"(175403335, cast(null as double), -69711503, 'ja')," +
+		"(-272715456, 48.62, 753928713, 'ur')," +
+		"(-2035825967, 257.3, -1598426762, 'lmqmn')," +
+		"(-1178957955, 2147483648.100000, 1432554380, 'dqpb210')," +
+		"(-2056628646, 254.5, -1476177588, 'k41ajpt7x')," +
+		"(-914210874, 126.7, -421919910, 'x57ud7oy1')," +
+		"(-88586773, 1.2, 1568247510, 'drmxi8')," +
+		"(-834563269, -4294967296.7, 1163133933, 'wp')," +
+		"(-84490060, 54.13, -630289437, '_3_twecg5h')," +
+		" (267700893, 54.75, 370343042, 'n72')," +
+		"(552106333, 32766.2, 2365745, 's7tt')," +
+		"(643440707, 65536.8, -850412592, 'wmluxa9a')," +
+		"(1709853766, -4294967296.5, -21041749, 'obqj0uu5v')," +
+		"(-7, 80.88, 528792379, 'n5qr9m26i')," +
+		"(-456431629, 28.43, 1958788149, 'b')," +
+		"(-28841240, 11.86, -1089765168, 'pqg')," +
+		"(-807839288, 25.89, 504535500, 'cs3tkhs')," +
+		"(-52910064, 85.16, 354032882, '_ffjo67yxe')," +
+		"(1919869830, 81.81, -272247558, 'aj')," +
+		"(165434725, -2147483648.0, 11, 'xxnsf5')," +
+		"(3, -2147483648.7, 1616632952, 'g7t8tqyi')," +
+		"(1851859144, 70.73, -1105664209, 'qjfhjr');")
+
+	tk.MustQuery("SELECT subq_0.c3 as c1 FROM (select c_a90ol as c3, c_a90ol as c4, var_pop(cast(c__qy as double)) over (partition by c_a90ol, c_s order by c_z) as c5 from t_jg8o limit 65) as subq_0 LIMIT 37")
 }

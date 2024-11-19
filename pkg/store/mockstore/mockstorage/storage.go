@@ -17,6 +17,7 @@ package mockstorage
 import (
 	"context"
 	"crypto/tls"
+	"sync"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,6 +34,7 @@ var _ helper.Storage = &mockStorage{}
 type mockStorage struct {
 	*tikv.KVStore
 	*copr.Store
+	opts      sync.Map
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
 }
@@ -49,6 +51,18 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 		Store:    coprStore,
 		memCache: kv.NewCacheDB(),
 	}, nil
+}
+
+func (s *mockStorage) GetOption(k any) (any, bool) {
+	return s.opts.Load(k)
+}
+
+func (s *mockStorage) SetOption(k, v any) {
+	if v == nil {
+		s.opts.Delete(k)
+	} else {
+		s.opts.Store(k, v)
+	}
 }
 
 func (s *mockStorage) EtcdAddrs() ([]string, error) {

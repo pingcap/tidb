@@ -188,7 +188,7 @@ func fastReverseBytes(b []byte) {
 	w := n / wordSize
 	if w > 0 {
 		bw := *(*[]uintptr)(unsafe.Pointer(&b))
-		for i := 0; i < w; i++ {
+		for i := range w {
 			bw[i] = ^bw[i]
 		}
 	}

@@ -102,7 +102,7 @@ func TestBasic(t *testing.T) {
 
 	dbInfos := []*model.DBInfo{dbInfo}
 	internal.AddDB(t, re.Store(), dbInfo)
-	internal.AddTable(t, re.Store(), dbInfo, tblInfo)
+	internal.AddTable(t, re.Store(), dbInfo.ID, tblInfo)
 
 	builder := infoschema.NewBuilder(re, nil, infoschema.NewData(), variable.SchemaCacheSize.Load() > 0)
 	err = builder.InitWithDBInfos(dbInfos, nil, nil, 1)
@@ -148,6 +148,15 @@ func TestBasic(t *testing.T) {
 	schema, ok = infoschema.SchemaByTable(is, tblInfo)
 	require.True(t, ok)
 	require.NotNil(t, schema)
+
+	b, err := json.Marshal(tblInfo)
+	require.NoError(t, err)
+	tblUnmarshal := &model.TableInfo{}
+	err = json.Unmarshal(b, tblUnmarshal)
+	require.NoError(t, err)
+	schema2, ok := infoschema.SchemaByTable(is, tblUnmarshal)
+	require.True(t, ok)
+	require.Equal(t, schema, schema2)
 
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
 	schema, ok = infoschema.SchemaByTable(is, noexistTblInfo)
@@ -331,42 +340,38 @@ func TestInfoTables(t *testing.T) {
 	is := builder.Build(math.MaxUint64)
 
 	infoTables := []string{
-		"SCHEMATA",
-		"TABLES",
-		"COLUMNS",
-		"STATISTICS",
 		"CHARACTER_SETS",
 		"COLLATIONS",
-		"FILES",
-		"PROFILING",
-		"PARTITIONS",
-		"KEY_COLUMN_USAGE",
-		"REFERENTIAL_CONSTRAINTS",
-		"SESSION_VARIABLES",
-		"PLUGINS",
-		"TABLE_CONSTRAINTS",
-		"TRIGGERS",
-		"USER_PRIVILEGES",
-		"ENGINES",
-		"VIEWS",
-		"ROUTINES",
-		"SCHEMA_PRIVILEGES",
-		"COLUMN_PRIVILEGES",
-		"TABLE_PRIVILEGES",
-		"PARAMETERS",
-		"EVENTS",
-		"GLOBAL_STATUS",
-		"GLOBAL_VARIABLES",
-		"SESSION_STATUS",
-		"OPTIMIZER_TRACE",
-		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
-		"PROCESSLIST",
-		"TIDB_TRX",
+		"COLUMNS",
+		"COLUMN_PRIVILEGES",
 		"DEADLOCKS",
+		"ENGINES",
+		"EVENTS",
+		"FILES",
+		"KEY_COLUMN_USAGE",
+		"OPTIMIZER_TRACE",
+		"PARAMETERS",
+		"PARTITIONS",
 		"PLACEMENT_POLICIES",
-		"TRX_SUMMARY",
+		"PLUGINS",
+		"PROCESSLIST",
+		"PROFILING",
+		"REFERENTIAL_CONSTRAINTS",
 		"RESOURCE_GROUPS",
+		"ROUTINES",
+		"SCHEMATA",
+		"SCHEMA_PRIVILEGES",
+		"STATISTICS",
+		"TABLES",
+		"TABLESPACES",
+		"TABLE_CONSTRAINTS",
+		"TABLE_PRIVILEGES",
+		"TIDB_TRX",
+		"TRIGGERS",
+		"TRX_SUMMARY",
+		"USER_PRIVILEGES",
+		"VIEWS",
 	}
 	for _, tbl := range infoTables {
 		tb, err1 := is.TableByName(context.Background(), util.InformationSchemaName, pmodel.NewCIStr(tbl))
@@ -1143,7 +1148,7 @@ func (tc *infoschemaTestContext) runCreateTable(tblName string) int64 {
 	}
 	// create table
 	tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
-	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
+	internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo.ID, tblInfo)
 
 	tc.applyDiffAndCheck(&model.SchemaDiff{Type: model.ActionCreateTable, SchemaID: tc.dbInfo.ID, TableID: tblInfo.ID}, func(tc *infoschemaTestContext) {
 		tbl, ok := tc.is.TableByID(context.Background(), tblInfo.ID)
@@ -1161,7 +1166,7 @@ func (tc *infoschemaTestContext) runCreateTables(tblNames []string) {
 	diff.AffectedOpts = make([]*model.AffectedOption, len(tblNames))
 	for i, tblName := range tblNames {
 		tblInfo := internal.MockTableInfo(tc.t, tc.re.Store(), tblName)
-		internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo, tblInfo)
+		internal.AddTable(tc.t, tc.re.Store(), tc.dbInfo.ID, tblInfo)
 		diff.AffectedOpts[i] = &model.AffectedOption{
 			SchemaID: tc.dbInfo.ID,
 			TableID:  tblInfo.ID,

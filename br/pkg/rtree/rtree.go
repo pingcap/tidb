@@ -9,7 +9,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
@@ -153,8 +152,8 @@ func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) b
 	if leftKeys+rightKeys > splitKeyCount {
 		return false
 	}
-	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
-	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
+	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(left.StartKey)
+	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(right.StartKey)
 
 	// Failed to decode the file key head... can this happen?
 	if err1 != nil || err2 != nil {
@@ -419,7 +418,8 @@ func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
 }
 
 func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 64*len(iter.items))
+	// about 64 MB memory if there are 1 million ranges
+	incompleteRanges := make([]Range, 0, len(iter.items))
 	for _, item := range iter.items {
 		if item.complete {
 			continue

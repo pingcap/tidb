@@ -26,6 +26,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestInstancePlanCacheMinSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=0")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=1")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=101KiB")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=10001KiB")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=99MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=100MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=101MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=2000000KiB")
+}
+
 func TestInstancePlanCacheVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -45,8 +58,8 @@ func TestInstancePlanCacheVars(t *testing.T) {
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=-1`)
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=-1111111111111`)
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=dslfj`)
-	tk.MustExec(`set global tidb_instance_plan_cache_max_size=123456`)
-	tk.MustQuery(`select @@tidb_instance_plan_cache_max_size`).Check(testkit.Rows("123456"))
+	tk.MustExec(`set global tidb_instance_plan_cache_max_size=1234560000`)
+	tk.MustQuery(`select @@tidb_instance_plan_cache_max_size`).Check(testkit.Rows("1234560000"))
 	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=-1`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1292 Truncated incorrect tidb_instance_plan_cache_reserved_percentage value: '-1'`))
 	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=1.1100`)
@@ -260,6 +273,58 @@ func TestInstancePlanCachePrivilegeChanges(t *testing.T) {
 	tk.MustExec(`grant select on test.t to 'u1'`)
 	u1.MustExec(`execute st`)
 	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // hit the cache again
+}
+
+func TestInstancePlanCacheDifferentCollation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	u1 := testkit.NewTestKit(t, store)
+	u1.MustExec(`use test`)
+	u1.MustExec(`prepare st from 'select a from t where a=1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	u2 := testkit.NewTestKit(t, store)
+	u2.MustExec(`use test`)
+	u2.MustExec(`set @@collation_connection=utf8mb4_0900_ai_ci`)
+	u2.MustExec(`prepare st from 'select a from t where a=1'`)
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	u3 := testkit.NewTestKit(t, store)
+	u3.MustExec(`use test`)
+	u3.MustExec(`prepare st from 'select a from t where a=1'`)
+	u3.MustExec(`execute st`)
+	u3.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestInstancePlanCacheDifferentCharset(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	u1 := testkit.NewTestKit(t, store)
+	u1.MustExec(`use test`)
+	u1.MustExec(`prepare st from 'select a from t where a=1'`)
+	u1.MustExec(`execute st`)
+	u1.MustExec(`execute st`)
+	u1.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	u2 := testkit.NewTestKit(t, store)
+	u2.MustExec(`use test`)
+	u2.MustExec(`set @@character_set_connection=latin1`)
+	u2.MustExec(`prepare st from 'select a from t where a=1'`)
+	u2.MustExec(`execute st`)
+	u2.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	u3 := testkit.NewTestKit(t, store)
+	u3.MustExec(`use test`)
+	u3.MustExec(`prepare st from 'select a from t where a=1'`)
+	u3.MustExec(`execute st`)
+	u3.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestInstancePlanCacheDifferentUsers(t *testing.T) {

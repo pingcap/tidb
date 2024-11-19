@@ -864,3 +864,15 @@ select *,_tidb_rowid from t partition(p1) where _tidb_rowid=1;
 explain select *,_tidb_rowid from t partition(p0,p1) where _tidb_rowid=1;
 
 
+# TestUnsignedBigintListPartitionPrune
+drop table if exists t;
+CREATE TABLE `t` (
+  `a` bigint unsigned
+)
+PARTITION BY LIST (`a`)
+(PARTITION `p0` VALUES IN (18446744073709551610,1),
+ PARTITION `p1` VALUES IN (2,3));
+explain select * from t where a < 18446744073709551610 and a > 2;
+explain select * from t where a < 18446744073709551610;
+explain select * from t where a not in (18446744073709551610, 1);
+
