@@ -58,11 +58,11 @@
 4. Get the table/index of hot regions
 
     ```shell
-     http://{TiDBIP}:10080/regions/hot
+    curl http://{TiDBIP}:10080/regions/hot
     ```
 
     ```shell
-    $ http://127.0.0.1:10080/regions/hot
+    $curl http://127.0.0.1:10080/regions/hot
     {
       "read": [
 
@@ -83,11 +83,11 @@
 5. Get the information of a specific region by ID
 
     ```shell
-     http://{TiDBIP}:10080/regions/{regionID}
+    curl http://{TiDBIP}:10080/regions/{regionID}
     ```
 
     ```shell
-    $ http://127.0.0.1:10080/regions/4001
+    $curl http://127.0.0.1:10080/regions/4001
     {
         "end_key": "dIAAAAAAAAEk",
         "frames": [
@@ -106,11 +106,11 @@
 6. Get regions Information from db.table
 
     ```shell
-     http://{TiDBIP}:10080/tables/{db}/{table}/regions
+    curl http://{TiDBIP}:10080/tables/{db}/{table}/regions
     ```
 
     ```shell
-    $ http://127.0.0.1:10080/tables/test/t1/regions
+    $curl http://127.0.0.1:10080/tables/test/t1/regions
     {
         "id": 286,
         "indices": [],
@@ -140,11 +140,11 @@
 7. Get schema Information about all db
 
     ```shell
-     http://{TiDBIP}:10080/schema
+    curl http://{TiDBIP}:10080/schema
     ```
 
     ```shell
-    $ http://127.0.0.1:10080/schema
+    $curl http://127.0.0.1:10080/schema
     [
         {
             "charset": "utf8mb4",
@@ -165,11 +165,11 @@
 8. Get schema Information about db
 
     ```shell
-     http://{TiDBIP}:10080/schema/{db}
+    curl http://{TiDBIP}:10080/schema/{db}
     ```
 
     ```shell
-     http://{TiDBIP}:10080/schema/{db}?id_name_only=true
+    curl http://{TiDBIP}:10080/schema/{db}?id_name_only=true
     [
     {
      "id": 119,
@@ -191,27 +191,27 @@
 9. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 
     ```shell
-     http://{TiDBIP}:10080/schema/{db}/{table}
+    curl http://{TiDBIP}:10080/schema/{db}/{table}
 
-     http://{TiDBIP}:10080/schema?table_id={tableID}
+    curl http://{TiDBIP}:10080/schema?table_id={tableID}
 
-     http://{TiDBIP}:10080/schema?table_ids={tableID,...}
+    curl http://{TiDBIP}:10080/schema?table_ids={tableID,...}
     ```
 
 10. Get database information, table information and tidb info schema version by tableID.
 
      ```shell
-      http://{TiDBIP}:10080/db-table/{tableID}
+     curl http://{TiDBIP}:10080/db-table/{tableID}
      ```
 
 11. Get MVCC Information of the key with a specified handle ID
 
      ```shell
-      http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
+     curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
      ```
 
      ```shell
-     $ http://127.0.0.1:10080/mvcc/key/test/t/1
+     $curl http://127.0.0.1:10080/mvcc/key/test/t/1
      {
          "key": "74800000000000006E5F728000000000000001",
          "region_id": 4,
