@@ -37,7 +37,7 @@ func newDatum() *datum {
 	return &datum{intValue: -1, step: 1}
 }
 
-func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
+func (d *datum) setInitInt64Value(step int64, minv, maxv int64) {
 	d.Lock()
 	defer d.Unlock()
 
@@ -47,13 +47,13 @@ func (d *datum) setInitInt64Value(step int64, min int64, max int64) {
 
 	d.step = step
 
-	if min != -1 {
-		d.minIntValue = min
-		d.intValue = min
+	if minv != -1 {
+		d.minIntValue = minv
+		d.intValue = minv
 	}
 
-	if min < max {
-		d.maxIntValue = max
+	if minv < maxv {
+		d.maxIntValue = maxv
 		d.useRange = true
 	}
 

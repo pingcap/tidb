@@ -24,7 +24,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
 )
@@ -33,9 +33,11 @@ var (
 	RestoreLabelKey   = restoreLabelKey
 	RestoreLabelValue = restoreLabelValue
 
-	GetSSTMetaFromFile = getSSTMetaFromFile
-	GetKeyRangeByMode  = getKeyRangeByMode
-	MapTableToFiles    = mapTableToFiles
+	GetSSTMetaFromFile      = getSSTMetaFromFile
+	GetKeyRangeByMode       = getKeyRangeByMode
+	MapTableToFiles         = mapTableToFiles
+	GetFileRangeKey         = getFileRangeKey
+	GetSortedPhysicalTables = getSortedPhysicalTables
 )
 
 // MockClient create a fake Client used to test.

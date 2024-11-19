@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -66,7 +66,7 @@ func (mr *mutableIndexJoinRange) Range() ranger.Ranges {
 	return mr.ranges
 }
 
-func (mr *mutableIndexJoinRange) Rebuild(sctx context.PlanContext) error {
+func (mr *mutableIndexJoinRange) Rebuild(sctx planctx.PlanContext) error {
 	result, empty, err := indexJoinPathBuild(sctx, mr.path, mr.indexJoinInfo, true)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ type indexJoinTmpRange struct {
 // indexJoinPathNewMutableRange creates a mutableIndexJoinRange.
 // See more info in the comments of mutableIndexJoinRange.
 func indexJoinPathNewMutableRange(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	relatedExprs []expression.Expression,
 	ranges []*ranger.Range,
@@ -146,7 +146,7 @@ func indexJoinPathNewMutableRange(
 }
 
 func indexJoinPathUpdateTmpRange(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	buildTmp *indexJoinPathTmp,
 	tempRangeRes *indexJoinTmpRange,
 	accesses, remained []expression.Expression) (lastColPos int, newAccesses, newRemained []expression.Expression) {
@@ -163,7 +163,7 @@ func indexJoinPathUpdateTmpRange(
 
 // indexJoinPathBuild tries to build an index join on this specified access path.
 // The result is recorded in the *indexJoinPathResult, see more info in that structure.
-func indexJoinPathBuild(sctx context.PlanContext,
+func indexJoinPathBuild(sctx planctx.PlanContext,
 	path *util.AccessPath,
 	indexJoinInfo *indexJoinPathInfo,
 	rebuildMode bool) (result *indexJoinPathResult, emptyRange bool, err error) {
@@ -334,7 +334,7 @@ func indexJoinPathConstructResult(
 }
 
 func indexJoinPathBuildTmpRange(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	buildTmp *indexJoinPathTmp,
 	matchedKeyCnt int,
 	eqAndInFuncs []expression.Expression,
@@ -424,7 +424,7 @@ func indexJoinPathBuildTmpRange(
 }
 
 // indexJoinPathRangeInfo generates the range information for the index join path.
-func indexJoinPathRangeInfo(sctx context.PlanContext,
+func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	outerJoinKeys []*expression.Column,
 	indexJoinResult *indexJoinPathResult) string {
 	buffer := bytes.NewBufferString("[")
@@ -466,7 +466,7 @@ For each idxCols,
 // For example, innerKeys[t1.a, t1.sum_b, t1.c], idxCols [a, b, c]
 // 'curIdxOff2KeyOff' = [0, -1, 2]
 func indexJoinPathTmpInit(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	indexJoinInfo *indexJoinPathInfo,
 	idxCols []*expression.Column,
 	colLens []int) *indexJoinPathTmp {
@@ -500,7 +500,7 @@ func indexJoinPathTmpInit(
 // usefulEqOrInFilters is the continuous eq/in conditions on current unused index columns.
 // remainedEqOrIn is part of usefulEqOrInFilters, which needs to be evaluated again in selection.
 // remainingRangeCandidates is the other conditions for future use.
-func indexJoinPathFindUsefulEQIn(sctx context.PlanContext, indexJoinInfo *indexJoinPathInfo,
+func indexJoinPathFindUsefulEQIn(sctx planctx.PlanContext, indexJoinInfo *indexJoinPathInfo,
 	buildTmp *indexJoinPathTmp) (usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates []expression.Expression, emptyRange bool) {
 	// Extract the eq/in functions of possible join key.
 	// you can see the comment of ExtractEqAndInCondition to get the meaning of the second return value.
@@ -586,7 +586,7 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(
 	join *logicalop.LogicalJoin,
-	innerChild *DataSource,
+	innerChild *logicalop.DataSource,
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
@@ -636,27 +636,29 @@ type ColWithCmpFuncManager struct {
 	OpType            []string
 	opArg             []expression.Expression
 	TmpConstant       []*expression.Constant
-	affectedColSchema *expression.Schema
-	compareFuncs      []chunk.CompareFunc
+	affectedColSchema *expression.Schema  `plan-cache-clone:"shallow"`
+	compareFuncs      []chunk.CompareFunc `plan-cache-clone:"shallow"`
 }
 
-// Copy clones the ColWithCmpFuncManager.
-func (cwc *ColWithCmpFuncManager) Copy() *ColWithCmpFuncManager {
+func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
 	if cwc == nil {
 		return nil
 	}
 	cloned := new(ColWithCmpFuncManager)
 	if cwc.TargetCol != nil {
-		cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
+		if cwc.TargetCol.SafeToShareAcrossSession() {
+			cloned.TargetCol = cwc.TargetCol
+		} else {
+			cloned.TargetCol = cwc.TargetCol.Clone().(*expression.Column)
+		}
 	}
 	cloned.colLength = cwc.colLength
 	cloned.OpType = make([]string, len(cwc.OpType))
 	copy(cloned.OpType, cwc.OpType)
-	cloned.opArg = util.CloneExpressions(cwc.opArg)
-	cloned.TmpConstant = util.CloneConstants(cwc.TmpConstant)
-	cloned.affectedColSchema = cwc.affectedColSchema.Clone()
-	cloned.compareFuncs = make([]chunk.CompareFunc, len(cwc.compareFuncs))
-	copy(cloned.compareFuncs, cwc.compareFuncs)
+	cloned.opArg = cloneExpressionsForPlanCache(cwc.opArg, nil)
+	cloned.TmpConstant = cloneConstantsForPlanCache(cwc.TmpConstant, nil)
+	cloned.affectedColSchema = cwc.affectedColSchema
+	cloned.compareFuncs = cwc.compareFuncs
 	return cloned
 }
 

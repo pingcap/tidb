@@ -35,7 +35,7 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
-        "//pkg/expression/context",
+        "//pkg/expression/exprctx",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",

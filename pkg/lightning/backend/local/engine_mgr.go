@@ -319,6 +319,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.StatFiles,
 			externalCfg.StartKey,
 			externalCfg.EndKey,
+			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
 			em.keyAdapter,
 			em.DupeDetectEnabled,

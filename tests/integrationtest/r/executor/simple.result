@@ -454,3 +454,63 @@ id
 1
 2
 set autocommit = default;
+set global default_authentication_plugin = 'invalid_auth_plugin';
+Error 1231 (42000): Variable 'default_authentication_plugin' can't be set to the value of 'invalid_auth_plugin'
+set global default_authentication_plugin = 'auth_socket';
+Error 1231 (42000): Variable 'default_authentication_plugin' can't be set to the value of 'auth_socket'
+set global default_authentication_plugin = 'tidb_sm3_password';
+create user default_sm3_user;
+show create user default_sm3_user;
+CREATE USER for default_sm3_user@%
+CREATE USER 'default_sm3_user'@'%' IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sm3_user';
+plugin
+tidb_sm3_password
+set global default_authentication_plugin = 'caching_sha2_password';
+create user default_sha2_user;
+create user native_plugin_user identified with 'mysql_native_password';
+create role default_sha2_role;
+show create user default_sha2_user;
+CREATE USER for default_sha2_user@%
+CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha2_user';
+plugin
+caching_sha2_password
+show create user native_plugin_user;
+CREATE USER for native_plugin_user@%
+CREATE USER 'native_plugin_user'@'%' IDENTIFIED WITH 'mysql_native_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'native_plugin_user';
+plugin
+mysql_native_password
+show create user default_sha2_role;
+CREATE USER for default_sha2_role@%
+CREATE USER 'default_sha2_role'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '' REQUIRE NONE PASSWORD EXPIRE ACCOUNT LOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha2_role';
+plugin
+caching_sha2_password
+alter user default_sha2_user identified with 'tidb_sm3_password';
+show create user default_sha2_user;
+CREATE USER for default_sha2_user@%
+CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'tidb_sm3_password' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha2_user';
+plugin
+tidb_sm3_password
+alter user default_sha2_user identified with 'authentication_ldap_simple';
+show create user default_sha2_user;
+CREATE USER for default_sha2_user@%
+CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'authentication_ldap_simple' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha2_user';
+plugin
+authentication_ldap_simple
+alter user default_sha2_user identified with 'authentication_ldap_sasl';
+show create user default_sha2_user;
+CREATE USER for default_sha2_user@%
+CREATE USER 'default_sha2_user'@'%' IDENTIFIED WITH 'authentication_ldap_sasl' AS '' REQUIRE NONE PASSWORD EXPIRE DEFAULT ACCOUNT UNLOCK PASSWORD HISTORY DEFAULT PASSWORD REUSE INTERVAL DEFAULT
+select plugin from mysql.user where user = 'default_sha2_user';
+plugin
+authentication_ldap_sasl
+drop user default_sm3_user;
+drop user default_sha2_user;
+drop user native_plugin_user;
+drop user default_sha2_role;
+set global default_authentication_plugin = default;

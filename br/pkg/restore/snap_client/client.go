@@ -45,14 +45,13 @@ import (
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -67,7 +66,7 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 16
+	defaultDDLConcurrency = 100
 	maxSplitKeysOnce      = 10240
 )
 
@@ -184,7 +183,7 @@ func (rc *SnapClient) Close() {
 	rc.closeConn()
 
 	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+		log.Warn("failed to close file importer")
 	}
 
 	log.Info("Restore client closed")
@@ -278,7 +277,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMeta(txn))
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
 	})
 	if err != nil {
 		return err
@@ -300,25 +299,36 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 // storage.
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
-	s storage.ExternalStorage,
-	taskName string,
+	g glue.Glue, store kv.Storage,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
-) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
-	var (
-		// checkpoint sets distinguished by range key
-		checkpointSetWithTableID = make(map[int64]map[string]struct{})
-
-		checkpointClusterConfig *pdutil.ClusterConfig
-
-		err error
-	)
+) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
+	// checkpoint sets distinguished by range key
+	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 	if !checkpointFirstRun {
+		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
+		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
+		}
+
+		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		}
+
+		if meta.RestoredTS != rc.backupMeta.EndVersion {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			)
 		}
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
@@ -329,7 +339,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.WalkCheckpointFileForRestore(ctx, s, rc.cipher, taskName, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, execCtx, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
@@ -341,7 +351,7 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -354,17 +364,24 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		meta := &checkpoint.CheckpointMetadataForRestore{}
+		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
+			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoredTS:        rc.backupMeta.EndVersion,
+		}
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.db.Session(), meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
+	se, err := g.CreateSession(store)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se)
 	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
 }
 
@@ -440,6 +457,7 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
@@ -450,8 +468,8 @@ func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *SnapClient) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
@@ -633,7 +651,7 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		return nil
 	}
 
-	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)))
+	log.Info("create databases in db pool", zap.Int("pool size", len(rc.dbPool)), zap.Int("number of db", len(dbs)))
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "DB DDL workers")
 	for _, db_ := range dbs {
@@ -972,7 +990,7 @@ func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error
 	return nil
 }
 
-func (rc *SnapClient) execChecksum(
+func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -983,13 +1001,14 @@ func (rc *SnapClient) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1029,21 +1048,24 @@ func (rc *SnapClient) execChecksum(
 			}
 		}
 	}
-	table := tbl.OldTable
-	if item.Crc64xor != table.Crc64Xor ||
-		item.TotalKvs != table.TotalKvs ||
-		item.TotalBytes != table.TotalBytes {
+	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
+		item.TotalKvs == expectedChecksumStats.TotalKvs &&
+		item.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
+	logger.Info("success in validating checksum")
 	return nil
 }
 
@@ -1060,7 +1082,7 @@ func (rc *SnapClient) WaitForFilesRestored(ctx context.Context, files []*backupp
 					log.Info("import sst files done", logutil.Files(files))
 					updateCh.Inc()
 				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, restoreutils.EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+				return rc.fileImporter.ImportSSTFiles(ectx, []TableIDWithFiles{{Files: []*backuppb.File{fileReplica}, RewriteRules: restoreutils.EmptyRewriteRule()}}, rc.cipher, rc.backupMeta.ApiVersion)
 			})
 	}
 	if err := eg.Wait(); err != nil {

@@ -16,7 +16,7 @@ package context
 
 import (
 	"github.com/pingcap/tidb/pkg/errctx"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -470,7 +470,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
-	sctx := mock.NewContext()
+	sctx := mock.NewContextDeprecated()
 	sctx.GetSessionVars().StmtCtx = sc
 	sctx.GetSessionVars().TimeZone = tz
 	return sctx

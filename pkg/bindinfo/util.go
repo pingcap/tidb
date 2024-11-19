@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -31,7 +31,7 @@ func exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, 
 }
 
 // execRows is a helper function to execute sql and return rows and fields.
-func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)

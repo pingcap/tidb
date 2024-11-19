@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errctx",
-        "//pkg/expression/context",
+        "//pkg/expression/exprctx",
         "//pkg/types",
         "//pkg/util/context",
     ],
@@ -21,7 +21,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/errctx",
-        "//pkg/expression/contextstatic",
+        "//pkg/expression/exprstatic",
         "//pkg/types",
         "//pkg/util/context",
         "//pkg/util/deeptest",

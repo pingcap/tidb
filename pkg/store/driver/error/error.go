@@ -134,7 +134,7 @@ func ToTiDBErr(err error) error {
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.RunawayQueryExceeded}) {
-		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.GenWithStackByArgs()
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs("exceed tidb side")
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVServerBusy) {

@@ -18,8 +18,8 @@
 package resolve
 
 import (
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 // TableNameW is a wrapper around ast.TableName to store more information.

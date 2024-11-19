@@ -18,8 +18,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
@@ -134,9 +135,9 @@ func TestColInfo2Col(t *testing.T) {
 func TestIndexInfo2Cols(t *testing.T) {
 	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
 	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: model.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: model.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: model.NewCIStr("0")}, &model.IndexColumn{Name: model.NewCIStr("1")}
+	colInfo0 := &model.ColumnInfo{ID: 0, Name: pmodel.NewCIStr("0")}
+	colInfo1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("1")}
+	indexCol0, indexCol1 := &model.IndexColumn{Name: pmodel.NewCIStr("0")}, &model.IndexColumn{Name: pmodel.NewCIStr("1")}
 	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
 
 	cols := []*Column{col0}
@@ -414,8 +415,7 @@ func TestColumnHashEquals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, col1.Equals(col2))
 
-	// diff VirtualExpr
-	// TODO: add HashEquals for VirtualExpr
+	// diff VirtualExpr see TestColumnHashEuqals4VirtualExpr
 
 	// diff OrigName
 	col2.Index = col1.Index
@@ -466,4 +466,30 @@ func TestColumnHashEquals(t *testing.T) {
 	col2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, col1.Equals(col2))
+}
+
+func TestColumnHashEuqals4VirtualExpr(t *testing.T) {
+	col1 := &Column{UniqueID: 1, VirtualExpr: NewZero()}
+	col2 := &Column{UniqueID: 1, VirtualExpr: nil}
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	col1.Hash64(hasher1)
+	col2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, col1.Equals(col2))
+
+	col2.VirtualExpr = NewZero()
+	hasher2.Reset()
+	col2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, col1.Equals(col2))
+
+	col1.VirtualExpr = nil
+	col2.VirtualExpr = nil
+	hasher1.Reset()
+	hasher2.Reset()
+	col1.Hash64(hasher1)
+	col2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, col1.Equals(col2))
 }

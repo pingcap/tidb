@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/context"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -32,10 +32,10 @@ import (
 )
 
 // PlanContext is the context for building plan.
-type PlanContext = context.PlanContext
+type PlanContext = planctx.PlanContext
 
 // BuildPBContext is the context for building `*tipb.Executor`.
-type BuildPBContext = context.BuildPBContext
+type BuildPBContext = planctx.BuildPBContext
 
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.

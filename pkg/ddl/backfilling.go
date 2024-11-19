@@ -32,12 +32,13 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -154,7 +155,6 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
-	sessCtx       sessionctx.Context
 	warnings      contextutil.WarnHandlerExt
 	loc           *time.Location
 	exprCtx       exprctx.BuildContext
@@ -167,25 +167,40 @@ type backfillCtx struct {
 }
 
 func newBackfillCtx(id int, rInfo *reorgInfo,
-	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool) (*backfillCtx, error) {
-	sessCtx, err := newSessCtx(rInfo.jobCtx.store, rInfo.ReorgMeta)
+	schemaName string, tbl table.Table, jobCtx *ReorgContext, label string, isDistributed bool, isUpdateColumn bool) (*backfillCtx, error) {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	exprCtx, err := newReorgExprCtxWithReorgMeta(rInfo.ReorgMeta, warnHandler)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
+	if isUpdateColumn {
+		// The below case should be compatible with mysql behavior:
+		// > create table t (a int);
+		// > insert into t values (0);
+		// > alter table t modify column a date;
+		// The alter DDL should return an error in strict mode and success in non-strict mode.
+		// See: https://github.com/pingcap/tidb/pull/25728 for more details.
+		hasStrictMode := rInfo.ReorgMeta.SQLMode.HasStrictMode()
+		tc := exprCtx.GetStaticEvalCtx().TypeCtx()
+		evalCtx := exprCtx.GetStaticEvalCtx().Apply(exprstatic.WithTypeFlags(
+			tc.Flags().WithIgnoreZeroDateErr(!hasStrictMode),
+		))
+		exprCtx = exprCtx.Apply(exprstatic.WithEvalCtx(evalCtx))
+	}
+
+	tblCtx := newReorgTableMutateContext(exprCtx)
 	if isDistributed {
 		id = int(backfillContextID.Add(1))
 	}
 
-	exprCtx := sessCtx.GetExprCtx()
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		sessCtx:    sessCtx,
-		warnings:   sessCtx.GetSessionVars().StmtCtx.WarnHandler,
+		warnings:   warnHandler,
 		exprCtx:    exprCtx,
-		tblCtx:     sessCtx.GetTableCtx(),
+		tblCtx:     tblCtx,
 		loc:        exprCtx.GetEvalCtx().Location(),
 		schemaName: schemaName,
 		table:      tbl,
@@ -495,6 +510,7 @@ func loadTableRanges(
 		zap.String("range start", hex.EncodeToString(ranges[0].StartKey)),
 		zap.String("range end", hex.EncodeToString(ranges[len(ranges)-1].EndKey)),
 		zap.Int("range count", len(ranges)))
+	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
 }
 
@@ -631,7 +647,7 @@ func loadDDLReorgVars(ctx context.Context, sessPool *sess.Pool) error {
 	return ddlutil.LoadDDLReorgVars(ctx, sCtx)
 }
 
-func makeupDecodeColMap(dbName model.CIStr, t table.Table) (map[int64]decoder.Column, error) {
+func makeupDecodeColMap(dbName pmodel.CIStr, t table.Table) (map[int64]decoder.Column, error) {
 	writableColInfos := make([]*model.ColumnInfo, 0, len(t.WritableCols()))
 	for _, col := range t.WritableCols() {
 		writableColInfos = append(writableColInfos, col.ColumnInfo)
@@ -660,7 +676,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
-	opCtx := NewLocalOperatorCtx(ctx, job.ID)
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+	defer cancel()
+
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
@@ -685,16 +703,11 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, dc.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, importConc)
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-	sctx, err := sessPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer sessPool.Put(sctx)
 
 	cpMgr, err := ingest.NewCheckpointManager(
 		ctx,
@@ -722,6 +735,11 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
 	}
 
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
 	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
@@ -828,12 +846,17 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	t table.PhysicalTable,
 	bfWorkerType backfillerType,
 	reorgInfo *reorgInfo,
-) error {
+) (err error) {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
+	defer func() {
+		if err != nil && ctx.Err() != nil {
+			err = context.Cause(ctx)
+		}
+	}()
 
 	failpoint.Inject("MockCaseWhenParseFailure", func(val failpoint.Value) {
 		//nolint:forcetypeassert
@@ -914,6 +937,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
+					failpoint.InjectCall("afterUpdateReorgMeta")
 				}
 			}
 		}

@@ -63,7 +63,6 @@ func TestGCPartition(t *testing.T) {
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
-		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
 			    partition by range (a) (
 			    partition p0 values less than (3),

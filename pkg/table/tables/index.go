@@ -22,12 +22,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -193,7 +194,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		)
 		if !opt.FromBackFill() {
 			key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
-			if keyVer == TempIndexKeyTypeBackfill || keyVer == TempIndexKeyTypeDelete {
+			if keyVer == tablecodec.TempIndexKeyTypeBackfill || keyVer == tablecodec.TempIndexKeyTypeDelete {
 				key, tempKey = tempKey, nil
 				keyIsTempIdxKey = true
 			}
@@ -408,6 +409,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
+		if c.idxInfo.Global {
+			tempValElem.Global = true
+			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
+		}
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
@@ -422,6 +427,8 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 						if err != nil {
 							return err
 						}
+						// The handle passed in may be a `PartitionHandle`,
+						// so we can't directly do comparation with them.
 						if !h.Equal(oh) {
 							okToDelete = false
 						}
@@ -478,40 +485,29 @@ func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedVal
 	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
 }
 
-const (
-	// TempIndexKeyTypeNone means the key is not a temporary index key.
-	TempIndexKeyTypeNone byte = 0
-	// TempIndexKeyTypeDelete indicates this value is written in the delete-only stage.
-	TempIndexKeyTypeDelete byte = 'd'
-	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
-	TempIndexKeyTypeBackfill byte = 'b'
-	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
-	TempIndexKeyTypeMerge byte = 'm'
-)
-
 // GenTempIdxKeyByState is used to get the key version and the temporary key.
 // The tempKeyVer means the temp index key/value version.
 func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tempKey kv.Key, tempKeyVer byte) {
 	if indexInfo.State != model.StatePublic {
 		switch indexInfo.BackfillState {
 		case model.BackfillStateInapplicable:
-			return indexKey, nil, TempIndexKeyTypeNone
+			return indexKey, nil, tablecodec.TempIndexKeyTypeNone
 		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			tablecodec.IndexKey2TempIndexKey(indexKey)
 			if indexInfo.State == model.StateDeleteOnly {
-				return nil, indexKey, TempIndexKeyTypeDelete
+				return nil, indexKey, tablecodec.TempIndexKeyTypeDelete
 			}
-			return nil, indexKey, TempIndexKeyTypeBackfill
+			return nil, indexKey, tablecodec.TempIndexKeyTypeBackfill
 		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
 			tmp := make([]byte, len(indexKey))
 			copy(tmp, indexKey)
 			tablecodec.IndexKey2TempIndexKey(tmp)
-			return indexKey, tmp, TempIndexKeyTypeMerge
+			return indexKey, tmp, tablecodec.TempIndexKeyTypeMerge
 		}
 	}
-	return indexKey, nil, TempIndexKeyTypeNone
+	return indexKey, nil, tablecodec.TempIndexKeyTypeNone
 }
 
 func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
@@ -633,13 +629,30 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 	return val, nil
 }
 
+// FetchValues implements table.Index interface.
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
-	needLength := len(c.idxInfo.Columns)
+	return fetchIndexRow(c.idxInfo, r, vals, nil)
+}
+
+func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
+	needLength := len(idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]
-	for i, ic := range c.idxInfo.Columns {
+	// If the context has extra info, use the extra layout info to get index columns.
+	if len(opt) != 0 {
+		intest.Assert(len(opt) == len(idxInfo.Columns), "offsets length is not equal to index columns length, offset len: %d, index len: %d", len(opt), len(idxInfo.Columns))
+		for i, offset := range opt {
+			if offset < 0 || offset > len(r) {
+				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idxInfo.Name, offset, r)
+			}
+			vals[i] = r[offset]
+		}
+		return vals, nil
+	}
+	// Otherwise use the full column layout.
+	for i, ic := range idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}

@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -55,7 +56,7 @@ type BatchPointGetExec struct {
 	planPhysIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
 	singlePartID   int64
-	partitionNames []model.CIStr
+	partitionNames []pmodel.CIStr
 	idxVals        [][]types.Datum
 	txn            kv.Transaction
 	lock           bool
@@ -107,7 +108,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+		} else if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -162,16 +163,28 @@ func MockNewCacheTableSnapShot(snapshot kv.Snapshot, memBuffer kv.MemBuffer) *ca
 // Close implements the Executor interface.
 func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
+			if timeDetail != nil {
+				e.Ctx().GetSessionVars().SQLCPUUsages.MergeTikvCPUTime(timeDetail.ProcessTime)
+			}
+		}()
 	}
+
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil && e.idxInfo != nil {
+	if e.indexUsageReporter != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
 		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
 		// percentage according to the row counts for the whole table.
-		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		if e.idxInfo != nil {
+			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		} else {
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, e.ID(), kvReqTotal)
+		}
 	}
 	e.inited = 0
 	e.index = 0

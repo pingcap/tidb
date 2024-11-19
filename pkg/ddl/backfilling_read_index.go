@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -105,8 +105,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	opCtx := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
-	defer opCtx.Cancel()
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
 	r.curRowCount.Store(0)
 
 	if len(r.cloudStorageURI) > 0 {

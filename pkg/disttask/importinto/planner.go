@@ -239,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -387,7 +387,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			startKey := tidbkv.Key(kvMeta.StartKey)
 			var endKey tidbkv.Key
 			for {
-				endKeyOfGroup, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+				endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err2 := splitter.SplitOneRangesGroup()
 				if err2 != nil {
 					return err2
 				}
@@ -404,6 +404,10 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					return errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 						hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 				}
+				rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+				rangeJobKeys = append(rangeJobKeys, startKey)
+				rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+				rangeJobKeys = append(rangeJobKeys, endKey)
 				// each subtask will write and ingest one range group
 				m := &WriteIngestStepMeta{
 					KVGroup: kvGroup,

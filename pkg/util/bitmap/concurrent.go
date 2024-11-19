@@ -41,7 +41,7 @@ type ConcurrentBitmap struct {
 func (cb *ConcurrentBitmap) Clone() *ConcurrentBitmap {
 	cp := NewConcurrentBitmap(cb.bitLen)
 	needLen := len(cp.segments)
-	for i := 0; i < needLen; i++ {
+	for i := range needLen {
 		cp.segments[i] = cb.segments[i]
 	}
 	return cp

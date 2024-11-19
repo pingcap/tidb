@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -97,6 +96,7 @@ type Engine struct {
 	statsFiles        []string
 	startKey          []byte
 	endKey            []byte
+	jobKeys           [][]byte
 	splitKeys         [][]byte
 	regionSplitSize   int64
 	smallBlockBufPool *membuf.Pool
@@ -127,6 +127,8 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+var _ common.Engine = (*Engine)(nil)
+
 const (
 	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
@@ -139,6 +141,7 @@ func NewExternalEngine(
 	statsFiles []string,
 	startKey []byte,
 	endKey []byte,
+	jobKeys [][]byte,
 	splitKeys [][]byte,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
@@ -157,6 +160,7 @@ func NewExternalEngine(
 		statsFiles: statsFiles,
 		startKey:   startKey,
 		endKey:     endKey,
+		jobKeys:    jobKeys,
 		splitKeys:  splitKeys,
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
@@ -255,7 +259,7 @@ func getFilesReadConcurrency(
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
+func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -263,16 +267,16 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
+	startKey := jobKeys[0]
+	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
-	readDtStartKey := e.keyAdapter.Encode(nil, startKey, common.MinRowID)
-	readDtEndKey := e.keyAdapter.Encode(nil, endKey, common.MinRowID)
 	err := readAllData(
 		ctx,
 		e.storage,
 		e.dataFiles,
 		e.statsFiles,
-		readDtStartKey,
-		readDtEndKey,
+		startKey,
+		endKey,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -327,21 +331,50 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
-	sendFn := func(dr common.DataAndRange) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case outCh <- dr:
-		}
-		return nil
+	ranges := make([]common.Range, 0, len(jobKeys)-1)
+	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
+	if err2 != nil {
+		return err
 	}
-	return sendFn(common.DataAndRange{
-		Data: data,
-		Range: common.Range{
-			Start: startKey,
-			End:   endKey,
-		},
+	for i := 1; i < len(jobKeys)-1; i++ {
+		cur, err3 := e.keyAdapter.Decode(nil, jobKeys[i])
+		if err3 != nil {
+			return err3
+		}
+		ranges = append(ranges, common.Range{
+			Start: prev,
+			End:   cur,
+		})
+		prev = cur
+	}
+	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
+	nextKey := false
+	lastKey := jobKeys[len(jobKeys)-1]
+	cur, err4 := e.keyAdapter.Decode(nil, lastKey)
+	if err4 != nil && lastKey[len(lastKey)-1] == 0 {
+		nextKey = true
+		cur, err4 = e.keyAdapter.Decode(nil, lastKey[:len(lastKey)-1])
+	}
+	if err4 != nil {
+		return err4
+	}
+	if nextKey {
+		cur = kv.Key(cur).Next()
+	}
+	ranges = append(ranges, common.Range{
+		Start: prev,
+		End:   cur,
 	})
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case outCh <- common.DataAndRanges{
+		Data:         data,
+		SortedRanges: ranges,
+	}:
+	}
+	return nil
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
@@ -350,16 +383,17 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	regionRanges []common.Range,
-	outCh chan<- common.DataAndRange,
+	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
 	regionBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
-	for i := 0; i < len(regionRanges); i += regionBatchSize {
-		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
+	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+		// want to generate N ranges, so we need N+1 keys
+		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
@@ -382,9 +416,6 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		importedKVCount:    e.importedKVCount,
 	}
 }
-
-// LargeRegionSplitDataThreshold is exposed for test.
-var LargeRegionSplitDataThreshold = int(config.SplitRegionSize)
 
 // KVStatistics returns the total kv size and total kv count.
 func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
@@ -431,13 +462,9 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 	return start, kv.Key(end).Next(), nil
 }
 
-// SplitRanges split the ranges by split keys provided by external engine.
-func (e *Engine) SplitRanges(
-	startKey, endKey []byte,
-	_, _ int64,
-	_ log.Logger,
-) ([]common.Range, error) {
-	splitKeys := e.splitKeys
+// GetRegionSplitKeys implements common.Engine.
+func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
+	splitKeys := make([][]byte, len(e.splitKeys))
 	for i, k := range e.splitKeys {
 		var err error
 		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
@@ -445,18 +472,7 @@ func (e *Engine) SplitRanges(
 			return nil, err
 		}
 	}
-	ranges := make([]common.Range, 0, len(splitKeys)+1)
-	ranges = append(ranges, common.Range{Start: startKey})
-	for i := 0; i < len(splitKeys); i++ {
-		ranges[len(ranges)-1].End = splitKeys[i]
-		var endK []byte
-		if i < len(splitKeys)-1 {
-			endK = splitKeys[i+1]
-		}
-		ranges = append(ranges, common.Range{Start: splitKeys[i], End: endK})
-	}
-	ranges[len(ranges)-1].End = endKey
-	return ranges, nil
+	return splitKeys, nil
 }
 
 // Close implements common.Engine.

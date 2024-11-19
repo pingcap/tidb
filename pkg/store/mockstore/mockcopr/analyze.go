@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -131,7 +131,7 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 
 type analyzeColumnsExec struct {
 	tblExec *tableScanExec
-	fields  []*ast.ResultField
+	fields  []*resolve.ResultField
 }
 
 func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
@@ -186,9 +186,9 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 			rd:             rd,
 		},
 	}
-	e.fields = make([]*ast.ResultField, len(columns))
+	e.fields = make([]*resolve.ResultField, len(columns))
 	for i := range e.fields {
-		rf := new(ast.ResultField)
+		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		ft := types.FieldType{}
 		ft.SetType(mysql.TypeBlob)
@@ -252,7 +252,7 @@ func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeRe
 }
 
 // Fields implements the sqlexec.RecordSet Fields interface.
-func (e *analyzeColumnsExec) Fields() []*ast.ResultField {
+func (e *analyzeColumnsExec) Fields() []*resolve.ResultField {
 	return e.fields
 }
 

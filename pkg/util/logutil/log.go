@@ -28,7 +28,7 @@ import (
 	tlog "github.com/opentracing/opentracing-go/log"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"

@@ -11,8 +11,8 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/config",
-        "//pkg/domain/resourcegroup",
         "//pkg/kv",
+        "//pkg/resourcegroup/runaway",
         "//pkg/store/copr",
         "//pkg/store/mockstore",
         "//pkg/testkit/testmain",

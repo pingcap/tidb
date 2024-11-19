@@ -24,10 +24,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -65,7 +66,7 @@ type job struct {
 type statementBuildInfo struct {
 	stmt              *ast.NonTransactionalDMLStmt
 	shardColumnType   types.FieldType
-	shardColumnRefer  *ast.ResultField
+	shardColumnRefer  *resolve.ResultField
 	originalCondition ast.ExprNode
 }
 
@@ -260,11 +261,11 @@ func checkReadClauses(limit *ast.Limit, order *ast.OrderByClause) error {
 func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 	tableName *resolve.TableNameW, se sessiontypes.Session, originalCondition ast.ExprNode) ([]string, error) {
 	// prepare for the construction of statement
-	var shardColumnRefer *ast.ResultField
+	var shardColumnRefer *resolve.ResultField
 	var shardColumnType types.FieldType
 	for _, col := range tableName.TableInfo.Columns {
 		if col.Name.L == stmt.ShardColumn.Name.L {
-			shardColumnRefer = &ast.ResultField{
+			shardColumnRefer = &resolve.ResultField{
 				Column: col,
 				Table:  tableName.TableInfo,
 				DBName: tableName.Schema,
@@ -300,7 +301,7 @@ func runJobs(ctx context.Context, jobs []job, stmt *ast.NonTransactionalDMLStmt,
 		// _tidb_rowid
 		if shardColumnRefer == nil {
 			shardColumnType = *types.NewFieldType(mysql.TypeLonglong)
-			shardColumnRefer = &ast.ResultField{
+			shardColumnRefer = &resolve.ResultField{
 				Column: model.NewExtraHandleColInfo(),
 				Table:  tableName.TableInfo,
 				DBName: tableName.Schema,
@@ -615,7 +616,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Sessio
 
 			// the specified table must be in the join
 			tableInJoin := false
-			var chosenTableName model.CIStr
+			var chosenTableName pmodel.CIStr
 			for _, tableSource := range tableSources {
 				tableSourceName := tableSource.Source.(*ast.TableName)
 				tableSourceFinalTableName := tableSource.AsName // precedence: alias name, then table name
@@ -687,7 +688,7 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
 // making it transparent to following steps
 func selectShardColumnFromTheOnlyTable(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName,
-	tableAsName model.CIStr, tbl table.Table) (
+	tableAsName pmodel.CIStr, tbl table.Table) (
 	indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	if stmt.ShardColumn == nil {
 		return selectShardColumnAutomatically(stmt, tbl, tableName, tableAsName)
@@ -732,7 +733,7 @@ func selectShardColumnByGivenName(shardColumnName string, tbl table.Table) (
 }
 
 func selectShardColumnAutomatically(stmt *ast.NonTransactionalDMLStmt, tbl table.Table,
-	tableName *ast.TableName, tableAsName model.CIStr) (bool, *model.ColumnInfo, error) {
+	tableName *ast.TableName, tableAsName pmodel.CIStr) (bool, *model.ColumnInfo, error) {
 	// auto-detect shard column
 	var shardColumnInfo *model.ColumnInfo
 	tableInfo := tbl.Meta()
@@ -766,7 +767,7 @@ func selectShardColumnAutomatically(stmt *ast.NonTransactionalDMLStmt, tbl table
 	stmt.ShardColumn = &ast.ColumnName{
 		Schema: tableName.Schema,
 		Table:  outputTableName, // so that table alias works
-		Name:   model.NewCIStr(shardColumnName),
+		Name:   pmodel.NewCIStr(shardColumnName),
 	}
 	return true, shardColumnInfo, nil
 }
@@ -779,11 +780,11 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 		fieldName = "query statement"
 	}
 
-	resultFields := []*ast.ResultField{{
+	resultFields := []*resolve.ResultField{{
 		Column: &model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
-		ColumnAsName: model.NewCIStr(fieldName),
+		ColumnAsName: pmodel.NewCIStr(fieldName),
 	}}
 	rows := make([][]any, 0, len(results))
 	for _, result := range results {
@@ -806,18 +807,18 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 		}
 	}
 	if len(failedJobs) == 0 {
-		resultFields := []*ast.ResultField{
+		resultFields := []*resolve.ResultField{
 			{
 				Column: &model.ColumnInfo{
 					FieldType: *types.NewFieldType(mysql.TypeLong),
 				},
-				ColumnAsName: model.NewCIStr("number of jobs"),
+				ColumnAsName: pmodel.NewCIStr("number of jobs"),
 			},
 			{
 				Column: &model.ColumnInfo{
 					FieldType: *types.NewFieldType(mysql.TypeString),
 				},
-				ColumnAsName: model.NewCIStr("job status"),
+				ColumnAsName: pmodel.NewCIStr("job status"),
 			},
 		}
 		rows := make([][]any, 1)

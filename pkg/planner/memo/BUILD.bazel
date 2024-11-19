@@ -14,9 +14,9 @@ go_library(
         "//pkg/expression",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/pattern",
         "//pkg/planner/property",
-        "//pkg/planner/util/utilfuncp",
     ],
 )
 
@@ -36,8 +36,8 @@ go_test(
         "//pkg/domain",
         "//pkg/expression",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",

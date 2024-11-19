@@ -26,7 +26,7 @@ func TestIteratorOnSel(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	sel := make([]int, 0, 1024)
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		chk.AppendInt64(0, int64(i))
 		if i%2 == 0 {
 			sel = append(sel, i)
@@ -59,8 +59,8 @@ func TestMultiIterator(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10
-	var expected []int64
-	for i := 0; i < n; i++ {
+	expected := make([]int64, 0, n)
+	for i := range n {
 		chk.AppendInt64(0, int64(i))
 		expected = append(expected, int64(i))
 	}
@@ -96,17 +96,17 @@ func TestIterator(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	chk := New(fields, 32, 1024)
 	n := 10
-	var expected []int64
-	for i := 0; i < n; i++ {
+	expected := make([]int64, 0, n)
+	for i := range n {
 		chk.AppendInt64(0, int64(i))
 		expected = append(expected, int64(i))
 	}
-	var rows []Row
+	var rows = make([]Row, 0, n)
 	li := NewList(fields, 1, 2)
 	li2 := NewList(fields, 8, 16)
-	var ptrs []RowPtr
-	var ptrs2 []RowPtr
-	for i := 0; i < n; i++ {
+	var ptrs = make([]RowPtr, 0, n)
+	var ptrs2 = make([]RowPtr, 0, n)
+	for i := range n {
 		rows = append(rows, chk.GetRow(i))
 		ptr := li.AppendRow(chk.GetRow(i))
 		ptrs = append(ptrs, ptr)
@@ -118,7 +118,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4Slice(rows)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, rows[i], it.Current())
 		it.Next()
 	}
@@ -129,7 +129,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4Chunk(chk)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, chk.GetRow(i), it.Current())
 		it.Next()
 	}
@@ -140,7 +140,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4List(li)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
 		it.Next()
 	}
@@ -151,7 +151,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4RowPtr(li, ptrs)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
 		it.Next()
 	}
@@ -162,7 +162,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4RowPtr(li2, ptrs2)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, li2.GetRow(ptrs2[i]), it.Current())
 		it.Next()
 	}
@@ -175,7 +175,7 @@ func TestIterator(t *testing.T) {
 	it = NewIterator4RowContainer(rc)
 	checkEqual(it, expected, t)
 	it.Begin()
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.Equal(t, li.GetRow(ptrs[i]), it.Current())
 		it.Next()
 	}
