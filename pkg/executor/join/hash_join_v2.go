@@ -1254,7 +1254,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
-	// init builder
+	// init builder, todo maybe the builder can be reused during the whole life cycle of the executor
 	hashJoinCtx := e.HashJoinCtxV2
 	for _, worker := range e.BuildWorkers {
 		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
