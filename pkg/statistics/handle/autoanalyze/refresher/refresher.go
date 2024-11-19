@@ -188,6 +188,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	return false
 }
 
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return r.jobs.Snapshot()
+}
+
 func (r *Refresher) setAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {

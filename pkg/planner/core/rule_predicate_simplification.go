@@ -224,7 +224,10 @@ func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	// Copy constant from equal predicate into other predicate.
 	equalValue := equalPred.(*expression.ScalarFunction)
 	otherValue := otherPred.(*expression.ScalarFunction)
-	newPred := expression.NewFunctionInternal(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
+	newPred, err := expression.NewFunction(ctx.GetExprCtx(), otherValue.FuncName.L, otherValue.RetType, equalValue.GetArgs()[1], otherValue.GetArgs()[1])
+	if err != nil {
+		return false
+	}
 	newPredList := make([]expression.Expression, 0, 1)
 	newPredList = append(newPredList, newPred)
 	newPredList = expression.PropagateConstant(ctx.GetExprCtx(), newPredList)
@@ -276,7 +279,11 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	} else if emptyFirst && emptySecond {
 		return &expression.Constant{Value: types.NewIntDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)}
 	}
-	return expression.NewFunctionInternal(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
+	newPred, err := expression.NewFunction(ctx.GetExprCtx(), ast.LogicOr, v.RetType, firstCondition, secondCondition)
+	if err != nil {
+		return orPredicateList
+	}
+	return newPred
 }
 
 // pruneEmptyORBranches applies iteratively updateOrPredicate for each pair of OR predicate

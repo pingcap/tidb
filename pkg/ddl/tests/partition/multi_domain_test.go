@@ -412,11 +412,12 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 				" PARTITION `p1` VALUES LESS THAN (200),\n" +
 				" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-		case model.StateNone.String():
-			logutil.BgLogger().Info("Can this happen?")
 		case model.StatePublic.String():
+			// not tested, both tkO and tkNO sees same partitions
+		case model.StateNone.String():
+			// not tested, both tkO and tkNO sees same partitions
 		default:
-			require.Failf(t, "unhandled schema state '%s'", schemaState)
+			require.Failf(t, "unhandled schema state", "State '%s'", schemaState)
 		}
 	}
 	postFn := func(tkO *testkit.TestKit, store kv.Storage) {
