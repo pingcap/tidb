@@ -65,10 +65,10 @@ for i in $(seq $TABLE_COUNT); do
     for j in $(seq $CONCURRENCY); do
         insertRecords $DB.$TABLE${i} $(expr $ROW_COUNT / $CONCURRENCY \* $(expr $j - 1) + 1) $(expr $ROW_COUNT / $CONCURRENCY \* $j) &
     done
-    if ! ((i % 4)); then
+    if [ $((i % 4)) -eq 0 ]; then
 	    run_sql "ALTER TABLE $DB.$TABLE${i} REMOVE PARTITIONING"
     fi
-    if ! ((i % 2)); then
+    if [ $((i % 2)) -eq 0 ]; then
 	    run_sql "ALTER TABLE $DB.$TABLE${i} \
 		PARTITION BY RANGE(c1) ( \
 		PARTITION p0 VALUES LESS THAN (0), \
