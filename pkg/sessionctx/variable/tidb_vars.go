@@ -525,6 +525,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
+	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
+
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -1324,6 +1327,7 @@ const (
 	DefTiDBDDLReorgBatchSize                = 256
 	DefTiDBDDLFlashbackConcurrency          = 64
 	DefTiDBDDLErrorCountLimit               = 512
+	DefTiDBDDLReorgMaxWriteSpeed            = 0
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false
@@ -1590,6 +1594,7 @@ var (
 	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
 	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
