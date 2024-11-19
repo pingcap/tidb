@@ -947,10 +947,7 @@ ab
 
 ab			ab		
 ab  	ab
-ab
-
-	ab
-
+ab	ab
 select length(v), length(c) from vctt;
 length(v)	length(c)
 4	4
@@ -1716,7 +1713,7 @@ insert into t(name, b) values("chb", 3);
 Error 1062 (23000): Duplicate entry 'ch' for key 't.PRIMARY'
 insert into t(name, b) values("测试", 3);
 insert into t(name, b) values("测试", 3);
-Error 1062 (23000): Duplicate entry '�' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry '�' for key 't.PRIMARY'
 drop table if exists t;
 create table t (i int unique key);
 insert into t values (1),(2);
