@@ -73,8 +73,9 @@ type DDLReorgMeta struct {
 	TargetScope       string                           `json:"target_scope"`
 	// These two variables are set when corresponding session variables are set explicitly. When they are set,
 	// user cannot change it by setting the global one. Otherwise, they can be adjusted dynamically through global var.
-	Concurrency int `json:"concurrency"`
-	BatchSize   int `json:"batch_size"`
+	Concurrency   int   `json:"concurrency"`
+	BatchSize     int   `json:"batch_size"`
+	MaxWriteSpeed int64 `json:"max_write_speed"`
 }
 
 // GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta or returns the default value.

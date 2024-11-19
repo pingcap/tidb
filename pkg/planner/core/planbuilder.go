@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -5938,6 +5939,16 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
 			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
 				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
+		}
+	case AlterDDLJobMaxWriteSpeed:
+		speedStr := opt.Value.(*expression.Constant).Value.GetString()
+		speed, err := units.RAMInBytes(speedStr)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if speed < 0 || speed > units.PiB {
+			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
+				speedStr, opt.Name, 0, units.PiB)
 		}
 	}
 	return nil

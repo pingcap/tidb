@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -208,6 +209,16 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 			if opt.Value != nil {
 				cons := opt.Value.(*expression.Constant)
 				job.ReorgMeta.BatchSize = int(cons.Value.GetInt64())
+			}
+			job.AdminOperator = byWho
+		case core.AlterDDLJobMaxWriteSpeed:
+			if opt.Value != nil {
+				cons := opt.Value.(*expression.Constant)
+				speed, err := units.RAMInBytes(cons.Value.GetString())
+				if err != nil {
+					return errors.Trace(err)
+				}
+				job.ReorgMeta.MaxWriteSpeed = speed
 			}
 			job.AdminOperator = byWho
 		default:
