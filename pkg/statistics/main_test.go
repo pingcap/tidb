@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -106,7 +107,10 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	}
 	sc := stmtctx.NewStmtCtx()
 
-	err := sortSampleItems(sc, samples)
+	err := sortSampleItemsByBinary(samples, func(datum types.Datum) ([]byte, error) {
+		ctx := mock.NewContext()
+		return getComparedBytesFromColumn(ctx, datum)
+	})
 	require.NoError(t, err)
 	s.samples = samples
 	rc := &recordSet{
