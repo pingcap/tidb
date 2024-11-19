@@ -194,7 +194,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			return err
 		}
 
-		err = output.Check(typeCtx(ctx))
+		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -225,7 +225,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			return err
 		}
 
-		err = output.Check(tc)
+		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -340,7 +340,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -362,7 +362,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue

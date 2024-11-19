@@ -78,7 +78,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 			return err
 		}
 
-		err = output.Check(typeCtx(ctx))
+		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -164,7 +164,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			return err
 		}
 
-		err = output.Check(tc)
+		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -553,7 +553,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -648,7 +648,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -764,7 +764,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 			return err
 		}
 
-		err = output.Check(typeCtx(ctx))
+		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -849,7 +849,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			return err
 		}
 
-		err = output.Check(tc)
+		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -1238,7 +1238,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
@@ -1333,7 +1333,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			continue
 		}
 
-		err = res.Check(tc)
+		err = res.CheckAlwaysNoZero(tc)
 		if err != nil {
 			result.AppendNull()
 			continue
