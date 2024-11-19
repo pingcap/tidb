@@ -1979,6 +1979,11 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
