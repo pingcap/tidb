@@ -99,9 +99,9 @@ type KeyRange struct {
 	StartKey Key
 	EndKey   Key
 
-	XXXNoUnkeyedLiteral struct{}
-	XXXunrecognized     []byte
-	XXXsizecache        int32
+	//XXXNoUnkeyedLiteral struct{}
+	//XXXunrecognized     []byte
+	//XXXsizecache        int32
 }
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
@@ -110,7 +110,7 @@ func KeyRangeSliceMemUsage(k []KeyRange) int64 {
 
 	res := sizeofKeyRange * int64(cap(k))
 	for _, m := range k {
-		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) //+ int64(cap(m.XXXunrecognized))
 	}
 
 	return res
