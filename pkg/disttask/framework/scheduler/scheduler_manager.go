@@ -153,7 +153,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 	return schedulerManager
 }
 
-// Start the schedulerManager, start the scheduleTask to start multiple schedulers.
+// Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
 	// init cached managed nodes
 	sm.nodeMgr.refreshNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
