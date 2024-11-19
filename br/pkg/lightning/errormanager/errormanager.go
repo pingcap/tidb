@@ -121,8 +121,13 @@ const (
 	`
 
 	insertIntoConflictErrorData = `
+<<<<<<< HEAD:br/pkg/lightning/errormanager/errormanager.go
 		INSERT INTO %s.` + ConflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
+=======
+		INSERT IGNORE INTO %s.` + ConflictErrorTableName + `
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, kv_type)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/lightning/errormanager/errormanager.go
 		VALUES
 	`
 

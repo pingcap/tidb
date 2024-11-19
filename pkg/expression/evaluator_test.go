@@ -104,7 +104,14 @@ func TestSleep(t *testing.T) {
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
+<<<<<<< HEAD
 	sessVars.StmtCtx.BadNullAsWarning = true
+=======
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -121,7 +128,13 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, int64(0), ret)
 
 	// for error case under the strict model
+<<<<<<< HEAD
 	sessVars.StmtCtx.BadNullAsWarning = false
+=======
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)

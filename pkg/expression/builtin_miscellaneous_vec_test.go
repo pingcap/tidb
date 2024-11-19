@@ -151,7 +151,14 @@ func TestSleepVectorized(t *testing.T) {
 	warnCnt := counter{}
 
 	// non-strict model
+<<<<<<< HEAD
 	sessVars.StmtCtx.BadNullAsWarning = true
+=======
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 	input.AppendFloat64(0, 1)
 	err = f.vecEvalInt(input, result)
 	require.NoError(t, err)
@@ -184,7 +191,13 @@ func TestSleepVectorized(t *testing.T) {
 	require.Equal(t, uint16(warnCnt.add(2)), sessVars.StmtCtx.WarningCount())
 
 	// for error case under the strict model
+<<<<<<< HEAD
 	sessVars.StmtCtx.BadNullAsWarning = false
+=======
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 	input.Reset()
 	input.AppendNull(0)
 	err = f.vecEvalInt(input, result)

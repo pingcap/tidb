@@ -98,9 +98,18 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
+<<<<<<< HEAD
 	stmtCtx.DupKeyAsWarning = true
 	stmtCtx.TruncateAsWarning = true
 	stmtCtx.BadNullAsWarning = true
+=======
+	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
+	stmtCtx.SetErrLevels(levels)
+	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
