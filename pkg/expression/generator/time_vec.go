@@ -194,6 +194,11 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			return err
 		}
 
+		err = output.Check(typeCtx(ctx))
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
 		{{ template "CheckDateTime" . }}
 		{{ if eq $.FuncName "AddTime" }}
@@ -218,6 +223,12 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		{{ end }}
 		if err != nil {
 			return err
+		}
+
+		err = output.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
 		}
 	{{ else if or (eq .SigName "builtinAddDurationAndDurationSig") (eq .SigName "builtinSubDurationAndDurationSig") }}
 		{{ if eq $.FuncName "AddTime" }}
@@ -328,6 +339,13 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			result.AppendNull()
 			continue
 		}
+
+		err = res.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
 		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
 		{{ template "CheckDateTime" . }}
@@ -340,6 +358,12 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		{{ end }}
 		if err != nil {
 			tc.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+
+		err = res.Check(tc)
+		if err != nil {
 			result.AppendNull()
 			continue
 		}

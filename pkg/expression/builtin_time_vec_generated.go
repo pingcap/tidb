@@ -78,6 +78,12 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 			return err
 		}
 
+		err = output.Check(typeCtx(ctx))
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
 		// commit result
 
 		resultSlice[i] = output
@@ -156,6 +162,12 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		if err != nil {
 			return err
+		}
+
+		err = output.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
 		}
 
 		// commit result
@@ -540,6 +552,13 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 			result.AppendNull()
 			continue
 		}
+
+		err = res.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
 		output := res.String()
 
 		// commit result
@@ -625,6 +644,12 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		if err != nil {
 			tc.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+
+		err = res.Check(tc)
+		if err != nil {
 			result.AppendNull()
 			continue
 		}
@@ -739,6 +764,12 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 			return err
 		}
 
+		err = output.Check(typeCtx(ctx))
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
 		// commit result
 
 		resultSlice[i] = output
@@ -816,6 +847,12 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		if err != nil {
 			return err
+		}
+
+		err = output.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
 		}
 
 		// commit result
@@ -1200,6 +1237,13 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 			result.AppendNull()
 			continue
 		}
+
+		err = res.Check(tc)
+		if err != nil {
+			result.AppendNull()
+			continue
+		}
+
 		output := res.String()
 
 		// commit result
@@ -1285,6 +1329,12 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		if err != nil {
 			tc.AppendWarning(err)
+			result.AppendNull()
+			continue
+		}
+
+		err = res.Check(tc)
+		if err != nil {
 			result.AppendNull()
 			continue
 		}
