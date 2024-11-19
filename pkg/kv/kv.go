@@ -719,6 +719,10 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	// GetCodec gets the codec of the storage.
 	GetCodec() tikv.Codec
+	// SetOption is a thin wrapper around sync.Map.
+	SetOption(k any, v any)
+	// GetOption is a thin wrapper around sync.Map.
+	GetOption(k any) (any, bool)
 }
 
 // EtcdBackend is used for judging a storage is a real TiKV.

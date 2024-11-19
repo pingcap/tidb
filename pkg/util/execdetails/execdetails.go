@@ -1305,8 +1305,12 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 type BasicRuntimeStats struct {
 	// executor's Next() called times.
 	loop atomic.Int32
-	// executor consume time.
+	// executor consume time, including open, next, and close time.
 	consume atomic.Int64
+	// executor open time.
+	open atomic.Int64
+	// executor close time.
+	close atomic.Int64
 	// executor return row count.
 	rows atomic.Int64
 }
@@ -1321,6 +1325,8 @@ func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	result := &BasicRuntimeStats{}
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
+	result.open.Store(e.open.Load())
+	result.close.Store(e.close.Load())
 	result.rows.Store(e.rows.Load())
 	return result
 }
@@ -1333,6 +1339,8 @@ func (e *BasicRuntimeStats) Merge(rs RuntimeStats) {
 	}
 	e.loop.Add(tmp.loop.Load())
 	e.consume.Add(tmp.consume.Load())
+	e.open.Add(tmp.open.Load())
+	e.close.Add(tmp.close.Load())
 	e.rows.Add(tmp.rows.Load())
 }
 
@@ -1388,6 +1396,18 @@ func (e *BasicRuntimeStats) Record(d time.Duration, rowNum int) {
 	e.rows.Add(int64(rowNum))
 }
 
+// RecordOpen records executor's open time.
+func (e *BasicRuntimeStats) RecordOpen(d time.Duration) {
+	e.consume.Add(int64(d))
+	e.open.Add(int64(d))
+}
+
+// RecordClose records executor's close time.
+func (e *BasicRuntimeStats) RecordClose(d time.Duration) {
+	e.consume.Add(int64(d))
+	e.close.Add(int64(d))
+}
+
 // SetRowNum sets the row num.
 func (e *BasicRuntimeStats) SetRowNum(rowNum int64) {
 	e.rows.Store(rowNum)
@@ -1399,8 +1419,19 @@ func (e *BasicRuntimeStats) String() string {
 		return ""
 	}
 	var str strings.Builder
+	totalTime := e.consume.Load()
+	openTime := e.open.Load()
+	closeTime := e.close.Load()
 	str.WriteString("time:")
-	str.WriteString(FormatDuration(time.Duration(e.consume.Load())))
+	str.WriteString(FormatDuration(time.Duration(totalTime)))
+	if openTime >= int64(time.Millisecond) {
+		str.WriteString(", open:")
+		str.WriteString(FormatDuration(time.Duration(openTime)))
+	}
+	if closeTime >= int64(time.Millisecond) {
+		str.WriteString(", close:")
+		str.WriteString(FormatDuration(time.Duration(closeTime)))
+	}
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()

@@ -118,6 +118,33 @@ type StatsHistory interface {
 	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
+// PriorityQueueSnapshot is the snapshot of the stats priority queue.
+type PriorityQueueSnapshot struct {
+	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
+	MustRetryTables []int64           `json:"must_retry_tables"`
+}
+
+// AnalysisJobJSON represents the JSON format of an AnalysisJob.
+//
+//nolint:fieldalignment
+type AnalysisJobJSON struct {
+	Type               string            `json:"type"`
+	TableID            int64             `json:"table_id"`
+	Weight             float64           `json:"weight"`
+	PartitionIDs       []int64           `json:"partition_ids"`
+	IndexIDs           []int64           `json:"index_ids"`
+	PartitionIndexIDs  map[int64][]int64 `json:"partition_index_ids"`
+	Indicators         IndicatorsJSON    `json:"indicators"`
+	HasNewlyAddedIndex bool              `json:"has_newly_added_index"`
+}
+
+// IndicatorsJSON represents the JSON format of Indicators.
+type IndicatorsJSON struct {
+	ChangePercentage     string `json:"change_percentage"`
+	TableSize            string `json:"table_size"`
+	LastAnalysisDuration string `json:"last_analysis_duration"`
+}
+
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type StatsAnalyze interface {
 	owner.Listener
@@ -160,6 +187,9 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// GetPriorityQueueSnapshot returns the stats priority queue.
+	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
 
 	// Close closes the analyze worker.
 	Close()
