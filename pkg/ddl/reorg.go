@@ -257,8 +257,9 @@ func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
 
 func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
 	return errctx.LevelMap{
-		errctx.ErrGroupTruncate: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupBadNull:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
 		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
 			!mode.HasErrorForDivisionByZeroMode(),
 			!mode.HasStrictMode(),
