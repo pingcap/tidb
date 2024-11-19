@@ -16,6 +16,8 @@ package core
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -121,6 +123,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		}
 		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
 		if err != nil {
+			logutil.BgLogger().Warn("unexpected error during tryLockMDLAndUpdateSchemaIfNecessary", zap.Error(err))
 			schemaNotMatch = true
 			continue
 		}

@@ -4162,18 +4162,18 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
 		log := false
-		indexInfo := ""
-		for id := range s.GetSessionVars().StmtCtx.MDLRelatedTableIDs {
-			if tbl, ok := s.GetInfoSchema().TableInfoByID(id); ok {
-				for _, idx := range tbl.Indices {
-					if idx.State != model.StatePublic {
-						log = true
-						indexInfo = fmt.Sprintf("index name : %s, state : %s, backfill state: %s", idx.Name.O, idx.State.String(), idx.BackfillState.String())
-						break
-					}
-				}
-			}
-		}
+		//indexInfo := ""
+		//for id := range s.GetSessionVars().StmtCtx.MDLRelatedTableIDs {
+		//	if tbl, ok := s.GetInfoSchema().TableInfoByID(id); ok {
+		//		for _, idx := range tbl.Indices {
+		//			if idx.State != model.StatePublic {
+		//				log = true
+		//				indexInfo = fmt.Sprintf("index name : %s, state : %s, backfill state: %s", idx.Name.O, idx.State.String(), idx.BackfillState.String())
+		//				break
+		//			}
+		//		}
+		//	}
+		//}
 		if log {
 			logutil.GeneralLogger.Info("GENERAL_LOG",
 				zap.Uint64("conn", vars.ConnectionID),
@@ -4186,8 +4186,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 				zap.String("currentDB", vars.CurrentDB),
 				zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 				zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
-				zap.String("sql", query),
-				zap.String("indexInfo", indexInfo))
+				zap.String("sql", query))
+			//zap.String("indexInfo", indexInfo))
 		}
 	}
 }
