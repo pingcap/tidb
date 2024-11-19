@@ -58,12 +58,13 @@ run_sql "CREATE TABLE IF NOT EXISTS $DB.${TABLE}_List ($TABLE_COLUMNS) PARTITION
 
 wait
 
+insertRecords $DB.${TABLE}_Hash 1 $ROW_COUNT &
+insertRecords $DB.${TABLE}_List 1 $ROW_COUNT &
+
 for i in $(seq $TABLE_COUNT); do
     for j in $(seq $CONCURRENCY); do
         insertRecords $DB.$TABLE${i} $(expr $ROW_COUNT / $CONCURRENCY \* $(expr $j - 1) + 1) $(expr $ROW_COUNT / $CONCURRENCY \* $j) &
     done
-    insertRecords $DB.${TABLE}_Hash 1 $ROW_COUNT &
-    insertRecords $DB.${TABLE}_List 1 $ROW_COUNT &
     if ! ((i % 4)); then
 	    run_sql "ALTER TABLE $DB.$TABLE${i} REMOVE PARTITIONING"
     fi
@@ -77,3 +78,12 @@ for i in $(seq $TABLE_COUNT); do
     fi
 done
 wait
+
+run_sql "ALTER TABLE $DB.${TABLE}_Hash ADD UNIQUE INDEX idx(c1) GLOBAL" &
+run_sql "ALTER TABLE $DB.${TABLE}_List ADD UNIQUE INDEX idx(c1) GLOBAL" &
+
+for i in $(seq $TABLE_COUNT); do
+    run_sql "ALTER TABLE $DB.$TABLE${i} ADD UNIQUE INDEX idx(c1) GLOBAL" &
+done
+wait
+
