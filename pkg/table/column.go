@@ -513,10 +513,6 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
 func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
-		if ec.HandleError(err) == nil {
-			*d = GetZeroValue(c.ToInfo())
-			return nil
-		}
 		return err
 	}
 	return nil
