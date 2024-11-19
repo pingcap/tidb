@@ -58,11 +58,11 @@
 4. Get the table/index of hot regions
 
     ```shell
-    curl http://{TiDBIP}:10080/regions/hot
+     http://{TiDBIP}:10080/regions/hot
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/regions/hot
+    $ http://127.0.0.1:10080/regions/hot
     {
       "read": [
 
@@ -83,11 +83,11 @@
 5. Get the information of a specific region by ID
 
     ```shell
-    curl http://{TiDBIP}:10080/regions/{regionID}
+     http://{TiDBIP}:10080/regions/{regionID}
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/regions/4001
+    $ http://127.0.0.1:10080/regions/4001
     {
         "end_key": "dIAAAAAAAAEk",
         "frames": [
@@ -106,11 +106,11 @@
 6. Get regions Information from db.table
 
     ```shell
-    curl http://{TiDBIP}:10080/tables/{db}/{table}/regions
+     http://{TiDBIP}:10080/tables/{db}/{table}/regions
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/tables/test/t1/regions
+    $ http://127.0.0.1:10080/tables/test/t1/regions
     {
         "id": 286,
         "indices": [],
@@ -140,11 +140,11 @@
 7. Get schema Information about all db
 
     ```shell
-    curl http://{TiDBIP}:10080/schema
+     http://{TiDBIP}:10080/schema
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/schema
+    $ http://127.0.0.1:10080/schema
     [
         {
             "charset": "utf8mb4",
@@ -165,11 +165,11 @@
 8. Get schema Information about db
 
     ```shell
-    curl http://{TiDBIP}:10080/schema/{db}
+     http://{TiDBIP}:10080/schema/{db}
     ```
 
     ```shell
-    curl http://{TiDBIP}:10080/schema/{db}?id_name_only=true
+     http://{TiDBIP}:10080/schema/{db}?id_name_only=true
     [
     {
      "id": 119,
@@ -191,27 +191,27 @@
 9. Get schema Information about db.table, and you can get schema info by tableID (tableID is the **unique** identifier of table in TiDB)
 
     ```shell
-    curl http://{TiDBIP}:10080/schema/{db}/{table}
+     http://{TiDBIP}:10080/schema/{db}/{table}
 
-    curl http://{TiDBIP}:10080/schema?table_id={tableID}
+     http://{TiDBIP}:10080/schema?table_id={tableID}
 
-    curl http://{TiDBIP}:10080/schema?table_ids={tableID,...}
+     http://{TiDBIP}:10080/schema?table_ids={tableID,...}
     ```
 
 10. Get database information, table information and tidb info schema version by tableID.
 
      ```shell
-     curl http://{TiDBIP}:10080/db-table/{tableID}
+      http://{TiDBIP}:10080/db-table/{tableID}
      ```
 
 11. Get MVCC Information of the key with a specified handle ID
 
      ```shell
-     curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
+      http://{TiDBIP}:10080/mvcc/key/{db}/{table}/{handle}
      ```
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/key/test/t/1
+     $ http://127.0.0.1:10080/mvcc/key/test/t/1
      {
          "key": "74800000000000006E5F728000000000000001",
          "region_id": 4,
@@ -232,11 +232,11 @@
      If the handle is clustered, specify the primary key column values in the query string
 
      ```shell
-     $curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}
+     $curl "http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}"
      ```
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/key/test/t\?a\=aaa\&b\=2020-01-01
+     $curl "http://127.0.0.1:10080/mvcc/key/test/t?a=aaa&b=2020-01-01"
      {
          "key": "7480000000000000365F72016161610000000000FA0419A5420000000000",
          "region_id": 52,
@@ -387,14 +387,14 @@
 14. Get MVCC Information of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
 
      ```shell
-     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
+     curl "http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}"
      ```
 
      *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/index/test/t1/idx/1\?a\=A
+     $curl "http://127.0.0.1:10080/mvcc/index/test/t1/idx/1?a=A"
      {
          "info": {
              "writes": [
@@ -411,17 +411,17 @@ timezone.*
      *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1\?a\=A
+     $curl "http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1?a=A"
      ```
 
     If the handle is clustered, also specify the primary key column values in the query string
 
     ```shell
-    $curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}
+    $curl "http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}"
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/index/test/t/idx\?a\=1.1\&b\=111\&c\=1
+    $curl "http://127.0.0.1:10080/mvcc/index/test/t/idx?a=1.1&b=111&c=1"
     {
         "key": "74800000000000003B5F69800000000000000203800000000000000105BFF199999999999A013131310000000000FA",
         "region_id": 59,
