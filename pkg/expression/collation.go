@@ -62,14 +62,17 @@ func (c *collationInfo) Hash64(h base.Hasher) {
 
 // Equals implements the base.Hasher.<1th> interface.
 func (c *collationInfo) Equals(other any) bool {
-	c2, ok := other.(*collationInfo)
-	if !ok {
+	// the caller should care about c is nil or not.
+	if other == nil {
 		return false
 	}
-	if c == nil {
-		return c2 == nil
-	}
-	if c2 == nil {
+	var c2 *collationInfo
+	switch x := other.(type) {
+	case *collationInfo:
+		c2 = x
+	case collationInfo:
+		c2 = &x
+	default:
 		return false
 	}
 	return c.coer == c2.coer &&
