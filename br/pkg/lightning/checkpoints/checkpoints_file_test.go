@@ -109,7 +109,9 @@ func newFileCheckpointsDB(t *testing.T) *checkpoints.FileCheckpointsDB {
 	}
 	scm.MergeInto(cpd)
 	rcm := checkpoints.RebaseCheckpointMerger{
-		AllocBase: 132861,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
 	}
 	rcm.MergeInto(cpd)
 	cksum := checkpoints.TableChecksumMerger{
@@ -150,6 +152,7 @@ func setInvalidStatus(cpdb *checkpoints.FileCheckpointsDB) {
 
 func TestGet(t *testing.T) {
 	ctx := context.Background()
+<<<<<<< HEAD:br/pkg/lightning/checkpoints/checkpoints_file_test.go
 	cpdb := newFileCheckpointsDB(t)
 
 	// 5. get back the checkpoints
@@ -160,6 +163,14 @@ func TestGet(t *testing.T) {
 		Status:    checkpoints.CheckpointStatusAllWritten,
 		AllocBase: 132861,
 		Checksum:  verification.MakeKVChecksum(4492, 686, 486070148910),
+=======
+	expectT2 := &checkpoints.TableCheckpoint{
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		Checksum:      verification.MakeKVChecksum(4492, 686, 486070148910),
+>>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):pkg/lightning/checkpoints/checkpoints_file_test.go
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
 				Status: checkpoints.CheckpointStatusLoaded,

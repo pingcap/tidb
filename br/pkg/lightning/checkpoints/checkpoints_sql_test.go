@@ -64,6 +64,119 @@ func TestNormalOperations(t *testing.T) {
 	ctx := context.Background()
 	s := newCPSQLSuite(t)
 	cpdb := s.cpdb
+<<<<<<< HEAD:br/pkg/lightning/checkpoints/checkpoints_sql_test.go
+=======
+	s.mock.ExpectBegin()
+	initializeStmt := s.mock.ExpectPrepare(
+		"REPLACE INTO `mock-schema`\\.`task_v\\d+`")
+	initializeStmt.ExpectExec().
+		WithArgs(123, "/data", "local", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv", build.ReleaseVersion).
+		WillReturnResult(sqlmock.NewResult(6, 1))
+	initializeStmt = s.mock.
+		ExpectPrepare("INSERT INTO `mock-schema`\\.`table_v\\d+`")
+	initializeStmt.ExpectExec().
+		WithArgs(123, "`db1`.`t2`", sqlmock.AnyArg(), int64(2), []byte("")).
+		WillReturnResult(sqlmock.NewResult(8, 1))
+	s.mock.ExpectCommit()
+
+	s.mock.MatchExpectationsInOrder(false)
+	cfg := newTestConfig()
+	err := cpdb.Initialize(ctx, cfg, map[string]*checkpoints.TidbDBInfo{
+		"db1": {
+			Name: "db1",
+			Tables: map[string]*checkpoints.TidbTableInfo{
+				"t2": {
+					Name: "t2",
+					ID:   2,
+					Desired: &model.TableInfo{
+						Name: pmodel.NewCIStr("t2"),
+					},
+				},
+			},
+		},
+	})
+	s.mock.MatchExpectationsInOrder(true)
+	require.NoError(t, err)
+	require.Nil(t, s.mock.ExpectationsWereMet())
+
+	s.mock.ExpectBegin()
+	s.mock.
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`engine_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(
+			sqlmock.NewRows([]string{"engine_id", "status"}).
+				AddRow(0, 120).
+				AddRow(-1, 30),
+		)
+	s.mock.
+		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.`chunk_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(
+			sqlmock.NewRows([]string{
+				"engine_id", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
+				"pos", "end_offset", "prev_rowid_max", "rowid_max",
+				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
+			}).
+				AddRow(
+					0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, "[]",
+					55904, 102400, 681, 5000,
+					4491, 586, 486070148917, 1234567894,
+				),
+		)
+	s.mock.
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
+		WithArgs("`db1`.`t2`").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"status", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum",
+			"auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+			AddRow(60, int64(2), nil, uint64(4492), uint64(686), uint64(486070148910), 132861, 132862, 132863))
+	s.mock.ExpectCommit()
+
+	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
+	require.Nil(t, err)
+	require.Equal(t, &checkpoints.TableCheckpoint{
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		TableID:       int64(2),
+		TableInfo:     nil,
+		Engines: map[int32]*checkpoints.EngineCheckpoint{
+			-1: {Status: checkpoints.CheckpointStatusLoaded},
+			0: {
+				Status: checkpoints.CheckpointStatusImported,
+				Chunks: []*checkpoints.ChunkCheckpoint{{
+					Key: checkpoints.ChunkCheckpointKey{
+						Path:   "/tmp/path/1.sql",
+						Offset: 0,
+					},
+					FileMeta: mydump.SourceFileMeta{
+						Path:     "/tmp/path/1.sql",
+						Type:     mydump.SourceTypeSQL,
+						FileSize: 123,
+					},
+					ColumnPermutation: []int{},
+					Chunk: mydump.Chunk{
+						Offset:       55904,
+						EndOffset:    102400,
+						PrevRowIDMax: 681,
+						RowIDMax:     5000,
+					},
+					Checksum:  verification.MakeKVChecksum(4491, 586, 486070148917),
+					Timestamp: 1234567894,
+				}},
+			},
+		},
+		Checksum: verification.MakeKVChecksum(4492, 686, 486070148910),
+	}, cp)
+	require.Nil(t, s.mock.ExpectationsWereMet())
+}
+
+func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
+	ctx := context.Background()
+	s := newCPSQLSuite(t)
+	cpdb := s.cpdb
+>>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):pkg/lightning/checkpoints/checkpoints_sql_test.go
 
 	// 2. initialize with checkpoint data.
 
@@ -205,7 +318,9 @@ func TestNormalOperations(t *testing.T) {
 	}
 	scm.MergeInto(cpd)
 	rcm := checkpoints.RebaseCheckpointMerger{
-		AllocBase: 132861,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
 	}
 	rcm.MergeInto(cpd)
 	cksum := checkpoints.TableChecksumMerger{
@@ -231,9 +346,13 @@ func TestNormalOperations(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(11, 1))
 	s.mock.
+<<<<<<< HEAD:br/pkg/lightning/checkpoints/checkpoints_sql_test.go
 		ExpectPrepare("UPDATE `mock-schema`\\.table_v\\d+ SET alloc_base = .+").
+=======
+		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET auto_rand_base = .+ auto_incr_base = .+ auto_row_id_base = .+").
+>>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):pkg/lightning/checkpoints/checkpoints_sql_test.go
 		ExpectExec().
-		WithArgs(132861, "`db1`.`t2`").
+		WithArgs(132861, 132862, 132863, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(12, 1))
 	s.mock.
 		ExpectPrepare("UPDATE `mock-schema`\\.engine_v\\d+ SET status = .+").
@@ -288,17 +407,21 @@ func TestNormalOperations(t *testing.T) {
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
-			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).
-				AddRow(60, 132861, int64(2), t2Info, uint64(4492), uint64(686), uint64(486070148910)),
+			sqlmock.NewRows([]string{
+				"status", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum",
+				"auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+				AddRow(60, int64(2), t2Info, uint64(4492), uint64(686), uint64(486070148910), 132861, 132862, 132863),
 		)
 	s.mock.ExpectCommit()
 
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.Nil(t, err)
 	require.Equal(t, &checkpoints.TableCheckpoint{
-		Status:    checkpoints.CheckpointStatusAllWritten,
-		AllocBase: 132861,
-		TableID:   int64(2),
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		TableID:       int64(2),
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("t2"),
 		},
@@ -360,7 +483,7 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 	s.mock.
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WithArgs("`db1`.`t2`").
-		WillReturnRows(sqlmock.NewRows([]string{"status", "alloc_base", "table_id"}))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "table_id"}))
 	s.mock.ExpectRollback()
 
 	cp, err := s.cpdb.Get(ctx, "`db1`.`t2`")
@@ -541,17 +664,24 @@ func TestDump(t *testing.T) {
 		csvBuilder.String())
 
 	s.mock.
+<<<<<<< HEAD:br/pkg/lightning/checkpoints/checkpoints_sql_test.go
 		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status", "alloc_base", "create_time", "update_time"}).
 				AddRow(1555555555, "`db1`.`t2`", 0, 90, 132861, tm, tm),
+=======
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status",
+			"create_time", "update_time", "auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
+			AddRow(1555555555, "`db1`.`t2`", 0, 90, tm, tm, 132861, 132862, 132863),
+>>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):pkg/lightning/checkpoints/checkpoints_sql_test.go
 		)
 
 	csvBuilder.Reset()
 	err = s.cpdb.DumpTables(ctx, &csvBuilder)
 	require.NoError(t, err)
-	require.Equal(t, "task_id,table_name,hash,status,alloc_base,create_time,update_time\n"+
-		"1555555555,`db1`.`t2`,0,90,132861,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC\n",
+	require.Equal(t, "task_id,table_name,hash,status,create_time,update_time,auto_rand_base,auto_incr_base,auto_row_id_base\n"+
+		"1555555555,`db1`.`t2`,0,90,2019-04-18 02:45:55 +0000 UTC,2019-04-18 02:45:55 +0000 UTC,132861,132862,132863\n",
 		csvBuilder.String(),
 	)
 }
