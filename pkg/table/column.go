@@ -512,10 +512,7 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
 func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
-	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
-		return err
-	}
-	return nil
+	return c.CheckNotNull(d, rowCntInLoadData)
 }
 
 // IsPKHandleColumn checks if the column is primary key handle column.
