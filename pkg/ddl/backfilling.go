@@ -435,9 +435,9 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		targetBatchSize := job.ReorgMeta.GetBatchSize()
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
-			logger.Info("adjust backfill batch size success",
-				zap.Int("current batch size", w.GetCtx().batchCnt),
-				zap.Int64("job ID", job.ID))
+			logger.Info("adjust ddl job config success",
+				zap.Int64("job ID", job.ID),
+				zap.Int("current batch size", w.GetCtx().batchCnt))
 		}
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
@@ -809,10 +809,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 				}
 				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
 				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
-				logutil.DDLIngestLogger().Info("adjust backfill worker count",
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", job.ID),
-					zap.Int("table scan operator count", targetReaderCnt),
-					zap.Int("index ingest operator count", targetWriterCnt))
+					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
+					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
 			}
 		}
 	}()
@@ -1034,13 +1034,11 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				if currentWorkerCnt != targetWorkerCnt {
 					err := scheduler.adjustWorkerSize()
 					if err != nil {
-						logutil.DDLLogger().Warn("cannot adjust backfill worker count",
-							zap.Int64("job ID", reorgInfo.ID),
+						logutil.DDLLogger().Error("adjust ddl job config failed",
 							zap.Error(err))
 					} else {
-						logutil.DDLLogger().Info("adjust backfill worker count success",
-							zap.Int("current worker count", scheduler.currentWorkerSize()),
-							zap.Int64("job ID", reorgInfo.ID))
+						logutil.DDLLogger().Info("adjust ddl job config success",
+							zap.Int("current worker count", scheduler.currentWorkerSize()))
 					}
 				}
 			}

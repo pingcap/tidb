@@ -602,7 +602,7 @@ func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	chk := w.srcChkPool.Get().(*chunk.Chunk)
 	if chk.Capacity() != targetCap {
 		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, targetCap)
-		logutil.Logger(w.ctx).Info("adjust backfill batch size success", zap.Int("current batch size", targetCap))
+		logutil.Logger(w.ctx).Info("adjust ddl job config success", zap.Int("current batch size", chk.Capacity()))
 	}
 	chk.Reset()
 	return chk
