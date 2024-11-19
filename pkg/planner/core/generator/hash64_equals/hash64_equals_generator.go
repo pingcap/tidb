@@ -40,6 +40,7 @@ func GenHash64Equals4LogicalOps() ([]byte, error) {
 		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{},
 		logicalop.LogicalMemTable{}, logicalop.LogicalUnionAll{}, logicalop.LogicalPartitionUnionAll{}, logicalop.LogicalProjection{},
 		logicalop.LogicalSelection{}, logicalop.LogicalShow{}, logicalop.LogicalShowDDLJobs{}, logicalop.LogicalSort{},
+		logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{}, logicalop.LogicalWindow{},
 	}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
@@ -144,6 +145,14 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeShowDDLJobs"
 	case "LogicalSort":
 		return "plancodec.TypeSort"
+	case "LogicalTableDual":
+		return "plancodec.TypeDual"
+	case "LogicalTopN":
+		return "plancodec.TypeTopN"
+	case "LogicalUnionScan":
+		return "plancodec.TypeUnionScan"
+	case "LogicalWindow":
+		return "plancodec.TypeWindow"
 	default:
 		return ""
 	}

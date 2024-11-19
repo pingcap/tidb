@@ -17,6 +17,7 @@ package perfschema
 // perfSchemaTables is a shortcut to involve all table names.
 var perfSchemaTables = []string{
 	tableGlobalStatus,
+	tableGlobalVariables,
 	tableSessionAccountConnectAttrs,
 	tableSessionConnectAttrs,
 	tableSessionStatus,
@@ -60,6 +61,11 @@ const tableGlobalStatus = "CREATE TABLE performance_schema." + tableNameGlobalSt
 const tableSessionStatus = "CREATE TABLE performance_schema." + tableNameSessionStatus + " (" +
 	"VARIABLE_NAME VARCHAR(64) not null," +
 	"VARIABLE_VALUE VARCHAR(1024));"
+
+// tableGlobalVariables contains the column name definitions for table global_variables, same as MySQL.
+const tableGlobalVariables = "CREATE TABLE performance_schema." + tableNameGlobalVariables + " (" +
+	"VARIABLE_NAME varchar(64) NOT NULL," +
+	"VARIABLE_VALUE varchar(1024) DEFAULT NULL);"
 
 // tableSetupActors contains the column name definitions for table setup_actors, same as MySQL.
 const tableSetupActors = "CREATE TABLE if not exists performance_schema." + tableNameSetupActors + " (" +

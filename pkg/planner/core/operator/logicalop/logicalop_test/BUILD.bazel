@@ -8,7 +8,7 @@ go_test(
         "logical_mem_table_predicate_extractor_test.go",
     ],
     flaky = True,
-    shard_count = 22,
+    shard_count = 25,
     deps = [
         "//pkg/domain",
         "//pkg/expression",
@@ -30,6 +30,7 @@ go_test(
         "//pkg/session/types",
         "//pkg/testkit",
         "//pkg/types",
+        "//pkg/util/chunk",
         "//pkg/util/hint",
         "//pkg/util/mock",
         "//pkg/util/set",

@@ -1554,7 +1554,8 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		resultTp.SetFlenUnderLimit(max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	}
 	types.TryToFixFlenOfDatetime(resultTp)
-	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
+	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) &&
+		(resultTp.GetFlen() < mysql.MaxIntWidth && resultTp.GetFlen() != types.UnspecifiedLength) {
 		resultTp.SetFlen(mysql.MaxIntWidth)
 	}
 	expression.SetBinFlagOrBinStr(b, resultTp)
@@ -2939,11 +2940,19 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
 			tnW := b.resolveCtx.GetTableName(field)
-			// when the Select is inside a view, it's not pre-processed, tnW is nil.
 			if tnW != nil {
 				return tnW.TableInfo
 			}
-			return nil
+			// when the Select is inside a view, it's not pre-processed, tnW is nil.
+			if b.isCreateView {
+				// Ignore during create
+				return nil
+			}
+			tblInfo, err := b.is.TableInfoByName(name.DBName, name.TblName)
+			if err != nil {
+				return nil
+			}
+			return tblInfo
 		}
 	}
 	return nil
