@@ -2171,6 +2171,11 @@ error = '''
 not implemented
 '''
 
+["kv:8178"]
+error = '''
+key is too large, the size of given key is %d
+'''
+
 ["kv:9007"]
 error = '''
 Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
