@@ -196,6 +196,20 @@ func TestTaskTable(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePaused, task.State)
+	// check modifying param
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStateReverting,
+	}), storage.ErrTaskStateNotAllow)
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, 123123123, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}), storage.ErrTaskNotFound)
+	require.NoError(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateModifying, task.State)
+	require.Equal(t, proto.TaskStatePaused, task.ModifyParam.PrevState)
 }
 
 func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, subtasks []*proto.Subtask, step proto.Step) {
@@ -369,6 +383,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		proto.TaskStatePending,
 		proto.TaskStatePending,
 		proto.TaskStatePending,
+		proto.TaskStateModifying,
 	}
 	for i, state := range taskStates {
 		taskKey := fmt.Sprintf("key/%d", i)
@@ -403,17 +418,26 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
-		require.Equal(t, int64(12), rs[0].GetInt64(0))
+		require.Equal(t, int64(13), rs[0].GetInt64(0))
 		return err
 	}))
+	getTaskKeys := func(tasks []*proto.TaskBase) []string {
+		taskKeys := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			taskKeys = append(taskKeys, task.Key)
+		}
+		return taskKeys
+	}
 	tasks, err := gm.GetTopUnfinishedTasks(ctx)
 	require.NoError(t, err)
 	require.Len(t, tasks, 8)
-	taskKeys := make([]string, 0, len(tasks))
-	for _, task := range tasks {
-		taskKeys = append(taskKeys, task.Key)
-	}
-	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, taskKeys)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9"}, getTaskKeys(tasks))
+
+	proto.MaxConcurrentTask = 6
+	tasks, err = gm.GetTopUnfinishedTasks(ctx)
+	require.NoError(t, err)
+	require.Len(t, tasks, 11)
+	require.Equal(t, []string{"key/6", "key/5", "key/1", "key/2", "key/3", "key/4", "key/8", "key/9", "key/10", "key/11", "key/12"}, getTaskKeys(tasks))
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {

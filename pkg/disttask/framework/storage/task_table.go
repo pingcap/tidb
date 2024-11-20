@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -64,6 +65,9 @@ var (
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
 	ErrTaskAlreadyExists = errors.New("task already exists")
+
+	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
+	ErrTaskStateNotAllow = errors.New("task state not allow to do the operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
@@ -236,7 +240,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task t
-		where state in (%?, %?, %?, %?, %?, %?)
+		where state in (%?, %?, %?, %?, %?, %?, %?)
 		order by priority asc, create_time asc, id asc
 		limit %?`,
 		proto.TaskStatePending,
@@ -319,7 +323,16 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
 func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		task, err2 = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		return err2
+	})
+	return
+}
+
+func (mgr *TaskManager) getTaskBaseByID(ctx context.Context, exec sqlexec.SQLExecutor, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := sqlexec.ExecSQL(ctx, exec, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -811,4 +824,34 @@ func (mgr *TaskManager) AdjustTaskOverflowConcurrency(ctx context.Context, se se
 	sql := "update mysql.tidb_global_task set concurrency = %? where concurrency > %?;"
 	_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), sql, cpuCount, cpuCount)
 	return err
+}
+
+// ModifyTaskByID modifies the task by the task ID.
+func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error {
+	if param.PrevState != proto.TaskStatePending &&
+		param.PrevState != proto.TaskStateRunning &&
+		param.PrevState != proto.TaskStatePaused {
+		return ErrTaskStateNotAllow
+	}
+	bytes, err := json.Marshal(param)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
+		_, err = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		if err != nil {
+			return err
+		}
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`update mysql.tidb_global_task set state = %?, modify_params = %? where id = %? and state = %?`,
+			proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return ErrTaskStateNotAllow
+		}
+		return nil
+	})
 }

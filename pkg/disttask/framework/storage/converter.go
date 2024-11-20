@@ -68,7 +68,8 @@ func Row2Task(r chunk.Row) *proto.Task {
 		}
 	}
 	if !r.IsNull(14) {
-		if err := json.Unmarshal(r.GetJSON(14).GetString(), &task.ModifyParam); err != nil {
+		str := r.GetJSON(14).String()
+		if err := json.Unmarshal([]byte(str), &task.ModifyParam); err != nil {
 			logutil.BgLogger().Error("unmarshal task modify param", zap.Error(err))
 		}
 	}
