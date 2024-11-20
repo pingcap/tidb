@@ -381,7 +381,6 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 				logutil.Logger(logCtx).Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
-			err = nil
 		case <-leaseNotFoundCh:
 			logutil.Logger(logCtx).Info("meet lease not found error, refresh session")
 			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
@@ -389,7 +388,6 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 				return
 			}
 			leaseNotFoundCh = make(chan struct{})
-			err = nil
 		case <-campaignContext.Done():
 			failpoint.Inject("MockDelOwnerKey", func(v failpoint.Value) {
 				if v.(string) == "delOwnerKeyAndNotOwner" {
@@ -406,6 +404,7 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 		// In this time if we do the campaign operation, the etcd server will return ErrLeaseNotFound.
 		if terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
 			close(leaseNotFoundCh)
+			err = nil
 			continue
 		}
 
