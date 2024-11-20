@@ -532,8 +532,13 @@ func (e *BaseTaskExecutor) onError(err error) {
 	if err == nil {
 		return
 	}
-	err = errors.Trace(err)
-	e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
+
+	if errors.HasStack(err) {
+		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"),
+			zap.String("error stack", fmt.Sprintf("%+v", err)))
+	} else {
+		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
