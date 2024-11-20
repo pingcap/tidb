@@ -22,12 +22,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -35,12 +38,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
@@ -92,7 +97,7 @@ func TestDeleteRangeQueryExec(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(g, m.Storage)
+	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -111,7 +116,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 	g := gluetidb.New()
 	client := logclient.NewRestoreClient(
 		split.NewFakePDClient(nil, false, nil), nil, nil, keepalive.ClientParameters{})
-	err := client.Init(g, m.Storage)
+	err := client.Init(ctx, g, m.Storage)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
@@ -1339,7 +1344,12 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	}
 	mockIter := &mockLogIter{}
 	ctx := context.Background()
-	logIter := logclient.NewLogFilesIterWithSplitHelper(mockIter, rewriteRulesMap, split.NewFakeSplitClient(), 144*1024*1024, 1440000)
+	w := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(split.NewFakeSplitClient(), 144*1024*1024, 1440000),
+	}
+	s, err := logclient.NewLogSplitStrategy(ctx, false, nil, rewriteRulesMap, func(uint64, uint64) {})
+	require.NoError(t, err)
+	logIter := w.WithSplit(context.Background(), mockIter, s)
 	next := 0
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)
@@ -1505,4 +1515,477 @@ func TestPITRIDMap(t *testing.T) {
 			}
 		}
 	}
+}
+
+type mockLogStrategy struct {
+	*logclient.LogSplitStrategy
+	expectSplitCount int
+}
+
+func (m *mockLogStrategy) ShouldSplit() bool {
+	return m.AccumulateCount == m.expectSplitCount
+}
+
+func TestLogSplitStrategy(t *testing.T) {
+	ctx := context.Background()
+
+	// Define rewrite rules for table ID transformations.
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	// Define initial regions for the mock PD client.
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	// Set up a mock PD client with predefined regions.
+	storesMap := make(map[uint64]*metapb.Store)
+	storesMap[1] = &metapb.Store{Id: 1}
+	mockPDCli := split.NewMockPDClientForSplit()
+	mockPDCli.SetStores(storesMap)
+	mockPDCli.SetRegions(oriRegions)
+
+	// Create a split client with the mock PD client.
+	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+
+	// Define a mock iterator with sample data files.
+	mockIter := iter.FromSlice([]*backuppb.DataFileInfo{
+		fakeFile(1, 100, 100, 100),
+		fakeFile(1, 200, 2*units.MiB, 200),
+		fakeFile(2, 100, 3*units.MiB, 300),
+		fakeFile(3, 100, 10*units.MiB, 100000),
+		fakeFile(1, 300, 3*units.MiB, 10),
+		fakeFile(1, 400, 4*units.MiB, 10),
+	})
+	logIter := toLogDataFileInfoIter(mockIter)
+
+	// Initialize a wrapper for the file restorer with a region splitter.
+	wrapper := restore.PipelineRestorerWrapper[*logclient.LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+	}
+
+	// Create a log split strategy with the given rewrite rules.
+	strategy, err := logclient.NewLogSplitStrategy(ctx, false, nil, rules, func(u1, u2 uint64) {})
+	require.NoError(t, err)
+
+	// Set up a mock strategy to control split behavior.
+	expectSplitCount := 2
+	mockStrategy := &mockLogStrategy{
+		LogSplitStrategy: strategy,
+		// fakeFile(3, 100, 10*units.MiB, 100000) will skipped due to no rewrite rule found.
+		expectSplitCount: expectSplitCount,
+	}
+
+	// Use the wrapper to apply the split strategy to the log iterator.
+	helper := wrapper.WithSplit(ctx, logIter, mockStrategy)
+
+	// Iterate over the log items and verify the split behavior.
+	count := 0
+	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+		require.NoError(t, i.Err)
+		if count == expectSplitCount {
+			// Verify that no split occurs initially due to insufficient data.
+			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+			require.NoError(t, err)
+			require.Len(t, regions, 3)
+			require.Equal(t, []byte{}, regions[0].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
+			require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
+		}
+		// iter.Filterout execute first
+		count += 1
+	}
+
+	// Verify that a split occurs on the second region due to excess data.
+	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+	require.NoError(t, err)
+	require.Len(t, regions, 4)
+	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
+}
+
+type mockCompactedStrategy struct {
+	*logclient.CompactedFileSplitStrategy
+	expectSplitCount int
+}
+
+func (m *mockCompactedStrategy) ShouldSplit() bool {
+	return m.AccumulateCount%m.expectSplitCount == 0
+}
+
+func TestCompactedSplitStrategy(t *testing.T) {
+	ctx := context.Background()
+
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	cases := []struct {
+		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		ExpectRegionEndKeys  [][]byte
+	}{
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 100*units.MiB, 100000),
+			}),
+			// no split
+			// table 1 has not accumlate enough 400 keys or 4MB
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+			}),
+			// split on table 1
+			// table 1 has accumlate enough keys
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 400)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+	}
+	for _, ca := range cases {
+		storesMap := make(map[uint64]*metapb.Store)
+		storesMap[1] = &metapb.Store{Id: 1}
+		mockPDCli := split.NewMockPDClientForSplit()
+		mockPDCli.SetStores(storesMap)
+		mockPDCli.SetRegions(oriRegions)
+
+		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+		}
+
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, nil, nil)
+		mockStrategy := &mockCompactedStrategy{
+			CompactedFileSplitStrategy: strategy,
+			expectSplitCount:           3,
+		}
+
+		helper := wrapper.WithSplit(ctx, ca.MockSubcompationIter, mockStrategy)
+
+		for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+			require.NoError(t, i.Err)
+		}
+
+		regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+		require.NoError(t, err)
+		require.Len(t, regions, len(ca.ExpectRegionEndKeys))
+		for i, endKey := range ca.ExpectRegionEndKeys {
+			require.Equal(t, endKey, regions[i].Meta.EndKey)
+		}
+	}
+}
+
+func TestCompactedSplitStrategyWithCheckpoint(t *testing.T) {
+	ctx := context.Background()
+
+	rules := map[int64]*utils.RewriteRules{
+		1: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
+				},
+			},
+		},
+		2: {
+			Data: []*import_sstpb.RewriteRule{
+				{
+					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
+				},
+			},
+		},
+	}
+
+	oriRegions := [][]byte{
+		{},
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+	}
+
+	cases := []struct {
+		MockSubcompationIter iter.TryNextor[*backuppb.LogFileSubcompaction]
+		CheckpointSet        map[string]struct{}
+		ProcessedKVCount     int
+		ProcessedSize        int
+		ExpectRegionEndKeys  [][]byte
+	}{
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 100*units.MiB, 100000),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			300,
+			48 * units.MiB,
+			// no split, checkpoint files came in order
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(1, 100, 32*units.MiB, 10),
+				fakeSubCompactionWithOneSst(2, 100, 48*units.MiB, 300),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+			},
+			110,
+			48 * units.MiB,
+			// no split, checkpoint files came in different order
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:300": {},
+				"1:400": {},
+			},
+			27,
+			112 * units.MiB,
+			// no split, the main file has skipped due to checkpoint.
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithOneSst(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			315,
+			49 * units.MiB,
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 400)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+		{
+			iter.FromSlice([]*backuppb.LogFileSubcompaction{
+				fakeSubCompactionWithOneSst(1, 100, 16*units.MiB, 100),
+				fakeSubCompactionWithMultiSsts(1, 200, 32*units.MiB, 200),
+				fakeSubCompactionWithOneSst(2, 100, 32*units.MiB, 300),
+				fakeSubCompactionWithOneSst(3, 100, 10*units.MiB, 100000),
+				fakeSubCompactionWithOneSst(1, 300, 48*units.MiB, 13),
+				fakeSubCompactionWithOneSst(1, 400, 64*units.MiB, 14),
+				fakeSubCompactionWithOneSst(1, 100, 1*units.MiB, 15),
+			}),
+			map[string]struct{}{
+				"1:100": {},
+				"1:200": {},
+			},
+			315,
+			49 * units.MiB,
+			[][]byte{
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
+				[]byte(fakeRowKey(100, 300)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
+				codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
+			},
+		},
+	}
+	for _, ca := range cases {
+		storesMap := make(map[uint64]*metapb.Store)
+		storesMap[1] = &metapb.Store{Id: 1}
+		mockPDCli := split.NewMockPDClientForSplit()
+		mockPDCli.SetStores(storesMap)
+		mockPDCli.SetRegions(oriRegions)
+
+		client := split.NewClient(mockPDCli, nil, nil, 100, 4)
+		wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+			PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, 4*units.MB, 400),
+		}
+		totalSize := 0
+		totalKvCount := 0
+
+		strategy := logclient.NewCompactedFileSplitStrategy(rules, ca.CheckpointSet, func(u1, u2 uint64) {
+			totalKvCount += int(u1)
+			totalSize += int(u2)
+		})
+		mockStrategy := &mockCompactedStrategy{
+			CompactedFileSplitStrategy: strategy,
+			expectSplitCount:           3,
+		}
+
+		helper := wrapper.WithSplit(ctx, ca.MockSubcompationIter, mockStrategy)
+
+		for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
+			require.NoError(t, i.Err)
+		}
+
+		regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
+		require.NoError(t, err)
+		require.Len(t, regions, len(ca.ExpectRegionEndKeys))
+		for i, endKey := range ca.ExpectRegionEndKeys {
+			require.Equal(t, endKey, regions[i].Meta.EndKey)
+		}
+		require.Equal(t, totalKvCount, ca.ProcessedKVCount)
+		require.Equal(t, totalSize, ca.ProcessedSize)
+	}
+}
+
+func fakeSubCompactionWithMultiSsts(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
+	return &backuppb.LogFileSubcompaction{
+		Meta: &backuppb.LogFileSubcompactionMeta{
+			TableId: tableID,
+		},
+		SstOutputs: []*backuppb.File{
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID),
+				StartKey: fakeRowRawKey(tableID, rowID),
+				EndKey:   fakeRowRawKey(tableID, rowID+1),
+				Size_:    length,
+				TotalKvs: num,
+			},
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID+1),
+				StartKey: fakeRowRawKey(tableID, rowID+1),
+				EndKey:   fakeRowRawKey(tableID, rowID+2),
+				Size_:    length,
+				TotalKvs: num,
+			},
+		},
+	}
+}
+func fakeSubCompactionWithOneSst(tableID, rowID int64, length uint64, num uint64) *backuppb.LogFileSubcompaction {
+	return &backuppb.LogFileSubcompaction{
+		Meta: &backuppb.LogFileSubcompactionMeta{
+			TableId: tableID,
+		},
+		SstOutputs: []*backuppb.File{
+			{
+				Name:     fmt.Sprintf("%d:%d", tableID, rowID),
+				StartKey: fakeRowRawKey(tableID, rowID),
+				EndKey:   fakeRowRawKey(tableID, rowID+1),
+				Size_:    length,
+				TotalKvs: num,
+			},
+		},
+	}
+}
+
+func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
+	return &backuppb.DataFileInfo{
+		StartKey:        fakeRowKey(tableID, rowID),
+		EndKey:          fakeRowKey(tableID, rowID+1),
+		TableId:         tableID,
+		Length:          length,
+		NumberOfEntries: num,
+	}
+}
+
+func fakeRowKey(tableID, rowID int64) kv.Key {
+	return codec.EncodeBytes(nil, fakeRowRawKey(tableID, rowID))
+}
+
+func fakeRowRawKey(tableID, rowID int64) kv.Key {
+	return tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID))
 }
