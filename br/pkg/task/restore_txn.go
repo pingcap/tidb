@@ -15,6 +15,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"go.uber.org/zap"
 )
 
 // RunRestoreTxn starts a txn kv restore task inside the current goroutine.
@@ -54,7 +55,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -72,6 +73,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	summary.CollectInt("restore files", len(files))
 
+	log.Info("restore files", zap.Int("count", len(files)))
 	ranges, _, err := restoreutils.MergeAndRewriteFileRanges(
 		files, nil, conn.DefaultMergeRegionSizeBytes, conn.DefaultMergeRegionKeyCount)
 	if err != nil {
@@ -86,8 +88,9 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		int64(len(ranges)+len(files)),
 		!cfg.LogProgress)
 
+	onProgress := func(i int64) { updateCh.IncBy(i) }
 	// RawKV restore does not need to rewrite keys.
-	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, false)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), onProgress, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -99,11 +102,14 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, false)
 
-	err = client.WaitForFilesRestored(ctx, files, updateCh)
+	err = client.GetRestorer().GoRestore(onProgress, restore.CreateUniqueFileSets(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
-
+	err = client.GetRestorer().WaitUntilFinish()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	// Restore has finished.
 	updateCh.Close()
 

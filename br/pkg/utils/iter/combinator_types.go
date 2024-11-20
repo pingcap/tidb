@@ -124,6 +124,26 @@ func (f filterMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
 	}
 }
 
+type tryMap[T, R any] struct {
+	inner TryNextor[T]
+
+	mapper func(T) (R, error)
+}
+
+func (t tryMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	r := t.inner.TryNext(ctx)
+
+	if r.FinishedOrError() {
+		return DoneBy[R](r)
+	}
+
+	res, err := t.mapper(r.Item)
+	if err != nil {
+		return Throw[R](err)
+	}
+	return Emit(res)
+}
+
 type join[T any] struct {
 	inner TryNextor[TryNextor[T]]
 

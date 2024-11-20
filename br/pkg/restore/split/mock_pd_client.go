@@ -23,6 +23,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// TODO consilodate TestClient and MockPDClientForSplit and FakePDClient
+// into one test client.
 type TestClient struct {
 	SplitClient
 	pd.Client
