@@ -276,8 +276,13 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addin
 	// tblInfo do not include added partitions, so we should add them first
 	tblInfo = tblInfo.Clone()
 	p := *tblInfo.Partition
-	p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
-	p.Definitions = append(tblInfo.Partition.Definitions, addingDefinitions...)
+	if p.DDLAction == model.ActionAlterTablePartitioning && p.Type == pmodel.PartitionTypeNone {
+		// skip adding the original table as partition
+		p.Definitions = []model.PartitionDefinition{}
+	} else {
+		p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
+	}
+	p.Definitions = append(p.Definitions, addingDefinitions...)
 	tblInfo.Partition = &p
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
@@ -3180,6 +3185,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		// The partInfo may have been checked against an older schema version for example.
 		// If the check is done here, it does not need to be repeated, since no other
 		// DDL on the same table can be run concurrently.
+		tblInfo.Partition.DDLAction = job.Type
 		num := len(partInfo.Definitions) - len(partNames) + len(tblInfo.Partition.Definitions)
 		err = checkAddPartitionTooManyPartitions(uint64(num))
 		if err != nil {
@@ -3357,7 +3363,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
-		tblInfo.Partition.DDLAction = job.Type
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
