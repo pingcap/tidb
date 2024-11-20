@@ -2402,3 +2402,15 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 		" PARTITION `p2` VALUES LESS THAN (10000))"))
 	checkExistTableBundlesInPD(t, dom, "test", "tp3")
 }
+
+func TestPartitionByWithLabels(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create placement policy pp1 primary_region='r1' regions='r1,r2'")
+
+	tk.MustExec(`CREATE TABLE t1 (id INT)`)
+	tk.MustExec(`ALTER TABLE t1 placement policy pp1`)
+	tk.MustExec(`ALTER TABLE t1 PARTITION BY HASH (id) PARTITIONS 3`)
+}

@@ -16,6 +16,9 @@ package infosync
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -107,11 +110,38 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		m.bundles = make(map[string]*placement.Bundle)
 	}
 
+	rules := 0
 	for _, bundle := range bundles {
 		if bundle.IsEmpty() {
 			delete(m.bundles, bundle.ID)
 		} else {
 			m.bundles[bundle.ID] = bundle
+			rules += len(bundle.Rules)
+		}
+	}
+
+	// Check that no bundles are overlapping
+	type keyRange struct {
+		start string
+		end   string
+	}
+	keys := make([]keyRange, 0, rules)
+	for k := range m.bundles {
+		for _, rule := range m.bundles[k].Rules {
+			if rule.Role == pd.Leader {
+				keys = append(keys, keyRange{start: rule.StartKeyHex, end: rule.EndKeyHex})
+			}
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].start == keys[j].start {
+			return keys[i].end < keys[j].end
+		}
+		return keys[i].start < keys[j].start
+	})
+	for i := 1; i < len(keys); i++ {
+		if keys[i].start < keys[i-1].end {
+			return errors.New(fmt.Sprintf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end))
 		}
 	}
 
