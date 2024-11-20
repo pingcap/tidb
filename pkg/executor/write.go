@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -60,7 +61,8 @@ func updateRecord(
 	ctx context.Context, sctx sessionctx.Context,
 	h kv.Handle, oldData, newData []types.Datum,
 	assignments []*expression.Assignment,
-	evalFunc func(assign *expression.Assignment) (types.Datum, error),
+	evalBuffer chunk.MutRow,
+	evalFunc func(assign *expression.Assignment, evalBuffer chunk.MutRow) (types.Datum, error),
 	modified []bool,
 	t table.Table,
 	onDup bool,
@@ -148,6 +150,7 @@ func updateRecord(
 		for i, col := range t.Cols() {
 			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
 				newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+				evalBuffer.SetDatum(i, newData[i])
 				if err != nil {
 					return false, err, false
 				}
@@ -164,7 +167,7 @@ func updateRecord(
 		// Step3: fill auto generated columns
 		for _, assign := range assignments {
 			idx := assign.Col.Index
-			newData[idx], err = evalFunc(assign)
+			newData[idx], err = evalFunc(assign, evalBuffer)
 			if err != nil {
 				return false, err, false
 			}

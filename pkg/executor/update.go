@@ -198,8 +198,8 @@ func (e *UpdateExec) exec(
 		}
 		assignments = append(assignments, assign)
 	}
-	assignFunc := func(assign *expression.Assignment) (types.Datum, error) {
-		return evaluateGeneratedInUpdate(e.Ctx(), assign, e.evalBuffer, rowIdx)
+	assignFunc := func(assign *expression.Assignment, evalBuffer chunk.MutRow) (types.Datum, error) {
+		return evaluateGeneratedInUpdate(e.Ctx(), assign, evalBuffer, rowIdx)
 	}
 
 	var totalMemDelta int64
@@ -225,11 +225,15 @@ func (e *UpdateExec) exec(
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
 
+		if len(assignments) > 0 {
+			e.evalBuffer.SetDatums(newTableData...)
+		}
+
 		// Update row
 		changed, err, ignored := updateRecord(
 			ctx, e.Ctx(),
 			handle, oldData, newTableData,
-			assignments, assignFunc,
+			assignments, e.evalBuffer, assignFunc,
 			flags, tbl, false, e.memTracker,
 			e.fkChecks[content.TblID],
 			e.fkCascades[content.TblID],
@@ -412,7 +416,7 @@ func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mm
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
 
-	if types.ErrTruncatedWrongVal.Equal(err) && colInfo != nil && colInfo != nil && colInfo.GetType() == mysql.TypeTimestamp {
+	if types.ErrTruncatedWrongVal.Equal(err) && colInfo != nil && colInfo.GetType() == mysql.TypeTimestamp {
 		ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
 		return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
 	}
