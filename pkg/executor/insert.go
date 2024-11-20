@@ -513,14 +513,14 @@ func (e *InsertExec) doDupRowUpdate(
 		}
 	}
 
-	assignFunc := func(assign *expression.Assignment) (types.Datum, error) {
-		return evaluateGeneratedInInsert(e.Ctx(), assign, e.evalBuffer4Dup, idxInBatch)
+	assignFunc := func(assign *expression.Assignment, evalBuffer chunk.MutRow) (types.Datum, error) {
+		return evaluateGeneratedInInsert(e.Ctx(), assign, evalBuffer, idxInBatch)
 	}
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	for _, assign := range nonGenerated {
-		val, err := assignFunc(assign)
+		val, err := assignFunc(assign, e.evalBuffer4Dup)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -533,7 +533,7 @@ func (e *InsertExec) doDupRowUpdate(
 	_, err, ignored := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,
-		generated, assignFunc,
+		generated, e.evalBuffer4Dup, assignFunc,
 		assignFlag, e.Table,
 		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
 
