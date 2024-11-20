@@ -18,7 +18,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"os"
+	"path"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -39,7 +43,8 @@ type testCase struct {
 	sortedKVs [][2][]byte
 	ts        uint64
 
-	expectedFilePath string
+	expectedWriteCFPath   string
+	expectedDefaultCFPath string
 }
 
 var testCases []*testCase
@@ -47,25 +52,62 @@ var testCases []*testCase
 func init() {
 	testCases = make([]*testCase, 0, 2)
 
+	// case 0: single and short KV
 	testCases = append(testCases, &testCase{
 		sortedKVs: [][2][]byte{
 			{[]byte("a"), []byte("1")},
 		},
-		ts:               1,
-		expectedFilePath: "sst-examples/0.sst",
+		ts:                  1,
+		expectedWriteCFPath: "sst-examples/0.sst",
 	})
 
-	moreKeys := make([][2][]byte, 10000)
+	// case 1: many short KV
+	moreKeys := make([][]byte, 10000)
 	for i := range moreKeys {
-		moreKeys[i] = [2][]byte{
-			[]byte("key" + fmt.Sprintf("%09d", i)),
+		moreKeys[i] = []byte("key" + fmt.Sprintf("%09d", i))
+	}
+
+	case1 := make([][2][]byte, 10000)
+	for i := range case1 {
+		case1[i] = [2][]byte{
+			moreKeys[i],
 			[]byte("1"),
 		}
 	}
 	testCases = append(testCases, &testCase{
-		sortedKVs:        moreKeys,
-		ts:               404411537129996288,
-		expectedFilePath: "sst-examples/1.sst",
+		sortedKVs:           case1,
+		ts:                  404411537129996288,
+		expectedWriteCFPath: "sst-examples/1.sst",
+	})
+
+	// case 2: single long KV
+	testCases = append(testCases, &testCase{
+		sortedKVs: [][2][]byte{
+			{[]byte("key0000001"), []byte(strings.Repeat("long-value-", 100))},
+		},
+		ts:                    404411537129996288,
+		expectedDefaultCFPath: "sst-examples/2-default.sst",
+		expectedWriteCFPath:   "sst-examples/2-write.sst",
+	})
+
+	// case 3: many long and short KV
+	moreValues := make([][]byte, 10000)
+	for i := range moreValues {
+		moreValues[i] = []byte(strings.Repeat("long-value-", i%100))
+	}
+	case3 := make([][2][]byte, 10000)
+	for i := range case3 {
+		case3[i] = [2][]byte{
+			moreKeys[i],
+			moreValues[i],
+		}
+	}
+
+	testCases = append(testCases, &testCase{
+		sortedKVs:             case3,
+		ts:                    404411537129996288,
+		expectedWriteCFPath:   "sst-examples/3-write.sst",
+		expectedDefaultCFPath: "sst-examples/3-default.sst",
 	})
 }
 
@@ -144,23 +186,30 @@ func write2ImportService4Test(
 		return nil, errors.Trace(err)
 	}
 
+	step := 1000
 	batch := &import_sstpb.WriteBatch{
 		CommitTs: ts,
-		Pairs:    make([]*import_sstpb.Pair, 0, len(sortedKVs)),
+		Pairs:    make([]*import_sstpb.Pair, 0, step),
 	}
-	for _, kv := range sortedKVs {
-		batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{
-			Key:   kv[0],
-			Value: kv[1],
+	for i := 0; i < len(sortedKVs); i += step {
+		batch.Pairs = make([]*import_sstpb.Pair, 0, step)
+		end := min(len(sortedKVs), i+step)
+		for j := i; j < end; j++ {
+			kv := sortedKVs[j]
+			batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{
+				Key:   kv[0],
+				Value: kv[1],
+			})
+		}
+		err = writeStream.Send(&import_sstpb.WriteRequest{
+			Chunk:   &import_sstpb.WriteRequest_Batch{Batch: batch},
+			Context: &rpcCtx,
 		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
-	err = writeStream.Send(&import_sstpb.WriteRequest{
-		Chunk:   &import_sstpb.WriteRequest_Batch{Batch: batch},
-		Context: &rpcCtx,
-	})
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+
 	resp, err := writeStream.CloseAndRecv()
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -174,27 +223,28 @@ func write2ImportService4Test(
 var tikvWriteTest = flag.Bool("tikv-write-test", false, "run TestIntegrationTest")
 
 func TestIntegrationTest(t *testing.T) {
-	if !*tikvWriteTest {
-		t.Skip(`This is a manual test. You can use tiup playground and run this test. After the test is finished, find the SST files in the import directory of the TiKV node.`)
-	}
+	//if !*tikvWriteTest {
+	//	t.Skip(`This is a manual test. You can use tiup playground and run this test. After the test is finished, find the SST files in the import directory of the TiKV node.`)
+	//}
 
 	ctx := context.Background()
 	pdAddrs := []string{"127.0.0.1:2379"}
-	sortedKVs := make([][2][]byte, 1_000_000)
+	sortedKVs := make([][2][]byte, 10_000_000)
+	longValue := []byte(strings.Repeat("long-value-", 100))
 	for i := range sortedKVs {
 		sortedKVs[i] = [2][]byte{
 			[]byte("key" + fmt.Sprintf("%09d", i)),
-			[]byte("1"),
+			longValue,
 		}
 	}
 	ts := uint64(404411537129996288)
 
-	sstPath := "/tmp/go-write-cf.sst"
-	now := time.Now()
-	pebbleWriteSST(t, sstPath, sortedKVs, ts)
-	t.Logf("write to SST takes %v", time.Since(now))
+	//sstPath := "/tmp/go-write-cf.sst"
+	//now := time.Now()
+	//pebbleWriteCFSST(t, sstPath, sortedKVs, ts)
+	//t.Logf("write to SST takes %v", time.Since(now))
 
-	now = time.Now()
+	now := time.Now()
 	metas, err := write2ImportService4Test(ctx, pdAddrs, sortedKVs, ts)
 	t.Logf("write to TiKV takes %v", time.Since(now))
 	require.NoError(t, err)
@@ -203,39 +253,248 @@ func TestIntegrationTest(t *testing.T) {
 	}
 }
 
-func pebbleWriteSST(
-	t *testing.T,
-	path string,
-	sortedKVs [][2][]byte,
-	ts uint64,
-) {
-	writer, err := newWriteCFWriter(path, ts)
+func TestIntegrationTest2(t *testing.T) {
+	//if !*tikvWriteTest {
+	//	t.Skip(`This is a manual test. You can use tiup playground and run this test. After the test is finished, find the SST files in the import directory of the TiKV node.`)
+	//}
+
+	ctx := context.Background()
+	pdAddrs := []string{"127.0.0.1:2379"}
+	sortedKVs := make([][2][]byte, 10_000_000)
+	longValue := []byte(strings.Repeat("long-value-", 100))
+	for i := range sortedKVs {
+		sortedKVs[i] = [2][]byte{
+			[]byte("key" + fmt.Sprintf("%09d", i)),
+			longValue,
+		}
+	}
+	ts := uint64(404411537129996288)
+
+	now := time.Now()
+	writer, defaulCFChan, writeCFChan, err := NewLocalSSTWriter(ts)
 	require.NoError(t, err)
 
+	pdClient, err := pd.NewClient(pdAddrs, pd.SecurityOption{})
+	require.NoError(t, err)
+
+	defer pdClient.Close()
+
+	r0, err := pdClient.GetRegion(ctx, sortedKVs[0][0])
+	require.NoError(t, err)
+	r1, err := pdClient.GetRegion(ctx, sortedKVs[len(sortedKVs)-1][0])
+	require.NoError(t, err)
+	if r0.Meta.Id != r1.Meta.Id {
+		panic(1)
+	}
+
+	store, err := pdClient.GetStore(ctx, r0.Leader.GetStoreId())
+	require.NoError(t, err)
+	conn, err := grpc.DialContext(
+		ctx, store.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	ingestClient := import_sstpb.NewImportSSTClient(conn)
+	writeStream, err := ingestClient.Write(ctx)
+	require.NoError(t, err)
+	u := uuid.New()
+	writeMeta := &import_sstpb.SSTMeta{
+		Uuid:        u[:],
+		RegionId:    r0.Meta.Id,
+		RegionEpoch: r0.Meta.RegionEpoch,
+		Range: &import_sstpb.Range{
+			Start: sortedKVs[0][0],
+			End:   sortedKVs[len(sortedKVs)-1][0],
+		},
+	}
+	rpcCtx := kvrpcpb.Context{
+		RegionId:    r0.Meta.Id,
+		RegionEpoch: r0.Meta.RegionEpoch,
+		Peer:        r0.Leader,
+	}
+	err = writeStream.Send(&import_sstpb.WriteRequest{
+		Chunk:   &import_sstpb.WriteRequest_Meta{Meta: writeMeta},
+		Context: &rpcCtx,
+	})
+	require.NoError(t, err)
+
+	eg := errgroup.Group{}
+	eg.Go(func() error {
+		batch := &import_sstpb.WriteBatch{
+			CommitTs: ts,
+			Pairs:    make([]*import_sstpb.Pair, 0, 16),
+		}
+		defaultCFClosed := false
+		writeCFClosed := false
+
+		var (
+			ok            bool
+			defaultCFData []byte
+			writeCFData   []byte
+		)
+
+	forLoop:
+		for {
+			select {
+			case defaultCFData, ok = <-defaulCFChan:
+				if !ok {
+					defaultCFClosed = true
+					defaulCFChan = nil
+					if writeCFClosed {
+						break forLoop
+					}
+					continue
+				}
+
+				defaultCount := len(defaulCFChan)
+				writeCount := len(writeCFChan)
+				batch.Pairs = make([]*import_sstpb.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Key: defaultCFData})
+				defaultCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaulCFChan
+					batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Value: writeCFData})
+				}
+				err2 := writeStream.Send(&import_sstpb.WriteRequest{
+					Chunk:   &import_sstpb.WriteRequest_Batch{Batch: batch},
+					Context: &rpcCtx,
+				})
+				require.NoError(t, err2)
+
+			case writeCFData, ok = <-writeCFChan:
+				if !ok {
+					writeCFClosed = true
+					writeCFChan = nil
+					if defaultCFClosed {
+						break forLoop
+					}
+					continue
+				}
+
+				defaultCount := len(defaulCFChan)
+				writeCount := len(writeCFChan)
+				batch.Pairs = make([]*import_sstpb.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Value: writeCFData})
+				writeCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaulCFChan
+					batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &import_sstpb.Pair{Value: writeCFData})
+				}
+				err2 := writeStream.Send(&import_sstpb.WriteRequest{
+					Chunk:   &import_sstpb.WriteRequest_Batch{Batch: batch},
+					Context: &rpcCtx,
+				})
+				require.NoError(t, err2)
+			}
+		}
+
+		resp, err := writeStream.CloseAndRecv()
+		require.NoError(t, err)
+		if resp.GetError() != nil {
+			panic(2)
+		}
+		return nil
+	})
+
 	for _, kv := range sortedKVs {
-		err = writer.set(kv[0], kv[1])
+		err = writer.Set(kv[0], kv[1])
 		require.NoError(t, err)
 	}
 
-	err = writer.close()
+	err = writer.Close()
 	require.NoError(t, err)
+	require.NoError(t, eg.Wait())
+	t.Logf("write to SST takes %v", time.Since(now))
 }
 
 func TestPebbleWriteSST(t *testing.T) {
 	for i, c := range testCases {
 		t.Logf("start test case %d", i)
-		testPebbleWriteSST(t, c)
+		testPebbleSST(t, c)
 	}
 }
 
-func testPebbleWriteSST(
+func testPebbleSST(
 	t *testing.T,
 	c *testCase,
 ) {
-	sstPath := "/tmp/test-write.sst"
-	pebbleWriteSST(t, sstPath, c.sortedKVs, c.ts)
+	writer, defaultCFChan, writeCFChan, err := NewLocalSSTWriter(c.ts)
+	require.NoError(t, err)
 
-	f, err := vfs.Default.Open(sstPath)
+	defaultCFFilename := path.Join(t.TempDir(), "default.sst")
+	writeCFFilename := path.Join(t.TempDir(), "write.sst")
+
+	eg, egCtx := errgroup.WithContext(context.Background())
+	eg.Go(func() error {
+		f, err2 := os.Create(defaultCFFilename)
+		require.NoError(t, err2)
+
+		defer f.Close()
+
+		for {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			case data, ok := <-defaultCFChan:
+				if !ok {
+					return nil
+				}
+				_, err2 = f.Write(data)
+				require.NoError(t, err2)
+			}
+		}
+	})
+	eg.Go(func() error {
+		f, err2 := os.Create(writeCFFilename)
+		require.NoError(t, err2)
+
+		defer f.Close()
+
+		for {
+			select {
+			case <-egCtx.Done():
+				return egCtx.Err()
+			case data, ok := <-writeCFChan:
+				if !ok {
+					return nil
+				}
+				_, err2 = f.Write(data)
+				require.NoError(t, err2)
+			}
+		}
+	})
+
+	for _, kv := range c.sortedKVs {
+		err = writer.Set(kv[0], kv[1])
+		require.NoError(t, err)
+	}
+
+	err = writer.Close()
+	require.NoError(t, err)
+	require.NoError(t, eg.Wait())
+	compareSST(t, c.expectedWriteCFPath, writeCFFilename)
+	if c.expectedDefaultCFPath != "" {
+		compareSST(t, c.expectedDefaultCFPath, defaultCFFilename)
+	}
+}
+
+func compareSST(
+	t *testing.T,
+	tikvSSTPath string,
+	goSSTPath string,
+) {
+	f, err := vfs.Default.Open(goSSTPath)
 	require.NoError(t, err)
 	readable, err := rockssst.NewSimpleReadable(f)
 	require.NoError(t, err)
@@ -244,9 +503,8 @@ func testPebbleWriteSST(
 	defer reader.Close()
 
 	goSSTKVs, goSSTProperties := getData2Compare(t, reader)
-	require.Len(t, goSSTKVs, len(c.sortedKVs))
 
-	f2, err := vfs.Default.Open(c.expectedFilePath)
+	f2, err := vfs.Default.Open(tikvSSTPath)
 	require.NoError(t, err)
 	readable2, err := rockssst.NewSimpleReadable(f2)
 	require.NoError(t, err)
@@ -325,7 +583,7 @@ func getData2Compare(
 func TestDebugReadSST(t *testing.T) {
 	t.Skip("this is a manual test")
 
-	sstPath := "/tmp/test.sst"
+	sstPath := "/tmp/test-write.sst"
 	t.Logf("read sst: %s", sstPath)
 	f, err := vfs.Default.Open(sstPath)
 	require.NoError(t, err)
@@ -336,7 +594,6 @@ func TestDebugReadSST(t *testing.T) {
 	defer reader.Close()
 
 	t.Logf("properties:\n %s", reader.Properties.String())
-	t.SkipNow()
 
 	iter, err := reader.NewIter(nil, nil)
 	require.NoError(t, err)
@@ -352,6 +609,7 @@ func TestDebugReadSST(t *testing.T) {
 		return realV
 	}
 	t.Logf("key: %X\nvalue: %X", k.UserKey, getValue(v))
+	t.SkipNow()
 	for {
 		k, v = iter.Next()
 		if k == nil {

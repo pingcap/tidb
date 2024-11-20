@@ -37,14 +37,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 )
 
@@ -336,7 +337,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 	apiVersion := local.tikvCodec.GetAPIVersion()
 	clientFactory := local.importClientFactory
-	kvBatchSize := local.KVWriteBatchSize
+	//kvBatchSize := local.KVWriteBatchSize
 	bufferPool := local.engineMgr.getBufferPool()
 	writeLimiter := local.writeLimiter
 
@@ -437,20 +438,19 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		},
 	}
 
-	pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
+	//pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 	count := 0
 	size := int64(0)
 	totalSize := int64(0)
 	totalCount := int64(0)
-	// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
-	// because the range-properties is not 100% accurate
-	regionMaxSize := j.regionSplitSize
-	if j.regionSplitSize <= int64(config.SplitRegionSize) {
-		regionMaxSize = j.regionSplitSize * 4 / 3
-	}
+	//// if region-split-size <= 96MiB, we bump the threshold a bit to avoid too many retry split
+	//// because the range-properties is not 100% accurate
+	//regionMaxSize := j.regionSplitSize
+	//if j.regionSplitSize <= int64(config.SplitRegionSize) {
+	//	regionMaxSize = j.regionSplitSize * 4 / 3
+	//}
 
 	flushKVs := func() error {
-		req.Chunk.(*sst.WriteRequest_Batch).Batch.Pairs = pairs[:count]
 		preparedMsg := &grpc.PreparedMsg{}
 		// by reading the source code, Encode need to find codec and compression from the stream
 		// because all stream has the same codec and compression, we can use any one of them
@@ -481,63 +481,109 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	//nolint: errcheck
 	defer iter.Close()
 
+	localSSTWriter, defaultCFChan, writeCFChan, err := tikv.NewLocalSSTWriter(dataCommitTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		defaultCFClosed := false
+		writeCFClosed := false
+
+		var (
+			ok            bool
+			defaultCFData []byte
+			writeCFData   []byte
+		)
+
+		for {
+			select {
+			case defaultCFData, ok = <-defaultCFChan:
+				if !ok {
+					defaultCFClosed = true
+					defaultCFChan = nil
+					if writeCFClosed {
+						return nil
+					}
+					continue
+				}
+
+				defaultCount := len(defaultCFChan)
+				writeCount := len(writeCFChan)
+				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
+				batch.Pairs = make([]*sst.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				defaultCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaultCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				}
+				err2 := flushKVs()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+
+			case writeCFData, ok = <-writeCFChan:
+				if !ok {
+					writeCFClosed = true
+					writeCFChan = nil
+					if defaultCFClosed {
+						return nil
+					}
+					continue
+				}
+
+				defaultCount := len(defaultCFChan)
+				writeCount := len(writeCFChan)
+				batch := req.Chunk.(*sst.WriteRequest_Batch).Batch
+				batch.Pairs = make([]*sst.Pair, 0, 1+defaultCount+writeCount)
+				batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				writeCFData = nil
+				for i := 0; i < defaultCount; i++ {
+					defaultCFData = <-defaultCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Key: defaultCFData})
+				}
+				for i := 0; i < writeCount; i++ {
+					writeCFData = <-writeCFChan
+					batch.Pairs = append(batch.Pairs, &sst.Pair{Value: writeCFData})
+				}
+				err2 := flushKVs()
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+		}
+	})
+
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
-		kvSize := int64(len(k) + len(v))
-		// here we reuse the `*sst.Pair`s to optimize object allocation
-		if count < len(pairs) {
-			pairs[count].Key = k
-			pairs[count].Value = v
-		} else {
-			pair := &sst.Pair{
-				Key:   k,
-				Value: v,
-			}
-			pairs = append(pairs, pair)
+		err = localSSTWriter.Set(k, v)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		count++
-		totalCount++
-		size += kvSize
-		totalSize += kvSize
-
-		if size >= kvBatchSize {
-			if err := flushKVs(); err != nil {
-				return errors.Trace(err)
-			}
-			count = 0
-			size = 0
-			iter.ReleaseBuf()
-		}
-		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
-			// we will shrink the key range of this job to real written range
-			if iter.Next() {
-				remainingStartKey = append([]byte{}, iter.Key()...)
-				log.FromContext(ctx).Info("write to tikv partial finish",
-					zap.Int64("count", totalCount),
-					zap.Int64("size", totalSize),
-					logutil.Key("startKey", j.keyRange.Start),
-					logutil.Key("endKey", j.keyRange.End),
-					logutil.Key("remainStart", remainingStartKey),
-					logutil.Region(region),
-					logutil.Leader(j.region.Leader),
-					zap.Uint64("commitTS", dataCommitTS))
-			}
-			break
-		}
+		iter.ReleaseBuf()
 	}
 
 	if iter.Error() != nil {
 		return errors.Trace(iter.Error())
 	}
 
-	if count > 0 {
-		if err := flushKVs(); err != nil {
-			return errors.Trace(err)
-		}
-		count = 0
-		size = 0
-		iter.ReleaseBuf()
+	err = localSSTWriter.Close()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = eg.Wait()
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	var leaderPeerMetas []*sst.SSTMeta
