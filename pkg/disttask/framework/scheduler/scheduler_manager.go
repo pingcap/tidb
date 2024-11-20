@@ -42,9 +42,6 @@ var (
 	defaultCollectMetricsInterval = 5 * time.Second
 )
 
-// WaitTaskFinished is used to sync the test.
-var WaitTaskFinished = make(chan struct{})
-
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
@@ -300,13 +297,7 @@ func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 
 func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
-	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
-		if seconds, ok := val.(int); ok {
-			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
-		}
-
-		<-WaitTaskFinished
-	})
+	failpoint.InjectCall("historySubtaskTableGcInterval", &historySubtaskTableGcInterval)
 
 	sm.logger.Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)

@@ -168,8 +168,14 @@ func TestOwnerChangeWhenSchedule(t *testing.T) {
 }
 
 func TestGC(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval", "return(1)")
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *time.Duration) {
+		*interval = 1 * time.Second
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval", func(interval *time.Duration) {
+		*interval = 1 * time.Second
+		<-ch
+	})
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
@@ -188,7 +194,7 @@ func TestGC(t *testing.T) {
 		return historySubTasksCnt == 4
 	}, 10*time.Second, 500*time.Millisecond)
 
-	scheduler.WaitTaskFinished <- struct{}{}
+	ch <- struct{}{}
 
 	require.Eventually(t, func() bool {
 		historySubTasksCnt, err := testutil.GetSubtasksFromHistory(c.Ctx, mgr)
