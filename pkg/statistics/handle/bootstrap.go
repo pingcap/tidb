@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const initStatsStep = int64(400)
+const initStatsStep = int64(500)
 
 var maxTidRecord MaxTidRecord
 
