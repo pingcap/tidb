@@ -765,3 +765,9 @@ Error 3853 (22032): Invalid JSON type in argument 1 to function json_schema_vali
 select json_type(cast(cast('2024' as year) as json));
 json_type(cast(cast('2024' as year) as json))
 UNSIGNED INTEGER
+drop table if exists t;
+create table t(j json, str varchar(255), other int);
+insert into t values (NULL, NULL, NULL);
+select json_valid(j), json_valid(str), json_valid(other) from t;
+json_valid(j)	json_valid(str)	json_valid(other)
+NULL	NULL	NULL
