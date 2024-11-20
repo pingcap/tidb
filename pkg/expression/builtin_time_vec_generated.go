@@ -63,8 +63,6 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
@@ -125,8 +123,6 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
@@ -513,8 +509,6 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.AppendNull() // fixed: false
 			continue
 		}
@@ -587,8 +581,6 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.AppendNull() // fixed: false
 			continue
 		}
@@ -711,8 +703,6 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
@@ -775,8 +765,6 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
@@ -1162,8 +1150,6 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.AppendNull() // fixed: false
 			continue
 		}
@@ -1236,8 +1222,6 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		// calculate
 
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			result.AppendNull() // fixed: false
 			continue
 		}

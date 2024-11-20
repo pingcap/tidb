@@ -76,8 +76,6 @@ import (
 
 {{ define "CheckZeroDate" }}
 		if arg0.IsZero() {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
 			{{ template "SetNull" . }}
 			continue
 		}
