@@ -16,7 +16,6 @@ package infosync
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -141,7 +140,7 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 	})
 	for i := 1; i < len(keys); i++ {
 		if keys[i].start < keys[i-1].end {
-			return errors.New(fmt.Sprintf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end))
+			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
 		}
 	}
 
