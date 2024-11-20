@@ -30,20 +30,27 @@ type panickingAllocator struct {
 	ty   autoid.AllocatorType
 }
 
-// NewPanickingAllocators creates a PanickingAllocator shared by all allocation types.
+// NewPanickingAllocators creates a PanickingAllocator with default base values.
+func NewPanickingAllocators(sepAutoInc bool) autoid.Allocators {
+	return NewPanickingAllocatorsWithBase(sepAutoInc, 0, 0, 0)
+}
+
+// NewPanickingAllocatorsWithBase creates a PanickingAllocator shared by all allocation types.
 // we use this to collect the max id(either _tidb_rowid or auto_increment id or auto_random) used
 // during import, and we will use this info to do ALTER TABLE xxx AUTO_RANDOM_BASE or AUTO_INCREMENT
 // on post-process phase.
-// TODO: support save all bases in checkpoint.
-func NewPanickingAllocators(sepAutoInc bool, base int64) autoid.Allocators {
+func NewPanickingAllocatorsWithBase(sepAutoInc bool, autoRandBase, autoIncrBase, autoRowIDBase int64) autoid.Allocators {
 	allocs := make([]autoid.Allocator, 0, 3)
-	for _, t := range []autoid.AllocatorType{
-		autoid.RowIDAllocType,
-		autoid.AutoIncrementType,
-		autoid.AutoRandomType,
+	for _, t := range []struct {
+		Type autoid.AllocatorType
+		Base int64
+	}{
+		{Type: autoid.AutoRandomType, Base: autoRandBase},
+		{Type: autoid.AutoIncrementType, Base: autoIncrBase},
+		{Type: autoid.RowIDAllocType, Base: autoRowIDBase},
 	} {
-		pa := &panickingAllocator{ty: t}
-		pa.base.Store(base)
+		pa := &panickingAllocator{ty: t.Type}
+		pa.base.Store(t.Base)
 		allocs = append(allocs, pa)
 	}
 	return autoid.NewAllocators(sepAutoInc, allocs...)
