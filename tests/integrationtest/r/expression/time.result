@@ -1301,18 +1301,18 @@ NULL
 NULL
 NULL
 NULL
-set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 select addtime(date '0-0-0', '12:00:01.341300');
 addtime(date '0-0-0', '12:00:01.341300')
 NULL
 select addtime(date '0-0-0', time '12:00:01.341300');
 addtime(date '0-0-0', time '12:00:01.341300')
 NULL
-select addtime(cast('0-0-0' as datetime), '12:00:01.341300');
-addtime(cast('0-0-0' as datetime), '12:00:01.341300')
+select addtime(date '0-0-0', '1 12:00:01.341300');
+addtime(date '0-0-0', '1 12:00:01.341300')
 NULL
-select addtime(cast('0-0-0' as datetime), time '12:00:01.341300');
-addtime(cast('0-0-0' as datetime), time '12:00:01.341300')
+select addtime(date '0-0-0', time '1 12:00:01.341300');
+addtime(date '0-0-0', time '1 12:00:01.341300')
 NULL
 select subtime(date '0-0-0', '12:00:01.341300');
 subtime(date '0-0-0', '12:00:01.341300')
@@ -1320,17 +1320,17 @@ NULL
 select subtime(date '0-0-0', time '12:00:01.341300');
 subtime(date '0-0-0', time '12:00:01.341300')
 NULL
-select subtime(cast('0-0-0' as datetime), '12:00:01.341300');
-subtime(cast('0-0-0' as datetime), '12:00:01.341300')
+select subtime(date '0-0-0', '1 12:00:01.341300');
+subtime(date '0-0-0', '1 12:00:01.341300')
 NULL
-select subtime(cast('0-0-0' as datetime), time '12:00:01.341300');
-subtime(cast('0-0-0' as datetime), time '12:00:01.341300')
+select subtime(date '0-0-0', time '1 12:00:01.341300');
+subtime(date '0-0-0', time '1 12:00:01.341300')
 NULL
-set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 drop table if exists t;
 create table t(col0 date, col1 time, col2 varchar(30));
 insert into t values ('0-0-0', '1:1:1', '1:1:1'), ('0-0-0', '0:0:0', '0:0:0'), ('2024-0-1', '1:1:1', '1:1:1'), ('2020-1-1', '-1 1:1:1', '-1 1:1:1'), ('2024-1-0', '1:1:1', '1:1:1'), ('2024-0-1', '1:1:1', '1:1:1');
-set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 select addtime(col0, col1) from t order by col0, col1, col2 asc;
 addtime(col0, col1)
 NULL
@@ -1363,7 +1363,77 @@ NULL
 2023-11-30 22:58:59
 2023-11-30 22:58:59
 2023-12-30 22:58:59
-set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+drop table if exists t;
+create table t(col0 datetime, col1 time, col2 varchar(30));
+insert into t values ('0-0-0', '1:1:1', '1:1:1'), ('0-0-0', '0:0:0', '0:0:0'), ('2024-0-1', '1:1:1', '1:1:1'), ('2020-1-1', '-1 1:1:1', '-1 1:1:1'), ('2024-1-0', '1:1:1', '1:1:1'), ('2024-0-1', '1:1:1', '1:1:1');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
 select addtime(col0, col1) from t order by col0, col1, col2 asc;
 addtime(col0, col1)
 NULL
