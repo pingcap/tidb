@@ -1866,9 +1866,7 @@ f1	f2
 2	2
 SET sql_mode='';
 INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
-show warnings;
-Level	Code	Message
-Warning	1048	Column 'f2' cannot be null
+Error 1048 (23000): Column 'f2' cannot be null
 SELECT * FROM t1 order by f1;
 f1	f2
 1	0
@@ -2142,3 +2140,41 @@ Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`
 insert into parent values (2, 3) on duplicate key update ref = 3;
 Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__insert`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
 insert ignore into parent values (2, 3) on duplicate key update ref = 3;
+drop table if exists t1, t2;
+create table t1 (id int primary key, col1 varchar(10) not null default '');
+create table t2 (id int primary key, col1 varchar(10));
+insert into t2 values (1, null);
+insert ignore into t1 values(5, null);
+set session sql_mode = '';
+insert into t1 values(1, null);
+Error 1048 (23000): Column 'col1' cannot be null
+insert into t1 set id = 1, col1 = null;
+Error 1048 (23000): Column 'col1' cannot be null
+insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null;
+Error 1048 (23000): Column 'col1' cannot be null
+insert t1 VALUES (5, 5), (6, null) ON DUPLICATE KEY UPDATE col1 = null;
+select * from t1;
+id	col1
+5	
+6	
+insert into t1 select * from t2;
+show warnings;
+Level	Code	Message
+Warning	1048	Column 'col1' cannot be null
+insert into t1 values(2, null), (3, 3), (4, 4);
+show warnings;
+Level	Code	Message
+Warning	1048	Column 'col1' cannot be null
+update t1 set col1 = null where id = 3;
+show warnings;
+Level	Code	Message
+Warning	1048	Column 'col1' cannot be null
+insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null;
+select * from t1;
+id	col1
+1	
+2	
+3	
+4	
+5	
+6	

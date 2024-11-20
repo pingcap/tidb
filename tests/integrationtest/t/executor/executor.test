@@ -2104,8 +2104,8 @@ insert tdouble values (10.23);
 set sql_mode = '';
 insert t values ();
 show warnings;
+-- error 1048
 insert t values (null);
-show warnings;
 insert ignore t values (null);
 show warnings;
 insert t select null;

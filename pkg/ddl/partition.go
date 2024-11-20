@@ -2040,7 +2040,6 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 	oldDefs := tblInfo.Partition.Definitions
 	newDefs := make([]model.PartitionDefinition, 0, len(oldDefs)-len(partLowerNames))
 	droppingDefs := make([]model.PartitionDefinition, 0, len(partLowerNames))
-	pids := make([]int64, 0, len(partLowerNames))
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
 	for i := range oldDefs {
@@ -2052,7 +2051,6 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 			}
 		}
 		if found {
-			pids = append(pids, oldDefs[i].ID)
 			droppingDefs = append(droppingDefs, oldDefs[i])
 		} else {
 			newDefs = append(newDefs, oldDefs[i])

@@ -530,7 +530,7 @@ br_bins:
 
 .PHONY: data_parsers
 data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling

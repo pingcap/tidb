@@ -524,3 +524,13 @@ drop view if exists v0;
 CREATE  TABLE  t0(c0 INTEGER);
 CREATE VIEW v0(c0) AS SELECT 'a' FROM t0 WHERE (CASE t0.c0 WHEN t0.c0 THEN false END );
 SELECT t0.c0 FROM v0, t0 WHERE RAND();
+
+# TestIssue56479
+drop table if exists tl6e913fb9;
+CREATE TABLE `tl6e913fb9` (
+  `col_36` varchar(175) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'asMF',
+  KEY `idx_35_5` (`col_36`(1)),
+  PRIMARY KEY (`col_36`) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx_65` (`col_36`(5))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );

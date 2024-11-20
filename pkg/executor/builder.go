@@ -2255,7 +2255,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableProcesslist),
 			strings.ToLower(infoschema.TableTiKVRegionStatus),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
-			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints),
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
