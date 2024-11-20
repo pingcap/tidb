@@ -1901,7 +1901,6 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				err = do.privHandle.UpdateAll()
-
 			}
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
