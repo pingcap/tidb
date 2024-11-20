@@ -1085,6 +1085,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if resp == nil {
 			return nil, nil
 		}
+		consumed := resp.MemSize()
+		it.memTracker.Consume(-consumed)
 	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
