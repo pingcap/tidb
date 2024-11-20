@@ -2839,7 +2839,7 @@ func TestWithSimpleTruncate(t *testing.T) {
 
 func TestUnsupportedVersion(t *testing.T) {
 	s := tmp(t)
-	m := mig(mVersion(backuppb.MigrationVersion_AllowNewSSTs))
+	m := mig(mVersion(backuppb.MigrationVersion(65535)))
 	pmig(s, 1, m)
 
 	est := MigerationExtension(s)
@@ -2847,4 +2847,10 @@ func TestUnsupportedVersion(t *testing.T) {
 	_, err := est.Load(ctx)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+}
+
+func TestCreator(t *testing.T) {
+	mig := NewMigration()
+	require.Contains(t, mig.Creator, "br")
+	require.Equal(t, mig.Version, SupportedMigVersion)
 }
