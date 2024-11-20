@@ -329,7 +329,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
 			executor.Close()
@@ -381,7 +382,8 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	}, "update to subtask failed")
 	if err1 == nil {
-		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
+		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID),
+			zap.Error(err1), zap.Stack("stack"))
 	}
 }
 
