@@ -441,8 +441,8 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 				return needWait, errors.Trace(err)
 			}
 			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
-			failpoint.Inject("ForceTiflashNotAvailable", func(val failpoint.Value) {
-				tiflashPeerAtLeastOne = val.(bool)
+			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
+				tiflashPeerAtLeastOne = v.(bool)
 			})
 			// It's unnecessary to wait all tiflash peer to be replicated.
 			// Here only make sure that tiflash peer count > 0 (at least one).
