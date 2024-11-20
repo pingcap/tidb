@@ -366,6 +366,17 @@ select addtime(null, col2) from t order by col0, col1 asc;
 select subtime(null, col2) from t order by col0, col1 asc;
 
 set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+select addtime(date '0-0-0', '12:00:01.341300');
+select addtime(date '0-0-0', time '12:00:01.341300');
+select addtime(cast('0-0-0' as datetime), '12:00:01.341300');
+select addtime(cast('0-0-0' as datetime), time '12:00:01.341300');
+select subtime(date '0-0-0', '12:00:01.341300');
+select subtime(date '0-0-0', time '12:00:01.341300');
+select subtime(cast('0-0-0' as datetime), '12:00:01.341300');
+select subtime(cast('0-0-0' as datetime), time '12:00:01.341300');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
 drop table if exists t;
 create table t(col0 datetime, col1 time, col2 varchar(30));
 insert into t values('0-0-0', '1:1:1', '1:1:1');
