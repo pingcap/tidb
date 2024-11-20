@@ -1363,3 +1363,36 @@ NULL
 2023-11-30 22:58:59
 2023-11-30 22:58:59
 2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
