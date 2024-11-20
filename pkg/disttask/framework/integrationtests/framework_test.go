@@ -169,8 +169,8 @@ func TestOwnerChangeWhenSchedule(t *testing.T) {
 
 func TestGC(t *testing.T) {
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *time.Duration) {
-		*interval = 1 * time.Second
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *int) {
+		*interval = int(time.Second)
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval", func(interval *time.Duration) {
 		*interval = 1 * time.Second
