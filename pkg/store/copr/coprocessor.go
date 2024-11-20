@@ -95,8 +95,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	ctx = interceptor.WithRPCInterceptor(ctx, interceptor.GetRPCInterceptorFromCtx(ctx))
-	enabledRateLimitAction := option.EnabledRateLimitAction
-	sessionMemTracker := option.SessionMemTracker
 	it, errRes := c.BuildCopIterator(ctx, req, vars, option)
 	if errRes != nil {
 		return errRes
@@ -105,10 +103,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	if ctx.Value(util.RUDetailsCtxKey) == nil {
 		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	}
-	if sessionMemTracker != nil && enabledRateLimitAction {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	it.open(ctx, option.EnableCollectExecutionInfo)
 	return it
 }
 
@@ -246,6 +241,10 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
+	if option.SessionMemTracker != nil && option.EnabledRateLimitAction {
+		option.SessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+	it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
 	return it, nil
 }
 
@@ -843,7 +842,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
+func (it *copIterator) open(ctx context.Context, enableCollectExecutionInfo bool) {
 	taskCh := make(chan *copTask, 1)
 	it.unconsumedStats = &unconsumedCopRuntimeStats{}
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
@@ -885,7 +884,6 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		sendRate:    it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
 		if val.(bool) {
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
