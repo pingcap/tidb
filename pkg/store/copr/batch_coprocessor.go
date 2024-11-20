@@ -1117,7 +1117,8 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 
 	if req.MaxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
-		ctxWithTimeout, _ := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer cancel()
 		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
 	}
 
