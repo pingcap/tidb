@@ -900,7 +900,7 @@ func (iter *defaultRowsIter) Next() ([]types.Datum, error) {
 	return nil, nil
 }
 
-func (iter *defaultRowsIter) Close() {}
+func (*defaultRowsIter) Close() {}
 
 // memRowsIterForTable combine a kv.Iterator and a kv decoder to get a memRowsIter.
 type memRowsIterForTable struct {
