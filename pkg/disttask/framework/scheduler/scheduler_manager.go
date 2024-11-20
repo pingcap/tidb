@@ -376,9 +376,6 @@ func (sm *Manager) cleanupTaskLoop() {
 	}
 }
 
-// WaitCleanUpFinished is used to sync the test.
-var WaitCleanUpFinished = make(chan struct{}, 1)
-
 // doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
 // For example:
 //
@@ -403,9 +400,7 @@ func (sm *Manager) doCleanupTask() {
 		sm.logger.Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
-	failpoint.Inject("WaitCleanUpFinished", func() {
-		WaitCleanUpFinished <- struct{}{}
-	})
+	failpoint.InjectCall("WaitCleanUpFinished")
 	sm.logger.Info("cleanup routine success")
 }
 
