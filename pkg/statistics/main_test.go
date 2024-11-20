@@ -15,7 +15,9 @@
 package statistics
 
 import (
+	"bytes"
 	"flag"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -80,6 +82,24 @@ func TestStatistics(t *testing.T) {
 	// statistics_serial_test.go
 	t.Run("SubTestBuild", SubTestBuild())
 	t.Run("SubTestHistogramProtoConversion", SubTestHistogramProtoConversion())
+}
+
+// sortDatumByBinary sorts the items by the binary representation of the datum.
+func sortDatumByBinary(items []types.Datum, getComparedBytes func(datum types.Datum) ([]byte, error)) error {
+	var err error
+	slices.SortStableFunc(items, func(i, j types.Datum) int {
+		var ib, jb []byte
+		ib, err = getComparedBytes(i)
+		if err != nil {
+			return 1
+		}
+		jb, err = getComparedBytes(j)
+		if err != nil {
+			return -1
+		}
+		return bytes.Compare(ib, jb)
+	})
+	return err
 }
 
 func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
