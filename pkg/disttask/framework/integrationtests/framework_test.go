@@ -266,7 +266,12 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 1, 16, true)
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", "1*return(true)")
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", func(taskID int64) {
+		once.Do(func() {
+			require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, taskID))
+		})
+	})
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

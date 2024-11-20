@@ -175,6 +175,7 @@ func (s *BaseScheduler) scheduleTask() {
 		case <-ticker.C:
 		}
 
+		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 		err := s.refreshTaskIfNeeded()
 		if err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
@@ -186,40 +187,11 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
+		failpoint.InjectCall("afterRefreshTask", s.GetTask())
 		task := s.getTaskClone()
 		// TODO: refine failpoints below.
 		failpoint.Inject("exitScheduler", func() {
 			failpoint.Return()
-		})
-		failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
-			if val.(bool) && task.State == proto.TaskStateRunning {
-				err := s.taskMgr.CancelTask(s.ctx, task.ID)
-				if err != nil {
-					s.logger.Error("cancel task failed", zap.Error(err))
-				}
-			}
-		})
-
-		failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
-			if val.(bool) && task.State == proto.TaskStatePending {
-				_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-				if err != nil {
-					s.logger.Error("pause task failed", zap.Error(err))
-				}
-				task.State = proto.TaskStatePausing
-				s.task.Store(task)
-			}
-		})
-
-		failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
-			if val.(bool) && task.State == proto.TaskStateRunning {
-				_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
-				if err != nil {
-					s.logger.Error("pause task failed", zap.Error(err))
-				}
-				task.State = proto.TaskStatePausing
-				s.task.Store(task)
-			}
 		})
 
 		switch task.State {
@@ -498,9 +470,7 @@ func (s *BaseScheduler) scheduleSubTask(
 
 		size += uint64(len(meta))
 	}
-	failpoint.Inject("cancelBeforeUpdateTask", func() {
-		_ = s.taskMgr.CancelTask(s.ctx, task.ID)
-	})
+	failpoint.InjectCall("cancelBeforeUpdateTask", task.ID)
 
 	// as other fields and generated key and index KV takes space too, we limit
 	// the size of subtasks to 80% of the transaction limit.
