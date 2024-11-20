@@ -251,7 +251,7 @@ func (e *InfoSchemaBaseExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // Filter use the col predicates to filter records.
 // Return true if the underlying row does not match predicate,
 // then it should be filtered and not shown in the result.
-func (e *InfoSchemaBaseExtractor) filter(colName string, val string, toLower bool) bool {
+func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 	if e.SkipRequest {
 		return true
 	}
@@ -260,6 +260,8 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string, toLower boo
 			return true
 		}
 	}
+
+	toLower := e.extractLowerString[colName]
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
 		if toLower {
@@ -310,12 +312,12 @@ func NewInfoSchemaTablesExtractor() *InfoSchemaTablesExtractor {
 
 // HasTableName returns true if table name is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableName(name string) bool {
-	return !e.filter(TableName, name, true)
+	return !e.filter(TableName, name)
 }
 
 // HasTableSchema returns true if table schema is specified in predicates.
 func (e *InfoSchemaTablesExtractor) HasTableSchema(name string) bool {
-	return !e.filter(TableSchema, name, true)
+	return !e.filter(TableSchema, name)
 }
 
 // InfoSchemaDDLExtractor is the predicate extractor for information_schema.ddl_jobs.
@@ -386,17 +388,17 @@ func NewInfoSchemaKeyColumnUsageExtractor() *InfoSchemaKeyColumnUsageExtractor {
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasConstraint(name string) bool {
-	return !e.filter(ConstraintName, name, false)
+	return !e.filter(ConstraintName, name)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasPrimaryKey() bool {
-	return !e.filter(ConstraintName, primaryKeyName, false)
+	return !e.filter(ConstraintName, primaryKeyName)
 }
 
 // HasConstraintSchema returns true if constraint schema is specified in predicates.
 func (e *InfoSchemaKeyColumnUsageExtractor) HasConstraintSchema(name string) bool {
-	return !e.filter(ConstraintSchema, name, false)
+	return !e.filter(ConstraintSchema, name)
 }
 
 // InfoSchemaTableConstraintsExtractor is the predicate extractor for information_schema.constraints.
@@ -419,17 +421,17 @@ func NewInfoSchemaTableConstraintsExtractor() *InfoSchemaTableConstraintsExtract
 
 // HasConstraintSchema returns true if constraint schema is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasConstraintSchema(name string) bool {
-	return !e.filter(ConstraintSchema, name, false)
+	return !e.filter(ConstraintSchema, name)
 }
 
 // HasConstraint returns true if constraint is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(ConstraintName, name, false)
+	return !e.filter(ConstraintName, name)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaTableConstraintsExtractor) HasPrimaryKey() bool {
-	return !e.filter(ConstraintName, primaryKeyName, false)
+	return !e.filter(ConstraintName, primaryKeyName)
 }
 
 // InfoSchemaPartitionsExtractor is the predicate extractor for information_schema.partitions.
@@ -452,7 +454,7 @@ func NewInfoSchemaPartitionsExtractor() *InfoSchemaPartitionsExtractor {
 
 // HasPartition returns true if partition name matches the one in predicates.
 func (e *InfoSchemaPartitionsExtractor) HasPartition(name string) bool {
-	return !e.filter(PartitionName, name, false)
+	return !e.filter(PartitionName, name)
 }
 
 // HasPartitionPred returns true if partition name is specified in predicates.
@@ -479,12 +481,12 @@ func NewInfoSchemaStatisticsExtractor() *InfoSchemaStatisticsExtractor {
 
 // HasIndex returns true if index name is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasIndex(val string) bool {
-	return !e.filter(IndexName, val, false)
+	return !e.filter(IndexName, val)
 }
 
 // HasPrimaryKey returns true if primary key is specified in predicates.
 func (e *InfoSchemaStatisticsExtractor) HasPrimaryKey() bool {
-	return !e.filter(IndexName, primaryKeyName, false)
+	return !e.filter(IndexName, primaryKeyName)
 }
 
 // InfoSchemaSchemataExtractor is the predicate extractor for information_schema.schemata.
@@ -520,7 +522,7 @@ func NewInfoSchemaCheckConstraintsExtractor() *InfoSchemaCheckConstraintsExtract
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaCheckConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(ConstraintName, name, false)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaTiDBCheckConstraintsExtractor is the predicate extractor for information_schema.tidb_check_constraints.
@@ -543,7 +545,7 @@ func NewInfoSchemaTiDBCheckConstraintsExtractor() *InfoSchemaTiDBCheckConstraint
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaTiDBCheckConstraintsExtractor) HasConstraint(name string) bool {
-	return !e.filter(ConstraintName, name, false)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaReferConstExtractor is the predicate extractor for information_schema.referential_constraints.
@@ -565,7 +567,7 @@ func NewInfoSchemaReferConstExtractor() *InfoSchemaReferConstExtractor {
 
 // HasConstraint returns true if constraint name is specified in predicates.
 func (e *InfoSchemaReferConstExtractor) HasConstraint(name string) bool {
-	return !e.filter(ConstraintName, name, false)
+	return !e.filter(ConstraintName, name)
 }
 
 // InfoSchemaSequenceExtractor is the predicate extractor for information_schema.sequences.
