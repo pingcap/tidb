@@ -1064,3 +1064,405 @@ a	d
 -1.00	0999-01-01 00:00:00
 1.00	1001-01-01 00:00:00
 drop table if exists t1;
+drop table if exists t;
+create table t(col0 date, col1 time, col2 varchar(30));
+insert into t values('2024-11-01', '12:00:01.341300', '12:00:01.341300'), ('2024-11-01', '1 12:00:01.341300', '1 12:00:01.341300'),  ('2024-11-01', '-1 12:00:01.341300', '-1 12:00:01.341300'),('1000-01-01', '12:00:01.341300', '12:00:01.341300'), ('9999-12-31', '12:00:01.341300', '12:00:01.341300'), (null, '12:00:01.341300', '12:00:01.341300'), ('2020-11-01', null, null);
+select addtime(date '2024-11-01', '12:00:01.341300');
+addtime(date '2024-11-01', '12:00:01.341300')
+2024-11-01 12:00:01.341300
+select subtime(date '2024-11-01', '12:00:01.341300');
+subtime(date '2024-11-01', '12:00:01.341300')
+2024-10-31 11:59:58.658700
+select addtime(date '2024-11-01', '1 12:00:01.341300');
+addtime(date '2024-11-01', '1 12:00:01.341300')
+2024-11-02 12:00:01.341300
+select subtime(date '2024-11-01', '1 12:00:01.341300');
+subtime(date '2024-11-01', '1 12:00:01.341300')
+2024-10-30 11:59:58.658700
+select addtime(date '2024-11-01', '-1 12:00:01.341300');
+addtime(date '2024-11-01', '-1 12:00:01.341300')
+2024-10-30 11:59:58.658700
+select subtime(date '2024-11-01', '-1 12:00:01.341300');
+subtime(date '2024-11-01', '-1 12:00:01.341300')
+2024-11-02 12:00:01.341300
+select addtime(date '2024-11-01', time '12:00:01.341300');
+addtime(date '2024-11-01', time '12:00:01.341300')
+2024-11-01 12:00:01.341300
+select subtime(date '2024-11-01', time '12:00:01.341300');
+subtime(date '2024-11-01', time '12:00:01.341300')
+2024-10-31 11:59:58.658700
+select addtime(date '2024-11-01', time '1 12:00:01.341300');
+addtime(date '2024-11-01', time '1 12:00:01.341300')
+2024-11-02 12:00:01.341300
+select subtime(date '2024-11-01', time '1 12:00:01.341300');
+subtime(date '2024-11-01', time '1 12:00:01.341300')
+2024-10-30 11:59:58.658700
+select addtime(date '2024-11-01', time '-1 12:00:01.341300');
+addtime(date '2024-11-01', time '-1 12:00:01.341300')
+2024-10-30 11:59:58.658700
+select subtime(date '2024-11-01', time '-1 12:00:01.341300');
+subtime(date '2024-11-01', time '-1 12:00:01.341300')
+2024-11-02 12:00:01.341300
+select addtime(col0, '12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, '12:00:01.341300')
+NULL
+1000-01-01 12:00:01.341300
+2020-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+9999-12-31 12:00:01.341300
+select subtime(col0, '12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, '12:00:01.341300')
+NULL
+0999-12-31 11:59:58.658700
+2020-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+9999-12-30 11:59:58.658700
+select addtime(col0, '1 12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, '1 12:00:01.341300')
+NULL
+1000-01-02 12:00:01.341300
+2020-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+NULL
+select subtime(col0, '1 12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, '1 12:00:01.341300')
+NULL
+0999-12-30 11:59:58.658700
+2020-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+9999-12-29 11:59:58.658700
+select addtime(col0, '-1 12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, '-1 12:00:01.341300')
+NULL
+0999-12-30 11:59:58.658700
+2020-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+9999-12-29 11:59:58.658700
+select subtime(col0, '-1 12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, '-1 12:00:01.341300')
+NULL
+1000-01-02 12:00:01.341300
+2020-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+NULL
+select addtime(col0, time '12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, time '12:00:01.341300')
+NULL
+1000-01-01 12:00:01.341300
+2020-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+2024-11-01 12:00:01.341300
+9999-12-31 12:00:01.341300
+select subtime(col0, time '12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, time '12:00:01.341300')
+NULL
+0999-12-31 11:59:58.658700
+2020-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+2024-10-31 11:59:58.658700
+9999-12-30 11:59:58.658700
+select addtime(col0, time '1 12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, time '1 12:00:01.341300')
+NULL
+1000-01-02 12:00:01.341300
+2020-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+NULL
+select subtime(col0, time '1 12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, time '1 12:00:01.341300')
+NULL
+0999-12-30 11:59:58.658700
+2020-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+9999-12-29 11:59:58.658700
+select addtime(col0, time '-1 12:00:01.341300') from t order by col0, col1 asc;
+addtime(col0, time '-1 12:00:01.341300')
+NULL
+0999-12-30 11:59:58.658700
+2020-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+2024-10-30 11:59:58.658700
+9999-12-29 11:59:58.658700
+select subtime(col0, time '-1 12:00:01.341300') from t order by col0, col1 asc;
+subtime(col0, time '-1 12:00:01.341300')
+NULL
+1000-01-02 12:00:01.341300
+2020-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+2024-11-02 12:00:01.341300
+NULL
+select addtime(col0, col1) from t order by col0, col1 asc;
+addtime(col0, col1)
+NULL
+1000-01-01 12:00:01
+NULL
+2024-10-30 11:59:59
+2024-11-01 12:00:01
+2024-11-02 12:00:01
+9999-12-31 12:00:01
+select subtime(col0, col1) from t order by col0, col1 asc;
+subtime(col0, col1)
+NULL
+0999-12-31 11:59:59
+NULL
+2024-11-02 12:00:01
+2024-10-31 11:59:59
+2024-10-30 11:59:59
+9999-12-30 11:59:59
+select addtime(col0, col2) from t order by col0, col1 asc;
+addtime(col0, col2)
+NULL
+1000-01-01 12:00:01.341300
+NULL
+2024-10-30 11:59:58.658700
+2024-11-01 12:00:01.341300
+2024-11-02 12:00:01.341300
+9999-12-31 12:00:01.341300
+select subtime(col0, col2) from t order by col0, col1 asc;
+subtime(col0, col2)
+NULL
+0999-12-31 11:59:58.658700
+NULL
+2024-11-02 12:00:01.341300
+2024-10-31 11:59:58.658700
+2024-10-30 11:59:58.658700
+9999-12-30 11:59:58.658700
+select addtime(col0, null) from t order by col0, col1 asc;
+addtime(col0, null)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+select subtime(col0, null) from t order by col0, col1 asc;
+subtime(col0, null)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+select addtime(null, col1) from t order by col0, col1 asc;
+addtime(null, col1)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+select subtime(null, col1) from t order by col0, col1 asc;
+subtime(null, col1)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+select addtime(null, col2) from t order by col0, col1 asc;
+addtime(null, col2)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+select subtime(null, col2) from t order by col0, col1 asc;
+subtime(null, col2)
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+NULL
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(date '0-0-0', '12:00:01.341300');
+addtime(date '0-0-0', '12:00:01.341300')
+NULL
+select addtime(date '0-0-0', time '12:00:01.341300');
+addtime(date '0-0-0', time '12:00:01.341300')
+NULL
+select addtime(date '0-0-0', '1 12:00:01.341300');
+addtime(date '0-0-0', '1 12:00:01.341300')
+NULL
+select addtime(date '0-0-0', time '1 12:00:01.341300');
+addtime(date '0-0-0', time '1 12:00:01.341300')
+NULL
+select subtime(date '0-0-0', '12:00:01.341300');
+subtime(date '0-0-0', '12:00:01.341300')
+NULL
+select subtime(date '0-0-0', time '12:00:01.341300');
+subtime(date '0-0-0', time '12:00:01.341300')
+NULL
+select subtime(date '0-0-0', '1 12:00:01.341300');
+subtime(date '0-0-0', '1 12:00:01.341300')
+NULL
+select subtime(date '0-0-0', time '1 12:00:01.341300');
+subtime(date '0-0-0', time '1 12:00:01.341300')
+NULL
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+drop table if exists t;
+create table t(col0 date, col1 time, col2 varchar(30));
+insert into t values ('0-0-0', '1:1:1', '1:1:1'), ('0-0-0', '0:0:0', '0:0:0'), ('2024-0-1', '1:1:1', '1:1:1'), ('2020-1-1', '-1 1:1:1', '-1 1:1:1'), ('2024-1-0', '1:1:1', '1:1:1'), ('2024-0-1', '1:1:1', '1:1:1');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+drop table if exists t;
+create table t(col0 datetime, col1 time, col2 varchar(30));
+insert into t values ('0-0-0', '1:1:1', '1:1:1'), ('0-0-0', '0:0:0', '0:0:0'), ('2024-0-1', '1:1:1', '1:1:1'), ('2020-1-1', '-1 1:1:1', '-1 1:1:1'), ('2024-1-0', '1:1:1', '1:1:1'), ('2024-0-1', '1:1:1', '1:1:1');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+select addtime(col0, col1) from t order by col0, col1, col2 asc;
+addtime(col0, col1)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col1) from t order by col0, col1, col2 asc;
+subtime(col0, col1)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
+select addtime(col0, col2) from t order by col0, col1, col2 asc;
+addtime(col0, col2)
+NULL
+NULL
+2019-12-30 22:58:59
+2023-12-01 01:01:01
+2023-12-01 01:01:01
+2023-12-31 01:01:01
+select subtime(col0, col2) from t order by col0, col1, col2 asc;
+subtime(col0, col2)
+NULL
+NULL
+2020-01-02 01:01:01
+2023-11-30 22:58:59
+2023-11-30 22:58:59
+2023-12-30 22:58:59
