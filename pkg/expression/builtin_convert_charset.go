@@ -170,6 +170,7 @@ type builtinInternalFromBinarySig struct {
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
 
