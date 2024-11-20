@@ -15,7 +15,11 @@
 package metadatalocktest
 
 import (
+	"context"
 	"fmt"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"sync"
 	"testing"
 	"time"
@@ -910,19 +914,94 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	conn3 := server.CreateMockConn(t, sv)
+	tk3 := testkit.NewTestKitWithSession(t, store, conn3.Context().Session)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_metadata_lock=1")
-	tk.MustExec("create table t(a int);")
+	tk.MustExec("create table t(a int primary key, b int);")
 	tk.MustExec("create table t2(a int);")
-	tk.MustExec("insert into t values(1), (2), (3), (4);")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4);")
 
-	tk.MustExec(`prepare stmt_test_1 from 'update t set a = ? where a = ?';`)
-	tk.MustExec(`set @a = 1, @b = 3;`)
+	tk.MustExec(`begin`)
+	tk.MustExec(`prepare select_stmt from 'select * from t where a = ?';`)
+	//tk.MustExec(`prepare pk_stmt from 'update t set a = a + 1 where a = ?'`)
+	tk.MustExec(`prepare stmt_test_1 from 'update t set b = ? where a = ?';`)
+	tk.MustExec(`commit`)
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`set @a = 4, @b= 4;`)
+	tk.MustExec(`execute select_stmt using @a;`)
+	//tk.MustExec(`execute pk_stmt using @a;`)
 	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustExec(`commit`)
 
 	tk.MustExec("begin")
 
 	ch := make(chan struct{})
+
+	first := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
+			idx := tbl.Meta().FindIndexByName("idx")
+			switch idx.BackfillState {
+			case model.BackfillStateRunning:
+				if first {
+					tk.MustExec(`begin`)
+					tk.MustExec(`set @a=4;`)
+					tk.MustExec(`execute select_stmt using @a;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+					//tk.MustExec(`set @a=5, @b=4;`)
+					//tk.MustExec(`execute pk_stmt using @a;`)
+					//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+					tk.MustExec(`set @a=6, @b=4;`)
+					tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+					tk.MustExec(`commit`)
+					tk.MustExec(`begin`)
+					tk.MustExec(`set @a=5;`)
+					tk.MustExec(`execute select_stmt using @a;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+					//tk.MustExec(`set @a=5, @b=4;`)
+					//tk.MustExec(`execute pk_stmt using @a;`)
+					//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+					tk.MustExec(`set @a=7, @b=4;`)
+					tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+					tk.MustExec(`commit`)
+
+					tk.MustExec("begin")
+					tk.MustExec("select * from t2")
+					first = false
+					tk3.MustExec("insert into test.t values(10000, 1000)")
+					return
+				}
+				//case model.BackfillStateMerging:
+				//	tk.MustExec(`set @c=200;`)
+				//	tk.MustExec(`execute insert_stmt using @c;`)
+				//	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+				//	tk.MustExec(`set @c=300;`)
+				//	tk.MustExec(`execute insert_stmt using @c;`)
+				//	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+				//	tk.MustExec("commit")
+			}
+		}
+	})
+
+	ddl.MockDMLExecutionMerging = func() {
+		tk.MustExec(`set @a=6;`)
+		tk.MustExec(`execute select_stmt using @a;`)
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		//tk.MustExec(`set @a=6, @b=4;`)
+		//tk.MustExec(`execute pk_stmt using @a;`)
+		//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		tk.MustExec(`set @a=8, @b=4;`)
+		tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		tk.MustExec("commit")
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -932,22 +1011,24 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 		wg.Done()
 	}()
 
-	tk.MustQuery("select * from t2")
-	tk.MustExec(`set @a = 2, @b=4;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan now.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	//tk.MustQuery("select * from t2")
+	//tk.MustExec(`set @a = 2, @b=4;`)
+	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
+	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
+	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan now.
+	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	// The plan is from cache, the metadata lock should be added to block the DDL.
 	ch <- struct{}{}
 
-	time.Sleep(5 * time.Second)
+	time.Sleep(1 * time.Second)
 
-	tk.MustExec("commit")
+	//tk.MustExec("commit")
 
 	wg.Wait()
+
+	tk.MustQuery("select * from t where a=4").Check(testkit.Rows("4 8"))
 
 	tk.MustExec("admin check table t")
 }

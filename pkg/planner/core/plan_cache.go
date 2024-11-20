@@ -113,6 +113,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	for i := 0; i < len(stmt.dbName); i++ {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
+			logutil.BgLogger().Warn("table not found in infoschema", zap.Int64("tableID", stmt.tbls[i].Meta().ID))
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
@@ -133,6 +134,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
 		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
 		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
+			logutil.BgLogger().Warn("schema version not match", zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
 			schemaNotMatch = true
 		}
 		stmt.tbls[i] = newTbl
