@@ -423,7 +423,7 @@ func (s *BaseScheduler) onRunning() error {
 
 // onModifying is called when task is in modifying state.
 // the first return value indicates whether the scheduler should be recreated.
-func (s *BaseScheduler) onModifying() (bool, error) {
+func (*BaseScheduler) onModifying() (bool, error) {
 	// TODO: implement me
 	panic("implement me")
 }
