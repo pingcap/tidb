@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"unsafe"
@@ -876,4 +877,79 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
 		})
 	}
+}
+
+func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
+	parser := parser.New()
+	sctx := MockContext()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+
+	stmt, err := parser.ParseOneStmt("admin alter ddl jobs 1 thread = 16 ", "", "")
+	require.NoError(t, err)
+	p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok := p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(1))
+	require.Equal(t, len(plan.Options), 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobThread)
+	cons, ok := plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetInt64(), int64(16))
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 2 batch_size = 512 ", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok = p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(2))
+	require.Equal(t, len(plan.Options), 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobBatchSize)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetInt64(), int64(512))
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 3 max_write_speed = '10MiB' ", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok = p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(3))
+	require.Equal(t, len(plan.Options), 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetString(), "10MiB")
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok = p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(4))
+	require.Equal(t, len(plan.Options), 3)
+	sort.Slice(plan.Options, func(i, j int) bool {
+		return plan.Options[i].Name < plan.Options[j].Name
+	})
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobBatchSize)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetInt64(), int64(512))
+	require.Equal(t, plan.Options[1].Name, AlterDDLJobMaxWriteSpeed)
+	cons, ok = plan.Options[1].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetString(), "10MiB")
+	require.Equal(t, plan.Options[2].Name, AlterDDLJobThread)
+	cons, ok = plan.Options[2].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetInt64(), int64(16))
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 aaa = 16", "", "")
+	require.NoError(t, err)
+	_, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
 }
