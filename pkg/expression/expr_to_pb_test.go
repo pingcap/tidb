@@ -1583,6 +1583,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 
 	// Test Conv function, `conv` function for a BIT column should not be pushed down for its special behavior which
 	// is only handled in TiDB currently.
+	// see issue: https://github.com/pingcap/tidb/issues/51877
 	exprs = exprs[:0]
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
