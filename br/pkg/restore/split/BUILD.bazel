@@ -7,6 +7,7 @@ go_library(
         "mock_pd_client.go",
         "region.go",
         "split.go",
+        "splitter.go",
         "sum_sorted.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/restore/split",
@@ -32,7 +33,6 @@ go_library(
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
@@ -63,7 +63,11 @@ go_test(
     ],
     embed = [":split"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 29,
+=======
+    shard_count = 26,
+>>>>>>> 9530fdc238 (Restore: implement restorer for compacted SST/Snapshot/log files (#57208))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/restore/utils",
@@ -75,10 +79,8 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/codec",
-        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",

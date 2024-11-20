@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
+	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // mysql driver
@@ -46,9 +47,11 @@ func NewImportModeSwitcher(
 	}
 }
 
+var closeOnce sync.Once
+
 // switchToNormalMode switch tikv cluster to normal mode.
-func (switcher *ImportModeSwitcher) switchToNormalMode(ctx context.Context) error {
-	close(switcher.switchCh)
+func (switcher *ImportModeSwitcher) SwitchToNormalMode(ctx context.Context) error {
+	closeOnce.Do(func() { close(switcher.switchCh) })
 	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
 }
 
@@ -113,8 +116,8 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 	return nil
 }
 
-// switchToImportMode switch tikv cluster to import mode.
-func (switcher *ImportModeSwitcher) switchToImportMode(
+// SwitchToImportMode switch tikv cluster to import mode.
+func (switcher *ImportModeSwitcher) SwitchToImportMode(
 	ctx context.Context,
 ) {
 	// tikv automatically switch to normal mode in every 10 minutes
@@ -163,7 +166,7 @@ func RestorePreWork(
 
 	if switchToImport {
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		switcher.switchToImportMode(ctx)
+		switcher.SwitchToImportMode(ctx)
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)
@@ -186,7 +189,7 @@ func RestorePostWork(
 		ctx = context.Background()
 	}
 
-	if err := switcher.switchToNormalMode(ctx); err != nil {
+	if err := switcher.SwitchToNormalMode(ctx); err != nil {
 		log.Warn("fail to switch to normal mode", zap.Error(err))
 	}
 	if err := restoreSchedulers(ctx); err != nil {
