@@ -100,6 +100,8 @@ const (
 	defaultStatsConcurrency   = 12
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
+	maxRestoreBatchSizeLimit  = 10240
+	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 	resetSpeedLimitRetryTimes = 3
 )
 
@@ -347,7 +349,7 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
@@ -357,10 +359,15 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = cfg.Config.ParseFromFlags(flags)
-	if err != nil {
-		return errors.Trace(err)
+
+	// parse common config if needed
+	if !skipCommonConfig {
+		err = cfg.Config.ParseFromFlags(flags)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
@@ -527,6 +534,10 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
+	if cfg.ConcurrencyPerStore.Value > 0 {
+		log.Info("set restore compacted sst files concurrency per store",
+			zap.Int("concurrency", int(cfg.ConcurrencyPerStore.Value)))
+	}
 }
 
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
@@ -641,20 +652,16 @@ func registerTaskToPD(ctx context.Context, etcdCLI *clientv3.Client) (closeF fun
 	return register.Close, errors.Trace(err)
 }
 
-func DefaultRestoreConfig() RestoreConfig {
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible failed.", zap.Error(err))
+		log.Panic("failed to parse restore flags to config", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 
@@ -764,8 +771,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	// set to cfg so that restoreStream can use it.
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	err := configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -801,7 +810,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.InitBackupMeta(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -822,7 +831,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -1092,6 +1101,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	onProgress := func(n int64) {
+		if n == 0 {
+			updateCh.Inc()
+			return
+		}
+		updateCh.IncBy(n)
+	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1099,7 +1115,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		updateCh,
+		onProgress,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -1108,8 +1124,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	errCh := make(chan error, 32)
 	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 
-	// pipeline checksum
-	if cfg.Checksum {
+	// pipeline checksum only when enabled and is not incremental snapshot repair mode cuz incremental doesn't have
+	// enough information in backup meta to validate checksum
+	if cfg.Checksum && !client.IsIncremental() {
 		postHandleCh = client.GoValidateChecksum(
 			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 	}
@@ -1123,25 +1140,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	finish := dropToBlackhole(ctx, postHandleCh, errCh)
-
-	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
-	defer func() {
-		var resetErr error
-		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-			resetErr = client.ResetSpeedLimit(ctx)
-			if resetErr != nil {
-				log.Warn("failed to reset speed limit, retry it",
-					zap.Int("retry time", retry), logutil.ShortError(resetErr))
-				time.Sleep(time.Duration(retry+3) * time.Second)
-				continue
-			}
-			break
-		}
-		if resetErr != nil {
-			log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-		}
-	}()
 
 	select {
 	case err = <-errCh:

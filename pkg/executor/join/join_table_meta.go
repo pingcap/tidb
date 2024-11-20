@@ -66,8 +66,8 @@ type joinTableMeta struct {
 	fakeKeyByte []byte
 }
 
-func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint64 {
-	return *(*uint64)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
+func (meta *joinTableMeta) getSerializedKeyLength(rowStart unsafe.Pointer) uint32 {
+	return *(*uint32)(unsafe.Add(rowStart, sizeOfNextPtr+meta.nullMapLength))
 }
 
 func (meta *joinTableMeta) isReadNullMapThreadSafe(columnIndex int) bool {
@@ -85,7 +85,7 @@ func (meta *joinTableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 	case FixedSerializedKey:
 		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr), meta.joinKeysLength)
 	case VariableSerializedKey:
-		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfLengthField), int(meta.getSerializedKeyLength(rowStart)))
+		return hack.GetBytesFromPtr(unsafe.Add(rowStart, meta.nullMapLength+sizeOfNextPtr+sizeOfElementSize), int(meta.getSerializedKeyLength(rowStart)))
 	default:
 		panic("unknown key match type")
 	}
@@ -94,7 +94,7 @@ func (meta *joinTableMeta) getKeyBytes(rowStart unsafe.Pointer) []byte {
 func (meta *joinTableMeta) advanceToRowData(matchedRowInfo *matchedRowInfo) {
 	if meta.rowDataOffset == -1 {
 		// variable length, non-inlined key
-		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
+		matchedRowInfo.buildRowOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize + int(meta.getSerializedKeyLength(*(*unsafe.Pointer)(unsafe.Pointer(&matchedRowInfo.buildRowStart))))
 	} else {
 		matchedRowInfo.buildRowOffset = meta.rowDataOffset
 	}
@@ -338,7 +338,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		if meta.isJoinKeysFixedLength {
 			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength
 		} else {
-			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfLengthField
+			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize
 		}
 	} else {
 		if meta.isJoinKeysFixedLength {

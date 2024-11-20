@@ -378,7 +378,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
-	return a.Text
+	return a.StmtNode.OriginalText()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
