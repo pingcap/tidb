@@ -1025,11 +1025,12 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	if err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock); err != nil {
+	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
+	if err != nil {
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
-		return storage.UnlockRemote(ctx, extStorage, truncateLockPath)
+		return lock.Unlock(ctx)
 	})
 
 	sp, err := stream.GetTSFromFile(ctx, extStorage, stream.TruncateSafePointFileName)
