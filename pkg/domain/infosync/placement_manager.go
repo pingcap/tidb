@@ -127,8 +127,8 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 	keys := make([]keyRange, 0, rules)
 	for k := range m.bundles {
 		for _, rule := range m.bundles[k].Rules {
-			if rule.Role == pd.Leader {
-				keys = append(keys, keyRange{start: rule.StartKeyHex, end: rule.EndKeyHex})
+			if rule.Role == pd.Leader && !m.bundles[k].Override {
+				keys = append(keys, keyRange{start: k + ":" + rule.StartKeyHex, end: k + ":" + rule.EndKeyHex})
 			}
 		}
 	}

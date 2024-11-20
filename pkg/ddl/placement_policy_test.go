@@ -2403,7 +2403,7 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 }
 
 func TestPartitionByWithLabels(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2412,4 +2412,10 @@ func TestPartitionByWithLabels(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1 (id INT)`)
 	tk.MustExec(`ALTER TABLE t1 placement policy pp1`)
 	tk.MustExec(`ALTER TABLE t1 PARTITION BY HASH (id) PARTITIONS 3`)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY HASH (`id`) PARTITIONS 3"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
 }
