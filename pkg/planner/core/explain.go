@@ -654,12 +654,6 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	buffer.WriteString(", left side:")
-	if normalized {
-		buffer.WriteString(p.Children()[0].TP())
-	} else {
-		buffer.WriteString(p.Children()[0].ExplainID().String())
-	}
 
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
