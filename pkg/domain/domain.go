@@ -1877,12 +1877,10 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		var count int
 		for {
 			var err error
-			var resp clientv3.WatchResponse
-			ok := true
 			select {
 			case <-do.exit:
 				return
-			case resp, ok = <-watchCh:
+			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
 					event := decodePrivilegeEvent(resp)
