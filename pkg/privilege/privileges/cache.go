@@ -1944,7 +1944,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// Update loads all the active users' privilege info from kv storage.
+// UpdateAll loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	userList := make([]string, 0, 20)
 	h.activeUsers.Range(func(key, _ any) bool {
