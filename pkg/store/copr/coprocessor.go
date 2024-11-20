@@ -846,6 +846,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
+	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
 		it.liteReqSender = true
 		return
@@ -874,7 +875,6 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		sendRate:    it.sendRate,
 	}
 	taskSender.respChan = it.respChan
-	it.actionOnExceed.setEnabled(enabledRateLimitAction)
 	failpoint.Inject("ticase-4171", func(val failpoint.Value) {
 		if val.(bool) {
 			it.memTracker.Consume(10 * MockResponseSizeForTest)
