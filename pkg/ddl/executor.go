@@ -4976,7 +4976,6 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				model.ActionAlterTablePartitioning,
 				model.ActionModifyColumn:
 				setReorgParam()
-				continue
 			}
 		}
 	default:
