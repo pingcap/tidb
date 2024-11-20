@@ -1944,26 +1944,34 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// Update loads all the privilege info from kv storage.
+// Update loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	userList := make([]string, 0, 20)
+	h.activeUsers.Range(func(key, _ any) bool {
+		userList = append(userList, key.(string))
+		return true
+	})
+
+	var priv immutable
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
+	if err != nil {
+		return err
+	}
+	h.merge(&priv, userList)
+	return nil
+}
+
+// Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
-	if userList == nil {
-		// Update all active users.
-		userList = make([]string, 0, 20)
-		h.activeUsers.Range(func(key, _ any) bool {
-			userList = append(userList, key.(string))
-			return true
-		})
-	} else {
-		needReload := false
-		for _, user := range userList {
-			if _, ok := h.activeUsers.Load(user); ok {
-				needReload = true
-				break
-			}
+	needReload := false
+	for _, user := range userList {
+		if _, ok := h.activeUsers.Load(user); ok {
+			needReload = true
+			break
 		}
-		if !needReload {
-			return nil
-		}
+	}
+	if !needReload {
+		return nil
 	}
 
 	var priv immutable

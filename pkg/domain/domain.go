@@ -16,7 +16,7 @@ package domain
 
 import (
 	"context"
-	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -95,6 +95,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1830,17 +1831,23 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
-func decodePrivilegeEvent(resp clientv3.WatchResponse) []string {
-	userList := make([]string, 0, len(resp.Events))
+func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+	var event PrivilegeEvent
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
 			if len(val) > 0 {
-				userList = decodeUserList(userList, string(val))
+				err := json.Unmarshal(val, &event)
+				if err == nil {
+					break
+				}
 			}
 		}
 	}
-	return userList
+	if len(event.UserList) == 0 {
+		event.All = true
+	}
+	return event
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
@@ -1869,7 +1876,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			var userList []string
+			var err error
 			var resp clientv3.WatchResponse
 			ok := true
 			select {
@@ -1877,22 +1884,27 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				return
 			case resp, ok = <-watchCh:
 				if ok {
-					userList = decodePrivilegeEvent(resp)
+					count = 0
+					event := decodePrivilegeEvent(resp)
+					if event.All {
+						err = do.privHandle.UpdateAll()
+					} else {
+						err = do.privHandle.Update(event.UserList)
+					}
+				} else {
+					if do.ctx.Err() == nil {
+						logutil.BgLogger().Error("load privilege loop watch channel closed")
+						watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+						count++
+						if count > 10 {
+							time.Sleep(time.Duration(count) * time.Second)
+						}
+					}
 				}
 			case <-time.After(duration):
-			}
-			if !ok && do.ctx.Err() == nil {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
-				}
-				continue
-			}
+				err = do.privHandle.UpdateAll()
 
-			count = 0
-			err := do.privHandle.Update(userList)
+			}
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2837,37 +2849,39 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
-func encodeUserList(userList []string) string {
-	// use base64 encoding for the user and use ',' to separate them.
-	// Because the user name itself may contains special char like ','
-	encoded := make([]string, 0, len(userList))
-	for _, user := range userList {
-		encoded = append(encoded, base64.StdEncoding.EncodeToString([]byte(user)))
-	}
-	return strings.Join(encoded, ",")
+// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
+// TiDB old version do not use no such message.
+type PrivilegeEvent struct {
+	All      bool
+	UserList []string
 }
 
-func decodeUserList(userList []string, val string) []string {
-	users := strings.Split(val, ",")
-	for _, userRaw := range users {
-		user, err := base64.StdEncoding.DecodeString(userRaw)
-		if err == nil {
-			userList = append(userList, string(user))
-		}
-	}
-	return userList
+// NotifyUpdateAllUsersPrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdateAllUsersPrivilege() error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{All: true})
 }
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
 func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{UserList: userList})
+}
+
+func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// No matter skip-grant-table is configured or not, sending an etcd message is required.
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
-		notifyList := encodeUserList(userList)
+		data, err := json.Marshal(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if uint64(len(data)) > size.MB {
+			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
+		}
 		row := do.etcdClient.KV
-		_, err := row.Put(do.ctx, privilegeKey, notifyList)
+		_, err = row.Put(do.ctx, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2880,7 +2894,10 @@ func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
 		return nil
 	}
 
-	return do.PrivilegeHandle().Update(userList)
+	if event.All {
+		return do.PrivilegeHandle().UpdateAll()
+	}
+	return do.PrivilegeHandle().Update(event.UserList)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
