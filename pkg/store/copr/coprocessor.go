@@ -195,6 +195,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		rpcCancel:        tikv.NewRPCanceller(),
 		buildTaskElapsed: *buildOpt.elapsed,
 		runawayChecker:   req.RunawayChecker,
+		unconsumedStats:  &unconsumedCopRuntimeStats{},
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -850,7 +851,6 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		return
 	}
 	taskCh := make(chan *copTask, 1)
-	it.unconsumedStats = &unconsumedCopRuntimeStats{}
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
 	var smallTaskCh chan *copTask
 	if it.smallTaskConcurrency > 0 {
