@@ -1430,14 +1430,14 @@ func (e *BasicRuntimeStats) String() string {
 	totalTime := e.consume.Load()
 	openTime := e.open.Load()
 	closeTime := e.close.Load()
-	str.WriteString(fmt.sprintf("%stime:", timePrefix))
+	str.WriteString(fmt.Sprintf("%stime:", timePrefix))
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
 	if openTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.sprintf(", %sopen:", timePrefix))
+		str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(openTime)))
 	}
 	if closeTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.sprintf(", %sclose:", timePrefix))
+		str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(closeTime)))
 	}
 	str.WriteString(", loops:")
@@ -1665,7 +1665,7 @@ func (e *RuntimeStatsWithConcurrencyInfo) String() string {
 			if concurrency.concurrencyNum > 0 {
 				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
 			} else {
-				result += fmt.sprintf("%s:off", concurrency.concurrencyname)
+				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
 			}
 		}
 	}

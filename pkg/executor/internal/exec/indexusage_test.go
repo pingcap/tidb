@@ -31,6 +31,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
