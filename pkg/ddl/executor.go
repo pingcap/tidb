@@ -4616,6 +4616,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
@@ -4642,6 +4646,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4905,29 +4910,9 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	if indexOption != nil && indexOption.SplitOpt != nil {
-		opt := indexOption.SplitOpt
-		lowers := make([]string, 0, len(opt.Lower))
-		for _, expL := range opt.Lower {
-			var sb strings.Builder
-			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-			err := expL.Restore(rCtx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			lowers = append(lowers, sb.String())
-		}
-		uppers := make([]string, 0, len(opt.Upper))
-		for _, expU := range opt.Upper {
-			var sb strings.Builder
-			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-			err := expU.Restore(rCtx)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			uppers = append(uppers, sb.String())
-		}
-
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	// global is set to  'false' is just there to be backwards compatible,
@@ -4950,6 +4935,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -5001,6 +4987,56 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 		zap.Int("batchSize", reorgMeta.BatchSize),
 	)
 	return reorgMeta, nil
+}
+
+func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+	if indexOpt == nil {
+		return nil, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, nil
+	}
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	valLists := make([][]string, 0, len(opt.ValueLists))
+	for _, lst := range opt.ValueLists {
+		values := make([]string, 0, len(lst))
+		for _, exp := range lst {
+			var sb strings.Builder
+			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			err := exp.Restore(rCtx)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			values = append(values, sb.String())
+		}
+		valLists = append(valLists, values)
+	}
+	return &model.IndexArgSplitOpt{
+		Lower:      lowers,
+		Upper:      uppers,
+		Num:        opt.Num,
+		ValueLists: valLists,
+	}, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.

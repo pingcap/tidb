@@ -274,17 +274,17 @@ func evalSplitDatumFromArgs(
 	idxInfo *model.IndexInfo,
 	idxArg *model.IndexArg,
 ) (*splitArgs, error) {
-	opt := idxArg.IndexOption.SplitOpt
+	opt := idxArg.SplitOpt
 	if opt == nil {
 		return nil, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		indexValues := make([][]types.Datum, 0, len(opt.ValueLists))
-		for i, valuesItem := range opt.ValueLists {
-			if len(valuesItem) > len(idxInfo.Columns) {
+		for i, valueList := range opt.ValueLists {
+			if len(valueList) > len(idxInfo.Columns) {
 				return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
 			}
-			values, err := evalConstExprNodes(evalCtx, valuesItem, tblInfo, idxInfo)
+			values, err := evalConstExprNodes(evalCtx, valueList, tblInfo, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -294,7 +294,7 @@ func evalSplitDatumFromArgs(
 	}
 
 	// Split index regions by lower, upper value.
-	checkLowerUpperValue := func(valuesItem []ast.ExprNode, name string) ([]types.Datum, error) {
+	checkLowerUpperValue := func(valuesItem []string, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
 			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", idxInfo.Name, name)
 		}
@@ -328,15 +328,16 @@ func evalSplitDatumFromArgs(
 
 func evalConstExprNodes(
 	evalCtx exprctx.EvalContext,
-	valuesItem []ast.ExprNode,
+	valueList []string,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 ) ([]types.Datum, error) {
-	values := make([]types.Datum, 0, len(valuesItem))
-	for j, valueItem := range valuesItem {
+	values := make([]types.Datum, 0, len(valueList))
+	for j, value := range valueList {
 		colOffset := idxInfo.Columns[j].Offset
 		col := tblInfo.Columns[colOffset]
-		switch x := valueItem.(type) {
+		valExpr := ast.NewValueExpr(value, "", "")
+		switch x := valExpr.(type) {
 		case *driver.ValueExpr:
 			constant := &expression.Constant{
 				Value:   x.Datum,
