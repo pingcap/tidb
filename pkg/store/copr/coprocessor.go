@@ -185,17 +185,18 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		return nil, copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:            c.store,
-		req:              req,
-		concurrency:      req.Concurrency,
-		finishCh:         make(chan struct{}),
-		vars:             vars,
-		memTracker:       req.MemTracker,
-		replicaReadSeed:  c.replicaReadSeed,
-		rpcCancel:        tikv.NewRPCanceller(),
-		buildTaskElapsed: *buildOpt.elapsed,
-		runawayChecker:   req.RunawayChecker,
-		unconsumedStats:  &unconsumedCopRuntimeStats{},
+		store:                      c.store,
+		req:                        req,
+		concurrency:                req.Concurrency,
+		finishCh:                   make(chan struct{}),
+		vars:                       vars,
+		memTracker:                 req.MemTracker,
+		replicaReadSeed:            c.replicaReadSeed,
+		rpcCancel:                  tikv.NewRPCanceller(),
+		buildTaskElapsed:           *buildOpt.elapsed,
+		runawayChecker:             req.RunawayChecker,
+		unconsumedStats:            &unconsumedCopRuntimeStats{},
+		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -708,8 +709,10 @@ type copIterator struct {
 	storeBatchedNum         atomic.Uint64
 	storeBatchedFallbackNum atomic.Uint64
 
-	runawayChecker  resourcegroup.RunawayChecker
-	unconsumedStats *unconsumedCopRuntimeStats
+	runawayChecker resourcegroup.RunawayChecker
+	// TODO: refactor following by https://github.com/pingcap/tidb/pull/57545
+	enableCollectExecutionInfo bool
+	unconsumedStats            *unconsumedCopRuntimeStats
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -1140,7 +1143,7 @@ func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
 	if len(it.tasks) == 0 {
 		return nil
 	}
-	worker := newCopIteratorWorker(it, nil, true)
+	worker := newCopIteratorWorker(it, nil, it.enableCollectExecutionInfo)
 	defer func() {
 		r := recover()
 		if r != nil {
