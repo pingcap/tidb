@@ -149,17 +149,62 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("create table t (a int primary key, b int, c int);")
 	for i := 0; i < 10; i++ {
-		insertSQL := fmt.Sprintf("insert into t values (%d, %d);", 10000*i, 10000*i)
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}
-	ret := tk.MustQuery("show table t regions;").Rows()
-	require.Len(t, ret, 1)
+	retRows := tk.MustQuery("show table t regions;").Rows()
+	require.Len(t, retRows, 1)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	ret = tk.MustQuery("show table t regions;").Rows()
-	require.Len(t, ret, 1)
-	// TODO(tangenta): test between by and partitions.
+	retRows = tk.MustQuery("show table t regions;").Rows()
+	idxRegionCnt := 0
+	for _, r := range retRows {
+		startKey := r[2].(string)
+		if strings.Contains(startKey, "_i_1") {
+			idxRegionCnt++
+		}
+	}
+	require.Equal(t, 3, idxRegionCnt)
+
+	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (100000) regions 3);")
+	retRows = tk.MustQuery("show table t regions;").Rows()
+	idxRegionCnt = 0
+	for _, r := range retRows {
+		startKey := r[2].(string)
+		if strings.Contains(startKey, "_i_2") {
+			idxRegionCnt++
+		}
+	}
+	require.Equal(t, 3, idxRegionCnt)
+
+	// Test partition tables.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int primary key, b int, c int) partition by hash(a) partitions 4;")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d, %[1]d);", 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	retRows = tk.MustQuery("show table t regions;").Rows()
+	idxRegionCnt = 0
+	for _, r := range retRows {
+		startKey := r[2].(string)
+		if strings.Contains(startKey, "_i_1") {
+			idxRegionCnt++
+		}
+	}
+	require.Equal(t, 9, idxRegionCnt)
+	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (100000) regions 3);")
+	retRows = tk.MustQuery("show table t regions;").Rows()
+	idxRegionCnt = 0
+	for _, r := range retRows {
+		startKey := r[2].(string)
+		if strings.Contains(startKey, "_i_2") {
+			idxRegionCnt++
+		}
+	}
+	require.Equal(t, 12, idxRegionCnt)
 }
