@@ -17,6 +17,7 @@ go_library(
         "rlimit_windows.go",
         "security.go",
         "session_pool.go",
+        "split.go",
         "tokenlimiter.go",
         "urls.go",
         "util.go",
