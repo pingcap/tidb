@@ -313,8 +313,8 @@ create or replace definer='root'@'localhost' view v_nested as select * from v_ne
 drop table test_v_nested;
 drop view v_nested, v_nested2;
 ## Refer https://github.com/pingcap/tidb/issues/25876
--- error 1356
 select sleep(1);
+-- error 1356
 create view v_stale as select * from source_table as of timestamp date_sub(current_timestamp(3), interval 1 second);
 ## Refer https://github.com/pingcap/tidb/issues/32682
 drop view if exists v1,v2;
