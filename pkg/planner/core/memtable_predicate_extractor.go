@@ -345,6 +345,10 @@ func (helper *extractHelper) extractCol(
 			break
 		}
 	}
+
+	if helper.extractLowerString == nil {
+		helper.extractLowerString = make(map[string]bool)
+	}
 	helper.extractLowerString[extractColName] = valueToLower
 	return
 }
