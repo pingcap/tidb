@@ -427,6 +427,8 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 						if err != nil {
 							return err
 						}
+						// The handle passed in may be a `PartitionHandle`,
+						// so we can't directly do comparation with them.
 						if !h.Equal(oh) {
 							okToDelete = false
 						}

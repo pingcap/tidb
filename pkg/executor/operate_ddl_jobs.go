@@ -19,8 +19,16 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -84,4 +92,127 @@ type PauseDDLJobsExec struct {
 // ResumeDDLJobsExec indicates an Executor for Resume a DDL Job.
 type ResumeDDLJobsExec struct {
 	*CommandDDLJobsExec
+}
+
+// AlterDDLJobExec indicates an Executor for alter config of a DDL Job.
+type AlterDDLJobExec struct {
+	exec.BaseExecutor
+	jobID     int64
+	AlterOpts []*core.AlterDDLJobOpt
+}
+
+// Open implements the Executor Open interface.
+func (e *AlterDDLJobExec) Open(ctx context.Context) error {
+	newSess, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), newSess)
+
+	return e.processAlterDDLJobConfig(ctx, newSess)
+}
+
+func getJobMetaFromTable(
+	ctx context.Context,
+	se *sess.Session,
+	jobID int64,
+) (*model.Job, error) {
+	sql := fmt.Sprintf("select job_meta from mysql.%s where job_id = %s",
+		ddl.JobTable, strconv.FormatInt(jobID, 10))
+	rows, err := se.Execute(ctx, sql, "get_job_by_id")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("ddl job %d is not running", jobID)
+	}
+	jobBinary := rows[0].GetBytes(0)
+	job := model.Job{}
+	err = job.Decode(jobBinary)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &job, nil
+}
+
+func updateJobMeta2Table(
+	ctx context.Context,
+	se *sess.Session,
+	job *model.Job,
+) error {
+	b, err := job.Encode(false)
+	if err != nil {
+		return err
+	}
+	sql := fmt.Sprintf("update mysql.%s set job_meta = %s where job_id = %d",
+		ddl.JobTable, util.WrapKey2String(b), job.ID)
+	_, err = se.Execute(ctx, sql, "update_job")
+	return errors.Trace(err)
+}
+
+const alterDDLJobMaxRetryCnt = 3
+
+// processAlterDDLJobConfig try to alter the ddl job configs.
+// In case of failure, it will retry alterDDLJobMaxRetryCnt times.
+func (e *AlterDDLJobExec) processAlterDDLJobConfig(
+	ctx context.Context,
+	sessCtx sessionctx.Context,
+) (err error) {
+	ns := sess.NewSession(sessCtx)
+	var job *model.Job
+	for tryN := uint(0); tryN < alterDDLJobMaxRetryCnt; tryN++ {
+		if err = ns.Begin(ctx); err != nil {
+			continue
+		}
+		job, err = getJobMetaFromTable(ctx, ns, e.jobID)
+		if err != nil {
+			continue
+		}
+		if !job.IsAlterable() {
+			return fmt.Errorf("unsupported DDL operation: %s, "+
+				"only support add index(tidb_enable_dist_task=off), modify column and alter table reorganize partition DDL job", job.Type.String())
+		}
+		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
+			continue
+		}
+		if err = updateJobMeta2Table(ctx, ns, job); err != nil {
+			continue
+		}
+
+		failpoint.Inject("mockAlterDDLJobCommitFailed", func(val failpoint.Value) {
+			if val.(bool) {
+				ns.Rollback()
+				failpoint.Return(errors.New("mock commit failed on admin alter ddl jobs"))
+			}
+		})
+
+		if err = ns.Commit(ctx); err != nil {
+			ns.Rollback()
+			continue
+		}
+		return nil
+	}
+	return err
+}
+
+func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminCommandOperator) error {
+	for _, opt := range e.AlterOpts {
+		switch opt.Name {
+		case core.AlterDDLJobThread:
+			if opt.Value != nil {
+				cons := opt.Value.(*expression.Constant)
+				job.ReorgMeta.Concurrency = int(cons.Value.GetInt64())
+			}
+			job.AdminOperator = byWho
+		case core.AlterDDLJobBatchSize:
+			if opt.Value != nil {
+				cons := opt.Value.(*expression.Constant)
+				job.ReorgMeta.BatchSize = int(cons.Value.GetInt64())
+			}
+			job.AdminOperator = byWho
+		default:
+			return errors.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)
+		}
+	}
+	return nil
 }

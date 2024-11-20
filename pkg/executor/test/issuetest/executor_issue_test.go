@@ -72,8 +72,10 @@ func TestIssue24210(t *testing.T) {
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Issue25506
+	// Issue56640
 	tk.MustExec("use test")
+	tk.MustQuery("(select cast('abcdefghijklmnopqrstuvwxyz' as char) as c1) union all (select 1 where false)").Check(testkit.Rows("abcdefghijklmnopqrstuvwxyz"))
+	// Issue25506
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
 	tk.MustExec("insert into tbl_3 values (0xFFFF)")
@@ -90,6 +92,10 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (id int);")
 	tk.MustExec("create table t2 (id int, c int);")
+	// Issue56587
+	tk.MustQuery("select quote(cast('abc' as char)) union all select '1'").Check(testkit.Rows("'abc'", "1"))
+	tk.MustQuery(`select elt(2, "1", cast('abc' as char)) union all select "12" where false`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select hex(cast('1' as char)) union all select '1';`).Check(testkit.Rows("31", "1"))
 
 	testCases := []struct {
 		sql    string

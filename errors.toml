@@ -901,6 +901,11 @@ error = '''
 View's SELECT contains a '%s' clause
 '''
 
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
+'''
+
 ["ddl:1353"]
 error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts

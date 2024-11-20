@@ -571,7 +571,9 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			TableInfo: tableInfo,
 		})
 	}
-
+	aliasChecker := &aliasChecker{}
+	originNode.Accept(aliasChecker)
+	hintedNode.Accept(aliasChecker)
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
 	hintedSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()), false)
 	if originSQL != hintedSQL {
@@ -1990,4 +1992,60 @@ func (p *preprocessor) skipLockMDL() bool {
 	// because it's a batch process and will do both DML and DDL.
 	// skip lock mdl for ANALYZE statement.
 	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
+}
+
+// aliasChecker is used to check the alias of the table in delete statement.
+//
+//	for example: delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id
+//	  `delete tt1` will be transformed to `delete current_database.t1` by default.
+//	   because `tt1` cannot be used as alias in delete statement.
+//	   so we have to set `tt1` as alias by aliasChecker.
+type aliasChecker struct{}
+
+func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
+		// 1. check the tableRefs of deleteStmt to find the alias
+		var aliases []*pmodel.CIStr
+		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
+			tableRefs := deleteStmt.TableRefs.TableRefs
+			if val := getTableRefsAlias(tableRefs.Left); val != nil {
+				aliases = append(aliases, val)
+			}
+			if val := getTableRefsAlias(tableRefs.Right); val != nil {
+				aliases = append(aliases, val)
+			}
+		}
+		// 2. check the Tables to tag the alias
+		if deleteStmt.Tables != nil && deleteStmt.Tables.Tables != nil {
+			for _, table := range deleteStmt.Tables.Tables {
+				if table.Schema.String() != "" {
+					continue
+				}
+				for _, alias := range aliases {
+					if table.Name.L == alias.L {
+						table.IsAlias = true
+						break
+					}
+				}
+			}
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
+	switch v := tableRefs.(type) {
+	case *ast.Join:
+		if v.Left != nil {
+			return getTableRefsAlias(v.Left)
+		}
+	case *ast.TableSource:
+		return &v.AsName
+	}
+	return nil
+}
+
+func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }

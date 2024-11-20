@@ -418,7 +418,8 @@ func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
 }
 
 func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 64*len(iter.items))
+	// about 64 MB memory if there are 1 million ranges
+	incompleteRanges := make([]Range, 0, len(iter.items))
 	for _, item := range iter.items {
 		if item.complete {
 			continue

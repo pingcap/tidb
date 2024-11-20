@@ -26,6 +26,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestInstancePlanCacheMinSize(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=0")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=1")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=101KiB")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=10001KiB")
+	tk.MustExecToErr("set global tidb_instance_plan_cache_max_size=99MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=100MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=101MiB")
+	tk.MustExec("set global tidb_instance_plan_cache_max_size=2000000KiB")
+}
+
 func TestInstancePlanCacheVars(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -45,8 +58,8 @@ func TestInstancePlanCacheVars(t *testing.T) {
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=-1`)
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=-1111111111111`)
 	tk.MustExecToErr(`set global tidb_instance_plan_cache_max_size=dslfj`)
-	tk.MustExec(`set global tidb_instance_plan_cache_max_size=123456`)
-	tk.MustQuery(`select @@tidb_instance_plan_cache_max_size`).Check(testkit.Rows("123456"))
+	tk.MustExec(`set global tidb_instance_plan_cache_max_size=1234560000`)
+	tk.MustQuery(`select @@tidb_instance_plan_cache_max_size`).Check(testkit.Rows("1234560000"))
 	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=-1`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1292 Truncated incorrect tidb_instance_plan_cache_reserved_percentage value: '-1'`))
 	tk.MustExec(`set global tidb_instance_plan_cache_reserved_percentage=1.1100`)

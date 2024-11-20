@@ -229,8 +229,10 @@ func expectedDefaultConfig() Config {
 }
 
 func expectedDefaultBackupConfig() BackupConfig {
+	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Checksum = false
 	return BackupConfig{
-		Config: expectedDefaultConfig(),
+		Config: defaultConfig,
 		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
@@ -270,13 +272,16 @@ func TestDefault(t *testing.T) {
 }
 
 func TestDefaultBackup(t *testing.T) {
-	def := DefaultBackupConfig()
+	commonConfig := DefaultConfig()
+	commonConfig.OverrideDefaultForBackup()
+	def := DefaultBackupConfig(commonConfig)
 	defaultConfig := expectedDefaultBackupConfig()
 	require.Equal(t, defaultConfig, def)
 }
 
 func TestDefaultRestore(t *testing.T) {
-	def := DefaultRestoreConfig()
+	commonConfig := DefaultConfig()
+	def := DefaultRestoreConfig(commonConfig)
 	defaultConfig := expectedDefaultRestoreConfig()
 	require.Equal(t, defaultConfig, def)
 }
