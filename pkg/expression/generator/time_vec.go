@@ -74,18 +74,6 @@ import (
 		}
 {{ end }}
 
-{{ define "CheckDateTime" }}
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-{{ end }}
-
 {{ range .Sigs }}
 {{ if .AllNull}}
 func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
@@ -182,7 +170,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 		// calculate
 	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
-	 	{{ template "CheckDateTime" . }}
 		{{ if eq $.FuncName "AddTime" }}
 		output, err := arg0.Add(typeCtx(ctx), types.Duration{Duration: arg1, Fsp: -1})
 		{{ else }}
@@ -196,11 +183,10 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
-		{{ template "CheckDateTime" . }}
 		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
 		output, err := arg0.Add(typeCtx(ctx), arg1Duration)
@@ -227,7 +213,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 	{{ else if or (eq .SigName "builtinAddDurationAndDurationSig") (eq .SigName "builtinSubDurationAndDurationSig") }}
@@ -324,7 +310,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-	 	{{ template "CheckDateTime" . }}
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		tc := typeCtx(ctx)
@@ -348,7 +333,6 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
-		{{ template "CheckDateTime" . }}
 		{{ template "ConvertStringToDuration" . }}
 		 arg0.SetType(mysql.TypeDatetime)
 		{{ if eq $.FuncName "AddTime" }}

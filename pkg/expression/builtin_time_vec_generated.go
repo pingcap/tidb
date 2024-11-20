@@ -62,16 +62,6 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		output, err := arg0.Add(typeCtx(ctx), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
@@ -80,7 +70,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 
@@ -133,16 +123,6 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
@@ -166,7 +146,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 
@@ -530,16 +510,6 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		tc := typeCtx(ctx)
@@ -612,16 +582,6 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		arg1 := buf1.GetString(i)
 
 		// calculate
-
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
 
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
@@ -746,16 +706,6 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		tc := typeCtx(ctx)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
 		output, err := arg0.Add(tc, arg1Duration.Neg())
@@ -766,7 +716,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		err = output.CheckAlwaysNoZero(typeCtx(ctx))
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 
@@ -819,16 +769,6 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
@@ -851,7 +791,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		err = output.CheckAlwaysNoZero(tc)
 		if err != nil {
-			result.AppendNull()
+			result.SetNull(i, true)
 			continue
 		}
 
@@ -1215,16 +1155,6 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		tc := typeCtx(ctx)
@@ -1297,16 +1227,6 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		arg1 := buf1.GetString(i)
 
 		// calculate
-
-		mode := sqlMode(ctx)
-		if (mode.HasNoZeroDateMode() && arg0.IsZero()) || (mode.HasNoZeroInDateMode() && arg0.InvalidZero()) {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
-
-		err = arg0.Check(typeCtx(ctx))
-		if err != nil {
-			return types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-		}
 
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
