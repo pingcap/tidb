@@ -411,14 +411,14 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
-	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 10")
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
 	tk.MustExec("create table ddltiflash(i int not null, s varchar(255)) partition by range (i) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("alter table ddltiflash set tiflash replica 1")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/FailTiFlashTruncatePartition", `5*return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/FailTiFlashTruncatePartition", `return`))
 	defer func() {
 		failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/FailTiFlashTruncatePartition")
 	}()
