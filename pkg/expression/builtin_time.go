@@ -4971,7 +4971,7 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	}
 
 	if arg0.IsZero() {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return types.ZeroDatetime, true, nil
 	}
 
 	tc := typeCtx(ctx)
@@ -5014,7 +5014,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	}
 
 	if arg0.IsZero() {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return types.ZeroDatetime, true, nil
 	}
 
 	err = arg0.Check(typeCtx(ctx))
@@ -5290,7 +5290,7 @@ func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 	}
 
 	if arg0.IsZero() {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return "", true, nil
 	}
 
 	tc := typeCtx(ctx)
@@ -5335,7 +5335,7 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	}
 
 	if arg0.IsZero() {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return "", true, nil
 	}
 
 	err = arg0.Check(typeCtx(ctx))
@@ -6034,7 +6034,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	}
 
 	if arg0.IsZero() {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return types.ZeroDatetime, true, nil
 	}
 
 	err = arg0.Check(typeCtx(ctx))
@@ -6077,7 +6077,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	}
 
 	if arg0.IsZero() {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return types.ZeroDatetime, true, nil
 	}
 
 	err = arg0.Check(typeCtx(ctx))
@@ -6359,7 +6359,7 @@ func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 	}
 
 	if arg0.IsZero() {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return "", true, nil
 	}
 
 	tc := typeCtx(ctx)
@@ -6404,7 +6404,7 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	}
 
 	if arg0.IsZero() {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
+		return "", true, nil
 	}
 
 	err = arg0.Check(typeCtx(ctx))

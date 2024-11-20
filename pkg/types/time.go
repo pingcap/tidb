@@ -689,21 +689,6 @@ func (t Time) Check(ctx Context) error {
 	return errors.Trace(err)
 }
 
-func (t Time) CheckAlwaysNoZero(ctx Context) error {
-	if t.Year() == 0 && t.Month() == 0 && t.Day() == 0 {
-		return errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, t))
-	}
-
-	var err error
-	switch t.Type() {
-	case mysql.TypeTimestamp:
-		err = checkTimestampType(t.coreTime, ctx.Location())
-	case mysql.TypeDatetime, mysql.TypeDate:
-		err = checkDatetimeType(t.coreTime, false, false)
-	}
-	return errors.Trace(err)
-}
-
 // Sub subtracts t1 from t, returns a duration value.
 // Note that sub should not be done on different time types.
 func (t *Time) Sub(ctx Context, t1 *Time) Duration {
