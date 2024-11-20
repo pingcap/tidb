@@ -331,7 +331,7 @@ func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task
 	return
 }
 
-func (mgr *TaskManager) getTaskBaseByID(ctx context.Context, exec sqlexec.SQLExecutor, taskID int64) (task *proto.TaskBase, err error) {
+func (*TaskManager) getTaskBaseByID(ctx context.Context, exec sqlexec.SQLExecutor, taskID int64) (task *proto.TaskBase, err error) {
 	rs, err := sqlexec.ExecSQL(ctx, exec, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
 	if err != nil {
 		return task, err
