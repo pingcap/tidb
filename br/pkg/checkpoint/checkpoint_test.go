@@ -75,7 +75,7 @@ func TestCheckpointMetaForRestore(t *testing.T) {
 			},
 		},
 	}
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, checkpointMetaForSnapshotRestore)
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, checkpointMetaForSnapshotRestore)
 	require.NoError(t, err)
 	checkpointMetaForSnapshotRestore2, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
@@ -278,9 +278,9 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 5*time.Second, 3*time.Second)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, 5*time.Second, 3*time.Second)
 	require.NoError(t, err)
 
 	data := map[string]struct {
@@ -310,7 +310,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey)
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey, "")
 		require.NoError(t, err)
 	}
 
@@ -320,7 +320,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey)
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey, "")
 		require.NoError(t, err)
 	}
 
@@ -343,7 +343,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		respCount += 1
 	}
 
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.SnapshotRestoreCheckpointDatabaseName, checker)
 	require.NoError(t, err)
 	require.Equal(t, 4, respCount)
 
@@ -355,10 +355,10 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
 
-	err = checkpoint.RemoveCheckpointDataForSnapshotRestore(ctx, s.Mock.Domain, se)
+	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
 
-	exists := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, s.Mock.Domain)
+	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 	require.False(t, exists)
 	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.SnapshotRestoreCheckpointDatabaseName))
 	require.False(t, exists)
@@ -371,9 +371,9 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 100*time.Millisecond, 300*time.Millisecond)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, 100*time.Millisecond, 300*time.Millisecond)
 	require.NoError(t, err)
 
 	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes", "return(true)")
@@ -382,9 +382,9 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
 		require.NoError(t, err)
 	}()
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123", "")
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456", "")
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	time.Sleep(time.Second)
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 3, "789")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 3, "789", "")
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
 	require.NoError(t, err)
@@ -400,7 +400,8 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+		checkpoint.SnapshotRestoreCheckpointDatabaseName,
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
 		})
@@ -422,14 +423,14 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, se, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, &checkpoint.CheckpointMetadataForSnapshotRestore{})
 	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, 100*time.Millisecond, 300*time.Millisecond)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, 100*time.Millisecond, 300*time.Millisecond)
 	require.NoError(t, err)
 
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123", "")
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456", "")
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
 	require.NoError(t, err)
@@ -440,7 +441,8 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
-	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
+		checkpoint.SnapshotRestoreCheckpointDatabaseName,
 		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
 		})
@@ -583,4 +585,58 @@ func TestCheckpointRunnerLock(t *testing.T) {
 	require.Error(t, err)
 
 	runner.WaitForFinish(ctx, true)
+}
+
+func TestCheckpointCompactedRestoreRunner(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.CompactedRestoreCheckpointDatabaseName, nil)
+	require.NoError(t, err)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.CompactedRestoreCheckpointDatabaseName, 500*time.Millisecond, time.Second)
+	require.NoError(t, err)
+
+	data := map[string]struct {
+		Name string
+	}{
+		"a": {Name: "a"},
+		"A": {Name: "A"},
+		"1": {Name: "1"},
+	}
+
+	for _, d := range data {
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "", d.Name)
+		require.NoError(t, err)
+	}
+
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
+
+	checkpointRunner.WaitForFinish(ctx, true)
+
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	respCount := 0
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+		require.NotNil(t, resp)
+		d, ok := data[resp.Name]
+		require.True(t, ok)
+		require.Equal(t, d.Name, resp.Name)
+		respCount++
+	}
+
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.CompactedRestoreCheckpointDatabaseName, checker)
+	require.NoError(t, err)
+	require.Equal(t, 3, respCount)
+
+	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.CompactedRestoreCheckpointDatabaseName)
+	require.NoError(t, err)
+
+	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CompactedRestoreCheckpointDatabaseName)
+	require.False(t, exists)
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.CompactedRestoreCheckpointDatabaseName))
+	require.False(t, exists)
 }

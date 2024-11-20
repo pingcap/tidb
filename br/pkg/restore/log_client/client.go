@@ -166,7 +166,7 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se)
+		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CompactedRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -284,7 +284,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	importModeSwitcher.SwitchToImportMode(ctx)
+	importModeSwitcher.GoSwitchToImportMode(ctx)
 	defer func() {
 		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
 		if switchErr != nil {

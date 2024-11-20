@@ -302,7 +302,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey, ""); err != nil {
 							return errors.Trace(err)
 						}
 					}
