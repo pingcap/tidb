@@ -284,10 +284,27 @@ func (c *castAsStringFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	if args[0].GetType().Hybrid() {
 		sig = &builtinCastStringAsStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
 		return sig, nil
+=======
+	if ft := args[0].GetType(ctx.GetEvalCtx()); ft.Hybrid() {
+		castBitAsUnBinary := ft.GetType() == mysql.TypeBit && c.tp.GetCharset() != charset.CharsetBin
+		if !castBitAsUnBinary {
+			sig = &builtinCastStringAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
+			return sig, nil
+		}
+		// for type BIT, it maybe an invalid value for the specified charset, we need to convert it to binary first,
+		// and then convert it to the specified charset with `HandleBinaryLiteral` in the following code.
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		args[0] = BuildCastFunction(ctx, args[0], tp)
+>>>>>>> 38104f4f328 (expression: fix tikv crash when `bool like cast(bit as char)` (#57484))
 	}
 	argTp := args[0].GetType().EvalType()
 	switch argTp {
