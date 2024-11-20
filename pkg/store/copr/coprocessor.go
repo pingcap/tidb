@@ -1291,9 +1291,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			err = worker.handleTiDBSendReqErr(err, task, ch)
 			return nil, err
 		}
-		if runawayErr := worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx); runawayErr != nil {
-			return nil, runawayErr
-		}
+		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
 		return nil, errors.Trace(err)
 	}
 
@@ -1330,6 +1328,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			remain.firstReadType = req.ReadType
 		}
 	}
+	worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
 	return remains, err
 }
 
@@ -1796,9 +1795,6 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 	if worker.stats == nil {
 		return nil
 	}
-	defer func() {
-		worker.kvclient.Stats = nil
-	}()
 	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("shouldn't reachable")
@@ -1811,18 +1807,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 }
 
 func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
-	copStats.ReqStats = worker.kvclient.Stats
-	backoffTimes := bo.GetBackoffTimes()
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
-	}
+	worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
 	if resp == nil {
 		return nil
 	}
@@ -1862,19 +1847,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	return nil
 }
 
-func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) error {
-	if worker.kvclient.Stats == nil || worker.stats == nil {
-		return nil
+func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	defer func() {
+		worker.kvclient.Stats = nil
+	}()
+	copStats.ReqStats = worker.kvclient.Stats
+	backoffTimes := bo.GetBackoffTimes()
+	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
-	copStats := &CopRuntimeStats{}
-	if err := worker.collectCopRuntimeStats(copStats, bo, rpcCtx, nil); err != nil {
-		return err
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
 	}
-	worker.stats.Lock()
-	worker.stats.stats = append(worker.stats.stats, copStats)
-	worker.stats.Unlock()
-	worker.kvclient.Stats = nil
-	return nil
+}
+
+func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if worker.kvclient.Stats != nil && worker.stats != nil {
+		copStats := &CopRuntimeStats{}
+		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
+		worker.stats.Lock()
+		worker.stats.stats = append(worker.stats.stats, copStats)
+		worker.stats.Unlock()
+	}
 }
 
 // CopRuntimeStats contains execution detail information.
