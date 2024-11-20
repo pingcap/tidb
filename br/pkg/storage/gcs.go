@@ -302,8 +302,103 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		gcs.CredentialsBlob = ""
 	}
 
+<<<<<<< HEAD
 	bucket := client.Bucket(gcs.Bucket)
 	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
+=======
+	ret := &GCSStorage{
+		gcs:       gcs,
+		idx:       atomic.NewInt64(0),
+		clientCnt: gcsClientCnt,
+		clientOps: clientOps,
+	}
+	if err := ret.Reset(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return ret, nil
+}
+
+// Reset resets the GCS storage.
+func (s *GCSStorage) Reset(ctx context.Context) error {
+	logutil.Logger(ctx).Info("resetting gcs storage")
+
+	for _, client := range s.clients {
+		_ = client.Close()
+	}
+
+	s.clients = make([]*storage.Client, gcsClientCnt)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	for i := range s.clients {
+		eg.Go(func() error {
+			client, err := storage.NewClient(egCtx, s.clientOps...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
+			s.clients[i] = client
+			return nil
+		})
+	}
+	err := eg.Wait()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
+	for i := range s.handles {
+		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
+	}
+	return nil
+}
+
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	if err == nil {
+		return false
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7440
+	if e := (http2.StreamError{}); goerrors.As(err, &e) {
+		if e.Code == http2.ErrCodeInternal {
+			log.Warn("retrying gcs request due to internal HTTP2 error", zap.Error(err))
+			return true
+		}
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+	errMsg := err.Error()
+	// workaround for strange unknown errors
+	retryableErrMsg := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"broken pipe",
+	}
+
+	for _, msg := range retryableErrMsg {
+		if strings.Contains(errMsg, msg) {
+			log.Warn("retrying gcs request", zap.Error(err))
+			return true
+		}
+	}
+
+	// just log the new unknown error, in case we can add it to this function
+	if !goerrors.Is(err, context.Canceled) {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+	}
+
+	return false
+>>>>>>> 84fe10a4cff (Dumpling: GCS always retry. (#57513))
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
