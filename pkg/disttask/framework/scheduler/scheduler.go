@@ -130,8 +130,8 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
-// GetTaskClone returns a clone of the task.
-func (s *BaseScheduler) GetTaskClone() *proto.Task {
+// getTaskClone returns a clone of the task.
+func (s *BaseScheduler) getTaskClone() *proto.Task {
 	clone := *s.GetTask()
 	return &clone
 }
@@ -186,7 +186,7 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		task := s.GetTaskClone()
+		task := s.getTaskClone()
 		// TODO: refine failpoints below.
 		failpoint.Inject("exitScheduler", func() {
 			failpoint.Return()
@@ -287,7 +287,7 @@ func (s *BaseScheduler) onCancelling() error {
 
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -321,7 +321,7 @@ func (s *BaseScheduler) onPaused() error {
 
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -345,7 +345,7 @@ func (s *BaseScheduler) onResuming() error {
 
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -419,7 +419,7 @@ func (s *BaseScheduler) onFinished() {
 }
 
 func (s *BaseScheduler) switch2NextStep() error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
@@ -528,7 +528,7 @@ func (s *BaseScheduler) scheduleSubTask(
 }
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		return err
@@ -537,7 +537,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 }
 
 func (s *BaseScheduler) revertTask(taskErr error) error {
-	task := s.GetTaskClone()
+	task := s.getTaskClone()
 	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 		return err
 	}
