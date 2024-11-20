@@ -143,3 +143,23 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	rs = rows[0][0].(string)
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }
+
+func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%d, %d);", 10000*i, 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	ret := tk.MustQuery("show table t regions;").Rows()
+	require.Len(t, ret, 1)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	ret = tk.MustQuery("show table t regions;").Rows()
+	require.Len(t, ret, 1)
+	// TODO(tangenta): test between by and partitions.
+}

@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -4902,6 +4903,31 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			return err
 		}
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
+	}
+
+	if indexOption != nil && indexOption.SplitOpt != nil {
+		opt := indexOption.SplitOpt
+		lowers := make([]string, 0, len(opt.Lower))
+		for _, expL := range opt.Lower {
+			var sb strings.Builder
+			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			err := expL.Restore(rCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			lowers = append(lowers, sb.String())
+		}
+		uppers := make([]string, 0, len(opt.Upper))
+		for _, expU := range opt.Upper {
+			var sb strings.Builder
+			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			err := expU.Restore(rCtx)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			uppers = append(uppers, sb.String())
+		}
+
 	}
 
 	// global is set to  'false' is just there to be backwards compatible,

@@ -1322,6 +1322,20 @@ type IndexArg struct {
 	IndexID  int64 `json:"index_id,omitempty"`
 	IfExist  bool  `json:"if_exist,omitempty"`
 	IsGlobal bool  `json:"is_global,omitempty"`
+
+	// For index presplit
+	BetweenLower []string
+	BetweenUpper []string
+	BetweenCnt   int
+	ByData       [][]string
+}
+
+// IndexArgSplitOpt is a field of IndexArg used by index presplit.
+type IndexArgSplitOpt struct {
+	BetweenLower []string
+	BetweenUpper []string
+	BetweenCnt   int
+	ByData       [][]string
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,
