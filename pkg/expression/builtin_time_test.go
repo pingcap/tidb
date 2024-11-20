@@ -1037,27 +1037,19 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true},
 	}
 
 	for _, c := range dateStringCases {
@@ -1075,10 +1067,6 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1095,27 +1083,19 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
 	}
 
 	for _, c := range dateDurationCases {
@@ -1133,10 +1113,6 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1153,27 +1129,19 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true},
 	}
 
 	for _, c := range datetimeStringCases {
@@ -1191,10 +1159,6 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1211,27 +1175,19 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), false, "2024-11-01 00:00:00", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
 	}
 
 	for _, c := range datetimeDurationCases {
@@ -1249,10 +1205,6 @@ func addTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1373,27 +1325,19 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, "", true, "", true},
 	}
 
 	for _, c := range dateStringCases {
@@ -1411,10 +1355,6 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1431,26 +1371,18 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDate, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
 	}
 
 	for _, c := range dateDurationCases {
@@ -1468,10 +1400,6 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1488,27 +1416,19 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "2024-10-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "2024-11-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "1 12:00:01.341300", false, "2024-10-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-1 12:00:01.341300", false, "2024-11-02 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "0999-12-31 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "1000-01-01 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "12:00:01.341300", false, "9999-12-30 11:59:58.658700", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "-12:00:01.341300", false, "9999-12-31 12:00:01.341300", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "anuverivr", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, "", true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, "", true, "", true},
 	}
 
 	for _, c := range datetimeStringCases {
@@ -1526,10 +1446,6 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
@@ -1546,26 +1462,18 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		isArg1Null   bool
 		expect       string
 		isExpectNull bool
-		err          error
 	}{
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false, nil},
-		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(0, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 1, 0, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 0, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(-1, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(10000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "", false, errors.NewNoStackError("")},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
-		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true, nil},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "2024-10-31 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "2024-11-01 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0), false, "2024-10-30 11:59:59", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(36, 0, 1, 0, 0).Neg(), false, "2024-11-02 12:00:01", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "0999-12-31 11:59:59", false},
+		{types.NewTime(types.FromDate(1000, 1, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "1000-01-01 12:00:01", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0), false, "9999-12-30 11:59:59", false},
+		{types.NewTime(types.FromDate(9999, 12, 31, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(12, 0, 1, 0, 0).Neg(), false, "9999-12-31 12:00:01", false},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), false, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), false, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
+		{types.NewTime(types.FromDate(2024, 11, 1, 0, 0, 0, 0), mysql.TypeDatetime, 0), true, types.NewDuration(0, 0, 0, 0, 0), true, "", true},
 	}
 
 	for _, c := range datetimeDurationCases {
@@ -1583,10 +1491,6 @@ func subTimeTestForIssue56861(t *testing.T, ctx *mock.Context, fc functionClass)
 		f, err := fc.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		if c.err != nil {
-			require.True(t, err != nil)
-			continue
-		}
 		if c.isExpectNull {
 			require.True(t, d.IsNull())
 			continue
