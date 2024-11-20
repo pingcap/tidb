@@ -115,7 +115,7 @@ func prepareForBenchTest(b *testing.B) {
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
-	config.GetGlobalConfig().Store = "tikv"
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	require.NoError(b, ddl.StartOwnerManager(context.Background(), store))
 	var dom *domain.Domain
 	dom, err = session.BootstrapSession(store)

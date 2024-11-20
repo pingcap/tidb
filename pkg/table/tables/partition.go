@@ -128,9 +128,50 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	if err := initTableIndices(&ret.TableCommon); err != nil {
 		return nil, errors.Trace(err)
 	}
+	origIndices := ret.meta.Indices
+	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	for _, idx := range origIndices {
+		newIdx, ok := pi.DDLChangedIndex[idx.ID]
+		if !ok {
+			// Untouched index
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+			if pi.DDLState != model.StateDeleteReorganization {
+				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
+				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
+				// set the correct assertion on the index.
+				idx = idx.Clone()
+				idx.State = pi.DDLState
+			}
+			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			continue
+		}
+		if newIdx {
+			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+		} else {
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+		}
+	}
+	tblInfo.Indices = origIndices
+	defer func() { ret.meta.Indices = origIndices }()
+	dropMap := make(map[int64]struct{})
+	for _, def := range pi.DroppingDefinitions {
+		dropMap[def.ID] = struct{}{}
+	}
+	addMap := make(map[int64]struct{})
+	for _, def := range pi.AddingDefinitions {
+		addMap[def.ID] = struct{}{}
+	}
 	partitions := make(map[int64]*partition, len(pi.Definitions))
 	for _, p := range pi.Definitions {
 		var t partition
+		if _, drop := dropMap[p.ID]; drop {
+			tblInfo.Indices = DroppingDefinitionIndices
+		} else if _, add := addMap[p.ID]; add {
+			tblInfo.Indices = AddingDefinitionIndices
+		} else {
+			tblInfo.Indices = origIndices
+		}
 		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -152,8 +193,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	// also in DroppingDefinitions (since session running on schema version -1)
 	// should also see the changes
 	if pi.DDLState == model.StateDeleteReorganization {
-		origIdx := setIndexesState(ret, pi.DDLState)
-		defer unsetIndexesState(ret, origIdx)
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -168,6 +207,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			ret.reorganizePartitions[def.ID] = nil
 		}
 		ret.doubleWritePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
+		tblInfo.Indices = DroppingDefinitionIndices
 		for _, def := range pi.DroppingDefinitions {
 			p, err := initPartition(ret, def)
 			if err != nil {
@@ -178,8 +218,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 	} else {
 		if len(pi.AddingDefinitions) > 0 {
-			origIdx := setIndexesState(ret, pi.DDLState)
-			defer unsetIndexesState(ret, origIdx)
 			if pi.NewTableID != 0 {
 				// REMOVE PARTITIONING or PARTITION BY
 				ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.AddingDefinitions)
@@ -191,6 +229,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				return nil, errors.Trace(err)
 			}
 			ret.doubleWritePartitions = make(map[int64]any, len(pi.AddingDefinitions))
+			tblInfo.Indices = AddingDefinitionIndices
 			for _, def := range pi.AddingDefinitions {
 				ret.doubleWritePartitions[def.ID] = nil
 				p, err := initPartition(ret, def)
@@ -208,31 +247,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		}
 	}
 	return ret, nil
-}
-
-func setIndexesState(t *partitionedTable, state model.SchemaState) []*model.IndexInfo {
-	orig := t.meta.Indices
-	t.meta.Indices = make([]*model.IndexInfo, 0, len(orig))
-	for i := range orig {
-		t.meta.Indices = append(t.meta.Indices, orig[i].Clone())
-		if t.meta.Indices[i].State == model.StatePublic {
-			switch state {
-			case model.StateDeleteOnly, model.StateNone:
-				t.meta.Indices[i].State = model.StateDeleteOnly
-			case model.StatePublic:
-				// Keep as is
-			default:
-				// use the 'StateWriteReorganization' here, since StateDeleteReorganization
-				// would skip index writes.
-				t.meta.Indices[i].State = model.StateWriteReorganization
-			}
-		}
-	}
-	return orig
-}
-
-func unsetIndexesState(t *partitionedTable, orig []*model.IndexInfo) {
-	t.meta.Indices = orig
 }
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
@@ -1024,6 +1038,7 @@ func (lp *ForListPruning) LocatePartition(ctx exprctx.EvalContext, value int64, 
 // LocatePartitionByRange locates partition by the range
 // Only could process `column op value` right now.
 func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ranger.Range) (idxs map[int]struct{}, err error) {
+	idxs = make(map[int]struct{})
 	lowVal, highVal := r.LowVal[0], r.HighVal[0]
 	if r.LowVal[0].Kind() == types.KindMinNotNull {
 		lowVal = types.GetMinValue(lp.PruneExpr.GetType(ctx))
@@ -1033,14 +1048,26 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		highVal = types.GetMaxValue(lp.PruneExpr.GetType(ctx))
 	}
 
-	highInt64, _, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{highVal}).ToRow())
+	highInt64, isNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{highVal}).ToRow())
 	if err != nil {
 		return nil, err
 	}
+	if isNull {
+		return nil, errors.Errorf("Internal error, `r.HighVal` cannot be null")
+	}
 
-	lowInt64, _, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{lowVal}).ToRow())
+	lowInt64, isNull, err := lp.PruneExpr.EvalInt(ctx, chunk.MutRowFromDatums([]types.Datum{lowVal}).ToRow())
 	if err != nil {
 		return nil, err
+	}
+	if isNull {
+		// If low value is null, add `lp.nullPartitionIdx` into idxs map.
+		if !r.LowExclude && lp.nullPartitionIdx != -1 {
+			idxs[lp.nullPartitionIdx] = struct{}{}
+		} else {
+			dt := types.GetMinValue(lp.PruneExpr.GetType(ctx))
+			lowInt64 = dt.GetInt64()
+		}
 	}
 
 	var lowKey, highKey uint64
@@ -1051,7 +1078,6 @@ func (lp *ForListPruning) LocatePartitionByRange(ctx exprctx.EvalContext, r *ran
 		lowKey, highKey = codec.EncodeIntToCmpUint(lowInt64), codec.EncodeIntToCmpUint(highInt64)
 	}
 
-	idxs = make(map[int]struct{})
 	lp.valueToPartitionIdxBTree.AscendRange(&btreeListItem{key: lowKey}, &btreeListItem{key: highKey}, func(item *btreeListItem) bool {
 		if item.key == lowKey && r.LowExclude {
 			return true

@@ -195,8 +195,8 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 
-	if config.GetGlobalConfig().Store != "tikv" {
-		config.GetGlobalConfig().Store = "tikv"
+	if config.GetGlobalConfig().Store != config.StoreTypeTiKV {
+		config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	}
 	// Disable GC because TiDB enables GC already.
 	path := fmt.Sprintf(

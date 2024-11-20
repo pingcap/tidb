@@ -198,7 +198,7 @@ func initFlagSet() *flag.FlagSet {
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store = fset.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
+	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
 	storePath = fset.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host = fset.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = fset.String(nmAdvertiseAddress, "", "tidb server advertise IP")
@@ -389,11 +389,11 @@ func setCPUAffinity() {
 }
 
 func registerStores() {
-	err := kvstore.Register("tikv", driver.TiKVDriver{})
+	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
+	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 
@@ -513,7 +513,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
-		cfg.Store = *store
+		cfg.Store = config.StoreType(*store)
 	}
 	if actualFlags[nmStorePath] {
 		cfg.Path = *storePath

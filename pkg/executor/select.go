@@ -419,6 +419,7 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+	columnSwapHelper      *chunk.ColumnSwapHelper
 
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
@@ -480,10 +481,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.cursor += batchSize
 
 	if e.columnIdxsUsedByChild != nil {
-		for i, childIdx := range e.columnIdxsUsedByChild {
-			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
-				return err
-			}
+		err = e.columnSwapHelper.SwapColumns(e.childResult, req)
+		if err != nil {
+			return err
 		}
 	} else {
 		req.SwapColumns(e.childResult)
@@ -1067,7 +1067,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 			errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 		}
-		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+		// For single-row INSERT statements, ignore non-strict mode
+		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
+		isSingleInsert := len(stmt.Lists) == 1
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, (!strictSQLMode && !isSingleInsert) || stmt.IgnoreErr)
+		errLevels[errctx.ErrGroupNoDefault] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 			!strictSQLMode || stmt.IgnoreErr,
@@ -1212,6 +1216,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupNoDefault] = errLevels[errctx.ErrGroupBadNull]
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 		!strictSQLMode || stmt.IgnoreErr,
@@ -1233,6 +1238,7 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupNoDefault] = errLevels[errctx.ErrGroupBadNull]
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 		!strictSQLMode || stmt.IgnoreErr,

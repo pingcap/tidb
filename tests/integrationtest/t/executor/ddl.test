@@ -258,10 +258,10 @@ create view v6 (c,d) as select * from t1;
 -- error 1353
 create view v7 (c,d,e) as select * from t1;
 drop view v1,v2,v3,v4,v5,v6;
+-- error 1351
 create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
--- error 1050
+-- error 1351
 create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
-drop view v1;
 -- error 1353
 create view v1 (c,d,e) as select a,b from t1 ;
 -- error 1353

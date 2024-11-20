@@ -16,6 +16,7 @@ package priorityqueue
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -245,7 +246,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				pi := tblInfo.GetPartitionInfo()
 				if pi == nil {
 					job := jobFactory.CreateNonPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 					)
@@ -268,10 +268,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				if pruneMode == variable.Static {
 					for pIDAndName, stats := range partitionStats {
 						job := jobFactory.CreateStaticPartitionAnalysisJob(
-							db.O,
 							tblInfo,
 							pIDAndName.ID,
-							pIDAndName.Name,
 							stats,
 						)
 						err := pq.pushWithoutLock(job)
@@ -281,7 +279,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 					}
 				} else {
 					job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 						partitionStats,
@@ -376,7 +373,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 
 		// Only update if we've seen a newer version
 		if newMaxVersion > lastFetchTimestamp {
-			statslogutil.StatsLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
+			queueSamplerLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
 			pq.syncFields.lastDMLUpdateFetchTimestamp = newMaxVersion
 		}
 		return nil
@@ -404,12 +401,6 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	// Check if the table is needed to be analyzed.
-	// Note: Unanalyzed tables will also be considered.
-	changePercent := jobFactory.CalculateChangePercentage(stats)
-	if changePercent == 0 {
-		return nil
-	}
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
@@ -455,7 +446,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 	}
 
 	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
-	tableMeta := tableInfo.Meta()
 	if !ok {
 		statslogutil.StatsLogger().Warn(
 			"Table info not found for table id",
@@ -463,14 +453,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		)
 		return nil
 	}
-	schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-	if !ok {
-		statslogutil.StatsLogger().Warn(
-			"Schema name not found for table id",
-			zap.Int64("tableID", stats.PhysicalID),
-		)
-		return nil
-	}
+	tableMeta := tableInfo.Meta()
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
 		// If the table is locked, we do not analyze it.
@@ -478,7 +461,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			return nil
 		}
 		job = jobFactory.CreateNonPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 		)
@@ -506,10 +488,8 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 				return nil
 			}
 			job = jobFactory.CreateStaticPartitionAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				partitionDef.ID,
-				partitionDef.Name.O,
 				stats,
 			)
 		} else {
@@ -540,7 +520,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			}
 			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				// Get global stats for dynamic partitioned table.
 				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
@@ -578,17 +557,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
 		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
-		schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-		if !ok {
-			statslogutil.StatsLogger().Warn(
-				"Schema name not found during updating job",
-				zap.Int64("tableID", stats.PhysicalID),
-				zap.String("job", oldJob.String()),
-			)
-			return nil
-		}
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 			partitionStats,
@@ -785,12 +754,14 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 		defer pq.syncFields.mu.Unlock()
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
-	job.RegisterFailureHook(func(j AnalysisJob) {
+	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
-		pq.syncFields.mustRetryJobs[j.GetTableID()] = struct{}{}
+		if needRetry {
+			pq.syncFields.mustRetryJobs[j.GetTableID()] = struct{}{}
+		}
 	})
 	return job, nil
 }
@@ -828,6 +799,38 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	}
 
 	return pq.syncFields.inner.len(), nil
+}
+
+// Snapshot returns a snapshot of all the jobs in the priority queue.
+func (pq *AnalysisPriorityQueue) Snapshot() (
+	snapshot statstypes.PriorityQueueSnapshot,
+	err error,
+) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return statstypes.PriorityQueueSnapshot{}, errors.New(notInitializedErrMsg)
+	}
+
+	currentJobs := pq.syncFields.inner.list()
+	mustRetryTables := make([]int64, 0, len(pq.syncFields.mustRetryJobs))
+	for tableID := range pq.syncFields.mustRetryJobs {
+		mustRetryTables = append(mustRetryTables, tableID)
+	}
+
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
+	for i, job := range currentJobs {
+		jsonJobs[i] = job.AsJSON()
+	}
+	// Sort by the weight in descending order.
+	sort.Slice(jsonJobs, func(i, j int) bool {
+		return jsonJobs[i].Weight > jsonJobs[j].Weight
+	})
+
+	return statstypes.PriorityQueueSnapshot{
+		CurrentJobs:     jsonJobs,
+		MustRetryTables: mustRetryTables,
+	}, nil
 }
 
 // Close closes the priority queue.

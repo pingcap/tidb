@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
@@ -886,6 +887,31 @@ func TestSetDDLErrorCountLimit(t *testing.T) {
 	require.Equal(t, int64(100), variable.GetDDLErrorCountLimit())
 	res := tk.MustQuery("select @@global.tidb_ddl_error_count_limit")
 	res.Check(testkit.Rows("100"))
+}
+
+func TestSetDDLReorgMaxWriteSpeed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.Equal(t, int64(variable.DefTiDBDDLReorgMaxWriteSpeed), variable.DDLReorgMaxWriteSpeed.Load())
+
+	// valid values
+	for _, val := range []int64{1, 0, 100, 1024 * 1024, 2147483647, units.PiB} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = %d", val))
+		require.Equal(t, val, variable.DDLReorgMaxWriteSpeed.Load())
+		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(val, 10)))
+	}
+	for _, val := range []string{"1", "0", "100", "2KB", "3MiB", "4 gb", "2147483647", "1125899906842624" /* 1PiB */} {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_reorg_max_write_speed = '%s'", val))
+		expected, err := units.RAMInBytes(val)
+		require.NoError(t, err)
+		require.Equal(t, expected, variable.DDLReorgMaxWriteSpeed.Load())
+		tk.MustQuery("select @@global.tidb_ddl_reorg_max_write_speed").Check(testkit.Rows(strconv.FormatInt(expected, 10)))
+	}
+
+	// invalid values
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = -1")
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = invalid_val")
+	tk.MustExecToErr("set @@global.tidb_ddl_reorg_max_write_speed = %d", units.PiB+1)
 }
 
 func TestLoadDDLDistributeVars(t *testing.T) {

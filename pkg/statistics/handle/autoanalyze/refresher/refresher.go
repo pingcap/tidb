@@ -144,7 +144,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
 		}
-		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
+		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
@@ -186,6 +186,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 
 	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
+}
+
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return r.jobs.Snapshot()
 }
 
 func (r *Refresher) setAutoAnalysisTimeWindow(
