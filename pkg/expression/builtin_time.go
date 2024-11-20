@@ -4974,17 +4974,11 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 		return types.ZeroDatetime, true, nil
 	}
 
-	tc := typeCtx(ctx)
-	err = arg0.Check(tc)
-	if err != nil {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-	}
-
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
-	result, err := arg0.Add(tc, arg1)
+	result, err := arg0.Add(typeCtx(ctx), arg1)
 	if err != nil {
 		return types.ZeroDatetime, true, err
 	}
@@ -5015,11 +5009,6 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 
 	if arg0.IsZero() {
 		return types.ZeroDatetime, true, nil
-	}
-
-	err = arg0.Check(typeCtx(ctx))
-	if err != nil {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
 	}
 
 	s, isNull, err := b.args[1].EvalString(ctx, row)
@@ -5293,19 +5282,13 @@ func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 		return "", true, nil
 	}
 
-	tc := typeCtx(ctx)
-	err = arg0.Check(tc)
-	if err != nil {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-	}
-
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
 
 	arg0.SetType(mysql.TypeDatetime)
-	result, err := arg0.Add(tc, arg1)
+	result, err := arg0.Add(typeCtx(ctx), arg1)
 	if err != nil {
 		return "", true, err
 	}
@@ -5336,11 +5319,6 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 	if arg0.IsZero() {
 		return "", true, nil
-	}
-
-	err = arg0.Check(typeCtx(ctx))
-	if err != nil {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
 	}
 
 	s, isNull, err := b.args[1].EvalString(ctx, row)
@@ -6037,11 +6015,6 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 		return types.ZeroDatetime, true, nil
 	}
 
-	err = arg0.Check(typeCtx(ctx))
-	if err != nil {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-	}
-
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
@@ -6078,11 +6051,6 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 
 	if arg0.IsZero() {
 		return types.ZeroDatetime, true, nil
-	}
-
-	err = arg0.Check(typeCtx(ctx))
-	if err != nil {
-		return types.ZeroDatetime, true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
 	}
 
 	s, isNull, err := b.args[1].EvalString(ctx, row)
@@ -6362,19 +6330,13 @@ func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row
 		return "", true, nil
 	}
 
-	tc := typeCtx(ctx)
-	err = arg0.Check(tc)
-	if err != nil {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
-	}
-
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
 
 	arg0.SetType(mysql.TypeDatetime)
-	result, err := arg0.Add(tc, arg1.Neg())
+	result, err := arg0.Add(typeCtx(ctx), arg1.Neg())
 	if err != nil {
 		return "", true, err
 	}
@@ -6405,11 +6367,6 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 
 	if arg0.IsZero() {
 		return "", true, nil
-	}
-
-	err = arg0.Check(typeCtx(ctx))
-	if err != nil {
-		return "", true, types.ErrWrongValue.GenWithStackByArgs(types.DateStr, arg0.String())
 	}
 
 	s, isNull, err := b.args[1].EvalString(ctx, row)
