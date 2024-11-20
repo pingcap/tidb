@@ -273,17 +273,20 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
 
+	// TODO: Set the new bundles as it should look for the final table!
+	// And verify that nothing breaks during ApplyDiff etc. for the intermediate tableInfo's
 	// tblInfo do not include added partitions, so we should add them first
 	tblInfo = tblInfo.Clone()
-	p := *tblInfo.Partition
+	p := tblInfo.Partition
 	if p.DDLAction == model.ActionAlterTablePartitioning && p.Type == pmodel.PartitionTypeNone {
-		// skip adding the original table as partition
+		// skip the original table as partition
 		p.Definitions = []model.PartitionDefinition{}
-	} else {
-		p.Definitions = append([]model.PartitionDefinition{}, p.Definitions...)
 	}
 	p.Definitions = append(p.Definitions, addingDefinitions...)
-	tblInfo.Partition = &p
+
+	if p.NewTableID != 0 {
+		tblInfo.ID = p.NewTableID
+	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
 	tblBundle, err := placement.NewTableBundle(t, tblInfo)
