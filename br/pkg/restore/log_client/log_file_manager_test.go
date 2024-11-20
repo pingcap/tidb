@@ -235,6 +235,8 @@ func testReadMetaBetweenTSWithVersion(t *testing.T, m metaMaker) {
 			RestoreTS: c.endTS,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, c.startTS, c.endTS),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		}
 		cli, err := logclient.CreateLogFileManager(ctx, init)
@@ -469,6 +471,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 			RestoreTS: end,
 			Storage:   loc,
 
+			MigrationsBuilder:         logclient.NewMigrationBuilder(0, start, end),
+			Migrations:                emptyMigrations(),
 			MetadataDownloadBatchSize: 32,
 		})
 		req.NoError(err)
@@ -487,15 +491,8 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			var counter *int
-			if c.DMLFileCount != nil {
-				counter = new(int)
-			}
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx, counter)
+			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
 			req.NoError(err)
-			if counter != nil {
-				req.Equal(*c.DMLFileCount, *counter)
-			}
 			r = data
 		}
 		dataFileInfoMatches(t, r, c.Requires...)
@@ -528,6 +525,7 @@ func TestFilterDataFiles(t *testing.T) {
 		RestoreTS: 10,
 		Storage:   loc,
 
+		MigrationsBuilder:         logclient.NewMigrationBuilder(0, 0, 10),
 		Migrations:                emptyMigrations(),
 		MetadataDownloadBatchSize: 32,
 	})

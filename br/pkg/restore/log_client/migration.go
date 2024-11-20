@@ -15,7 +15,10 @@
 package logclient
 
 import (
+	"context"
+
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 )
 
@@ -99,6 +102,10 @@ type WithMigrationsBuilder struct {
 	restoredTS   uint64
 }
 
+func (builder *WithMigrationsBuilder) SetShiftStartTS(ts uint64) {
+	builder.shiftStartTS = ts
+}
+
 func (builder *WithMigrationsBuilder) updateSkipMap(skipmap metaSkipMap, metas []*backuppb.MetaEdit) {
 	for _, meta := range metas {
 		if meta.DestructSelf {
@@ -136,14 +143,24 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 // Create the wrapper by migrations.
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
+	compactionDirs := make([]string, 0, 8)
+
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
 		if builder.coarseGrainedFilter(mig) {
 			continue
 		}
 		builder.updateSkipMap(skipmap, mig.EditMeta)
+
+		for _, c := range mig.Compactions {
+			compactionDirs = append(compactionDirs, c.Artifacts)
+		}
 	}
-	return WithMigrations(skipmap)
+	withMigrations := WithMigrations{
+		skipmap:        skipmap,
+		compactionDirs: compactionDirs,
+	}
+	return withMigrations
 }
 
 type PhysicalMigrationsIter = iter.TryNextor[*PhysicalWithMigrations]
@@ -190,13 +207,16 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 	})
 }
 
-type WithMigrations metaSkipMap
+type WithMigrations struct {
+	skipmap        metaSkipMap
+	compactionDirs []string
+}
 
-func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
+func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 	return iter.MapFilter(metaNameIter, func(mname *MetaName) (*MetaWithMigrations, bool) {
 		var phySkipmap physicalSkipMap = nil
-		if wm != nil {
-			skipmap := wm[mname.name]
+		if wm.skipmap != nil {
+			skipmap := wm.skipmap[mname.name]
 			if skipmap != nil {
 				if skipmap.skip {
 					return nil, true
@@ -208,5 +228,13 @@ func (wm WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
 			skipmap: phySkipmap,
 			meta:    mname.meta,
 		}, false
+	})
+}
+
+func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	compactionDirIter := iter.FromSlice(wm.compactionDirs)
+	return iter.FlatMap(compactionDirIter, func(name string) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		// name is the absolute path in external storage.
+		return Subcompactions(ctx, name, s)
 	})
 }

@@ -91,7 +91,7 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, erro
 func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, dom *domain.Domain, se glue.Session) *LogClient {
 	return &LogClient{
 		dom:               dom,
-		se:                se,
+		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,

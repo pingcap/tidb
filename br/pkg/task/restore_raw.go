@@ -4,6 +4,7 @@ package task
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -12,6 +13,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
@@ -20,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"go.uber.org/zap"
 )
 
 // RestoreRawConfig is the configuration specific for raw kv restore tasks.
@@ -109,7 +112,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		return errors.Trace(err)
 	}
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, true, cfg.StartKey, cfg.EndKey); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -145,8 +148,9 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 		int64(len(ranges)+len(files)),
 		!cfg.LogProgress)
 
+	onProgress := func(i int64) { updateCh.IncBy(i) }
 	// RawKV restore does not need to rewrite keys.
-	err = client.SplitPoints(ctx, getEndKeys(ranges), updateCh, true)
+	err = client.SplitPoints(ctx, getEndKeys(ranges), onProgress, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -158,10 +162,20 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	}
 	defer restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 
-	err = client.RestoreRaw(ctx, cfg.StartKey, cfg.EndKey, files, updateCh)
+	start := time.Now()
+	err = client.GetRestorer().GoRestore(onProgress, restore.CreateUniqueFileSets(files))
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = client.GetRestorer().WaitUntilFinish()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	elapsed := time.Since(start)
+	log.Info("Restore Raw",
+		logutil.Key("startKey", cfg.StartKey),
+		logutil.Key("endKey", cfg.EndKey),
+		zap.Duration("take", elapsed))
 
 	// Restore has finished.
 	updateCh.Close()

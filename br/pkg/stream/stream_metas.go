@@ -652,6 +652,17 @@ func (migs Migrations) MergeToBy(seq int, merge func(m1, m2 *pb.Migration) *pb.M
 	return newBase
 }
 
+// ListAll returns a slice of all migrations in protobuf format.
+// This includes the base migration and any additional layers.
+func (migs Migrations) ListAll() []*pb.Migration {
+	pbMigs := make([]*pb.Migration, 0, len(migs.Layers)+1)
+	pbMigs = append(pbMigs, migs.Base)
+	for _, m := range migs.Layers {
+		pbMigs = append(pbMigs, &m.Content)
+	}
+	return pbMigs
+}
+
 type mergeAndMigrateToConfig struct {
 	interactiveCheck       func(context.Context, *pb.Migration) bool
 	alwaysRunTruncate      bool

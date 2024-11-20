@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/internal/rawkv"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -62,6 +63,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -79,30 +81,128 @@ const maxSplitKeysOnce = 10240
 // rawKVBatchCount specifies the count of entries that the rawkv client puts into TiKV.
 const rawKVBatchCount = 64
 
+// LogRestoreManager is a comprehensive wrapper that encapsulates all logic related to log restoration,
+// including concurrency management, checkpoint handling, and file importing for efficient log processing.
+type LogRestoreManager struct {
+	fileImporter     *LogFileImporter
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType]
+}
+
+func NewLogRestoreManager(
+	ctx context.Context,
+	fileImporter *LogFileImporter,
+	poolSize uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*LogRestoreManager, error) {
+	// for compacted reason, user only set --concurrency for log file restore speed.
+	log.Info("log restore worker pool", zap.Uint("size", poolSize))
+	l := &LogRestoreManager{
+		fileImporter: fileImporter,
+		workerPool:   tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if se != nil {
+		l.checkpointRunner, err = checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return l, nil
+}
+
+func (l *LogRestoreManager) Close(ctx context.Context) {
+	if l.fileImporter != nil {
+		if err := l.fileImporter.Close(); err != nil {
+			log.Warn("failed to close file importer")
+		}
+	}
+	if l.checkpointRunner != nil {
+		l.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+// SstRestoreManager is a comprehensive wrapper that encapsulates all logic related to sst restoration,
+// including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
+type SstRestoreManager struct {
+	restorer         restore.SstRestorer
+	workerPool       *tidbutil.WorkerPool
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+}
+
+func (s *SstRestoreManager) Close(ctx context.Context) {
+	if s.restorer != nil {
+		if err := s.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
+	}
+	if s.checkpointRunner != nil {
+		s.checkpointRunner.WaitForFinish(ctx, true)
+	}
+}
+
+func NewSstRestoreManager(
+	ctx context.Context,
+	snapFileImporter *snapclient.SnapFileImporter,
+	concurrencyPerStore uint,
+	storeCount uint,
+	createCheckpointSessionFn func() (glue.Session, error),
+) (*SstRestoreManager, error) {
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
+	poolSize := concurrencyPerStore * 32 * storeCount
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+
+	s := &SstRestoreManager{
+		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
+	}
+	se, err := createCheckpointSessionFn()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if se != nil {
+		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		s.checkpointRunner = checkpointRunner
+	}
+	// TODO implement checkpoint
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	return s, nil
+}
+
 type LogClient struct {
-	cipher        *backuppb.CipherInfo
-	pdClient      pd.Client
-	pdHTTPClient  pdhttp.Client
-	clusterID     uint64
-	dom           *domain.Domain
-	tlsConf       *tls.Config
-	keepaliveConf keepalive.ClientParameters
+	*LogFileManager
+	logRestoreManager *LogRestoreManager
+	sstRestoreManager *SstRestoreManager
+
+	cipher              *backuppb.CipherInfo
+	pdClient            pd.Client
+	pdHTTPClient        pdhttp.Client
+	clusterID           uint64
+	dom                 *domain.Domain
+	tlsConf             *tls.Config
+	keepaliveConf       keepalive.ClientParameters
+	concurrencyPerStore uint
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
 
-	se glue.Session
+	// unsafeSession is not thread-safe.
+	// Currently, it is only utilized in some initialization and post-handle functions.
+	unsafeSession glue.Session
 
 	// currentTS is used for rewrite meta kv when restore stream.
 	// Can not use `restoreTS` directly, because schema created in `full backup` maybe is new than `restoreTS`.
 	currentTS uint64
 
 	upstreamClusterID uint64
-
-	*LogFileManager
-
-	workerPool   *tidbutil.WorkerPool
-	fileImporter *LogFileImporter
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -131,21 +231,80 @@ func NewRestoreClient(
 }
 
 // Close a client.
-func (rc *LogClient) Close() {
+func (rc *LogClient) Close(ctx context.Context) {
+	defer func() {
+		if rc.logRestoreManager != nil {
+			rc.logRestoreManager.Close(ctx)
+		}
+		if rc.sstRestoreManager != nil {
+			rc.sstRestoreManager.Close(ctx)
+		}
+	}()
+
 	// close the connection, and it must be succeed when in SQL mode.
-	if rc.se != nil {
-		rc.se.Close()
+	if rc.unsafeSession != nil {
+		rc.unsafeSession.Close()
 	}
 
 	if rc.rawKVClient != nil {
 		rc.rawKVClient.Close()
 	}
-
-	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
-	}
-
 	log.Info("Restore client closed")
+}
+
+func (rc *LogClient) RestoreCompactedSstFiles(
+	ctx context.Context,
+	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	rules map[int64]*restoreutils.RewriteRules,
+	importModeSwitcher *restore.ImportModeSwitcher,
+	onProgress func(int64),
+) error {
+	backupFileSets := make([]restore.BackupFileSet, 0, 8)
+	// Collect all items from the iterator in advance to avoid blocking during restoration.
+	// This approach ensures that we have all necessary data ready for processing,
+	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
+		if r.Err != nil {
+			return r.Err
+		}
+		i := r.Item
+		rewriteRules, ok := rules[i.Meta.TableId]
+		if !ok {
+			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.Meta.TableId))
+			continue
+		}
+		set := restore.BackupFileSet{
+			TableID:      i.Meta.TableId,
+			SSTFiles:     i.SstOutputs,
+			RewriteRules: rewriteRules,
+		}
+		backupFileSets = append(backupFileSets, set)
+	}
+	if len(backupFileSets) == 0 {
+		log.Info("[Compacted SST Restore] No SST files found for restoration.")
+		return nil
+	}
+	importModeSwitcher.SwitchToImportMode(ctx)
+	defer func() {
+		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
+		if switchErr != nil {
+			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
+		}
+	}()
+
+	// To optimize performance and minimize cross-region downloads,
+	// we are currently opting for a single restore approach instead of batch restoration.
+	// This decision is similar to the handling of raw and txn restores,
+	// where batch processing may lead to increased complexity and potential inefficiencies.
+	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
+	// while maintaining optimal performance and resource utilization.
+	for _, i := range backupFileSets {
+		err := rc.sstRestoreManager.restorer.GoRestore(onProgress, []restore.BackupFileSet{i})
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return rc.sstRestoreManager.restorer.WaitUntilFinish()
 }
 
 func (rc *LogClient) SetRawKVBatchClient(
@@ -164,11 +323,6 @@ func (rc *LogClient) SetRawKVBatchClient(
 
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
-}
-
-func (rc *LogClient) SetConcurrency(c uint) {
-	log.Info("download worker pool", zap.Uint("size", c))
-	rc.workerPool = tidbutil.NewWorkerPool(c, "file")
 }
 
 func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
@@ -210,28 +364,19 @@ func (rc *LogClient) CleanUpKVFiles(
 ) error {
 	// Current we only have v1 prefix.
 	// In the future, we can add more operation for this interface.
-	return rc.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
-}
-
-func (rc *LogClient) StartCheckpointRunnerForLogRestore(ctx context.Context, g glue.Glue, store kv.Storage) (*checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType], error) {
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	runner, err := checkpoint.StartCheckpointRunnerForLogRestore(ctx, se)
-	return runner, errors.Trace(err)
+	return rc.logRestoreManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
 }
 
 // Init create db connection and domain for storage.
-func (rc *LogClient) Init(g glue.Glue, store kv.Storage) error {
+func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.se, err = g.CreateSession(store)
+	rc.unsafeSession, err = g.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// Set SQL mode to None for avoiding SQL compatibility problem
-	err = rc.se.Execute(context.Background(), "set @@sql_mode=''")
+	err = rc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -244,7 +389,13 @@ func (rc *LogClient) Init(g glue.Glue, store kv.Storage) error {
 	return nil
 }
 
-func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageBackend) {
+func (rc *LogClient) InitClients(
+	ctx context.Context,
+	backend *backuppb.StorageBackend,
+	createSessionFn func() (glue.Session, error),
+	concurrency uint,
+	concurrencyPerStore uint,
+) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
@@ -252,7 +403,48 @@ func (rc *LogClient) InitClients(ctx context.Context, backend *backuppb.StorageB
 
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewLogFileImporter(metaClient, importCli, backend)
+
+	rc.logRestoreManager, err = NewLogRestoreManager(
+		ctx,
+		NewLogFileImporter(metaClient, importCli, backend),
+		concurrency,
+		createSessionFn,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	var createCallBacks []func(*snapclient.SnapFileImporter) error
+	var closeCallBacks []func(*snapclient.SnapFileImporter) error
+	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+
+	opt := snapclient.NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
+	snapFileImporter, err := snapclient.NewSnapFileImporter(
+		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.sstRestoreManager, err = NewSstRestoreManager(
+		ctx,
+		snapFileImporter,
+		concurrencyPerStore,
+		uint(len(stores)),
+		createSessionFn,
+	)
+	return errors.Trace(err)
+}
+
+func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
+	ctx context.Context,
+) (map[string]struct{}, error) {
+	// get sst checkpoint to skip repeated files
+	sstCheckpointSets := make(map[string]struct{})
+	// TODO initial checkpoint
+	return sstCheckpointSets, nil
 }
 
 func (rc *LogClient) InitCheckpointMetadataForLogRestore(
@@ -267,7 +459,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	// for the first time.
 	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
+		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -284,7 +476,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	log.Info("save gc ratio into checkpoint metadata",
 		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
-	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.se, &checkpoint.CheckpointMetadataForLogRestore{
+	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.unsafeSession, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
@@ -298,6 +490,15 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
+func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
+	ext := stream.MigerationExtension(rc.storage)
+	migs, err := ext.Load(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return migs.ListAll(), nil
+}
+
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
 	encryptionManager *encryption.Manager) error {
 	init := LogFileManagerInit{
@@ -305,6 +506,10 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 		RestoreTS: restoreTS,
 		Storage:   rc.storage,
 
+		MigrationsBuilder: &WithMigrationsBuilder{
+			startTS:    startTS,
+			restoredTS: restoreTS,
+		},
 		MetadataDownloadBatchSize: metadataDownloadBatchSize,
 		EncryptionManager:         encryptionManager,
 	}
@@ -477,9 +682,7 @@ func ApplyKVFilesWithSingleMethod(
 func (rc *LogClient) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
-	idrules map[int64]int64,
 	logIter LogIter,
-	runner *checkpoint.CheckpointRunner[checkpoint.LogRestoreKeyType, checkpoint.LogRestoreValueType],
 	pitrBatchCount uint32,
 	pitrBatchSize uint32,
 	updateStats func(kvCount uint64, size uint64),
@@ -522,31 +725,26 @@ func (rc *LogClient) RestoreKVFiles(
 			// For this version we do not handle new created table after full backup.
 			// in next version we will perform rewrite and restore meta key to restore new created tables.
 			// so we can simply skip the file that doesn't have the rule here.
-			onProgress(int64(len(files)))
+			onProgress(kvCount)
 			summary.CollectInt("FileSkip", len(files))
 			log.Debug("skip file due to table id not matched", zap.Int64("table-id", files[0].TableId))
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
-			downstreamId := idrules[files[0].TableId]
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
-					onProgress(int64(len(files)))
+					onProgress(kvCount)
 					updateStats(uint64(kvCount), size)
 					summary.CollectInt("File", len(files))
 
 					if err == nil {
 						filenames := make([]string, 0, len(files))
-						if runner == nil {
-							for _, f := range files {
-								filenames = append(filenames, f.Path+", ")
-							}
-						} else {
-							for _, f := range files {
-								filenames = append(filenames, f.Path+", ")
-								if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+						for _, f := range files {
+							filenames = append(filenames, f.Path+", ")
+							if rc.logRestoreManager.checkpointRunner != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
 									break
 								}
@@ -557,13 +755,13 @@ func (rc *LogClient) RestoreKVFiles(
 					}
 				}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
+				return rc.logRestoreManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
 					supportBatch, cipherInfo, masterKeys)
 			})
 		}
 	}
 
-	rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+	rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
@@ -590,7 +788,7 @@ func (rc *LogClient) initSchemasMap(
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-	execCtx := rc.se.GetSessionCtx().GetRestrictedSQLExecutor()
+	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
@@ -1246,36 +1444,45 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 	return nil
 }
 
-func (rc *LogClient) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int64]*restoreutils.RewriteRules, g glue.Glue, store kv.Storage) (LogIter, error) {
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
-	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
+func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
+	ctx context.Context,
+	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
+	rules map[int64]*restoreutils.RewriteRules,
+	checkpointSets map[string]struct{},
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
 	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
-	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
+	wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
+	}
+	strategy := NewCompactedFileSplitStrategy(rules, checkpointSets, updateStatsFn)
+	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
 }
 
-func (rc *LogClient) generateKvFilesSkipMap(ctx context.Context, downstreamIdset map[int64]struct{}) (*LogFilesSkipMap, error) {
-	skipMap := NewLogFilesSkipMap()
-	t, err := checkpoint.LoadCheckpointDataForLogRestore(
-		ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor(), func(groupKey checkpoint.LogRestoreKeyType, off checkpoint.LogRestoreValueMarshaled) {
-			for tableID, foffs := range off.Foffs {
-				// filter out the checkpoint data of dropped table
-				if _, exists := downstreamIdset[tableID]; exists {
-					for _, foff := range foffs {
-						skipMap.Insert(groupKey, off.Goff, foff)
-					}
-				}
-			}
-		})
+// WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
+// It uses a region splitter to handle the splitting logic based on the provided rules.
+func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
+	ctx context.Context,
+	logIter LogIter,
+	execCtx sqlexec.RestrictedSQLExecutor,
+	rules map[int64]*restoreutils.RewriteRules,
+	updateStatsFn func(uint64, uint64),
+	splitSize uint64,
+	splitKeys int64,
+) (LogIter, error) {
+	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
+		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
+	}
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	summary.AdjustStartTimeToEarlierTime(t)
-	return skipMap, nil
+	return wrapper.WithSplit(ctx, logIter, strategy), nil
 }
 
 func WrapLogFilesIterWithCheckpointFailpoint(
@@ -1304,27 +1511,6 @@ func WrapLogFilesIterWithCheckpointFailpoint(
 	return logIter, nil
 }
 
-func (rc *LogClient) WrapLogFilesIterWithCheckpoint(
-	ctx context.Context,
-	logIter LogIter,
-	downstreamIdset map[int64]struct{},
-	updateStats func(kvCount, size uint64),
-	onProgress func(),
-) (LogIter, error) {
-	skipMap, err := rc.generateKvFilesSkipMap(ctx, downstreamIdset)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return iter.FilterOut(logIter, func(d *LogDataFileInfo) bool {
-		if skipMap.NeedSkip(d.MetaDataGroupName, d.OffsetInMetaGroup, d.OffsetInMergedGroup) {
-			onProgress()
-			updateStats(uint64(d.NumberOfEntries), d.Length)
-			return true
-		}
-		return false
-	}), nil
-}
-
 const (
 	alterTableDropIndexSQL         = "ALTER TABLE %n.%n DROP INDEX %n"
 	alterTableAddIndexFormat       = "ALTER TABLE %%n.%%n ADD INDEX %%n(%s)"
@@ -1339,7 +1525,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	if rc.useCheckpoint {
 		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.se.GetSessionCtx().GetRestrictedSQLExecutor())
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1404,7 +1590,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	}
 
 	if rc.useCheckpoint && len(sqls) > 0 {
-		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
 		}); err != nil {
 			return sqls, false, errors.Trace(err)
@@ -1466,7 +1652,7 @@ NEXTSQL:
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.se.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := rc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1476,7 +1662,7 @@ NEXTSQL:
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := rc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Inc()
@@ -1549,7 +1735,7 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 			// trim the ',' behind the query.Sql if exists
 			// that's when the rewrite rule of the last table id is not exist
 			sql := strings.TrimSuffix(query.Sql, ",")
-			if err := rc.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+			if err := rc.unsafeSession.ExecuteInternal(ctx, sql, paramsList...); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1577,7 +1763,7 @@ func (rc *LogClient) saveIDMap(
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	err = rc.se.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1587,7 +1773,7 @@ func (rc *LogClient) saveIDMap(
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
-		err := rc.se.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
+		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1596,7 +1782,7 @@ func (rc *LogClient) saveIDMap(
 
 	if rc.useCheckpoint {
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := checkpoint.SaveCheckpointProgress(ctx, rc.se, &checkpoint.CheckpointProgress{
+		if err := checkpoint.SaveCheckpointProgress(ctx, rc.unsafeSession, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersist,
 		}); err != nil {
 			return errors.Trace(err)
@@ -1613,7 +1799,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	ctx context.Context,
 	kvClient kv.Client,
 	pdClient pd.Client,
-	idrules map[int64]int64,
 	rewriteRules map[int64]*restoreutils.RewriteRules,
 ) (finalErr error) {
 	startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
@@ -1650,11 +1835,11 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	infoSchema := rc.GetDomain().InfoSchema()
 	// downstream id -> upstream id
 	reidRules := make(map[int64]int64)
-	for upstreamID, downstreamID := range idrules {
-		reidRules[downstreamID] = upstreamID
+	for upstreamID, r := range rewriteRules {
+		reidRules[r.NewTableID] = upstreamID
 	}
-	for upstreamID, downstreamID := range idrules {
-		newTable, ok := infoSchema.TableByID(ctx, downstreamID)
+	for upstreamID, r := range rewriteRules {
+		newTable, ok := infoSchema.TableByID(ctx, r.NewTableID)
 		if !ok {
 			// a dropped table
 			continue
@@ -1714,53 +1899,4 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
-}
-
-type LogFilesIterWithSplitHelper struct {
-	iter   LogIter
-	helper *split.LogSplitHelper
-	buffer []*LogDataFileInfo
-	next   int
-}
-
-const SplitFilesBufferSize = 4096
-
-func NewLogFilesIterWithSplitHelper(iter LogIter, rules map[int64]*restoreutils.RewriteRules, client split.SplitClient, splitSize uint64, splitKeys int64) LogIter {
-	return &LogFilesIterWithSplitHelper{
-		iter:   iter,
-		helper: split.NewLogSplitHelper(rules, client, splitSize, splitKeys),
-		buffer: nil,
-		next:   0,
-	}
-}
-
-func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.IterResult[*LogDataFileInfo] {
-	if splitIter.next >= len(splitIter.buffer) {
-		splitIter.buffer = make([]*LogDataFileInfo, 0, SplitFilesBufferSize)
-		for r := splitIter.iter.TryNext(ctx); !r.Finished; r = splitIter.iter.TryNext(ctx) {
-			if r.Err != nil {
-				return r
-			}
-			f := r.Item
-			splitIter.helper.Merge(f.DataFileInfo)
-			splitIter.buffer = append(splitIter.buffer, f)
-			if len(splitIter.buffer) >= SplitFilesBufferSize {
-				break
-			}
-		}
-		splitIter.next = 0
-		if len(splitIter.buffer) == 0 {
-			return iter.Done[*LogDataFileInfo]()
-		}
-		log.Info("start to split the regions")
-		startTime := time.Now()
-		if err := splitIter.helper.Split(ctx); err != nil {
-			return iter.Throw[*LogDataFileInfo](errors.Trace(err))
-		}
-		log.Info("end to split the regions", zap.Duration("takes", time.Since(startTime)))
-	}
-
-	res := iter.Emit(splitIter.buffer[splitIter.next])
-	splitIter.next += 1
-	return res
 }
