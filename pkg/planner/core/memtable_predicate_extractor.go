@@ -553,7 +553,15 @@ func (helper extractHelper) extractTimeRange(
 			remained = append(remained, expr)
 			continue
 		}
-
+		fnArgs := fn.GetArgs()
+		var reverse bool
+		if len(fnArgs) == 2 {
+			_, isConst1 := fnArgs[0].(*expression.Constant)
+			_, isCol2 := fnArgs[1].(*expression.Column)
+			if isConst1 && isCol2 {
+				reverse = true
+			}
+		}
 		var colName string
 		var datums []types.Datum
 		fnName := helper.getTimeFunctionName(fn)
@@ -592,20 +600,44 @@ func (helper extractHelper) extractTimeRange(
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = max(startTime, timestamp+int64(time.Millisecond))
-			case ast.GE:
-				startTime = max(startTime, timestamp)
-			case ast.LT:
-				if endTime == 0 {
-					endTime = timestamp - int64(time.Millisecond)
+				if reverse {
+					endTime = max(endTime, timestamp+int64(time.Millisecond))
 				} else {
-					endTime = min(endTime, timestamp-int64(time.Millisecond))
+					startTime = min(startTime, timestamp+int64(time.Millisecond))
+				}
+			case ast.GE:
+				if reverse {
+					startTime = max(startTime, timestamp)
+				} else {
+					endTime = max(endTime, timestamp)
+				}
+			case ast.LT:
+				if reverse {
+					if startTime == 0 {
+						startTime = timestamp - int64(time.Millisecond)
+					} else {
+						startTime = min(startTime, timestamp-int64(time.Millisecond))
+					}
+				} else {
+					if endTime == 0 {
+						endTime = timestamp - int64(time.Millisecond)
+					} else {
+						endTime = min(endTime, timestamp-int64(time.Millisecond))
+					}
 				}
 			case ast.LE:
-				if endTime == 0 {
-					endTime = timestamp
+				if reverse {
+					if startTime == 0 {
+						startTime = timestamp
+					} else {
+						startTime = min(startTime, timestamp)
+					}
 				} else {
-					endTime = min(endTime, timestamp)
+					if endTime == 0 {
+						endTime = timestamp
+					} else {
+						endTime = min(endTime, timestamp)
+					}
 				}
 			default:
 				remained = append(remained, expr)
