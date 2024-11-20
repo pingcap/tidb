@@ -68,6 +68,7 @@ type Scheduler interface {
 	// Close closes the scheduler, should be called if Init returns nil.
 	Close()
 	// GetTask returns the task that the scheduler is managing.
+	// the task is for read only, it might be accessed by multiple goroutines
 	GetTask() *proto.Task
 	Extension
 }
@@ -129,6 +130,12 @@ func (s *BaseScheduler) GetTask() *proto.Task {
 	return s.task.Load()
 }
 
+// GetTaskClone returns a clone of the task.
+func (s *BaseScheduler) GetTaskClone() *proto.Task {
+	clone := *s.GetTask()
+	return &clone
+}
+
 // refreshTaskIfNeeded fetch task state from tidb_global_task table.
 func (s *BaseScheduler) refreshTaskIfNeeded() error {
 	task := s.GetTask()
@@ -179,7 +186,7 @@ func (s *BaseScheduler) scheduleTask() {
 			s.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		task := *s.GetTask()
+		task := s.GetTaskClone()
 		// TODO: refine failpoints below.
 		failpoint.Inject("exitScheduler", func() {
 			failpoint.Return()
@@ -200,7 +207,7 @@ func (s *BaseScheduler) scheduleTask() {
 					s.logger.Error("pause task failed", zap.Error(err))
 				}
 				task.State = proto.TaskStatePausing
-				s.task.Store(&task)
+				s.task.Store(task)
 			}
 		})
 
@@ -211,7 +218,7 @@ func (s *BaseScheduler) scheduleTask() {
 					s.logger.Error("pause task failed", zap.Error(err))
 				}
 				task.State = proto.TaskStatePausing
-				s.task.Store(&task)
+				s.task.Store(task)
 			}
 		})
 
@@ -280,7 +287,7 @@ func (s *BaseScheduler) onCancelling() error {
 
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	s.logger.Info("on pausing state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -299,7 +306,7 @@ func (s *BaseScheduler) onPausing() error {
 		return err
 	}
 	task.State = proto.TaskStatePaused
-	s.task.Store(&task)
+	s.task.Store(task)
 	return nil
 }
 
@@ -314,7 +321,7 @@ func (s *BaseScheduler) onPaused() error {
 
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	s.logger.Info("on resuming state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -329,7 +336,7 @@ func (s *BaseScheduler) onResuming() error {
 			return err
 		}
 		task.State = proto.TaskStateRunning
-		s.task.Store(&task)
+		s.task.Store(task)
 		return nil
 	}
 
@@ -338,7 +345,7 @@ func (s *BaseScheduler) onResuming() error {
 
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	s.logger.Debug("on reverting state", zap.Stringer("state", task.State),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)))
 	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
@@ -348,18 +355,18 @@ func (s *BaseScheduler) onReverting() error {
 	}
 	runnableSubtaskCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
 	if runnableSubtaskCnt == 0 {
-		if err = s.OnDone(s.ctx, s, &task); err != nil {
+		if err = s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
 		if err = s.taskMgr.RevertedTask(s.ctx, task.ID); err != nil {
 			return errors.Trace(err)
 		}
 		task.State = proto.TaskStateReverted
-		s.task.Store(&task)
+		s.task.Store(task)
 		return nil
 	}
 	// Wait all subtasks in this step finishes.
-	s.OnTick(s.ctx, &task)
+	s.OnTick(s.ctx, task)
 	s.logger.Debug("on reverting state, this task keeps current state", zap.Stringer("state", task.State))
 	return nil
 }
@@ -412,14 +419,14 @@ func (s *BaseScheduler) onFinished() {
 }
 
 func (s *BaseScheduler) switch2NextStep() error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	nextStep := s.GetNextStep(&task.TaskBase)
 	s.logger.Info("switch to next step",
 		zap.String("current-step", proto.Step2Str(task.Type, task.Step)),
 		zap.String("next-step", proto.Step2Str(task.Type, nextStep)))
 
 	if nextStep == proto.StepDone {
-		if err := s.OnDone(s.ctx, s, &task); err != nil {
+		if err := s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
 		}
 		if err := s.taskMgr.SucceedTask(s.ctx, task.ID); err != nil {
@@ -427,7 +434,7 @@ func (s *BaseScheduler) switch2NextStep() error {
 		}
 		task.Step = nextStep
 		task.State = proto.TaskStateSucceed
-		s.task.Store(&task)
+		s.task.Store(task)
 		return nil
 	}
 
@@ -443,19 +450,19 @@ func (s *BaseScheduler) switch2NextStep() error {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, &task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
 	if err != nil {
 		s.logger.Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePlanErr(err)
 	}
 
-	if err = s.scheduleSubTask(&task, nextStep, metas, eligibleNodes); err != nil {
+	if err = s.scheduleSubTask(task, nextStep, metas, eligibleNodes); err != nil {
 		return err
 	}
 	task.Step = nextStep
 	task.State = proto.TaskStateRunning
 	// and OnNextSubtasksBatch might change meta of task.
-	s.task.Store(&task)
+	s.task.Store(task)
 	return nil
 }
 
@@ -521,7 +528,7 @@ func (s *BaseScheduler) scheduleSubTask(
 }
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	s.logger.Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		return err
@@ -530,13 +537,13 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 }
 
 func (s *BaseScheduler) revertTask(taskErr error) error {
-	task := *s.GetTask()
+	task := s.GetTaskClone()
 	if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 		return err
 	}
 	task.State = proto.TaskStateReverting
 	task.Error = taskErr
-	s.task.Store(&task)
+	s.task.Store(task)
 	return nil
 }
 
