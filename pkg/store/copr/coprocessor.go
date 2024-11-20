@@ -1328,7 +1328,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			remain.firstReadType = req.ReadType
 		}
 	}
-	worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
 	return remains, err
 }
 
