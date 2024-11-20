@@ -261,7 +261,7 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	distribution := make([]int64, 9)
 	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
-		distribution[4]++ // total table count
+		distribution[7]++ // total table count
 		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
 		if !isEligibleForAnalysis {
 			uneligibleAnalyze++
