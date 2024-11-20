@@ -1832,22 +1832,22 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 }
 
 func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
-	var event PrivilegeEvent
+	var msg PrivilegeEvent
 	for _, event := range resp.Events {
 		if event.Kv != nil {
 			val := event.Kv.Value
 			if len(val) > 0 {
-				err := json.Unmarshal(val, &event)
+				err := json.Unmarshal(val, &msg)
 				if err == nil {
 					break
 				}
 			}
 		}
 	}
-	if len(event.UserList) == 0 {
-		event.All = true
+	if len(msg.UserList) == 0 {
+		msg.All = true
 	}
-	return event
+	return msg
 }
 
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
