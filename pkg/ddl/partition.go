@@ -2626,7 +2626,6 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
-
 	return ver, errors.Trace(err)
 }
 
