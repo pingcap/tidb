@@ -883,6 +883,7 @@ func buildMemIndexMergeReader(ctx context.Context, us *UnionScanExec, indexMerge
 
 type memRowsIter interface {
 	Next() ([]types.Datum, error)
+	// Close will release the snapshot it holds, so be sure to call Close.
 	Close()
 }
 
