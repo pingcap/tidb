@@ -191,7 +191,10 @@ func RestorePreWork(
 
 	if switchToImport {
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		switcher.GoSwitchToImportMode(ctx)
+		err := switcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return pdutil.Nop, nil, err
+		}
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)

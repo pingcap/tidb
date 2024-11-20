@@ -284,7 +284,10 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	importModeSwitcher.GoSwitchToImportMode(ctx)
+	err := importModeSwitcher.GoSwitchToImportMode(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
 		if switchErr != nil {
