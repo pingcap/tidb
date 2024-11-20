@@ -104,8 +104,8 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	wg.Wait()
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
-	require.True(t, strings.Contains(rows[0][3].(string) /* job_type */, "ingest"))
-	require.True(t, strings.Contains(rows[1][3].(string) /* job_type */, "ingest"))
+	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
+	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
 
@@ -160,7 +160,7 @@ func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
@@ -204,7 +204,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 		tk.MustExec(c)
 		rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 		require.Len(t, rows, 1)
-		jobTp := rows[0][3].(string)
+		jobTp := rows[0][12].(string)
 		require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 		addIndexDone.Store(true)
 		wg.Wait()
@@ -260,7 +260,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
@@ -290,7 +290,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 	ingest.ImporterRangeConcurrencyForTest = nil
 }
@@ -307,7 +307,7 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
@@ -335,7 +335,7 @@ func TestAddIndexIngestRestoredData(t *testing.T) {
 	tk.MustExec("admin check table tbl_5;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
@@ -444,7 +444,7 @@ func TestAddIndexMockFlushError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
