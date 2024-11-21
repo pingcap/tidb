@@ -37,7 +37,7 @@ func NewTableInfoGetter() TableInfoGetter {
 
 // TableInfoByID returns the table info specified by the physicalID.
 // If the physicalID is corresponding to a partition, return its parent table.
-func (c *tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
+func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
 	tbl, _, _ := is.FindTableByPartitionID(physicalID)
 	return tbl, tbl == nil
 }
