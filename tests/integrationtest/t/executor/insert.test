@@ -1407,8 +1407,8 @@ show warnings;
 SELECT * FROM t1 order by f1;
 
 SET sql_mode='';
+-- error 1048
 INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;
-show warnings;
 SELECT * FROM t1 order by f1;
 set sql_mode=default;
 
@@ -1620,3 +1620,27 @@ insert into parent values (2, 3) on duplicate key update ref = 3;
 --enable_warnings
 insert ignore into parent values (2, 3) on duplicate key update ref = 3;
 --disable_warnings
+
+# TestIssue55457
+drop table if exists t1, t2;
+create table t1 (id int primary key, col1 varchar(10) not null default '');
+create table t2 (id int primary key, col1 varchar(10));
+insert into t2 values (1, null);
+insert ignore into t1 values(5, null);
+set session sql_mode = '';
+-- error 1048
+insert into t1 values(1, null);
+-- error 1048
+insert into t1 set id = 1, col1 = null;
+-- error 1048
+insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null;
+insert t1 VALUES (5, 5), (6, null) ON DUPLICATE KEY UPDATE col1 = null;
+select * from t1;
+insert into t1 select * from t2;
+show warnings;
+insert into t1 values(2, null), (3, 3), (4, 4);
+show warnings;
+update t1 set col1 = null where id = 3;
+show warnings;
+insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null;
+select * from t1;
