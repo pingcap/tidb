@@ -2007,7 +2007,11 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetStaticType())
+		castToTP := col.GetStaticType()
+		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
