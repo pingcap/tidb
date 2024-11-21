@@ -237,7 +237,7 @@ test_backup_encrypted_restore_unencrypted() {
     # Insert additional test data
     insert_additional_data "insert_after_full_backup" || { echo "Failed to insert additional data"; exit 1; }
 
-    wait_log_checkpoint_advance || { echo "Failed to wait for log checkpoint"; exit 1; }
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME || { echo "Failed to wait for log checkpoint"; exit 1; }
 
 
     # Stop and clean the cluster

@@ -72,6 +72,7 @@ echo "incremental_delete_range_count: $incremental_delete_range_count"
 
 # wait checkpoint advance
 . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
+current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
 
 # dump some info from upstream cluster
 # ...
