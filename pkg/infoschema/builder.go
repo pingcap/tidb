@@ -370,7 +370,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -379,7 +379,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionAlterTablePlacement:
+	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
 }
