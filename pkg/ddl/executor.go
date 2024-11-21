@@ -4971,8 +4971,8 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
 		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
 		zap.String("targetScope", reorgMeta.TargetScope),
-		zap.Int("concurrency", reorgMeta.GetConcurrency()),
-		zap.Int("batchSize", reorgMeta.GetBatchSize()),
+		zap.Int("concurrency", reorgMeta.GetConcurrency(int(variable.GetDDLReorgWorkerCounter()))),
+		zap.Int("batchSize", reorgMeta.GetBatchSize(int(variable.GetDDLReorgBatchSize()))),
 	)
 	return reorgMeta, nil
 }
