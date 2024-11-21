@@ -3163,6 +3163,7 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "COMMENTS", mysql.TypeVarchar, 65535))
 	return schema.col2Schema(), schema.names
 }
 

@@ -4324,13 +4324,13 @@ TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
 insert into t values (0,0),(10,10),(20,20),(30,30);
 alter table t add index idx1(b);
 admin show ddl jobs 1;
-JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE
-<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	4	<create_time>	<start_time>	<end_time>	synced
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	4	<create_time>	<start_time>	<end_time>	synced	<comments>
 insert into t values (1,0),(2,10),(3,20),(4,30);
 alter table t add index idx2(b);
 admin show ddl jobs 1;
-JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE
-<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	8	<create_time>	<start_time>	<end_time>	synced
+JOB_ID	DB_NAME	TABLE_NAME	JOB_TYPE	SCHEMA_STATE	SCHEMA_ID	TABLE_ID	ROW_COUNT	CREATE_TIME	START_TIME	END_TIME	STATE	COMMENTS
+<job_id>	executor__executor	t	<type>	public	<schema_id>	<table_id>	8	<create_time>	<start_time>	<end_time>	synced	<comments>
 drop table if exists t;
 create table t(a int, b int as(-a));
 insert into t(a) values(1), (3), (7);
