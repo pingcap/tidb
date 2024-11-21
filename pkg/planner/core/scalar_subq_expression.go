@@ -233,16 +233,14 @@ func (s *ScalarSubQueryExpr) Hash64(h base2.Hasher) {
 
 // Equals implements the HashEquals.<1st> interface.
 func (s *ScalarSubQueryExpr) Equals(other any) bool {
-	if other == nil {
+	s2, ok := other.(*ScalarSubQueryExpr)
+	if !ok {
 		return false
 	}
-	var s2 *ScalarSubQueryExpr
-	switch x := other.(type) {
-	case *ScalarSubQueryExpr:
-		s2 = x
-	case ScalarSubQueryExpr:
-		s2 = &x
-	default:
+	if s == nil {
+		return s2 == nil
+	}
+	if s2 == nil {
 		return false
 	}
 	return s.scalarSubqueryColID == s2.scalarSubqueryColID

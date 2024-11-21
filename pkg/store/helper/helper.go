@@ -76,6 +76,8 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
 	GetPDHTTPClient() pd.Client
+	GetOption(any) (any, bool)
+	SetOption(any, any)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
@@ -383,7 +385,6 @@ type HotTableIndex struct {
 func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
-		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {

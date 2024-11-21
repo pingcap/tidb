@@ -38,17 +38,17 @@ import (
 
 // LogicalAggregation represents an aggregate plan.
 type LogicalAggregation struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	AggFuncs     []*aggregation.AggFuncDesc
-	GroupByItems []expression.Expression
+	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
+	GroupByItems []expression.Expression    `hash64-equals:"true"`
 
 	// PreferAggType And PreferAggToCop stores aggregation hint information.
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column
-	InputCount         float64 // InputCount is the input count of this plan.
+	PossibleProperties [][]*expression.Column `hash64-equals:"true"`
+	InputCount         float64                // InputCount is the input count of this plan.
 
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
@@ -141,7 +141,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, aggrFunc.Args, nil)
 
 		var cols []*expression.Column
-		aggrFunc.OrderByItems, cols = utilfuncp.PruneByItems(la, aggrFunc.OrderByItems, opt)
+		aggrFunc.OrderByItems, cols = pruneByItems(la, aggrFunc.OrderByItems, opt)
 		selfUsedCols = append(selfUsedCols, cols...)
 	}
 	if len(la.AggFuncs) == 0 || (!allFirstRow && allRemainFirstRow) {
@@ -703,7 +703,10 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
+			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
+			if err != nil {
+				return false
+			}
 			if con, ok := expr.(*expression.Constant); !ok || !con.Value.IsNull() {
 				return false
 			}

@@ -234,7 +234,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -256,7 +256,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), false)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -277,7 +277,7 @@ func TestAddIngestRecorder(t *testing.T) {
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, "a"]`),
+			json.RawMessage(`[1, false, [], false]`),
 		), true)
 		require.NoError(t, err)
 		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
@@ -375,7 +375,7 @@ func TestIndexesKind(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)
@@ -472,7 +472,7 @@ func TestRewriteTableID(t *testing.T) {
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x", "y"}),
 		},
-		json.RawMessage(`[1, "a"]`),
+		json.RawMessage(`[1, false, [], false]`),
 	), false)
 	require.NoError(t, err)
 	err = recorder.UpdateIndexInfo(infoSchema)

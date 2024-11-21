@@ -426,13 +426,12 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	s.clients = make([]*storage.Client, gcsClientCnt)
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := range s.clients {
-		i := i
 		eg.Go(func() error {
 			client, err := storage.NewClient(egCtx, s.clientOps...)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			client.SetRetry(storage.WithErrorFunc(shouldRetry))
+			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 			s.clients[i] = client
 			return nil
 		})

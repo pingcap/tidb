@@ -54,7 +54,11 @@ func TestSessionEvalContextBasic(t *testing.T) {
 	ctx.ResetSessionAndStmtTimeZone(time.FixedZone("UTC+11", 11*3600))
 	vars.SQLMode = mysql.ModeStrictTransTables | mysql.ModeNoZeroDate
 	sc.SetTypeFlags(types.FlagIgnoreInvalidDateErr | types.FlagSkipUTF8Check)
-	sc.SetErrLevels(errctx.LevelMap{errctx.ErrGroupDupKey: errctx.LevelWarn, errctx.ErrGroupBadNull: errctx.LevelIgnore})
+	sc.SetErrLevels(errctx.LevelMap{
+		errctx.ErrGroupDupKey:    errctx.LevelWarn,
+		errctx.ErrGroupBadNull:   errctx.LevelIgnore,
+		errctx.ErrGroupNoDefault: errctx.LevelIgnore,
+	})
 	vars.CurrentDB = "db1"
 	vars.MaxAllowedPacket = 123456
 
@@ -262,6 +266,12 @@ func TestSessionEvalContextOptProps(t *testing.T) {
 	require.False(t, ddlInfoProvider())
 	ctx.SetIsDDLOwner(true)
 	require.True(t, ddlInfoProvider())
+
+	// test for OptPropPrivilegeChecker
+	privCheckerProvider := getProvider[expropt.PrivilegeCheckerProvider](t, impl, exprctx.OptPropPrivilegeChecker)
+	privChecker := privCheckerProvider()
+	require.NotNil(t, privChecker)
+	require.Same(t, impl, privChecker)
 }
 
 func TestSessionBuildContext(t *testing.T) {

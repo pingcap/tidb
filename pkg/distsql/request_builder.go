@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -340,6 +341,7 @@ func (builder *RequestBuilder) SetFromSessionVars(dctx *distsqlctx.DistSQLContex
 	builder.Request.StoreBusyThreshold = dctx.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = dctx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = dctx.TiKVClientReadTimeout
+	builder.Request.MaxExecutionTime = dctx.MaxExecutionTime
 	return builder
 }
 
@@ -749,6 +751,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 		krs[i] = make([]kv.KeyRange, 0, len(ranges))
 	}
 
+	if memTracker != nil {
+		memTracker.Consume(int64(unsafe.Sizeof(kv.KeyRange{})) * int64(len(ranges)))
+	}
 	const checkSignalStep = 8
 	var estimatedMemUsage int64
 	// encodeIndexKey and EncodeIndexSeekKey is time-consuming, thus we need to
@@ -776,6 +781,9 @@ func indexRangesToKVWithoutSplit(dctx *distsqlctx.DistSQLContext, tids []int64, 
 			}
 			if interruptSignal != nil && interruptSignal.Load().(bool) {
 				return kv.NewPartitionedKeyRanges(nil), nil
+			}
+			if memTracker != nil {
+				memTracker.HandleKillSignal()
 			}
 		}
 	}
@@ -821,6 +829,18 @@ func BuildTableRanges(tbl *model.TableInfo) ([]kv.KeyRange, error) {
 	}
 
 	ranges := make([]kv.KeyRange, 0, len(pis.Definitions)*(len(tbl.Indices)+1)+1)
+	// Handle global index ranges
+	for _, idx := range tbl.Indices {
+		if idx.State != model.StatePublic || !idx.Global {
+			continue
+		}
+		idxRanges, err := IndexRangesToKVRanges(nil, tbl.ID, idx.ID, ranger.FullRange())
+		if err != nil {
+			return nil, err
+		}
+		ranges = idxRanges.AppendSelfTo(ranges)
+	}
+
 	for _, def := range pis.Definitions {
 		rgs, err := appendRanges(tbl, def.ID)
 		if err != nil {
@@ -847,7 +867,7 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	retRanges = kvRanges.AppendSelfTo(retRanges)
 
 	for _, index := range tbl.Indices {
-		if index.State != model.StatePublic {
+		if index.State != model.StatePublic || index.Global {
 			continue
 		}
 		ranges = ranger.FullRange()

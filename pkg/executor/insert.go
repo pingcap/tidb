@@ -47,7 +47,6 @@ import (
 type InsertExec struct {
 	*InsertValues
 	OnDuplicate    []*expression.Assignment
-	IgnoreErr      bool
 	evalBuffer4Dup chunk.MutRow
 	curInsertVals  chunk.MutRow
 	row4Update     []types.Datum
@@ -92,7 +91,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		if err != nil {
 			return err
 		}
-	} else if e.IgnoreErr {
+	} else if e.ignoreErr {
 		err := e.batchCheckAndInsert(ctx, rows, e.addRecord, false)
 		if err != nil {
 			return err
@@ -194,7 +193,7 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, dupKeyCheck table.DupKeyCheckMode) error {
+func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, dupKeyCheck table.DupKeyCheckMode, autoColIdx int) error {
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -205,7 +204,7 @@ func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Tr
 		extraCols = e.Ctx().GetSessionVars().CurrInsertBatchExtraCols[idxInBatch]
 	}
 
-	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, dupKeyCheck)
+	err = e.doDupRowUpdate(ctx, handle, oldRow, row.row, extraCols, e.OnDuplicate, idxInBatch, dupKeyCheck, autoColIdx)
 	if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
 		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
 		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
@@ -242,12 +241,17 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	// Though it is in an insert statement, `ON DUP KEY UPDATE` follows the dup-key check behavior of update.
 	// For example, it will ignore variable `tidb_constraint_check_in_place`, see the test case:
 	// https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
-	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreErr)
+	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.ignoreErr)
 	// Do not use `updateDupKeyCheck` for `AddRecord` because it is not optimized for insert.
 	// It seems that we can just use `DupKeyCheckSkip` here because all constraints are checked.
 	// But we still use `optimizeDupKeyCheckForNormalInsert` to make the refactor same behavior with the original code.
 	// TODO: just use `DupKeyCheckSkip` here.
 	addRecordDupKeyCheck := optimizeDupKeyCheckForNormalInsert(e.Ctx().GetSessionVars(), txn)
+
+	_, autoColIdx, found := findAutoIncrementColumn(e.Table)
+	if !found {
+		autoColIdx = -1
+	}
 
 	for i, r := range toBeCheckedRows {
 		if r.handleKey != nil {
@@ -256,7 +260,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				return err
 			}
 
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
 			if err == nil {
 				continue
 			}
@@ -273,7 +277,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			if handle == nil {
 				continue
 			}
-			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck)
+			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate, updateDupKeyCheck, autoColIdx)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
@@ -427,7 +431,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 
 // doDupRowUpdate updates the duplicate row.
 func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, dupKeyMode table.DupKeyCheckMode) error {
+	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, dupKeyMode table.DupKeyCheckMode, autoColIdx int) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -474,9 +478,31 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode)
+	if e.ignoreErr {
+		ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks, newData)
+		if err != nil {
+			return err
+		}
+
+		// meets an error, skip this row.
+		if ignored {
+			return nil
+		}
+	}
+	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
 	if err != nil {
 		return err
+	}
+
+	if autoColIdx >= 0 {
+		if e.Ctx().GetSessionVars().StmtCtx.AffectedRows() > 0 {
+			// If "INSERT ... ON DUPLICATE KEY UPDATE" duplicate and update a row,
+			// auto increment value should be set correctly for mysql_insert_id()
+			// See https://github.com/pingcap/tidb/issues/55965
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = newData[autoColIdx].GetUint64()
+		} else {
+			e.Ctx().GetSessionVars().StmtCtx.InsertID = 0
+		}
 	}
 	return nil
 }
@@ -488,7 +514,7 @@ func (e *InsertExec) setMessage() {
 	if e.SelectExec != nil || numRecords > 1 {
 		numWarnings := stmtCtx.WarningCount()
 		var numDuplicates uint64
-		if e.IgnoreErr {
+		if e.ignoreErr {
 			// if ignoreErr
 			numDuplicates = numRecords - stmtCtx.CopiedRows()
 		} else {

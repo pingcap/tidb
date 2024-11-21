@@ -19,7 +19,7 @@ insert into t values (1,"a"),(2,"bye"),(3,"Hi");
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -29,7 +29,7 @@ ALTER TABLE t REMOVE PARTITIONING;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -49,7 +49,7 @@ Warning	1105	The statistics of new partitions will be outdated after reorganizin
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -62,7 +62,7 @@ alter table t partition by hash(a) partitions 7;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -72,7 +72,7 @@ alter table t partition by key(a) partitions 5;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   `b` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`)
@@ -85,20 +85,20 @@ CREATE TABLE test.issue50972_3 (id3 int) PARTITION BY LIST (test.issue50972_3.id
 show create table test.issue50972_1;
 Table	Create Table
 issue50972_1	CREATE TABLE `issue50972_1` (
-  `id1` int(11) DEFAULT NULL
+  `id1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`id1`) PARTITIONS 4
 show create table test.issue50972_2;
 Table	Create Table
 issue50972_2	CREATE TABLE `issue50972_2` (
-  `id2` int(11) DEFAULT NULL
+  `id2` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id2`)
 (PARTITION `p0` VALUES LESS THAN (6))
 show create table test.issue50972_3;
 Table	Create Table
 issue50972_3	CREATE TABLE `issue50972_3` (
-  `id3` int(11) DEFAULT NULL
+  `id3` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`id3`)
 (PARTITION `p0` VALUES IN (1,2))
@@ -112,20 +112,20 @@ ALTER TABLE test.issue50972_3 PARTITION BY LIST (test.issue50972_3.id3) ( PARTIT
 show create table test.issue50972_1;
 Table	Create Table
 issue50972_1	CREATE TABLE `issue50972_1` (
-  `id1` int(11) DEFAULT NULL
+  `id1` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`id1`) PARTITIONS 4
 show create table test.issue50972_2;
 Table	Create Table
 issue50972_2	CREATE TABLE `issue50972_2` (
-  `id2` int(11) DEFAULT NULL
+  `id2` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`id2`)
 (PARTITION `p0` VALUES LESS THAN (6))
 show create table test.issue50972_3;
 Table	Create Table
 issue50972_3	CREATE TABLE `issue50972_3` (
-  `id3` int(11) DEFAULT NULL
+  `id3` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`id3`)
 (PARTITION `p0` VALUES IN (1,2))
@@ -139,7 +139,7 @@ PARTITIONS 2;
 show create table k1;
 Table	Create Table
 k1	CREATE TABLE `k1` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `name` varchar(20) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -153,7 +153,7 @@ PARTITIONS 2;
 show create table k2;
 Table	Create Table
 k2	CREATE TABLE `k2` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `name` varchar(20) DEFAULT NULL,
   UNIQUE KEY `id` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -167,7 +167,7 @@ PARTITIONS 2;
 show create table k3;
 Table	Create Table
 k3	CREATE TABLE `k3` (
-  `id` int(11) NOT NULL,
+  `id` int NOT NULL,
   `name` varchar(20) DEFAULT NULL,
   UNIQUE KEY `id` (`id`),
   PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */

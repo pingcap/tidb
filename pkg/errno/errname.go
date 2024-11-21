@@ -432,7 +432,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrNoDefaultForViewField:                    mysql.Message("Field of view '%-.192s.%-.192s' underlying table doesn't have a default value", nil),
 	ErrSpNoRecursion:                            mysql.Message("Recursive stored functions and triggers are not allowed.", nil),
 	ErrTooBigScale:                              mysql.Message("Too big scale %d specified for column '%-.192s'. Maximum is %d.", nil),
-	ErrTooBigPrecision:                          mysql.Message("Too big precision %d specified for column '%-.192s'. Maximum is %d.", nil),
+	ErrTooBigPrecision:                          mysql.Message("Too-big precision %d specified for '%-.192s'. Maximum is %d.", nil),
 	ErrMBiggerThanD:                             mysql.Message("For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '%-.192s').", nil),
 	ErrWrongLockOfSystemTable:                   mysql.Message("You can't combine write-locking of system tables with other tables or lock types", nil),
 	ErrConnectToForeignDataSource:               mysql.Message("Unable to connect to foreign data source: %.64s", nil),
@@ -1078,7 +1078,9 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
 	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
 	ErrDeleteNotFoundColumn:             mysql.Message("Delete can not find column %s for table %s", nil),
-	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
+	ErrKeyTooLarge:                      mysql.Message("key is too large, the size of given key is %d", nil),
+
+	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),

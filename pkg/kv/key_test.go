@@ -146,6 +146,14 @@ func TestHandle(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "abc", d.GetString())
 	assert.Equal(t, "{100, abc}", ch.String())
+
+	ph1 := NewPartitionHandle(2, ih)
+	assert.True(t, ph1.Equal(ih))
+	assert.True(t, ih.Equal(ph1))
+
+	ph2 := NewPartitionHandle(1, ch2)
+	assert.True(t, ph2.Equal(ch2))
+	assert.True(t, ch2.Equal(ph2))
 }
 
 func TestPaddingHandle(t *testing.T) {
@@ -345,7 +353,7 @@ func TestKeyRangeDefinition(t *testing.T) {
 		StartKey: []byte("s2"),
 		EndKey:   []byte("e2"),
 	}}
-	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
+	require.Equal(t, int64(104), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {
@@ -396,7 +404,7 @@ func nativeIntMap(size int, handles []Handle) int {
 }
 
 func BenchmarkMemAwareHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
 		for i := 0; i < s.input; i++ {
@@ -418,7 +426,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 }
 
 func BenchmarkNativeHandleMap(b *testing.B) {
-	var sc stmtctx.StatementContext
+	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
 		for i := 0; i < s.input; i++ {

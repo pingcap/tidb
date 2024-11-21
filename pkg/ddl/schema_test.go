@@ -307,7 +307,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithSchemaLoader(domain),
 	)
 	det2 := de2.(ddl.ExecutorForTest)
-	err := d2.Start(pools.NewResourcePool(func() (pools.Resource, error) {
+	err := d2.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {
 		session := testkit.NewTestKit(t, store).Session()
 		session.GetSessionVars().CommonGlobalLoaded = true
 		return session, nil

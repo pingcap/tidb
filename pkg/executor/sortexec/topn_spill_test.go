@@ -376,6 +376,7 @@ func severalChunksInDiskCase(t *testing.T, topnExec *sortexec.TopNExec) {
 }
 
 func TestGenerateTopNResultsWhenSpillOnlyOnce(t *testing.T) {
+	//nolint:constructor
 	topnExec := &sortexec.TopNExec{}
 	topnExec.Limit = &plannercore.PhysicalLimit{}
 

@@ -20,9 +20,7 @@ package session
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -38,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -52,6 +51,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
+
+// StoreBootstrappedKey is used by store.G/SetOption to store related bootstrap context for kv.Storage.
+const StoreBootstrappedKey = "bootstrap"
 
 type domainMap struct {
 	mu      syncutil.Mutex
@@ -126,9 +128,6 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
-	// store.UUID()-> IfBootstrapped
-	storeBootstrapped     = make(map[string]bool)
-	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is lease of info schema, we use this to check whether info schema
 	// is valid in SchemaChecker. we also use half of it as info schema reload interval.
@@ -148,21 +147,7 @@ var (
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
 func ResetStoreForWithTiKVTest(store kv.Storage) {
 	domap.Delete(store)
-	unsetStoreBootstrapped(store.UUID())
-}
-
-func setStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	storeBootstrapped[storeUUID] = true
-}
-
-// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
-// currently this function only used for test.
-func unsetStoreBootstrapped(storeUUID string) {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
-	delete(storeBootstrapped, storeUUID)
+	store.SetOption(StoreBootstrappedKey, nil)
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.

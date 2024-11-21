@@ -31,16 +31,17 @@ func TestGroupHashEquals(t *testing.T) {
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.True(t, a.Equals(b))
 	require.True(t, a.Equals(&b))
-
+	require.True(t, (&a).Equals(&b))
+	require.False(t, a.Equals(b))
+	require.False(t, (&a).Equals(b))
 	// change the id.
 	b.groupID = 2
 	hasher2.Reset()
 	b.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, a.Equals(b))
 	require.False(t, a.Equals(&b))
+	require.False(t, (&a).Equals(&b))
 }
 
 func TestGroupExpressionHashEquals(t *testing.T) {
@@ -50,23 +51,23 @@ func TestGroupExpressionHashEquals(t *testing.T) {
 	child2 := &Group{groupID: 2}
 	a := GroupExpression{
 		group:       &Group{groupID: 3},
-		inputs:      []*Group{child1, child2},
+		Inputs:      []*Group{child1, child2},
 		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	b := GroupExpression{
 		// root group should change the hash.
 		group:       &Group{groupID: 4},
-		inputs:      []*Group{child1, child2},
+		Inputs:      []*Group{child1, child2},
 		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.True(t, a.Equals(b))
+	require.False(t, a.Equals(b))
 	require.True(t, a.Equals(&b))
 
 	// change the children order, like join commutative.
-	b.inputs = []*Group{child2, child1}
+	b.Inputs = []*Group{child2, child1}
 	hasher2.Reset()
 	b.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())

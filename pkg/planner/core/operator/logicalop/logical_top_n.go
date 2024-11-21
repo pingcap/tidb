@@ -32,12 +32,12 @@ import (
 type LogicalTopN struct {
 	BaseLogicalPlan
 
-	ByItems []*util.ByItems
+	ByItems []*util.ByItems `hash64-equals:"true"`
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
+	PreferLimitToCop bool                `hash64-equals:"true"`
 }
 
 // Init initializes LogicalTopN.
@@ -82,7 +82,7 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
-	lt.ByItems, cols = utilfuncp.PruneByItems(lt, lt.ByItems, opt)
+	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
 	lt.Children()[0], err = child.PruneColumns(parentUsedCols, opt)

@@ -218,7 +218,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc()), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -407,7 +407,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		State:      model.StatePublic,
 	}
 
-	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc(), 0), table)
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(table.SepAutoInc()), table)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{
@@ -497,7 +497,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 			AddRow(3, data3IndexKey, "uni_b", data3IndexValue, data3RowKey).
 			AddRow(4, data3IndexKey, "uni_b", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
+	mockDB.ExpectExec("INSERT IGNORE INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "test", nil, nil, data2RowKey, data2RowValue, 2,
 			0, "test", nil, nil, data4RowKey, data4RowValue, 2).
 		WillReturnResult(driver.ResultNoRows)

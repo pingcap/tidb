@@ -797,7 +797,7 @@ type mockImportClientFactory struct {
 	apiInvokeRecorder map[string][]uint64
 }
 
-func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+func (f *mockImportClientFactory) create(_ context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	for _, store := range f.stores {
 		if store.Id == storeID {
 			return f.createClientFn(store), nil
@@ -806,7 +806,7 @@ func (f *mockImportClientFactory) Create(_ context.Context, storeID uint64) (sst
 	return nil, fmt.Errorf("store %d not found", storeID)
 }
 
-func (f *mockImportClientFactory) Close() {}
+func (f *mockImportClientFactory) close() {}
 
 func TestMultiIngest(t *testing.T) {
 	allStores := []*metapb.Store{
@@ -2081,11 +2081,6 @@ func TestDoImport(t *testing.T) {
 	}
 	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	require.ErrorContains(t, err, "fatal error")
-	for _, v := range fakeRegionJobs {
-		for _, job := range v.jobs {
-			require.Len(t, job.injected, 0)
-		}
-	}
 }
 
 func TestRegionJobResetRetryCounter(t *testing.T) {

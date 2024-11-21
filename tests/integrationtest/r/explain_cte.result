@@ -25,7 +25,7 @@ CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_11(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_12	1.00	root		rows:1
-└─Projection_13(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection_13(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection_14	0.80	root		lt(Column#3, 10)
     └─CTETable_15	1.00	root		Scan on CTE_0
 explain with recursive cte(a) as (select c2 from t1 union select a+1 from cte where a < 10) select * from cte;
@@ -34,7 +34,7 @@ CTEFullScan_20	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int(11))->explain_cte.t1.c2
+└─Projection_16(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int)->explain_cte.t1.c2
   └─Selection_17	8000.00	root		lt(explain_cte.t1.c2, 10)
     └─CTETable_18	10000.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte;
@@ -43,7 +43,7 @@ CTEFullScan_29	2.00	root	CTE:cte1	data:CTE_2
 CTE_2	2.00	root		Recursive CTE
 ├─Projection_23(Seed Part)	1.00	root		1->Column#9
 │ └─TableDual_24	1.00	root		rows:1
-└─Projection_25(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint(1) BINARY)->Column#12
+└─Projection_25(Recursive Part)	0.80	root		cast(plus(Column#10, 1), bigint BINARY)->Column#12
   └─Selection_26	0.80	root		lt(Column#10, 10)
     └─CTETable_27	1.00	root		Scan on CTE_2
 explain with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
@@ -54,7 +54,7 @@ HashJoin_20	4.00	root		CARTESIAN inner join
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_13(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_14	1.00	root		rows:1
-└─Projection_15(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection_15(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection_16	0.80	root		lt(Column#3, 10)
     └─CTETable_17	1.00	root		Scan on CTE_0
 explain with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
@@ -67,7 +67,7 @@ CTE_0	2.00	root		Non-Recursive CTE
 CTE_1	2.00	root		Recursive CTE
 ├─Projection_16(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_17	1.00	root		rows:1
-└─Projection_18(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection_18(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection_19	0.80	root		lt(Column#3, 10)
     └─CTETable_20	1.00	root		Scan on CTE_1
 explain with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
@@ -78,13 +78,13 @@ HashJoin_37	16002.00	root		CARTESIAN inner join
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_21(Seed Part)	1.00	root		1->Column#2
 │ └─TableDual_22	1.00	root		rows:1
-└─Projection_23(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint(1) BINARY)->Column#5
+└─Projection_23(Recursive Part)	0.80	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
   └─Selection_24	0.80	root		lt(Column#3, 10)
     └─CTETable_25	1.00	root		Scan on CTE_0
 CTE_1	8001.00	root		Recursive CTE
 ├─TableReader_28(Seed Part)	10000.00	root		data:TableFullScan_27
 │ └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_31(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int(11))->explain_cte.t1.c2
+└─Projection_31(Recursive Part)	8000.00	root		cast(plus(explain_cte.t1.c2, 1), int)->explain_cte.t1.c2
   └─Selection_32	8000.00	root		lt(explain_cte.t1.c2, 10)
     └─CTETable_33	10000.00	root		Scan on CTE_1
 explain with q(a,b) as (select * from t1) select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
@@ -102,7 +102,7 @@ CTEFullScan_17	2.00	root	CTE:cte	data:CTE_0
 CTE_0	2.00	root		Recursive CTE
 ├─Projection_11(Seed Part)	1.00	root		1->Column#3, a1->Column#4
 │ └─TableDual_12	1.00	root		rows:1
-└─Projection_13(Recursive Part)	0.80	root		cast(plus(Column#5, 1), bigint(1) BINARY)->Column#9, cast(concat(Column#6, 1), var_string(21))->Column#10
+└─Projection_13(Recursive Part)	0.80	root		cast(plus(Column#5, 1), bigint BINARY)->Column#9, cast(concat(Column#6, 1), var_string(21))->Column#10
   └─Selection_14	0.80	root		lt(Column#5, 5)
     └─CTETable_15	1.00	root		Scan on CTE_0
 explain select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
@@ -124,7 +124,7 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int)->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 100 offset 100) select * from cte1;
 id	estRows	task	access object	operator info
@@ -132,7 +132,7 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:100, count:100)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int)->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1;
 id	estRows	task	access object	operator info
@@ -140,7 +140,7 @@ CTEFullScan_19	8001.00	root	CTE:cte1	data:CTE_0
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:0)
 ├─TableReader_13(Seed Part)	10000.00	root		data:TableFullScan_12
 │ └─TableFullScan_12	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
+└─Projection_16(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int)->explain_cte.t1.c1
   └─CTETable_17	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
 id	estRows	task	access object	operator info
@@ -152,7 +152,7 @@ HashJoin_25	6400.80	root		inner join, equal:[eq(explain_cte.t1.c1, explain_cte.t
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:1)
 ├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
 │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
+└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int)->explain_cte.t1.c1
   └─CTETable_22	10000.00	root		Scan on CTE_0
 explain with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 0 offset 0) select * from cte1 dt1 join cte1 dt2 on dt1.c1 = dt2.c1;
 id	estRows	task	access object	operator info
@@ -164,7 +164,7 @@ HashJoin_25	6400.80	root		inner join, equal:[eq(explain_cte.t1.c1, explain_cte.t
 CTE_0	8001.00	root		Recursive CTE, limit(offset:0, count:0)
 ├─TableReader_18(Seed Part)	10000.00	root		data:TableFullScan_17
 │ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int(11))->explain_cte.t1.c1
+└─Projection_21(Recursive Part)	10000.00	root		cast(plus(explain_cte.t1.c1, 1), int)->explain_cte.t1.c1
   └─CTETable_22	10000.00	root		Scan on CTE_0
 CREATE TABLE `customer` (
 `c_customer_sk` int(11) NOT NULL,
