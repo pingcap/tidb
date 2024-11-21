@@ -65,7 +65,7 @@ go_test(
     embed = [":distsql"],
     flaky = True,
     race = "on",
-    shard_count = 28,
+    shard_count = 29,
     deps = [
         "//pkg/distsql/context",
         "//pkg/errctx",
