@@ -68,6 +68,9 @@ var (
 	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
 	ErrTaskStateNotAllow = errors.New("task state not allow to do the operation")
 
+	// ErrTaskChanged is the error when task changed by other operation.
+	ErrTaskChanged = errors.New("task changed by other operation")
+
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
 	ErrSubtaskNotFound = errors.New("subtask not found")

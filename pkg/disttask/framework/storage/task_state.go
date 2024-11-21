@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -163,20 +164,22 @@ func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
 
 // ModifyTaskByID modifies the task by the task ID.
 func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error {
-	if param.PrevState != proto.TaskStatePending &&
-		param.PrevState != proto.TaskStateRunning &&
-		param.PrevState != proto.TaskStatePaused {
+	if !param.PrevState.CanMoveToModifying() {
 		return ErrTaskStateNotAllow
 	}
 	bytes, err := json.Marshal(param)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.WithNewSession(func(se sessionctx.Context) error {
-		_, err = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
-		if err != nil {
-			return err
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		task, err2 := mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		if err2 != nil {
+			return err2
 		}
+		if task.State != param.PrevState {
+			return ErrTaskChanged
+		}
+		failpoint.InjectCall("beforeMoveToModifying")
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_global_task
 			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
@@ -187,7 +190,10 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 			return err
 		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			return ErrTaskStateNotAllow
+			// the txn is pessimistic, it's possible that another txn has
+			// changed the task state before this txn commits and there is no
+			// write-conflict.
+			return ErrTaskChanged
 		}
 		return nil
 	})

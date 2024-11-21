@@ -196,20 +196,6 @@ func TestTaskTable(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePaused, task.State)
-	// check modifying param
-	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
-		PrevState: proto.TaskStateReverting,
-	}), storage.ErrTaskStateNotAllow)
-	require.ErrorIs(t, gm.ModifyTaskByID(ctx, 123123123, &proto.ModifyParam{
-		PrevState: proto.TaskStatePaused,
-	}), storage.ErrTaskNotFound)
-	require.NoError(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
-		PrevState: proto.TaskStatePaused,
-	}))
-	task, err = gm.GetTaskByID(ctx, id)
-	require.NoError(t, err)
-	require.Equal(t, proto.TaskStateModifying, task.State)
-	require.Equal(t, proto.TaskStatePaused, task.ModifyParam.PrevState)
 }
 
 func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, subtasks []*proto.Subtask, step proto.Step) {

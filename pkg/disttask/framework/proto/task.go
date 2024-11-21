@@ -94,6 +94,11 @@ func (s TaskState) String() string {
 	return string(s)
 }
 
+// CanMoveToModifying checks if current state can move to 'modifying' state.
+func (s TaskState) CanMoveToModifying() bool {
+	return s == TaskStatePending || s == TaskStateRunning || s == TaskStatePaused
+}
+
 const (
 	// TaskIDLabelName is the label name of task id.
 	TaskIDLabelName = "task_id"
