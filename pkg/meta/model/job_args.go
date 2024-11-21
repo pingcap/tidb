@@ -1328,10 +1328,10 @@ type IndexArg struct {
 
 // IndexArgSplitOpt is a field of IndexArg used by index presplit.
 type IndexArgSplitOpt struct {
-	Lower      []string   `json:"lower"`
-	Upper      []string   `json:"upper"`
-	Num        int64      `json:"num"`
-	ValueLists [][]string `json:"value_lists"`
+	Lower      []string   `json:"lower,omitempty"`
+	Upper      []string   `json:"upper,omitempty"`
+	Num        int64      `json:"num,omitempty"`
+	ValueLists [][]string `json:"value_lists,omitempty"`
 }
 
 // ModifyIndexArgs is the argument for add/drop/rename index jobs,

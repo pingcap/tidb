@@ -735,7 +735,7 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
-	SplitOpt     *SplitOption `json:"-"`
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
 }
 
 // IsEmpty is true if only default options are given
@@ -851,30 +851,11 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 	}
 	n = newNode.(*IndexOption)
 	if n.SplitOpt != nil {
-		for i, val := range n.SplitOpt.Lower {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.SplitOpt.Lower[i] = node.(ExprNode)
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
 		}
-		for i, val := range n.SplitOpt.Upper {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.SplitOpt.Upper[i] = node.(ExprNode)
-		}
-
-		for i, list := range n.SplitOpt.ValueLists {
-			for j, val := range list {
-				node, ok := val.Accept(v)
-				if !ok {
-					return n, false
-				}
-				n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
-			}
-		}
+		n.SplitOpt = node.(*SplitOption)
 	}
 	return v.Leave(n)
 }

@@ -6645,13 +6645,13 @@ IndexOption:
 			Global: false,
 		}
 	}
-|   "PRE_SPLIT_REGIONS" "=" '(' SplitOption ')'
+|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
     {
 		$$ = &ast.IndexOption{
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|   "PRE_SPLIT_REGIONS" "=" Int64Num
+|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
 	{
 		$$ = &ast.IndexOption{
 			SplitOpt:  &ast.SplitOption{
