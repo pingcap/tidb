@@ -273,6 +273,19 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) ([]*placement.Bundle, error) {
 	var bundles []*placement.Bundle
 
+	// We want to achieve:
+	// - before we do any reorganization/write to new partitions/global indexes that the placement rules are in-place
+	// - not removing any placement rules for removed partitions
+	// - not leaving anything in case of failure/rollback!
+	// So we will:
+	// 1) First write the new bundles including both new and old partitions,
+	//    EXCEPT if the old partition is in fact a table, then skip that partition
+	//    This should be done for TRUNCATE/ADD/REORGANIZE PARTITION (incl. REMOVE PARTITIONING and PARTITION BY)
+	// 2) Then overwrite the bundles with the final partitioning scheme
+	//    This can be done directly for DROP PARTITION.
+
+	// TODO: How to handle labels?!?
+	// TODO: Handle rollback!!
 	// TODO: Set the new bundles as it should look for the final table!
 	// And verify that nothing breaks during ApplyDiff etc. for the intermediate tableInfo's
 	// tblInfo do not include added partitions, so we should add them first
