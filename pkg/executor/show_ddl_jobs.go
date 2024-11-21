@@ -315,11 +315,13 @@ func showCommentsFromJob(job *model.Job) string {
 		}
 	}
 	if job.MayNeedReorg() {
-		if m.Concurrency != 0 && m.Concurrency != variable.DefTiDBDDLReorgWorkerCount {
-			labels = append(labels, fmt.Sprintf("thread=%d", m.Concurrency))
+		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
+			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
 		}
-		if m.BatchSize != 0 && m.BatchSize != variable.DefTiDBDDLReorgBatchSize {
-			labels = append(labels, fmt.Sprintf("batch_size=%d", m.BatchSize))
+		if batchSize != variable.DefTiDBDDLReorgBatchSize {
+			labels = append(labels, fmt.Sprintf("batch_size=%d", batchSize))
 		}
 		if m.TargetScope != "" {
 			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
