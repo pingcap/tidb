@@ -315,14 +315,14 @@ func showCommentsFromJob(job *model.Job) string {
 		}
 	}
 	if job.MayNeedReorg() {
-		if m.Concurrency != variable.DefTiDBDDLReorgWorkerCount {
+		if m.Concurrency != 0 && m.Concurrency != variable.DefTiDBDDLReorgWorkerCount {
 			labels = append(labels, fmt.Sprintf("thread=%d", m.Concurrency))
 		}
-		if m.BatchSize != variable.DefTiDBDDLReorgBatchSize {
+		if m.BatchSize != 0 && m.BatchSize != variable.DefTiDBDDLReorgBatchSize {
 			labels = append(labels, fmt.Sprintf("batch_size=%d", m.BatchSize))
 		}
 		if m.TargetScope != "" {
-			labels = append(labels, fmt.Sprintf("target_scope=%s", m.TargetScope))
+			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
 		}
 	}
 	return strings.Join(labels, ", ")
@@ -337,7 +337,7 @@ func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
 	if useDXF {
 		labels = append(labels, "DXF")
 	}
-	if useCloud {
+	if useDXF && useCloud {
 		labels = append(labels, "cloud")
 	}
 	return strings.Join(labels, ", ")
