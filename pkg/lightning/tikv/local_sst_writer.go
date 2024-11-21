@@ -17,11 +17,11 @@ package tikv
 import (
 	"encoding/binary"
 
-	rocks "github.com/lance6716/pebble"
-	rocksbloom "github.com/lance6716/pebble/bloom"
-	"github.com/lance6716/pebble/objstorage/objstorageprovider"
-	rockssst "github.com/lance6716/pebble/sstable"
-	"github.com/lance6716/pebble/vfs"
+	rocks "github.com/cockroachdb/pebble"
+	rocksbloom "github.com/cockroachdb/pebble/bloom"
+	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
+	rockssst "github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -38,7 +38,6 @@ type writeCFWriter struct {
 func newWriteCFWriter(
 	sstPath string,
 	ts uint64,
-	identity *rockssst.Identity,
 ) (*writeCFWriter, error) {
 	f, err := vfs.Default.Create(sstPath)
 	if err != nil {
@@ -46,7 +45,8 @@ func newWriteCFWriter(
 	}
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := rockssst.NewWriter(writable, rockssst.WriterOptions{
-		// TODO(lance6716): should read TiKV config to know compression algorithm.
+		// TODO(lance6716): should read TiKV config to know these values.
+		BlockSize:   32 * 1024,
 		Compression: rocks.ZstdCompression,
 		// TODO(lance6716): should check the behaviour is the exactly same.
 		FilterPolicy: rocksbloom.FilterPolicy(10),
@@ -63,7 +63,7 @@ func newWriteCFWriter(
 				return mockCollector{name: "BlobFileSizeCollector"}
 			},
 		},
-	}, identity)
+	})
 	return &writeCFWriter{sstWriter: writer, ts: ts}, nil
 }
 

@@ -866,6 +866,8 @@ ADMIN SHOW privilege__privileges.admin NEXT_ROW_ID;
 ADMIN SHOW SLOW RECENT 3;
 -- error 8121
 ADMIN SHOW SLOW TOP ALL 3;
+-- error 8121
+ADMIN ALTER DDL JOBS 10 THREAD = 3, BATCH_SIZE = 100, MAX_WRITE_SPEED = '10MiB';
 
 disconnect without_super;
 connection default;

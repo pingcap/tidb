@@ -18,6 +18,7 @@ package mock
 import (
 	"context"
 	"fmt"
+	"iter"
 	"sync"
 	"time"
 
@@ -467,7 +468,7 @@ func (c *Context) GoCtx() context.Context {
 }
 
 // UpdateColStatsUsage updates the column stats usage.
-func (*Context) UpdateColStatsUsage(_ []model.TableItemID) {}
+func (*Context) UpdateColStatsUsage(_ iter.Seq[model.TableItemID]) {}
 
 // StoreIndexUsage strores the index usage information.
 func (*Context) StoreIndexUsage(_ int64, _ int64, _ int64) {}
