@@ -16,7 +16,9 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -157,6 +159,38 @@ func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
 		proto.TaskStateRunning, taskID, proto.TaskStateResuming,
 	)
 	return err
+}
+
+// ModifyTaskByID modifies the task by the task ID.
+func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error {
+	if param.PrevState != proto.TaskStatePending &&
+		param.PrevState != proto.TaskStateRunning &&
+		param.PrevState != proto.TaskStatePaused {
+		return ErrTaskStateNotAllow
+	}
+	bytes, err := json.Marshal(param)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
+		_, err = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		if err != nil {
+			return err
+		}
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
+			where id = %? and state = %?`,
+			proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return ErrTaskStateNotAllow
+		}
+		return nil
+	})
 }
 
 // SucceedTask update task state from running to succeed.
