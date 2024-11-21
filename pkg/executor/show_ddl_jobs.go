@@ -294,7 +294,24 @@ func showAddIdxReorgTp(job *model.Job) string {
 			return sb.String()
 		}
 	}
+<<<<<<< HEAD
 	return ""
+=======
+	if job.MayNeedReorg() {
+		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
+			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
+		}
+		if batchSize != variable.DefTiDBDDLReorgBatchSize {
+			labels = append(labels, fmt.Sprintf("batch_size=%d", batchSize))
+		}
+		if m.TargetScope != "" {
+			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
+		}
+	}
+	return strings.Join(labels, ", ")
+>>>>>>> 2f8d1f6f68f (ddl: dynamically adjusting the concurrency and batch size of reorganization job (#57468))
 }
 
 func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {

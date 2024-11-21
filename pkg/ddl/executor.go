@@ -4937,6 +4937,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
 func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
@@ -4944,6 +4945,17 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 	reorgMeta.TargetScope = variable.ServiceScope.Load()
 	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
 		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
+=======
+func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
+	m := NewDDLReorgMeta(sctx)
+	setReorgParam := func() {
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+			m.SetConcurrency(variable.TidbOptInt(sv, 0))
+		}
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+			m.SetBatchSize(variable.TidbOptInt(sv, 0))
+		}
+>>>>>>> 2f8d1f6f68f (ddl: dynamically adjusting the concurrency and batch size of reorganization job (#57468))
 	}
 	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
 		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
@@ -4968,11 +4980,19 @@ func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
+<<<<<<< HEAD
 		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
 		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
 		zap.String("targetScope", reorgMeta.TargetScope),
 		zap.Int("concurrency", reorgMeta.Concurrency),
 		zap.Int("batchSize", reorgMeta.BatchSize),
+=======
+		zap.Bool("enableDistTask", m.IsDistReorg),
+		zap.Bool("enableFastReorg", m.IsFastReorg),
+		zap.String("targetScope", m.TargetScope),
+		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
+		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
+>>>>>>> 2f8d1f6f68f (ddl: dynamically adjusting the concurrency and batch size of reorganization job (#57468))
 	)
 	return reorgMeta, nil
 }

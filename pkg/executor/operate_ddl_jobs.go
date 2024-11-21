@@ -169,8 +169,8 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 			continue
 		}
 		if !job.IsAlterable() {
-			return fmt.Errorf("unsupported DDL operation: %s, "+
-				"only support add index(tidb_enable_dist_task=off), modify column and alter table reorganize partition DDL job", job.Type.String())
+			return fmt.Errorf("unsupported DDL operation: %s. "+
+				"Supported DDL operations are: ADD INDEX (with tidb_enable_dist_task=OFF), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
@@ -201,13 +201,13 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 		case core.AlterDDLJobThread:
 			if opt.Value != nil {
 				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.Concurrency = int(cons.Value.GetInt64())
+				job.ReorgMeta.SetConcurrency(int(cons.Value.GetInt64()))
 			}
 			job.AdminOperator = byWho
 		case core.AlterDDLJobBatchSize:
 			if opt.Value != nil {
 				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.BatchSize = int(cons.Value.GetInt64())
+				job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
 			}
 			job.AdminOperator = byWho
 		default:
