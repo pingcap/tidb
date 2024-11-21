@@ -216,10 +216,13 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			// might be handled by other owner nodes, skip.
 			return nil
 		}
+		// subtask in final state are not changed.
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_background_subtask
-			set concurrency = %?
-			where task_key = %?`, task.Concurrency, task.ID)
+			set concurrency = %?, state_update_time = unix_timestamp()
+			where task_key = %? and state in (%?, %?, %?)`,
+			task.Concurrency, task.ID,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning, proto.SubtaskStatePaused)
 		return err
 	})
 }
