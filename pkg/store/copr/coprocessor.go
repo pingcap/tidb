@@ -1095,8 +1095,17 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		if resp == nil {
 			return nil, nil
 		}
-		consumed := resp.MemSize()
-		it.memTracker.Consume(-consumed)
+		if it.memTracker != nil {
+			consumed := resp.MemSize()
+			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+				if val.(bool) {
+					if resp != finCopResp {
+						consumed = MockResponseSizeForTest
+					}
+				}
+			})
+			it.memTracker.Consume(-consumed)
+		}
 	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
