@@ -178,7 +178,7 @@ func TestReplaceConflictMultipleKeysNonclusteredPk(t *testing.T) {
 			AddRow(3, data6RowKey, "PRIMARY", data6RowValue, data5RowKey).
 			AddRow(4, data6RowKey, "PRIMARY", data7NonclusteredValue, data6NonclusteredKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT IGNORE INTO `lightning_task_info`\\.conflict_error_v3.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "a", nil, nil, data2NonclusteredKey, data2NonclusteredValue, 2,
 			0, "a", nil, nil, data6NonclusteredKey, data6NonclusteredValue, 2).
 		WillReturnResult(driver.ResultNoRows)
@@ -361,7 +361,7 @@ func TestReplaceConflictOneKeyNonclusteredPk(t *testing.T) {
 			AddRow(1, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
 			AddRow(2, data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT IGNORE INTO `lightning_task_info`\\.conflict_error_v3.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "a", nil, nil, data4RowKey, data4RowValue, 2).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
@@ -547,7 +547,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredPk(t *testing.T) {
 			AddRow(5, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
 			AddRow(6, data3IndexKey, "PRIMARY", data4NonclusteredValue, data4RowKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT IGNORE INTO `lightning_task_info`\\.conflict_error_v3.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "a", nil, nil, data5RowKey, data5RowValue, 2,
 			0, "a", nil, nil, data2RowKey, data2RowValue, 2,
 			0, "a", nil, nil, data4RowKey, data4RowValue, 2).
@@ -754,7 +754,7 @@ func TestReplaceConflictOneUniqueKeyNonclusteredVarcharPk(t *testing.T) {
 			AddRow(5, data3IndexKey, "PRIMARY", data3IndexValue, data3RowKey).
 			AddRow(6, data3IndexKey, "PRIMARY", data4IndexValue, data4RowKey))
 	mockDB.ExpectBegin()
-	mockDB.ExpectExec("INSERT IGNORE INTO `lightning_task_info`\\.conflict_error_v3.*").
+	mockDB.ExpectExec("INSERT INTO `lightning_task_info`\\.conflict_error_v3.*").
 		WithArgs(0, "a", nil, nil, data5RowKey, data5RowValue, 2,
 			0, "a", nil, nil, data2RowKey, data2RowValue, 2,
 			0, "a", nil, nil, data4RowKey, data4RowValue, 2).
