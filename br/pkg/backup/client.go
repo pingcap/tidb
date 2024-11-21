@@ -202,7 +202,7 @@ mainLoop:
 		// Compute the left ranges that not backuped yet
 		start := time.Now()
 
-		var inCompleteRanges []rtree.Range
+		var inCompleteRanges []*backuppb.SubRanges
 		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
@@ -211,8 +211,7 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			iter := loop.GlobalProgressTree.Iter()
-			inCompleteRanges = iter.GetIncompleteRanges()
+			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 			if len(inCompleteRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
@@ -225,7 +224,7 @@ mainLoop:
 		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
 			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
 
-		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+		loop.BackupReq.SubRangesGroups = inCompleteRanges
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
@@ -1155,6 +1154,23 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 	return targetStores, nil
 }
 
+func minEndKey(left, right []byte) []byte {
+	if len(right) == 0 {
+		return left
+	}
+	if len(left) == 0 || bytes.Compare(left, right) > 0 {
+		return right
+	}
+	return left
+}
+
+func maxStartKey(left, right []byte) []byte {
+	if bytes.Compare(left, right) > 0 {
+		return left
+	}
+	return right
+}
+
 func (bc *Client) OnBackupResponse(
 	ctx context.Context,
 	r *ResponseAndStore,
@@ -1169,28 +1185,31 @@ func (bc *Client) OnBackupResponse(
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
 		start := time.Now()
-		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
+		prs, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
 		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
 			return nil, err
 		}
-		if bc.checkpointRunner != nil {
-			if err := checkpoint.AppendForBackup(
-				ctx,
-				bc.checkpointRunner,
-				pr.GroupKey,
-				resp.StartKey,
-				resp.EndKey,
-				resp.Files,
-			); err != nil {
-				// flush checkpoint failed,
-				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-				return nil, err
+		for _, pr := range prs {
+			startKey, endKey := maxStartKey(pr.Origin.StartKey, resp.StartKey), minEndKey(pr.Origin.EndKey, resp.EndKey)
+			if bc.checkpointRunner != nil {
+				if err := checkpoint.AppendForBackup(
+					ctx,
+					bc.checkpointRunner,
+					pr.GroupKey,
+					startKey,
+					endKey,
+					resp.Files,
+				); err != nil {
+					// flush checkpoint failed,
+					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
+					return nil, err
+				}
 			}
+			pr.Res.Put(startKey, endKey, resp.Files)
 		}
-		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 		apiVersion := resp.ApiVersion
 		bc.SetApiVersion(apiVersion)
 	} else {

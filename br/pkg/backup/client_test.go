@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/btree"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -387,10 +388,10 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	incomplete := tree.Iter().GetIncompleteRanges()
+	incomplete := tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 1)
-	require.Equal(t, []byte("b"), incomplete[0].StartKey)
-	require.Equal(t, []byte("c"), incomplete[0].EndKey)
+	require.Len(t, incomplete[0].SubRanges, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("b"), EndKey: []byte("c")}, incomplete[0].SubRanges[0])
 
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
@@ -398,7 +399,7 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Nil(t, lock)
-	incomplete = tree.Iter().GetIncompleteRanges()
+	incomplete = tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
 
 	// case #5: failed case, key is locked
@@ -424,6 +425,108 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Equal(t, []byte("b"), lock.Primary)
+}
+
+func TestOnBackupResponse2(t *testing.T) {
+	s := createBackupSuite(t)
+
+	ctx := context.Background()
+	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
+		return &rtree.ProgressRange{
+			Res: rtree.NewRangeTree(),
+			Origin: rtree.Range{
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+	buildBackupResponseFn := func(startKey, endKey []byte, fileName string) *backup.ResponseAndStore {
+		return &backup.ResponseAndStore{
+			StoreID: 0,
+			Resp: &backuppb.BackupResponse{
+				StartKey: startKey,
+				EndKey:   endKey,
+				Files: []*backuppb.File{
+					{Name: fileName},
+				},
+			},
+		}
+	}
+	tree := rtree.NewProgressRangeTree()
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("cc"))))
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("dd"), []byte("ff"))))
+
+	errContext := utils.NewErrorContext("test", 1)
+	r := buildBackupResponseFn([]byte("a"), []byte("ccc"), "123")
+	lock, err := s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aaa"), []byte("dd"), "123")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aaa"), []byte("ca"), "123")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("ca"), []byte("de"), "456")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aa"), []byte("aaa"), "789")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("de"), []byte("ff"), "012")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+
+	expectResultFileNames := []struct {
+		name     string
+		startKey []byte
+		endKey   []byte
+	}{
+		{
+			name:     "789",
+			startKey: []byte("aa"),
+			endKey:   []byte("aaa"),
+		},
+		{
+			name:     "123",
+			startKey: []byte("aaa"),
+			endKey:   []byte("ca"),
+		},
+		{
+			name:     "456",
+			startKey: []byte("ca"),
+			endKey:   []byte("cc"),
+		},
+		{
+			name:     "456",
+			startKey: []byte("dd"),
+			endKey:   []byte("de"),
+		},
+		{
+			name:     "012",
+			startKey: []byte("de"),
+			endKey:   []byte("ff"),
+		},
+	}
+	i := 0
+	tree.Ascend(func(item *rtree.ProgressRange) bool {
+		item.Res.Ascend(func(item btree.Item) bool {
+			rg := item.(*rtree.Range)
+			expectRg := expectResultFileNames[i]
+			require.Equal(t, expectRg.startKey, rg.StartKey)
+			require.Equal(t, expectRg.endKey, rg.EndKey)
+			require.Len(t, rg.Files, 1)
+			require.Equal(t, expectRg.name, rg.Files[0].Name)
+			i += 1
+			return true
+		})
+		return true
+	})
 }
 
 func TestMainBackupLoop(t *testing.T) {
@@ -760,8 +863,41 @@ func TestBuildProgressRangeTree(t *testing.T) {
 
 	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
 	require.NotNil(t, contained)
-	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
-	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.Len(t, contained, 1)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("b"))
+	require.NotNil(t, contained)
+	require.Len(t, contained, 1)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("a"), []byte("b"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("bb"), []byte("cc"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("b"), []byte("cc"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("c"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("cc"))
+	require.NotNil(t, contained)
+	require.Len(t, contained, 2)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.Equal(t, []byte("c"), contained[1].Origin.StartKey)
+	require.Equal(t, []byte("d"), contained[1].Origin.EndKey)
 	require.NoError(t, err)
 }
 
