@@ -44,7 +44,7 @@ echo "prepare_delete_range_count: $prepare_delete_range_count"
 # wait checkpoint advance
 . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
-run_br --pd $PD_ADDR log pause --task-name integration_test
+run_br --pd $PD_ADDR log pause --task-name $TASK_NAME
 
 safe_point=$(run_pd_ctl -u https://$PD_ADDR service-gc-safepoint)
 
