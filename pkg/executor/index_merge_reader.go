@@ -376,6 +376,9 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					byItems:            is.ByItems,
 					pushedLimit:        pushedIndexLimit,
 				}
+				if worker.stats != nil && worker.idxID != 0 {
+					worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
+				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
 					var err error

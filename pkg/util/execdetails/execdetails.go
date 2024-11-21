@@ -1501,7 +1501,7 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	}
 }
 
-// GetBasicRuntimeStats gets basicRuntimeStats for a executor.
+// GetBasicRuntimeStats gets basicRuntimeStats for a executor, will increase BasicRuntimeStats' executorCount when initNewExecutorStats is true
 func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats bool) *BasicRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
