@@ -19,6 +19,7 @@ import (
 	"context"
 	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -133,16 +134,30 @@ func largerStartKey(a, b []byte) []byte {
 type StoreWriteLimiter interface {
 	WaitN(ctx context.Context, storeID uint64, n int) error
 	Limit() int
+	UpdateLimiter(limit int)
 }
 
 type storeWriteLimiter struct {
 	rwm      sync.RWMutex
 	limiters map[uint64]*rate.Limiter
-	limit    int
-	burst    int
+	// limit and burst can only be non-negative, 0 means no rate limiting.
+	limit int64
+	burst int64
 }
 
 func newStoreWriteLimiter(limit int) *storeWriteLimiter {
+	l, b := calculateLimitAndBurst(limit)
+	return &storeWriteLimiter{
+		limiters: make(map[uint64]*rate.Limiter),
+		limit:    l,
+		burst:    b,
+	}
+}
+
+func calculateLimitAndBurst(limit int) (int64, int64) {
+	if limit <= 0 {
+		return 0, 0
+	}
 	var burst int
 	// Allow burst of at most 20% of the limit.
 	if limit <= math.MaxInt-limit/5 {
@@ -151,15 +166,14 @@ func newStoreWriteLimiter(limit int) *storeWriteLimiter {
 		// If overflowed, set burst to math.MaxInt.
 		burst = math.MaxInt
 	}
-	return &storeWriteLimiter{
-		limiters: make(map[uint64]*rate.Limiter),
-		limit:    limit,
-		burst:    burst,
-	}
+	return int64(limit), int64(burst)
 }
 
 func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
 	limiter := s.getLimiter(storeID)
+	if limiter == nil {
+		return nil
+	}
 	// The original WaitN doesn't allow n > burst,
 	// so we call WaitN with burst multiple times.
 	for n > limiter.Burst() {
@@ -172,10 +186,13 @@ func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) er
 }
 
 func (s *storeWriteLimiter) Limit() int {
-	return s.limit
+	return int(atomic.LoadInt64(&s.limit))
 }
 
 func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
+	if atomic.LoadInt64(&s.limit) == 0 {
+		return nil
+	}
 	s.rwm.RLock()
 	limiter, ok := s.limiters[storeID]
 	s.rwm.RUnlock()
@@ -186,10 +203,31 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	defer s.rwm.Unlock()
 	limiter, ok = s.limiters[storeID]
 	if !ok {
-		limiter = rate.NewLimiter(rate.Limit(s.limit), s.burst)
+		limiter = rate.NewLimiter(rate.Limit(atomic.LoadInt64(&s.limit)), int(atomic.LoadInt64(&s.burst)))
 		s.limiters[storeID] = limiter
 	}
 	return limiter
+}
+
+func (s *storeWriteLimiter) UpdateLimiter(newLimit int) {
+	limit, burst := calculateLimitAndBurst(newLimit)
+	if atomic.LoadInt64(&s.limit) == limit {
+		return
+	}
+
+	atomic.StoreInt64(&s.limit, limit)
+	atomic.StoreInt64(&s.burst, burst)
+	// Update all existing limiters with the new limit and burst values.
+	s.rwm.Lock()
+	defer s.rwm.Unlock()
+	if atomic.LoadInt64(&s.limit) == 0 {
+		s.limiters = make(map[uint64]*rate.Limiter)
+		return
+	}
+	for _, limiter := range s.limiters {
+		limiter.SetLimit(rate.Limit(atomic.LoadInt64(&s.limit)))
+		limiter.SetBurst(int(atomic.LoadInt64(&s.burst)))
+	}
 }
 
 type noopStoreWriteLimiter struct{}
@@ -201,6 +239,8 @@ func (noopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
 func (noopStoreWriteLimiter) Limit() int {
 	return math.MaxInt
 }
+
+func (noopStoreWriteLimiter) UpdateLimiter(_ int) {}
 
 // compaction threshold
 const (
