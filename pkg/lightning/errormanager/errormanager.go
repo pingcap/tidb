@@ -89,8 +89,8 @@ const (
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
-			table_name  varchar(261),
-			index_name  varchar(128),
+			table_name  varchar(261) NOT NULL,
+			index_name  varchar(128) NOT NULL,
 			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
 			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
