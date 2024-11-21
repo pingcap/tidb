@@ -95,8 +95,6 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	ctx = context.WithValue(ctx, util.RequestSourceKey, req.RequestSource)
 	ctx = interceptor.WithRPCInterceptor(ctx, interceptor.GetRPCInterceptorFromCtx(ctx))
-	enabledRateLimitAction := option.EnabledRateLimitAction
-	sessionMemTracker := option.SessionMemTracker
 	it, errRes := c.BuildCopIterator(ctx, req, vars, option)
 	if errRes != nil {
 		return errRes
@@ -105,10 +103,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	if ctx.Value(util.RUDetailsCtxKey) == nil {
 		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	}
-	if sessionMemTracker != nil && enabledRateLimitAction {
-		sessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
-	}
-	it.open(ctx, enabledRateLimitAction, option.EnableCollectExecutionInfo)
+	it.open(ctx)
 	return it
 }
 
@@ -185,18 +180,16 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		return nil, copErrorResponse{err}
 	}
 	it := &copIterator{
-		store:                      c.store,
-		req:                        req,
-		concurrency:                req.Concurrency,
-		finishCh:                   make(chan struct{}),
-		vars:                       vars,
-		memTracker:                 req.MemTracker,
-		replicaReadSeed:            c.replicaReadSeed,
-		rpcCancel:                  tikv.NewRPCanceller(),
-		buildTaskElapsed:           *buildOpt.elapsed,
-		runawayChecker:             req.RunawayChecker,
-		unconsumedStats:            &unconsumedCopRuntimeStats{},
-		enableCollectExecutionInfo: option.EnableCollectExecutionInfo,
+		store:            c.store,
+		req:              req,
+		concurrency:      req.Concurrency,
+		finishCh:         make(chan struct{}),
+		vars:             vars,
+		memTracker:       req.MemTracker,
+		replicaReadSeed:  c.replicaReadSeed,
+		rpcCancel:        tikv.NewRPCanceller(),
+		buildTaskElapsed: *buildOpt.elapsed,
+		runawayChecker:   req.RunawayChecker,
 	}
 	// Pipelined-dml can flush locks when it is still reading.
 	// The coprocessor of the txn should not be blocked by itself.
@@ -247,7 +240,14 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		it.respChan = make(chan *copResponse)
 		it.sendRate = util.NewRateLimit(it.concurrency + it.smallTaskConcurrency)
 	}
+	if option.EnableCollectExecutionInfo {
+		it.stats = &copIteratorRuntimeStats{}
+	}
 	it.actionOnExceed = newRateLimitAction(uint(it.sendRate.GetCapacity()))
+	if option.SessionMemTracker != nil && option.EnabledRateLimitAction {
+		option.SessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
+	}
+	it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
 	return it, nil
 }
 
@@ -717,9 +717,7 @@ type copIterator struct {
 	storeBatchedFallbackNum atomic.Uint64
 
 	runawayChecker resourcegroup.RunawayChecker
-	// TODO: refactor following by https://github.com/pingcap/tidb/pull/57545
-	enableCollectExecutionInfo bool
-	unconsumedStats            *unconsumedCopRuntimeStats
+	stats          *copIteratorRuntimeStats
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -737,12 +735,11 @@ type copIteratorWorker struct {
 
 	replicaReadSeed uint32
 
-	enableCollectExecutionInfo bool
-	pagingTaskIdx              *uint32
+	pagingTaskIdx *uint32
 
 	storeBatchedNum         *atomic.Uint64
 	storeBatchedFallbackNum *atomic.Uint64
-	unconsumedStats         *unconsumedCopRuntimeStats
+	stats                   *copIteratorRuntimeStats
 }
 
 // copIteratorTaskSender sends tasks to taskCh then wait for the workers to exit.
@@ -855,8 +852,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableCollectExecutionInfo bool) {
-	it.actionOnExceed.setEnabled(enabledRateLimitAction)
+func (it *copIterator) open(ctx context.Context) {
 	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
 		it.liteReqSender = true
 		return
@@ -873,7 +869,7 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 		if i >= it.concurrency && smallTaskCh != nil {
 			ch = smallTaskCh
 		}
-		worker := newCopIteratorWorker(it, ch, enableCollectExecutionInfo)
+		worker := newCopIteratorWorker(it, ch)
 		go worker.run(ctx)
 	}
 	taskSender := &copIteratorTaskSender{
@@ -894,23 +890,22 @@ func (it *copIterator) open(ctx context.Context, enabledRateLimitAction, enableC
 	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
-func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask, enableCollectExecutionInfo bool) *copIteratorWorker {
+func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorWorker {
 	return &copIteratorWorker{
-		taskCh:                     taskCh,
-		wg:                         &it.wg,
-		store:                      it.store,
-		req:                        it.req,
-		respChan:                   it.respChan,
-		finishCh:                   it.finishCh,
-		vars:                       it.vars,
-		kvclient:                   txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
-		memTracker:                 it.memTracker,
-		replicaReadSeed:            it.replicaReadSeed,
-		enableCollectExecutionInfo: enableCollectExecutionInfo,
-		pagingTaskIdx:              &it.pagingTaskIdx,
-		storeBatchedNum:            &it.storeBatchedNum,
-		storeBatchedFallbackNum:    &it.storeBatchedFallbackNum,
-		unconsumedStats:            it.unconsumedStats,
+		taskCh:                  taskCh,
+		wg:                      &it.wg,
+		store:                   it.store,
+		req:                     it.req,
+		respChan:                it.respChan,
+		finishCh:                it.finishCh,
+		vars:                    it.vars,
+		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+		memTracker:              it.memTracker,
+		replicaReadSeed:         it.replicaReadSeed,
+		pagingTaskIdx:           &it.pagingTaskIdx,
+		storeBatchedNum:         &it.storeBatchedNum,
+		storeBatchedFallbackNum: &it.storeBatchedFallbackNum,
+		stats:                   it.stats,
 	}
 }
 
@@ -1159,7 +1154,7 @@ func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
 	if len(it.tasks) == 0 {
 		return nil
 	}
-	worker := newCopIteratorWorker(it, nil, it.enableCollectExecutionInfo)
+	worker := newCopIteratorWorker(it, nil)
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -1203,13 +1198,13 @@ type HasUnconsumedCopRuntimeStats interface {
 }
 
 func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
-	if it == nil || it.unconsumedStats == nil {
+	if it == nil || it.stats == nil {
 		return nil
 	}
-	it.unconsumedStats.Lock()
-	stats := make([]*CopRuntimeStats, 0, len(it.unconsumedStats.stats))
-	stats = append(stats, it.unconsumedStats.stats...)
-	it.unconsumedStats.Unlock()
+	it.stats.Lock()
+	stats := make([]*CopRuntimeStats, 0, len(it.stats.stats))
+	stats = append(stats, it.stats.stats...)
+	it.stats.Unlock()
 	return stats
 }
 
@@ -1338,7 +1333,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
-	if worker.kvclient.Stats == nil {
+	if worker.stats != nil && worker.kvclient.Stats == nil {
 		worker.kvclient.Stats = tikv.NewRegionRequestRuntimeStats()
 	}
 	// set ReadReplicaScope and TxnScope so that req.IsStaleRead will be true when it's a global scope stale read.
@@ -1370,9 +1365,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 			err = worker.handleTiDBSendReqErr(err, task, ch)
 			return nil, err
 		}
-		if runawayErr := worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx); runawayErr != nil {
-			return nil, runawayErr
-		}
+		worker.collectUnconsumedCopRuntimeStats(bo, rpcCtx)
 		return nil, errors.Trace(err)
 	}
 
@@ -1865,17 +1858,14 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 }
 
 func (worker *copIteratorWorker) getLockResolverDetails() *util.ResolveLockDetail {
-	if !worker.enableCollectExecutionInfo {
+	if worker.stats == nil {
 		return nil
 	}
 	return &util.ResolveLockDetail{}
 }
 
 func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
-	defer func() {
-		worker.kvclient.Stats = nil
-	}()
-	if !worker.enableCollectExecutionInfo {
+	if worker.stats == nil {
 		return nil
 	}
 	failpoint.Inject("disable-collect-execution", func(val failpoint.Value) {
@@ -1890,18 +1880,7 @@ func (worker *copIteratorWorker) handleCollectExecutionInfo(bo *Backoffer, rpcCt
 }
 
 func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse) error {
-	copStats.ReqStats = worker.kvclient.Stats
-	backoffTimes := bo.GetBackoffTimes()
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
-	}
+	worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
 	if resp == nil {
 		return nil
 	}
@@ -1941,19 +1920,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	return nil
 }
 
-func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) error {
-	if worker.kvclient.Stats == nil {
-		return nil
+func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	defer func() {
+		worker.kvclient.Stats = nil
+	}()
+	copStats.ReqStats = worker.kvclient.Stats
+	backoffTimes := bo.GetBackoffTimes()
+	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+	for backoff := range backoffTimes {
+		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 	}
-	copStats := &CopRuntimeStats{}
-	if err := worker.collectCopRuntimeStats(copStats, bo, rpcCtx, nil); err != nil {
-		return err
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
 	}
-	worker.unconsumedStats.Lock()
-	worker.unconsumedStats.stats = append(worker.unconsumedStats.stats, copStats)
-	worker.unconsumedStats.Unlock()
-	worker.kvclient.Stats = nil
-	return nil
+}
+
+func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if worker.kvclient.Stats != nil && worker.stats != nil {
+		copStats := &CopRuntimeStats{}
+		worker.collectKVClientRuntimeStats(copStats, bo, rpcCtx)
+		worker.stats.Lock()
+		worker.stats.stats = append(worker.stats.stats, copStats)
+		worker.stats.Unlock()
+	}
 }
 
 // CopRuntimeStats contains execution detail information.
@@ -1964,7 +1956,7 @@ type CopRuntimeStats struct {
 	CoprCacheHit bool
 }
 
-type unconsumedCopRuntimeStats struct {
+type copIteratorRuntimeStats struct {
 	sync.Mutex
 	stats []*CopRuntimeStats
 }
