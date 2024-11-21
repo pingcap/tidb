@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"slices"
 
-	rockssst "github.com/lance6716/pebble/sstable"
+	rockssst "github.com/cockroachdb/pebble/sstable"
 )
 
 type mockCollector struct {
