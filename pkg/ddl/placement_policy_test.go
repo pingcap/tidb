@@ -1669,6 +1669,17 @@ func TestAlterTablePartitionPlacement(t *testing.T) {
 		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 		" PARTITION `p1` VALUES LESS THAN (1000))"))
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
+
+	tk.MustExec(`alter table tp reorganize partition p1 into (partition p1 values less than (750) placement policy p1, partition p2 values less than (1500) placement policy p0)`)
+	tk.MustQuery("show create table tp").Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`p0` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+		" PARTITION `p1` VALUES LESS THAN (750) /*T![placement] PLACEMENT POLICY=`p1` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (1500) /*T![placement] PLACEMENT POLICY=`p0` */)"))
+	checkExistTableBundlesInPD(t, dom, "test", "tp")
 }
 
 func TestAddPartitionWithPlacement(t *testing.T) {
