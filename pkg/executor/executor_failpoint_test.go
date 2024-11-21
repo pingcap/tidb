@@ -17,7 +17,6 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"github.com/tikv/client-go/v2/oracle"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
