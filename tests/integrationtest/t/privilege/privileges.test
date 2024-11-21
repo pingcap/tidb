@@ -895,3 +895,6 @@ with t_f as (
          update privilege__privileges.tt1 inner join t_f
          set t_f.fullname=t_f.fullname
          where tt1.id=t_f.id;
+
+disconnect u53490;
+connection default;
