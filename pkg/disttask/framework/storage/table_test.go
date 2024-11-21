@@ -825,7 +825,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 
 	// test GC history table.
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", func(interval *int) {
-		*interval = int(time.Second)
+		*interval = 1
 	})
 	time.Sleep(2 * time.Second)
 
