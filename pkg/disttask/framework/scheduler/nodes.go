@@ -145,6 +145,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 	for _, node := range newNodes {
 		if node.CPUCount > 0 {
 			cpuCount = node.CPUCount
+			break
 		}
 	}
 	slotMgr.updateCapacity(cpuCount)
@@ -170,6 +171,7 @@ func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	for _, node := range nodes {
 		if node.Role == "background" {
 			haveBackground = true
+			break
 		}
 	}
 	// prefer to use "background" node instead of "" node.
