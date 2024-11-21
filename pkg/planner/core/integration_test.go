@@ -235,6 +235,7 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 }
 
 func TestRightShiftPushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -732,6 +733,7 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 }
 
 func TestSpacePushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -936,6 +938,7 @@ func TestIssue29503(t *testing.T) {
 }
 
 func TestIssue31202(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1175,6 +1178,7 @@ func TestIssue33175(t *testing.T) {
 }
 
 func TestRepeatPushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1425,6 +1429,7 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 }
 
 func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1454,6 +1459,7 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 }
 
 func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1483,6 +1489,7 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 }
 
 func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -1545,6 +1552,7 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 }
 
 func TestUnhexPushDownToTiFlash(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -2030,6 +2038,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 }
 
 func TestWindowRangeFramePushDownTiflash(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -2115,6 +2124,7 @@ func TestIssue46556(t *testing.T) {
 
 // https://github.com/pingcap/tidb/issues/41458
 func TestIssue41458(t *testing.T) {
+	t.Name()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))

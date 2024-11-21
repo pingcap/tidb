@@ -377,9 +377,9 @@ func TestUpdateMultipleTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (c1 int, c2 int)")
+	tk.MustExec("create table t1 (c1 int, c2 int) partition by hash (c1) partitions 16")
 	tk.MustExec("insert t1 values (1, 1), (2, 2)")
-	tk.MustExec("create table t2 (c1 int, c2 int)")
+	tk.MustExec("create table t2 (c1 int, c2 int) partition by hash (c1) partitions 16")
 	tk.MustExec("insert t2 values (1, 3), (2, 5)")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
@@ -2102,7 +2102,9 @@ func TestAutoIncrementForce(t *testing.T) {
 	require.Equal(t, uint64(1), getNextGlobalID())
 	// inserting new rows can overwrite the existing data.
 	tk.MustExec("insert into t values (3);")
-	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", tk.ExecToErr("insert into t values (3);").Error())
+	err := tk.ExecToErr("insert into t values (3);")
+	require.Error(t, err)
+	require.Equal(t, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'", err.Error())
 	tk.MustQuery("select a, _tidb_rowid from t;").Check(testkit.Rows("3 1", "1 2", "2 3"))
 	tk.MustExec("drop table if exists t;")
 

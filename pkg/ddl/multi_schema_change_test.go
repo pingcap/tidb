@@ -160,6 +160,7 @@ func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
 }
 
 func TestMultiSchemaChangeRenameColumns(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

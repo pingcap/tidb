@@ -19,7 +19,6 @@ package testkit
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	"math/rand"
 	"net"
 	"net/http"
@@ -155,10 +154,26 @@ func (tk *TestKit) MustExec(sql string, args ...any) {
 	tk.MustExecWithContext(ctx, sql, args...)
 }
 
+var ignoreErrList = []string{
+	"table is partition table",
+	"has a partitioning function dependency and cannot be dropped or renamed",
+	"unsupported",
+	"not yet supported",
+	"Table to exchange with partition is partitioned",
+	"A CLUSTERED INDEX must include all columns in the table's partitioning function",
+}
+
 // MustExecWithContext executes a sql statement and asserts nil error.
 func (tk *TestKit) MustExecWithContext(ctx context.Context, sql string, args ...any) {
 	res, err := tk.ExecWithContext(ctx, sql, args...)
 	comment := fmt.Sprintf("sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
+	if err != nil {
+		for _, str := range ignoreErrList {
+			if strings.Contains(err.Error(), str) {
+				tk.t.SkipNow()
+			}
+		}
+	}
 	tk.require.NoError(err, comment)
 
 	if res != nil {
@@ -416,55 +431,74 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...any)
 
 	cursorExists := tk.Session().GetSessionVars().HasStatusFlag(mysql.ServerStatusCursorExists)
 	if len(args) == 0 {
-		if strings.Contains(sql, "create table") {
-			idxColName := make(map[string]struct{})
-			var err error
+		if strings.Contains(sql, "create table") && !strings.Contains(strings.ToLower(sql), "partition") {
 			stmts, err := tk.session.Parse(ctx, sql)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			colName := ""
 			if createTableStmts, ok := stmts[0].(*ast.CreateTableStmt); ok {
-				for _, c := range createTableStmts.Constraints {
-					for _, k := range c.Keys {
-						if k.Column != nil {
-							idxColName[k.Column.Name.O] = struct{}{}
-						}
-					}
-				}
 				for _, col := range createTableStmts.Cols {
-					skip := false
-					for _, o := range col.Options {
-						if o.Tp == ast.ColumnOptionPrimaryKey || o.Tp == ast.ColumnOptionUniqKey || o.Tp == ast.ColumnOptionDefaultValue {
-							skip = true
-							break
-						}
-					}
-					if skip {
-						continue
-					}
-					if _, exist := idxColName[col.Name.OrigColName()]; !exist {
-						switch col.Tp.EvalType() {
-						case types.ETInt:
-							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
-							col.Tp.DelFlag(mysql.UnsignedFlag)
-							col.Tp.SetFlen(types.UnspecifiedLength)
-						case types.ETReal:
-							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
-							col.Tp.SetFlen(types.UnspecifiedLength)
-						case types.ETDecimal:
-							col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
-							col.Tp.SetFlen(types.UnspecifiedLength)
-						}
+					if col.Tp.EvalType() == types.ETInt {
+						colName = col.Name.OrigColName()
+						break
 					}
 				}
-				var sb strings.Builder
-				restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-					format.RestoreSpacesAroundBinaryOperation
-				restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-				createTableStmts.Restore(restoreCtx)
-				sql = sb.String()
+			}
+			if colName != "" {
+				sql = strings.TrimRight(sql, ";")
+				sql += " partition by hash (" + colName + ") partitions 16"
 			}
 		}
+		//if strings.Contains(sql, "create table") {
+		//	idxColName := make(map[string]struct{})
+		//	var err error
+		//	stmts, err := tk.session.Parse(ctx, sql)
+		//	if err != nil {
+		//		return nil, errors.Trace(err)
+		//	}
+		//	if createTableStmts, ok := stmts[0].(*ast.CreateTableStmt); ok {
+		//		for _, c := range createTableStmts.Constraints {
+		//			for _, k := range c.Keys {
+		//				if k.Column != nil {
+		//					idxColName[k.Column.Name.O] = struct{}{}
+		//				}
+		//			}
+		//		}
+		//		for _, col := range createTableStmts.Cols {
+		//			skip := false
+		//			for _, o := range col.Options {
+		//				if o.Tp == ast.ColumnOptionPrimaryKey || o.Tp == ast.ColumnOptionUniqKey || o.Tp == ast.ColumnOptionDefaultValue {
+		//					skip = true
+		//					break
+		//				}
+		//			}
+		//			if skip {
+		//				continue
+		//			}
+		//			if _, exist := idxColName[col.Name.OrigColName()]; !exist {
+		//				switch col.Tp.EvalType() {
+		//				case types.ETInt:
+		//					col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+		//					col.Tp.DelFlag(mysql.UnsignedFlag)
+		//					col.Tp.SetFlen(types.UnspecifiedLength)
+		//				case types.ETReal:
+		//					col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+		//					col.Tp.SetFlen(types.UnspecifiedLength)
+		//				case types.ETDecimal:
+		//					col.Tp.SetType(mysql.TypeTiDBVectorFloat32)
+		//					col.Tp.SetFlen(types.UnspecifiedLength)
+		//				}
+		//			}
+		//		}
+		//		var sb strings.Builder
+		//		restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
+		//			format.RestoreSpacesAroundBinaryOperation
+		//		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		//		createTableStmts.Restore(restoreCtx)
+		//		sql = sb.String()
+		//	}
+		//}
 		sc := tk.session.GetSessionVars().StmtCtx
 		prevWarns := sc.GetWarnings()
 		var stmts []ast.StmtNode

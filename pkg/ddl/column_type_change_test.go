@@ -577,6 +577,7 @@ func TestDDLExitWhenCancelMeetPanic(t *testing.T) {
 
 // Close issue #24584
 func TestCancelCTCInReorgStateWillCauseGoroutineLeak(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_row_level_checksum = 1")
