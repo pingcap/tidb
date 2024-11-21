@@ -1841,6 +1841,7 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 				if err == nil {
 					break
 				}
+				logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 			}
 		}
 	}
