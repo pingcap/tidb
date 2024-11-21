@@ -314,7 +314,6 @@ func showCommentsFromJob(job *model.Job) string {
 			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
 	}
-
 	if job.MayNeedReorg() {
 		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
