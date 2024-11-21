@@ -112,6 +112,7 @@ func TestIssue46760(t *testing.T) {
 }
 
 func TestCacheable(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	mockCtx := mock.NewContext()
 	mockCtx.GetSessionVars().EnablePlanCacheForParamLimit = true

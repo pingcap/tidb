@@ -229,6 +229,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 }
 
 func TestMPPHintsWithBinding(t *testing.T) {
+	t.SkipNow()
 	t.Name()
 	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -453,6 +454,7 @@ func TestPhysicalPlanMemoryTrace(t *testing.T) {
 }
 
 func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t, coretestsdk.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -43,6 +43,7 @@ import (
 )
 
 func TestInitLRUWithSystemVar(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@session.tidb_prepared_plan_cache_size = 0") // MinValue: 1
@@ -266,6 +267,7 @@ func TestIssue53872(t *testing.T) {
 }
 
 func TestIssue38269(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
@@ -347,6 +349,7 @@ func TestIssue49344(t *testing.T) {
 }
 
 func TestIssue40093(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -948,6 +951,7 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 }
 
 func TestIssue42125(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

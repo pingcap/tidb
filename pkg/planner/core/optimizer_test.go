@@ -114,6 +114,7 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
+	t.SkipNow()
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,

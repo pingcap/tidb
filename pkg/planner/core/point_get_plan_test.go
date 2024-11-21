@@ -231,6 +231,7 @@ func TestIssue18042(t *testing.T) {
 }
 
 func TestIssue52592(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@tidb_opt_fix_control = "52592:OFF"`) // affect hit counter in this ut

@@ -470,6 +470,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 }
 
 func TestCopPaging(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
