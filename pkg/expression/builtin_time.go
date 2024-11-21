@@ -4579,7 +4579,7 @@ func getBf4TimeAddSub(ctx BuildContext, funcName string, args []Expression) (tp1
 	case mysql.TypeDuration:
 		argTp1, retTp = types.ETDuration, types.ETDuration
 	case mysql.TypeDate:
-		argTp1, retTp = types.ETDuration, types.ETString
+		argTp1, retTp = types.ETDatetime, types.ETString
 	default:
 		argTp1, retTp = types.ETString, types.ETString
 	}
@@ -4804,11 +4804,20 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
 	result, err := arg0.Add(typeCtx(ctx), arg1)
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
@@ -4829,6 +4838,11 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
@@ -4846,6 +4860,10 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(tc, arg1)
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
@@ -5066,15 +5084,26 @@ func (b *builtinAddDateAndDurationSig) Clone() builtinFunc {
 // evalString evals a builtinAddDurationAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	result, err := arg0.Add(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(typeCtx(ctx), arg1)
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
@@ -5091,10 +5120,15 @@ func (b *builtinAddDateAndStringSig) Clone() builtinFunc {
 // evalString evals a builtinAddDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_addtime
 func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -5111,7 +5145,13 @@ func (b *builtinAddDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		}
 		return "", true, err
 	}
-	result, err := arg0.Add(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(tc, arg1)
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
@@ -5757,12 +5797,21 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
 	tc := typeCtx(ctx)
 	result, err := arg0.Add(tc, arg1.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
@@ -5783,6 +5832,11 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
+
+	if arg0.IsZero() {
+		return types.ZeroDatetime, true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
@@ -5800,6 +5854,10 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(ctx EvalContext, row chunk.Row
 		return types.ZeroDatetime, true, err
 	}
 	result, err := arg0.Add(tc, arg1.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
 	return result, err != nil, err
 }
 
@@ -6023,15 +6081,26 @@ func (b *builtinSubDateAndDurationSig) Clone() builtinFunc {
 // evalString evals a builtinSubDateAndDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndDurationSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	arg1, isNull, err := b.args[1].EvalDuration(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	result, err := arg0.Sub(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(typeCtx(ctx), arg1.Neg())
+	if err != nil {
+		return "", true, err
+	}
+
 	return result.String(), err != nil, err
 }
 
@@ -6048,10 +6117,15 @@ func (b *builtinSubDateAndStringSig) Clone() builtinFunc {
 // evalString evals a builtinSubDateAndStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_subtime
 func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	arg0, isNull, err := b.args[0].EvalDuration(ctx, row)
+	arg0, isNull, err := b.args[0].EvalTime(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
+
+	if arg0.IsZero() {
+		return "", true, nil
+	}
+
 	s, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -6068,11 +6142,14 @@ func (b *builtinSubDateAndStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		}
 		return "", true, err
 	}
-	result, err := arg0.Sub(arg1)
+
+	arg0.SetType(mysql.TypeDatetime)
+	result, err := arg0.Add(tc, arg1.Neg())
 	if err != nil {
 		return "", true, err
 	}
-	return result.String(), false, nil
+
+	return result.String(), err != nil, err
 }
 
 type timeFormatFunctionClass struct {
