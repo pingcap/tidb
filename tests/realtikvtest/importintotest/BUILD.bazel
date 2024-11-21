@@ -23,7 +23,6 @@ go_test(
         "//pkg/config",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",

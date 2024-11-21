@@ -15,6 +15,7 @@
 package integrationtests
 
 import (
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -26,7 +27,16 @@ import (
 func TestFrameworkRollback(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 	testutil.RegisterRollbackTaskMeta(t, c.MockCtrl, testutil.GetMockRollbackSchedulerExt(c.MockCtrl), c.TestContext)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask", "2*return(true)")
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/afterRefreshTask",
+		func(task *proto.Task) {
+			if counter.Add(1) <= 2 {
+				if task.State == proto.TaskStateRunning {
+					require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, task.ID))
+				}
+			}
+		},
+	)
 
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)

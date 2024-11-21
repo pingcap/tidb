@@ -89,7 +89,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// fail in transfer
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()"))
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetTasksInStates(
 		mgr.ctx,
@@ -108,8 +107,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
 
 func TestManagerSchedulerNotAllocateSlots(t *testing.T) {
