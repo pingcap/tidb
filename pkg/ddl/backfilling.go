@@ -194,7 +194,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		id = int(backfillContextID.Add(1))
 	}
 
-	batchCnt := rInfo.ReorgMeta.GetBatchSize(int(variable.GetDDLReorgBatchSize()))
+	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
 		id:         id,
 		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
@@ -432,7 +432,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
-		targetBatchSize := job.ReorgMeta.GetBatchSize(int(variable.GetDDLReorgBatchSize()))
+		targetBatchSize := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
 			logger.Info("adjust ddl job config success",
@@ -707,7 +707,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := job.ReorgMeta.GetConcurrency(int(variable.GetDDLReorgWorkerCounter()))
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
 	if err != nil {
@@ -818,7 +818,7 @@ func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job
 			return
 		case <-ticker.C:
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(
-				job.ReorgMeta.GetConcurrency(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
+				job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
 				continue
@@ -1037,7 +1037,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				return
 			case <-ticker.C:
 				currentWorkerCnt := scheduler.currentWorkerSize()
-				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency(int(variable.GetDDLReorgWorkerCounter()))
+				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 				if currentWorkerCnt != targetWorkerCnt {
 					err := scheduler.adjustWorkerSize()
 					if err != nil {

@@ -79,9 +79,9 @@ type DDLReorgMeta struct {
 	BatchSize   int64 `json:"batch_size"`
 }
 
-// GetConcurrency gets the concurrency from DDLReorgMeta,
+// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,
 // pass the default value in case of the reorg meta coming from old cluster and Concurrency is 0.
-func (dm *DDLReorgMeta) GetConcurrency(defaultVal int) int {
+func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
 	if dm == nil || atomic.LoadInt64(&dm.Concurrency) == 0 {
 		return defaultVal
 	}
@@ -96,8 +96,8 @@ func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
 	}
 }
 
-// GetBatchSize gets the batch size from DDLReorgMeta.
-func (dm *DDLReorgMeta) GetBatchSize(defaultVal int) int {
+// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta.
+func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
 	if dm == nil || atomic.LoadInt64(&dm.BatchSize) == 0 {
 		return defaultVal
 	}
