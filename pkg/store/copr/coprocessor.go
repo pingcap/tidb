@@ -946,8 +946,6 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
 	for {
 		select {
 		case resp, ok = <-respCh:
@@ -966,17 +964,6 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		case <-it.finishCh:
 			exit = true
 			return
-		case <-ticker.C:
-			killed := atomic.LoadUint32(it.vars.Killed)
-			if killed != 0 {
-				logutil.Logger(ctx).Info(
-					"a killed signal is received",
-					zap.Uint32("signal", killed),
-				)
-				resp = &copResponse{err: derr.ErrQueryInterrupted}
-				ok = true
-				return
-			}
 		case <-ctx.Done():
 			// We select the ctx.Done() in the thread of `Next` instead of in the worker to avoid the cost of `WithCancel`.
 			if atomic.CompareAndSwapUint32(&it.closed, 0, 1) {
