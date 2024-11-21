@@ -45,5 +45,5 @@ func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID i
 		return tbl, true
 	}
 	tbl, _, _ = is.FindTableByPartitionID(physicalID)
-	return tbl, tbl == nil
+	return tbl, tbl != nil
 }
