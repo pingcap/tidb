@@ -771,13 +771,7 @@ func compareDBRecord(x, y dbRecord) int {
 		return ret
 	}
 
-	switch {
-	case x.DB > y.DB:
-		return 1
-	case x.DB < y.DB:
-		return -1
-	}
-	return 0
+	return strings.Compare(x.DB, y.DB)
 }
 
 func compareTablesPrivRecord(x, y tablesPrivRecord) int {
