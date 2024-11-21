@@ -436,7 +436,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
 			logger.Info("adjust ddl job config success",
-				zap.Int64("job ID", job.ID),
+				zap.Int64("jobID", job.ID),
 				zap.Int("current batch size", w.GetCtx().batchCnt))
 		}
 		result := w.handleBackfillTask(d, task, bf)
