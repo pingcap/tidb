@@ -22,10 +22,10 @@ import (
 	"testing"
 	"time"
 
+	rocks "github.com/cockroachdb/pebble"
+	rockssst "github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 	"github.com/google/uuid"
-	rocks "github.com/lance6716/pebble"
-	rockssst "github.com/lance6716/pebble/sstable"
-	"github.com/lance6716/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
