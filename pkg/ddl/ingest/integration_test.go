@@ -45,7 +45,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		require.Len(t, rows, n)
 		for i := 0; i < n; i++ {
 			//nolint: forcetypeassert
-			jobTp := rows[i][3].(string)
+			jobTp := rows[i][12].(string)
 			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 		}
 	}
@@ -100,7 +100,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 
 	tk.MustExec("drop table t;")
@@ -116,7 +116,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp = rows[0][3].(string)
+	jobTp = rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
