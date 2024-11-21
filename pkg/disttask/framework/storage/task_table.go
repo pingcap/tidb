@@ -842,8 +842,10 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 		if err != nil {
 			return err
 		}
-		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
-			`update mysql.tidb_global_task set state = %?, modify_params = %? where id = %? and state = %?`,
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
+			where id = %? and state = %?`,
 			proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
 		)
 		if err != nil {
