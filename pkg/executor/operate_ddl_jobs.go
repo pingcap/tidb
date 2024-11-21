@@ -218,7 +218,7 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 				if err != nil {
 					return errors.Trace(err)
 				}
-				job.ReorgMeta.MaxWriteSpeed = speed
+				job.ReorgMeta.SetMaxWriteSpeed(int(speed))
 			}
 			job.AdminOperator = byWho
 		default:

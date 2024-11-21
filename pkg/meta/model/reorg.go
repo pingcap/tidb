@@ -109,6 +109,21 @@ func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
 	atomic.StoreInt64(&dm.BatchSize, int64(batchSize))
 }
 
+// GetMaxWriteSpeedOrDefault gets the max write speed from DDLReorgMeta.
+// 0 means no limit.
+func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault(defaultVal int) int {
+	maxWriteSpeed := atomic.LoadInt64(&dm.MaxWriteSpeed)
+	if dm == nil {
+		return defaultVal
+	}
+	return int(maxWriteSpeed)
+}
+
+// SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
+	atomic.StoreInt64(&dm.MaxWriteSpeed, int64(maxWriteSpeed))
+}
+
 const (
 	// ReorgMetaVersion0 is the minimum version of DDLReorgMeta.
 	ReorgMetaVersion0 = int64(0)
