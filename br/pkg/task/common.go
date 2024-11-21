@@ -895,7 +895,8 @@ func ReadBackupMeta(
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
-	if f.Name == flagStorage {
+	switch f.Name {
+	case flagStorage, FlagStreamFullBackupStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
@@ -903,8 +904,14 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+		return zap.String(f.Name, "<redacted>")
+	case flagMasterKeyConfig:
+		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+		return zap.String(f.Name, "<redacted>")
+	default:
+		return zap.Stringer(f.Name, f.Value)
 	}
-	return zap.Stringer(f.Name, f.Value)
 }
 
 // LogArguments prints origin command arguments.
