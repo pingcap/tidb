@@ -265,30 +265,24 @@ func alterTableLabelRule(schemaName string, meta *model.TableInfo, ids []int64) 
 	return false, nil
 }
 
-func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addingDefinitions []model.PartitionDefinition) (bool, error) {
-	var bundles []*placement.Bundle
-
+func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDefs []model.PartitionDefinition) (bool, error) {
 	// We want to achieve:
 	// - before we do any reorganization/write to new partitions/global indexes that the placement rules are in-place
 	// - not removing any placement rules for removed partitions
-	// - not leaving anything in case of failure/rollback!
 	// So we will:
 	// 1) First write the new bundles including both new and old partitions,
 	//    EXCEPT if the old partition is in fact a table, then skip that partition
-	//    This should be done for TRUNCATE/ADD/REORGANIZE PARTITION (incl. REMOVE PARTITIONING and PARTITION BY)
-	// 2) Then overwrite the bundles with the final partitioning scheme
-	//    This can be done directly for DROP PARTITION.
+	// 2) Then overwrite the bundles with the final partitioning scheme (second call in onReorg/
 
 	tblInfo = tblInfo.Clone()
 	p := tblInfo.Partition
-	if p.DDLAction == model.ActionAlterTablePartitioning && p.Type == pmodel.PartitionTypeNone {
-		// skip the original table as partition
-		p.Definitions = []model.PartitionDefinition{}
-	}
-	p.Definitions = append(p.Definitions, addingDefinitions...)
-
-	if p.NewTableID != 0 {
-		tblInfo.ID = p.NewTableID
+	if p != nil {
+		// skip the original table as partition if partitioning a non-partitioned table
+		if p.DDLAction != model.ActionAlterTablePartitioning || p.Type != pmodel.PartitionTypeNone {
+			// prepend with existing partitions
+			addDefs = append(p.Definitions, addDefs...)
+		}
+		p.Definitions = addDefs
 	}
 
 	// bundle for table should be recomputed because it includes some default configs for partitions
@@ -297,16 +291,18 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addin
 		return false, errors.Trace(err)
 	}
 
+	var bundles []*placement.Bundle
 	if tblBundle != nil {
 		bundles = append(bundles, tblBundle)
 	}
 
-	partitionBundles, err := placement.NewPartitionListBundles(t, addingDefinitions)
+	partitionBundles, err := placement.NewPartitionListBundles(t, addDefs)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 
 	bundles = append(bundles, partitionBundles...)
+
 	if len(bundles) > 0 {
 		return true, infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles)
 	}
@@ -351,19 +347,15 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 }
 
 // rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
-func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string, []*placement.Bundle) {
+func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
 	partNames := make([]string, 0, len(tblInfo.Partition.AddingDefinitions))
-	rollbackBundles := make([]*placement.Bundle, 0, len(tblInfo.Partition.AddingDefinitions))
 	for _, one := range tblInfo.Partition.AddingDefinitions {
 		physicalTableIDs = append(physicalTableIDs, one.ID)
 		partNames = append(partNames, one.Name.L)
-		if one.PlacementPolicyRef != nil {
-			rollbackBundles = append(rollbackBundles, placement.NewBundle(one.ID))
-		}
 	}
 	tblInfo.Partition.AddingDefinitions = nil
-	return physicalTableIDs, partNames, rollbackBundles
+	return physicalTableIDs, partNames
 }
 
 // checkAddPartitionValue check add Partition Values,
@@ -2130,7 +2122,10 @@ func dropLabelRules(ctx context.Context, schemaName, tableName string, partNames
 // It will drop newly created partitions that has not yet been used, including cleaning
 // up label rules and bundles as well as changed indexes due to global flag.
 func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
-	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 	partInfo := args.PartInfo
 	metaMut := jobCtx.metaMut
 	tblInfo, err := GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
@@ -2138,12 +2133,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	tblInfo.Partition.DroppingDefinitions = nil
-	physicalTableIDs, pNames, rollbackBundles := rollbackAddingPartitionInfo(tblInfo)
-	err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), rollbackBundles)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
-	}
+	physicalTableIDs, pNames := rollbackAddingPartitionInfo(tblInfo)
 	// TODO: Will this drop LabelRules for existing partitions, if the new partitions have the same name?
 	err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, pNames)
 	if err != nil {
@@ -2158,7 +2148,9 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	if partInfo.Type != pmodel.PartitionTypeNone {
 		// ALTER TABLE ... PARTITION BY
 		// Also remove anything with the new table id
-		physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
+		if partInfo.NewTableID != 0 {
+			physicalTableIDs = append(physicalTableIDs, partInfo.NewTableID)
+		}
 		// Reset if it was normal table before
 		if tblInfo.Partition.Type == pmodel.PartitionTypeNone ||
 			tblInfo.Partition.DDLType == pmodel.PartitionTypeNone {
@@ -2181,6 +2173,11 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		tblInfo.Partition.ClearReorgIntermediateInfo()
 	}
 
+	_, err = alterTablePartitionBundles(metaMut, tblInfo, nil)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
+	}
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -3140,11 +3137,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	jobCtx.jobArgs = args
 	// Handle the rolling back job
 	if job.IsRollingback() {
-		ver, err := w.rollbackLikeDropPartition(jobCtx, job)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
-		return ver, nil
+		return w.rollbackLikeDropPartition(jobCtx, job)
 	}
 
 	tblInfo, partNames, partInfo, _, addingDefinitions, err := getReorgPartitionInfo(jobCtx.metaMut, job, args)
@@ -3480,12 +3473,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.Columns, tblInfo.Partition.DDLColumns = tblInfo.Partition.DDLColumns, tblInfo.Partition.Columns
 		}
 
-		// We need to update the Placement rule bundles with the final partitions.
-		_, err = alterTablePartitionBundles(metaMut, tblInfo, nil)
-		if err != nil {
-			return ver, err
-		}
-
 		failpoint.Inject("reorgPartFail2", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
@@ -3592,6 +3579,13 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 		}
+
+		// We need to update the Placement rule bundles with the final partitions.
+		_, err = alterTablePartitionBundles(metaMut, tblInfo, nil)
+		if err != nil {
+			return ver, err
+		}
+
 		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
