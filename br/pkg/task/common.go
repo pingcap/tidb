@@ -742,10 +742,7 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
-	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
-		return zap.String(f.Name, "<redacted>")
-	case flagMasterKeyConfig:
-		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+	case flagCipherKey:
 		return zap.String(f.Name, "<redacted>")
 	default:
 		return zap.Stringer(f.Name, f.Value)
