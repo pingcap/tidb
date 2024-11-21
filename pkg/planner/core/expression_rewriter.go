@@ -1221,16 +1221,16 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
-	ifLexprReturnBoolean := false
+	ifLexprReturnBool := false
 	// if lexpr is a scalar function who will return 1 or 0, don't convert the sub-query to an inner-join.
 	if lexpr, ok := lexpr.(*expression.ScalarFunction); ok && lexpr.FuncName.L == "or" {
-		ifLexprReturnBoolean = true
+		ifLexprReturnBool = true
 	}
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag && !ifLexprReturnBoolean {
+	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag && !ifLexprReturnBool {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
