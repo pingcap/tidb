@@ -287,7 +287,7 @@ func TestSchedulerRefreshTask(t *testing.T) {
 	// state/step not changed, no need to refresh
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).Return(&task.TaskBase, nil)
 	require.NoError(t, scheduler.refreshTaskIfNeeded())
-	require.Equal(t, *scheduler.GetTask(), task)
+	require.Equal(t, *scheduler.getTaskClone(), task)
 	require.True(t, ctrl.Satisfied())
 	// get task by id failed
 	tmpTask := task
@@ -295,7 +295,7 @@ func TestSchedulerRefreshTask(t *testing.T) {
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).Return(&tmpTask.TaskBase, nil)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(nil, errors.New("get task by id err"))
 	require.ErrorContains(t, scheduler.refreshTaskIfNeeded(), "get task by id err")
-	require.Equal(t, *scheduler.GetTask(), task)
+	require.Equal(t, *scheduler.getTaskClone(), task)
 	require.True(t, ctrl.Satisfied())
 	// state changed
 	tmpTask = task
@@ -303,7 +303,7 @@ func TestSchedulerRefreshTask(t *testing.T) {
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).Return(&tmpTask.TaskBase, nil)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(&tmpTask, nil)
 	require.NoError(t, scheduler.refreshTaskIfNeeded())
-	require.Equal(t, *scheduler.GetTask(), tmpTask)
+	require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	require.True(t, ctrl.Satisfied())
 	// step changed
 	scheduler.task.Store(&schTask) // revert
@@ -312,7 +312,7 @@ func TestSchedulerRefreshTask(t *testing.T) {
 	taskMgr.EXPECT().GetTaskBaseByID(gomock.Any(), task.ID).Return(&tmpTask.TaskBase, nil)
 	taskMgr.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(&tmpTask, nil)
 	require.NoError(t, scheduler.refreshTaskIfNeeded())
-	require.Equal(t, *scheduler.GetTask(), tmpTask)
+	require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	require.True(t, ctrl.Satisfied())
 }
 
@@ -354,7 +354,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().PausedTask(gomock.Any(), task.ID).Return(fmt.Errorf("pause err"))
 		require.ErrorContains(t, scheduler.onPausing(), "pause err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// pause task successfully
@@ -363,7 +363,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.NoError(t, scheduler.onPausing())
 		tmpTask := task
 		tmpTask.State = proto.TaskStatePaused
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -373,7 +373,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		taskMgr.EXPECT().GetSubtaskCntGroupByStates(gomock.Any(), task.ID, gomock.Any()).Return(nil, nil)
 		taskMgr.EXPECT().ResumedTask(gomock.Any(), task.ID).Return(fmt.Errorf("resume err"))
 		require.ErrorContains(t, scheduler.onResuming(), "resume err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// resume task successfully
@@ -382,7 +382,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.NoError(t, scheduler.onResuming())
 		tmpTask := task
 		tmpTask.State = proto.TaskStateRunning
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -393,7 +393,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 		taskMgr.EXPECT().RevertedTask(gomock.Any(), task.ID).Return(fmt.Errorf("reverted err"))
 		require.ErrorContains(t, scheduler.onReverting(), "reverted err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		// revert task successfully
@@ -403,7 +403,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.NoError(t, scheduler.onReverting())
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverted
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -415,7 +415,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, errors.New("plan err"))
 		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
 		require.ErrorContains(t, scheduler.switch2NextStep(), "plan err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// non-retryable plan error, but failed to revert, task state unchanged
 		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -423,7 +423,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(false)
 		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, gomock.Any(), gomock.Any()).Return(fmt.Errorf("revert err"))
 		require.ErrorContains(t, scheduler.switch2NextStep(), "revert err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// non-retryable plan error, task state changed to reverting
 		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -434,7 +434,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverting
 		tmpTask.Error = fmt.Errorf("revert err")
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 
 		// revert task back
@@ -445,7 +445,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 			Return(nil, nil)
 		taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, fmt.Errorf("update err"))
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 		// switch to next step successfully
 		schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
@@ -456,21 +456,21 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask = task
 		tmpTask.State = proto.TaskStateRunning
 		tmpTask.Step = proto.StepOne
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 
 		// task done, but update failed, task state unchanged
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(fmt.Errorf("update err"))
 		require.ErrorContains(t, scheduler.switch2NextStep(), "update err")
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		// task done successfully, task state changed
 		schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 		taskMgr.EXPECT().SucceedTask(gomock.Any(), task.ID).Return(nil)
 		require.NoError(t, scheduler.switch2NextStep())
 		tmpTask.State = proto.TaskStateSucceed
 		tmpTask.Step = proto.StepDone
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 	})
 
 	t.Run("test revertTask", func(t *testing.T) {
@@ -478,7 +478,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 
 		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, gomock.Any(), gomock.Any()).Return(fmt.Errorf("revert err"))
 		require.ErrorContains(t, scheduler.revertTask(fmt.Errorf("task err")), "revert err")
-		require.Equal(t, *scheduler.GetTask(), task)
+		require.Equal(t, *scheduler.getTaskClone(), task)
 		require.True(t, ctrl.Satisfied())
 
 		taskMgr.EXPECT().RevertTask(gomock.Any(), task.ID, gomock.Any(), gomock.Any()).Return(nil)
@@ -486,7 +486,7 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		tmpTask := task
 		tmpTask.State = proto.TaskStateReverting
 		tmpTask.Error = fmt.Errorf("task err")
-		require.Equal(t, *scheduler.GetTask(), tmpTask)
+		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 	})
 }

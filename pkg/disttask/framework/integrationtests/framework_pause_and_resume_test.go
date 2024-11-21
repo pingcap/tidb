@@ -16,6 +16,7 @@ package integrationtests
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -50,10 +51,18 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)")
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+		if counter.Add(1) <= 2 {
+			if task.State == proto.TaskStateRunning {
+				_, err := c.TaskMgr.PauseTask(c.Ctx, task.Key)
+				require.NoError(t, err)
+			}
+		}
+	})
 	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task1.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(c.Ctx, "key1"))
 	task1Base := testutil.WaitTaskDone(c.Ctx, t, task1.Key)
@@ -67,10 +76,18 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	require.Empty(t, errs)
 
 	// 2. pause pending task.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)")
+	counter.Store(0)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {
+		if counter.Add(1) <= 2 {
+			if task.State == proto.TaskStatePending {
+				_, err := mgr.PauseTask(c.Ctx, task.Key)
+				require.NoError(t, err)
+			}
+		}
+	})
 	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
 	require.Equal(t, proto.TaskStatePaused, task2.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(c.Ctx, "key2"))
 	task2Base := testutil.WaitTaskDone(c.Ctx, t, task2.Key)
