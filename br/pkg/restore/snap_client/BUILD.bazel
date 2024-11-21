@@ -65,7 +65,6 @@ go_library(
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
 

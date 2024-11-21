@@ -553,3 +553,29 @@ func TestMemBufferSnapshotRead(t *testing.T) {
 	tk.MustExec("set session tidb_max_chunk_size=default;")
 	tk.MustExec("set session tidb_index_join_batch_size = default")
 }
+
+func TestMemBufferCleanupMemoryLeak(t *testing.T) {
+	// Test if cleanup memory will cause a memory leak.
+	// When an in-txn statement fails, TiDB cleans up the mutations from this statement.
+	// If there's a memory leak, the memory usage could increase uncontrollably with retries.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a varchar(255) primary key)")
+	key1 := strings.Repeat("a", 255)
+	key2 := strings.Repeat("b", 255)
+	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	tk.MustExec("set session tidb_mem_quota_query=10240")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(?)", key2)
+	for i := 0; i < 100; i++ {
+		// The insert statement will fail because of the duplicate key error.
+		err := tk.ExecToErr("insert into t values(?), (?)", key1, key2)
+		require.Error(t, err)
+		if strings.Contains(err.Error(), "Duplicate") {
+			continue
+		}
+		require.NoError(t, err)
+	}
+	tk.MustExec("commit")
+}

@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func emptyMigrations() logclient.WithMigrations {
-	return logclient.WithMigrations{}
+func emptyMigrations() *logclient.WithMigrations {
+	return &logclient.WithMigrations{}
 }
 
 func nameFromID(prefix string, id uint64) string {

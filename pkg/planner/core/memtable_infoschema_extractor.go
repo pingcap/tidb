@@ -260,8 +260,17 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 			return true
 		}
 	}
+
+	toLower := false
+	if e.extractLowerString != nil {
+		toLower = e.extractLowerString[colName]
+	}
+
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
+		if toLower {
+			return !predVals.Exist(strings.ToLower(val))
+		}
 		fn, ok := e.pushedDownFuncs[colName]
 		if ok {
 			return !predVals.Exist(fn(val))
