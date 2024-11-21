@@ -785,6 +785,11 @@ func (local *Backend) UpdateLimiter(limit int) {
 	local.writeLimiter.UpdateLimiter(limit)
 }
 
+// GetLimiterSpeed returns the speed of the write limiter.
+func (local *Backend) GetLimiterSpeed() int {
+	return local.writeLimiter.Limit()
+}
+
 // convertStageOnIngestError will try to fix the error contained in ingest response.
 // Return (_, error) when another error occurred.
 // Return (true, nil) when the job can retry ingesting immediately.

@@ -777,7 +777,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, job, avgRowSize)
+	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -794,7 +794,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) {
+func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
@@ -818,23 +818,30 @@ func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(
-				job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
-			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
-			if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
-				continue
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load()))
+			if maxWriteSpeed != bcCtx.GetLocalBackend().GetLimiterSpeed() {
+				bcCtx.GetLocalBackend().UpdateLimiter(maxWriteSpeed)
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int("max write speed", maxWriteSpeed))
 			}
-			reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-			writer.TuneWorkerPoolSize(int32(targetWriterCnt))
-			logutil.DDLIngestLogger().Info("adjust ddl job config success",
-				zap.Int64("jobID", job.ID),
-				zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
-				zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+
+			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
+					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+			}
 		}
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) error {
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
@@ -843,7 +850,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	// Adjust worker pool size dynamically.
 	if job != nil {
 		go func() {
-			adjustWorkerPoolSize(ctx, pipe, job, avgRowSize)
+			adjustWorkerPoolSize(ctx, pipe, job, bcCtx, avgRowSize)
 		}()
 	}
 
