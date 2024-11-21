@@ -441,6 +441,7 @@ go_test(
         "//pkg/store/helper",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
+        "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/testkit",

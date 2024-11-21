@@ -348,6 +348,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -362,6 +363,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -376,6 +378,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -390,6 +393,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -404,6 +408,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -418,6 +423,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -432,6 +438,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -446,6 +453,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
@@ -460,6 +468,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
@@ -474,6 +483,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
 				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupNoDefault] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
 				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn

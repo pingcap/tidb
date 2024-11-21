@@ -552,6 +552,15 @@ func TestTablesTable(t *testing.T) {
 		testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id in (%s,%s)", tableMetas[0].id, tableMetas[1].id)).Check(
 		testkit.Rows(toString(tableMetas[0])))
+
+	selectTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables where upper(table_name) = 'T1'").Rows()[0][0].(string))
+	require.NoError(t, err)
+	totalTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables").Rows()[0][0].(string))
+	require.NoError(t, err)
+	remainTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables where upper(table_name) != 'T1'").Rows()[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, 2, selectTables)
+	require.Equal(t, totalTables, remainTables+selectTables)
 }
 
 func TestColumnTable(t *testing.T) {

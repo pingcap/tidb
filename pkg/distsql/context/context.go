@@ -78,6 +78,7 @@ type DistSQLContext struct {
 	LoadBasedReplicaReadThreshold time.Duration
 	RunawayChecker                resourcegroup.RunawayChecker
 	TiKVClientReadTimeout         uint64
+	MaxExecutionTime              uint64
 
 	ReplicaClosestReadThreshold int64
 	ConnectionID                uint64
