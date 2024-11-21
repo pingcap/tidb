@@ -322,7 +322,8 @@ func TestIssue35911(t *testing.T) {
 	timeStr1 := extractTime.FindStringSubmatch(rows[4][5].(string))[1]
 	time1, err := time.ParseDuration(timeStr1)
 	require.NoError(t, err)
-	timeStr2 := extractTime.FindStringSubmatch(rows[5][5].(string))[1]
+	extractTime2, _ := regexp.Compile("^total_time:(.*?),")
+	timeStr2 := extractTime2.FindStringSubmatch(rows[5][5].(string))[1]
 	time2, err := time.ParseDuration(timeStr2)
 	require.NoError(t, err)
 	// The duration of IndexLookUp should be longer than its build side child
