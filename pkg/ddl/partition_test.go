@@ -223,7 +223,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	// check job rollback finished
 	rows := tk.MustQuery("admin show ddl jobs where JOB_ID=" + jobID).Rows()
 	require.Equal(t, 1, len(rows))
-	require.Equal(t, "rollback done", rows[0][len(rows[0])-1])
+	require.Equal(t, "rollback done", rows[0][len(rows[0])-2])
 
 	// check table meta after rollback
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +

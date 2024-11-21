@@ -2940,11 +2940,19 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 	for _, field := range tableList {
 		if field.Name.L == name.TblName.L {
 			tnW := b.resolveCtx.GetTableName(field)
-			// when the Select is inside a view, it's not pre-processed, tnW is nil.
 			if tnW != nil {
 				return tnW.TableInfo
 			}
-			return nil
+			// when the Select is inside a view, it's not pre-processed, tnW is nil.
+			if b.isCreateView {
+				// Ignore during create
+				return nil
+			}
+			tblInfo, err := b.is.TableInfoByName(name.DBName, name.TblName)
+			if err != nil {
+				return nil
+			}
+			return tblInfo
 		}
 	}
 	return nil

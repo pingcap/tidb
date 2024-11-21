@@ -16,9 +16,11 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -484,4 +486,36 @@ func TestValidateAndFillRanges(t *testing.T) {
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.Error(t, err)
+}
+
+func TestTuneTableScanWorkerBatchSize(t *testing.T) {
+	reorgMeta := &model.DDLReorgMeta{
+		Concurrency: 4,
+		BatchSize:   32,
+	}
+	copCtx := &copr.CopContextSingleIndex{
+		CopContextBase: &copr.CopContextBase{
+			FieldTypes: []*types.FieldType{},
+		},
+	}
+	opCtx, cancel := NewDistTaskOperatorCtx(context.Background(), 1, 1)
+	w := tableScanWorker{
+		copCtx:        copCtx,
+		ctx:           opCtx,
+		srcChkPool:    createChunkPool(copCtx, reorgMeta),
+		hintBatchSize: 32,
+		reorgMeta:     reorgMeta,
+	}
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 32, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	reorgMeta.SetBatchSize(64)
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 64, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	cancel()
 }

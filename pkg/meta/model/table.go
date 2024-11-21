@@ -865,16 +865,6 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
-// HasTruncatingPartitionID checks whether the pid is truncating.
-func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
-	for i := range pi.NewPartitionIDs {
-		if pi.NewPartitionIDs[i] == pid {
-			return true
-		}
-	}
-	return false
-}
-
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLAction = ActionNone
@@ -1040,9 +1030,6 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 // For example during truncate or drop partition.
 func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 	// TODO:
-	// Truncate partition:
-	// write only => should not see NewPartitionIDs
-	// delete only => should not see DroppingPartitions
 	// Drop partition:
 	// TODO: Make similar changes as in Truncate Partition:
 	// Add a state blocking read and write in the partitions to be dropped,
