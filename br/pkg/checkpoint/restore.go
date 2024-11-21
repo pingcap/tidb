@@ -39,6 +39,14 @@ func (rv RestoreValueType) IdentKey() []byte {
 	return []byte(rv.RangeKey)
 }
 
+type CheckpointItem struct {
+	TableID RestoreKeyType
+	// used for table full backup restore
+	RangeKey string
+	// used for table raw/txn/compacted SST restore
+	Name string
+}
+
 func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType]) ([]byte, error) {
 	return json.Marshal(group)
 }
@@ -79,14 +87,12 @@ func StartCheckpointRunnerForRestore(
 func AppendRangesForRestore(
 	ctx context.Context,
 	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
-	tableID RestoreKeyType,
-	rangeKey string,
-	name string,
+	c CheckpointItem,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
-		GroupKey: tableID,
+		GroupKey: c.TableID,
 		Group: []RestoreValueType{
-			{RangeKey: rangeKey, Name: name},
+			{RangeKey: c.RangeKey, Name: c.Name},
 		},
 	})
 }
