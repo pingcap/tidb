@@ -490,3 +490,51 @@ drop table if exists t;
 create table t(j json, str varchar(255), other int);
 insert into t values (NULL, NULL, NULL);
 select json_valid(j), json_valid(str), json_valid(other) from t;
+
+# TestIssue54029
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(id INT PRIMARY KEY, d1 DATE, d2 DATETIME, t1 TIME, t2 TIMESTAMP, b1 BIT, b2 BINARY);
+INSERT INTO t1 VALUES (1, '2024-06-14', '2024-06-14 09:37:00', '09:37:00', '2024-06-14 09:37:00', b'0', 0x41);
+-- error 3146
+SELECT JSON_TYPE(d1) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(d2) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(t1) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(t2) FROM t1;
+-- error 3146
+SELECT JSON_TYPE(b1) FROM t1;
+-- error 3144
+SELECT JSON_TYPE(b2) FROM t1;
+-- error 3144
+SELECT JSON_EXTRACT(b2, '$') FROM t1;
+-- error 3144
+SELECT JSON_MERGE(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_CONTAINS_PATH(b2, 'one', '$.a') FROM t1;
+-- error 3144
+SELECT '1' member of(b2) FROM t1;
+-- error 3144
+SELECT JSON_CONTAINS(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_OVERLAPS(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PATCH(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PATCH('{a:"b"}', b2) FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PRESERVE(b2, '{a:"b"}') FROM t1;
+-- error 3144
+SELECT JSON_MERGE_PRESERVE('{a:"b"}', b2) FROM t1;
+-- error 3144
+SELECT JSON_SEARCH(b2, 'one', '1') FROM t1;
+-- error 3144
+SELECT JSON_KEYS(b2) FROM t1;
+-- error 3144
+SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
+
+# TestIssue54044
+prepare stmt from 'select json_object(?, ?)';
+set @a=1;
+execute stmt using @a, @a;
