@@ -28,7 +28,8 @@ const (
 //
 // export for using in tests.
 type LocalStorage struct {
-	base string
+	base   string
+	baseFD *os.File
 	// Whether ignoring ENOINT while deleting.
 	// Don't fail when deleting an unexist file is more like
 	// a normal ExternalStorage implementation does.
@@ -95,6 +96,11 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
 		return errors.Trace(err)
 	}
+	if err := l.baseFD.Sync(); err != nil {
+		// So the write can be observed by `Walk` immediately...
+		return errors.Trace(err)
+	}
+
 	return nil
 }
 
@@ -283,5 +289,9 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-	return &LocalStorage{base: base}, nil
+	baseFD, err := os.Open(base)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &LocalStorage{base: base, baseFD: baseFD}, nil
 }
