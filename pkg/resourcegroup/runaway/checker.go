@@ -92,9 +92,8 @@ func (rm *Manager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, plan
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
 		return nil
 	}
-	// Only check the normal query.
+	// Only check the normal statement.
 	if len(planDigest) == 0 {
-		logutil.BgLogger().Warn("cannot setup up runaway checker, there is no plan digest", zap.Error(err))
 		return nil
 	}
 	rm.ActiveLock.RLock()
