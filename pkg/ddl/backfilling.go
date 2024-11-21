@@ -839,7 +839,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	}
 
 	// Adjust worker pool size dynamically.
-	if job != nil && avgRowSize != 0 {
+	if job != nil {
 		go func() {
 			adjustWorkerPoolSize(ctx, pipe, job, avgRowSize)
 		}()
