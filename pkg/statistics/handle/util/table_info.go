@@ -15,6 +15,8 @@
 package util
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/table"
 )
@@ -39,5 +41,8 @@ func NewTableInfoGetter() TableInfoGetter {
 // If the physicalID is corresponding to a partition, return its parent table.
 func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
 	tbl, _, _ := is.FindTableByPartitionID(physicalID)
-	return tbl, tbl == nil
+	if tbl != nil {
+		return tbl, true
+	}
+	return is.TableByID(context.Background(), physicalID)
 }
