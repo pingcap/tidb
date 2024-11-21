@@ -361,7 +361,7 @@ type ProbeWorkerV2 struct {
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
 
-	restoredChk *chunk.Chunk
+	restoredChkBuf *chunk.Chunk
 }
 
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
@@ -395,7 +395,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
-		err := inDisk.FillChunk(i, w.restoredChk)
+		err := inDisk.FillChunk(i, w.restoredChkBuf)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -915,7 +915,7 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 }
 
 func (w *ProbeWorkerV2) processOneRestoredProbeChunk(joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(w.restoredChk)
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(w.restoredChkBuf)
 	if joinResult.err != nil {
 		return false, 0, joinResult
 	}

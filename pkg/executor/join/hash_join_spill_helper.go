@@ -382,8 +382,8 @@ func (h *hashJoinSpillHelper) init() {
 		}
 
 		for _, worker := range h.hashJoinExec.ProbeWorkers {
-			if worker.restoredChk == nil {
-				worker.restoredChk = chunk.NewEmptyChunk(h.probeSpillFieldTypes)
+			if worker.restoredChkBuf == nil {
+				worker.restoredChkBuf = chunk.NewEmptyChunk(h.probeSpillFieldTypes)
 			}
 		}
 	}
