@@ -780,20 +780,12 @@ func compareTablesPrivRecord(x, y tablesPrivRecord) int {
 		return ret
 	}
 
-	switch {
-	case x.DB > y.DB:
-		return 1
-	case x.DB < y.DB:
-		return -1
+	ret = strings.Compare(x.DB, y.DB)
+	if ret != 0 {
+		return ret
 	}
 
-	switch {
-	case x.TableName > y.TableName:
-		return 1
-	case x.TableName < y.TableName:
-		return -1
-	}
-	return 0
+	return strings.Compare(x.TableName, y.TableName)
 }
 
 func (p *MySQLPrivilege) buildDBMap() {
