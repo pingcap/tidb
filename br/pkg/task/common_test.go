@@ -54,29 +54,10 @@ func TestUrlNoQuery(t *testing.T) {
 			expectedValue: "s3://bucket/prefix/",
 		},
 		{
-			inputName:     flagFullBackupCipherKey,
+			inputName:     flagCipherKey,
 			expectedName:  "crypter.key",
 			inputValue:    "537570657253656372657456616C7565",
 			expectedValue: "<redacted>",
-		},
-		{
-			inputName:     flagLogBackupCipherKey,
-			expectedName:  "log.crypter.key",
-			inputValue:    "537570657253656372657456616C7565",
-			expectedValue: "<redacted>",
-		},
-		{
-			inputName:     "azblob.encryption-key",
-			expectedName:  "azblob.encryption-key",
-			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
-			expectedValue: "<redacted>",
-		},
-		{
-			inputName:     flagMasterKeyConfig,
-			expectedName:  "master-key",
-			inputValue:    "local:///path/abcd,aws-kms:///abcd?AWS_ACCESS_KEY_ID=SECRET1&AWS_SECRET_ACCESS_KEY=SECRET2&REGION=us-east-1,azure-kms:///abcd/v1?AZURE_TENANT_ID=tenant-id&AZURE_CLIENT_ID=client-id&AZURE_CLIENT_SECRET=client-secret&AZURE_VAULT_NAME=vault-name",
-			expectedValue: "<redacted>",
-			// expectedValue: "local:///path/abcd,aws-kms:///abcd,azure-kms:///abcd/v1"
 		},
 	}
 
