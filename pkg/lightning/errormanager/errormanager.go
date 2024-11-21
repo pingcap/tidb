@@ -91,8 +91,8 @@ const (
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
@@ -150,7 +150,7 @@ const (
 	`
 
 	insertIntoConflictErrorData = `
-		INSERT IGNORE INTO %s.` + ConflictErrorTableName + `
+		INSERT INTO %s.` + ConflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, kv_type)
 		VALUES
 	`
