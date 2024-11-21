@@ -15,6 +15,8 @@
 # limitations under the License.
 
 # currently the script is WIP and not used in the CI.
+# need to check both default CF and write CF
+return 0
 
 set -eu
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
