@@ -1979,20 +1979,17 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
-	// We need to update the AllocBase every time we've finished a file.
-	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
-	// or integer primary key), which can only be obtained by reading all data.
-
-	var base int64
-	if t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
-	} else {
-		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
-	}
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
-			AllocBase: base,
+			AutoRandBase:  t.alloc.Get(autoid.AutoRandomType).Base(),
+			AutoIncrBase:  t.alloc.Get(autoid.AutoIncrementType).Base(),
+			AutoRowIDBase: t.alloc.Get(autoid.RowIDAllocType).Base(),
 		},
 	}
 	rc.saveCpCh <- saveCp{

@@ -3,13 +3,11 @@
 package logclient_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"fmt"
 	"os"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,14 +16,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/kvproto/pkg/pdpb"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -52,157 +48,20 @@ func assertRegions(t *testing.T, regions []*split.RegionInfo, keys ...string) {
 	}
 }
 
-type TestClient struct {
-	split.SplitClient
-	pd.Client
-
-	mu           sync.RWMutex
-	stores       map[uint64]*metapb.Store
-	regions      map[uint64]*split.RegionInfo
-	regionsInfo  *pdtypes.RegionTree // For now it's only used in ScanRegions
-	nextRegionID uint64
-
-	scattered   map[uint64]bool
-	InjectErr   bool
-	InjectTimes int32
-}
-
-func NewTestClient(
-	stores map[uint64]*metapb.Store,
-	regions map[uint64]*split.RegionInfo,
-	nextRegionID uint64,
-) *TestClient {
-	regionsInfo := &pdtypes.RegionTree{}
-	for _, regionInfo := range regions {
-		regionsInfo.SetRegion(pdtypes.NewRegionInfo(regionInfo.Region, regionInfo.Leader))
-	}
-	return &TestClient{
-		stores:       stores,
-		regions:      regions,
-		regionsInfo:  regionsInfo,
-		nextRegionID: nextRegionID,
-		scattered:    map[uint64]bool{},
-	}
-}
-
-func (c *TestClient) GetAllRegions() map[uint64]*split.RegionInfo {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.regions
-}
-
-func (c *TestClient) GetPDClient() *split.FakePDClient {
-	stores := make([]*metapb.Store, 0, len(c.stores))
-	for _, store := range c.stores {
-		stores = append(stores, store)
-	}
-	return split.NewFakePDClient(stores, false, nil)
-}
-
-func (c *TestClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	store, ok := c.stores[storeID]
-	if !ok {
-		return nil, errors.Errorf("store not found")
-	}
-	return store, nil
-}
-
-func (c *TestClient) GetRegion(ctx context.Context, key []byte) (*split.RegionInfo, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, region := range c.regions {
-		if bytes.Compare(key, region.Region.StartKey) >= 0 &&
-			(len(region.Region.EndKey) == 0 || bytes.Compare(key, region.Region.EndKey) < 0) {
-			return region, nil
-		}
-	}
-	return nil, errors.Errorf("region not found: key=%s", string(key))
-}
-
-func (c *TestClient) GetRegionByID(ctx context.Context, regionID uint64) (*split.RegionInfo, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	region, ok := c.regions[regionID]
-	if !ok {
-		return nil, errors.Errorf("region not found: id=%d", regionID)
-	}
-	return region, nil
-}
-
-func (c *TestClient) SplitWaitAndScatter(_ context.Context, _ *split.RegionInfo, keys [][]byte) ([]*split.RegionInfo, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	newRegions := make([]*split.RegionInfo, 0)
-	for _, key := range keys {
-		var target *split.RegionInfo
-		splitKey := codec.EncodeBytes([]byte{}, key)
-		for _, region := range c.regions {
-			if region.ContainsInterior(splitKey) {
-				target = region
-			}
-		}
-		if target == nil {
-			continue
-		}
-		newRegion := &split.RegionInfo{
-			Region: &metapb.Region{
-				Peers:    target.Region.Peers,
-				Id:       c.nextRegionID,
-				StartKey: target.Region.StartKey,
-				EndKey:   splitKey,
-			},
-		}
-		c.regions[c.nextRegionID] = newRegion
-		c.nextRegionID++
-		target.Region.StartKey = splitKey
-		c.regions[target.Region.Id] = target
-		newRegions = append(newRegions, newRegion)
-	}
-	return newRegions, nil
-}
-
-func (c *TestClient) GetOperator(context.Context, uint64) (*pdpb.GetOperatorResponse, error) {
-	return &pdpb.GetOperatorResponse{
-		Header: new(pdpb.ResponseHeader),
-	}, nil
-}
-
-func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int) ([]*split.RegionInfo, error) {
-	if c.InjectErr && c.InjectTimes > 0 {
-		c.InjectTimes -= 1
-		return nil, status.Error(codes.Unavailable, "not leader")
-	}
-	if len(key) != 0 && bytes.Equal(key, endKey) {
-		return nil, status.Error(codes.Internal, "key and endKey are the same")
-	}
-
-	infos := c.regionsInfo.ScanRange(key, endKey, limit)
-	regions := make([]*split.RegionInfo, 0, len(infos))
-	for _, info := range infos {
-		regions = append(regions, &split.RegionInfo{
-			Region: info.Meta,
-			Leader: info.Leader,
-		})
-	}
-	return regions, nil
-}
-
-func (c *TestClient) WaitRegionsScattered(context.Context, []*split.RegionInfo) (int, error) {
-	return 0, nil
-}
-
 // region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
-func initTestClient(isRawKv bool) *TestClient {
+func initTestClient(isRawKv bool) *split.TestClient {
+	keys := []string{"", "aay", "bba", "bbh", "cca", ""}
+	stores := make(map[uint64]*metapb.Store)
+	stores[1] = &metapb.Store{
+		Id: 1,
+	}
 	peers := make([]*metapb.Peer, 1)
 	peers[0] = &metapb.Peer{
 		Id:      1,
 		StoreId: 1,
 	}
-	keys := [6]string{"", "aay", "bba", "bbh", "cca", ""}
 	regions := make(map[uint64]*split.RegionInfo)
-	for i := uint64(1); i < 6; i++ {
+	for i := 1; i < len(keys); i++ {
 		startKey := []byte(keys[i-1])
 		if len(startKey) != 0 {
 			startKey = codec.EncodeBytesExt([]byte{}, startKey, isRawKv)
@@ -211,24 +70,20 @@ func initTestClient(isRawKv bool) *TestClient {
 		if len(endKey) != 0 {
 			endKey = codec.EncodeBytesExt([]byte{}, endKey, isRawKv)
 		}
-		regions[i] = &split.RegionInfo{
+		regions[uint64(i)] = &split.RegionInfo{
 			Leader: &metapb.Peer{
-				Id:      i,
+				Id:      uint64(i),
 				StoreId: 1,
 			},
 			Region: &metapb.Region{
-				Id:       i,
+				Id:       uint64(i),
 				Peers:    peers,
 				StartKey: startKey,
 				EndKey:   endKey,
 			},
 		}
 	}
-	stores := make(map[uint64]*metapb.Store)
-	stores[1] = &metapb.Store{
-		Id: 1,
-	}
-	return NewTestClient(stores, regions, 6)
+	return split.NewTestClient(stores, regions, 6)
 }
 
 func TestScanSuccess(t *testing.T) {
@@ -411,7 +266,7 @@ func TestEpochNotMatch(t *testing.T) {
 	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
@@ -429,8 +284,8 @@ func TestEpochNotMatch(t *testing.T) {
 	}
 	newRegion := pdtypes.NewRegionInfo(info.Region, info.Leader)
 	mergeRegion := func() {
-		cli.regionsInfo.SetRegion(newRegion)
-		cli.regions[42] = &info
+		cli.RegionsInfo.SetRegion(newRegion)
+		cli.Regions[42] = &info
 	}
 	epochNotMatch := &import_sstpb.Error{
 		Message: "Epoch not match",
@@ -457,7 +312,7 @@ func TestEpochNotMatch(t *testing.T) {
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	assertRegions(t, firstRunRegions, "", "aay")
 	assertRegions(t, secondRunRegions, "", "aay", "bbh", "cca", "")
 	require.NoError(t, err)
@@ -470,7 +325,7 @@ func TestRegionSplit(t *testing.T) {
 	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("aazz"), 1)
 	require.NoError(t, err)
 	require.Len(t, regions, 1)
@@ -503,8 +358,8 @@ func TestRegionSplit(t *testing.T) {
 	splitRegion := func() {
 		for _, r := range newRegions {
 			newRegion := pdtypes.NewRegionInfo(r.Region, r.Leader)
-			cli.regionsInfo.SetRegion(newRegion)
-			cli.regions[r.Region.Id] = r
+			cli.RegionsInfo.SetRegion(newRegion)
+			cli.Regions[r.Region.Id] = r
 		}
 	}
 	epochNotMatch := &import_sstpb.Error{
@@ -535,7 +390,7 @@ func TestRegionSplit(t *testing.T) {
 	})
 	printRegion("first", firstRunRegions)
 	printRegion("second", secondRunRegions)
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	assertRegions(t, firstRunRegions, "", "aay")
 	assertRegions(t, secondRunRegions, "", "aay", "aayy", "bba", "bbh", "cca", "")
 	require.NoError(t, err)
@@ -548,7 +403,7 @@ func TestRetryBackoff(t *testing.T) {
 	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	regions, err := split.PaginateScanRegion(ctx, cli, []byte("aaz"), []byte("bbb"), 2)
 	require.NoError(t, err)
 	require.Len(t, regions, 2)
@@ -569,7 +424,7 @@ func TestRetryBackoff(t *testing.T) {
 		}
 		return logclient.RPCResultOK()
 	})
-	printPDRegion("cli", cli.regionsInfo.Regions)
+	printPDRegion("cli", cli.RegionsInfo.Regions)
 	require.Equal(t, 1, rs.Attempt())
 	// we retried leader not found error. so the next backoff should be 2 * initical backoff.
 	require.Equal(t, 2*time.Millisecond, rs.ExponentialBackoff())

@@ -130,9 +130,6 @@ func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager
 	}
 }
 
-// TestRefreshedChan is used to sync the test.
-var TestRefreshedChan = make(chan struct{})
-
 // refreshNodes maintains the nodes managed by the framework.
 func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	newNodes, err := taskMgr.GetAllNodes(ctx)
@@ -150,9 +147,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 	slotMgr.updateCapacity(cpuCount)
 	nm.nodes.Store(&newNodes)
 
-	failpoint.Inject("syncRefresh", func() {
-		TestRefreshedChan <- struct{}{}
-	})
+	failpoint.InjectCall("syncRefresh")
 }
 
 // GetNodes returns the nodes managed by the framework.

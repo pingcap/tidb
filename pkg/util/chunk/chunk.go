@@ -471,12 +471,12 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset in
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
 		currentOffset += elemLen
 	} else {
-		elemLen := *(*uint64)(unsafe.Add(rowData, currentOffset))
+		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+8), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+sizeUint32), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		currentOffset += int(elemLen + 8)
+		currentOffset += int(elemLen + uint32(sizeUint32))
 	}
 	dst.length++
 	return currentOffset

@@ -62,6 +62,11 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		output, err := arg0.Add(typeCtx(ctx), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
@@ -116,6 +121,11 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 		arg1 := buf1.GetString(i)
 
 		// calculate
+
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
 
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
@@ -464,7 +474,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -479,7 +489,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -498,16 +508,25 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -529,7 +548,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -544,7 +563,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -561,6 +580,11 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
@@ -576,14 +600,17 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -675,6 +702,11 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		tc := typeCtx(ctx)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
 		output, err := arg0.Add(tc, arg1Duration.Neg())
@@ -731,6 +763,11 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 		arg1 := buf1.GetString(i)
 
 		// calculate
+
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
 
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
@@ -1078,7 +1115,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1093,7 +1130,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -1112,16 +1149,25 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -1143,7 +1189,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1158,7 +1204,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -1175,6 +1221,11 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
@@ -1190,14 +1241,17 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			return err
 		}
 
-		fsp0 := b.args[0].GetType(ctx).GetDecimal()
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
