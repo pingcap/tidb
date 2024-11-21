@@ -169,7 +169,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	}
 	require.Equal(t, 3, idxRegionCnt)
 
-	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (100000) regions 3);")
+	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
 	retRows = tk.MustQuery("show table t regions;").Rows()
 	idxRegionCnt = 0
 	for _, r := range retRows {
@@ -197,7 +197,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 		}
 	}
 	require.Equal(t, 9, idxRegionCnt)
-	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (100000) regions 3);")
+	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
 	retRows = tk.MustQuery("show table t regions;").Rows()
 	idxRegionCnt = 0
 	for _, r := range retRows {

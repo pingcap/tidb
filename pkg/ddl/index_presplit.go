@@ -28,12 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -58,10 +56,9 @@ func presplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	evalCtx := exprCtx.GetEvalCtx()
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
-		splitArgs, err := evalSplitDatumFromArgs(evalCtx, tblInfo, idxInfo, idxArg)
+		splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -269,7 +266,7 @@ func splitIndexRegionAndWait(
 }
 
 func evalSplitDatumFromArgs(
-	evalCtx exprctx.EvalContext,
+	buildCtx exprctx.BuildContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	idxArg *model.IndexArg,
@@ -284,7 +281,7 @@ func evalSplitDatumFromArgs(
 			if len(valueList) > len(idxInfo.Columns) {
 				return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
 			}
-			values, err := evalConstExprNodes(evalCtx, valueList, tblInfo, idxInfo)
+			values, err := evalConstExprNodes(buildCtx, valueList, tblInfo, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -301,7 +298,7 @@ func evalSplitDatumFromArgs(
 		if len(valuesItem) > len(idxInfo.Columns) {
 			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", idxInfo.Name, name)
 		}
-		return evalConstExprNodes(evalCtx, valuesItem, tblInfo, idxInfo)
+		return evalConstExprNodes(buildCtx, valuesItem, tblInfo, idxInfo)
 	}
 	lowerValues, err := checkLowerUpperValue(opt.Lower, "lower")
 	if err != nil {
@@ -327,7 +324,7 @@ func evalSplitDatumFromArgs(
 }
 
 func evalConstExprNodes(
-	evalCtx exprctx.EvalContext,
+	buildCtx exprctx.BuildContext,
 	valueList []string,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -336,35 +333,30 @@ func evalConstExprNodes(
 	for j, value := range valueList {
 		colOffset := idxInfo.Columns[j].Offset
 		col := tblInfo.Columns[colOffset]
-		valExpr := ast.NewValueExpr(value, "", "")
-		switch x := valExpr.(type) {
-		case *driver.ValueExpr:
-			constant := &expression.Constant{
-				Value:   x.Datum,
-				RetType: &x.Type,
-			}
-			value, err := constant.Eval(evalCtx, chunk.Row{})
-			if err != nil {
+		exp, err := expression.ParseSimpleExpr(buildCtx, value)
+		if err != nil {
+			return nil, err
+		}
+		evalCtx := buildCtx.GetEvalCtx()
+		value, err := exp.Eval(evalCtx, chunk.Row{})
+		if err != nil {
+			return nil, err
+		}
+
+		d, err := value.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
+		if err != nil {
+			if !types.ErrTruncated.Equal(err) &&
+				!types.ErrTruncatedWrongVal.Equal(err) &&
+				!types.ErrBadNumber.Equal(err) {
 				return nil, err
 			}
-
-			d, err := value.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
-			if err != nil {
-				if !types.ErrTruncated.Equal(err) &&
-					!types.ErrTruncatedWrongVal.Equal(err) &&
-					!types.ErrBadNumber.Equal(err) {
-					return nil, err
-				}
-				valStr, err1 := value.ToString()
-				if err1 != nil {
-					return nil, err
-				}
-				return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
+			valStr, err1 := value.ToString()
+			if err1 != nil {
+				return nil, err
 			}
-			values = append(values, d)
-		default:
-			return nil, errors.New("Expect constant values")
+			return nil, types.ErrTruncated.GenWithStack("Incorrect value: '%-.128s' for column '%.192s'", valStr, col.Name.O)
 		}
+		values = append(values, d)
 	}
 	return values, nil
 }
