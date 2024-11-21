@@ -289,6 +289,10 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 			return nil, errors.Trace(err)
 		}
 	}
+
+	// Here the path targets to a directory and we will only call `Sync` over it.
+	// Disable the G304 warning which focus on relative path injection like "../../import_stuff".
+	//nolint: gosec
 	baseFD, err := os.Open(base)
 	if err != nil {
 		return nil, errors.Trace(err)
