@@ -1303,8 +1303,8 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
-	// stats shared by multiple executors with the same id
-	multipleExecutors atomic.Bool
+	// the count of executors with the same id
+	executorCount atomic.Int32
 	// executor's Next() called times.
 	loop atomic.Int32
 	// executor consume time, including open, next, and close time.
@@ -1325,7 +1325,7 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	result := &BasicRuntimeStats{}
-	result.multipleExecutors.Store(e.multipleExecutors.Load())
+	result.executorCount.Store(e.executorCount.Load())
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
 	result.open.Store(e.open.Load())
@@ -1354,7 +1354,6 @@ func (*BasicRuntimeStats) Tp() int {
 
 // RootRuntimeStats is the executor runtime stats that combine with multiple runtime stats.
 type RootRuntimeStats struct {
-	basics   []*BasicRuntimeStats
 	basic    *BasicRuntimeStats
 	groupRss []RuntimeStats
 }
@@ -1424,7 +1423,7 @@ func (e *BasicRuntimeStats) String() string {
 	}
 	var str strings.Builder
 	timePrefix := ""
-	if e.multipleExecutors.Load() {
+	if e.executorCount.Load() > 1 {
 		timePrefix = "total_"
 	}
 	totalTime := e.consume.Load()
@@ -1513,8 +1512,9 @@ func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats
 	}
 	if stats.basic == nil {
 		stats.basic = &BasicRuntimeStats{}
-	} else if initNewExecutorStats {
-		stats.basic.multipleExecutors.CompareAndSwap(false, true)
+	}
+	if initNewExecutorStats {
+		stats.basic.executorCount.Add(1)
 	}
 	return stats.basic
 }
