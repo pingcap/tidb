@@ -277,7 +277,11 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDe
 	tblInfo = tblInfo.Clone()
 	p := tblInfo.Partition
 	if p != nil {
-		// skip the original table as partition if partitioning a non-partitioned table
+		// if partitioning a non-partitioned table, we will first change the metadata,
+		// so the table looks like a partitioned table, with the first/only partition having
+		// the same partition ID as the table, so we can access the table as a single partition.
+		// But in this case we should not add a bundle rule for the same range
+		// both as table and partition.
 		if p.Definitions[0].ID != tblInfo.ID {
 			// prepend with existing partitions
 			addDefs = append(p.Definitions, addDefs...)
@@ -346,8 +350,8 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 	tblInfo.Partition.AddingDefinitions = append(tblInfo.Partition.AddingDefinitions, newDefs...)
 }
 
-// rollbackAddingPartitionInfo remove the `addingDefinitions` in the tableInfo.
-func rollbackAddingPartitionInfo(tblInfo *model.TableInfo) ([]int64, []string) {
+// removePartitionAddingDefinitionsFromTableInfo remove the `addingDefinitions` in the tableInfo.
+func removePartitionAddingDefinitionsFromTableInfo(tblInfo *model.TableInfo) ([]int64, []string) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
 	partNames := make([]string, 0, len(tblInfo.Partition.AddingDefinitions))
 	for _, one := range tblInfo.Partition.AddingDefinitions {
@@ -2133,7 +2137,10 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 		return ver, errors.Trace(err)
 	}
 	tblInfo.Partition.DroppingDefinitions = nil
-	physicalTableIDs, pNames := rollbackAddingPartitionInfo(tblInfo)
+	// Collect table/partition ids to clean up, through args.OldPhysicalTblIDs
+	// GC will later also drop matching Placement bundles.
+	// If we delete them now, it could lead to non-compliant placement or failure during flashback
+	physicalTableIDs, pNames := removePartitionAddingDefinitionsFromTableInfo(tblInfo)
 	// TODO: Will this drop LabelRules for existing partitions, if the new partitions have the same name?
 	err = dropLabelRules(w.ctx, job.SchemaName, tblInfo.Name.L, pNames)
 	if err != nil {
