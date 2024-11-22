@@ -160,10 +160,10 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
 	}
-	hasForce := false
-	ds.AccessPathMinSelectivity, hasForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
-	if hasForce {
-		ds.SCtx().GetSessionVars().StmtCtx.SetHasForce()
+	indexForce := false
+	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
+	if indexForce {
+		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
 	}
 
 	return ds.StatsInfo(), nil
@@ -410,7 +410,7 @@ func detachCondAndBuildRangeForPath(
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
 	minSelectivity := 1.0
-	hasForce := false
+	indexForce := false
 	for _, path := range paths {
 		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
 		// but we still consider their AccessPath.CountAfterAccess.
@@ -421,11 +421,11 @@ func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float
 				minSelectivity = min(minSelectivity, path.CountAfterIndex/totalRowCount)
 			}
 		}
-		if !hasForce && path.Forced {
-			hasForce = true
+		if !indexForce && path.Forced {
+			indexForce = true
 		}
 	}
-	return minSelectivity, hasForce
+	return minSelectivity, indexForce
 }
 
 func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []property.GroupNDV {
