@@ -82,7 +82,11 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 
 func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *physicalop.PhysicalHashJoin) {
 	// precondition: the storage type of hash join must be TiFlash
+<<<<<<< HEAD
 	if hashJoinPlan.StoreTp != kv.TiFlash {
+=======
+	if hashJoinPlan.storeTp != kv.TiFlash {
+>>>>>>> bc03ed8e2b5 (planner, runtime_filter: Remove redundant logs whose meaning can be directly displayed by default behavior (#57626))
 		return
 	}
 	// check hash join pattern
