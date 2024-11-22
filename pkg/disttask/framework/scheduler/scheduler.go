@@ -409,6 +409,7 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 	for _, m := range task.ModifyParam.Modifications {
 		if m.Type == proto.ModifyConcurrency {
 			if task.Concurrency == int(m.To) {
+				// shouldn't happen normally.
 				s.logger.Info("task concurrency not changed, skip", zap.Int("concurrency", task.Concurrency))
 				continue
 			}
