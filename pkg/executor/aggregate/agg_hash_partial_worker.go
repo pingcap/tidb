@@ -72,6 +72,17 @@ type HashAggPartialWorker struct {
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
+	needDone := false
+
+	defer func() {
+		if err := recover(); err != nil {
+			if needDone {
+				w.inflightChunkSync.Done()
+			}
+			panic(err)
+		}
+	}()
+
 	select {
 	case <-w.finishCh:
 		return false
@@ -79,6 +90,10 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 		if !ok {
 			return false
 		}
+
+		needDone = true
+
+		w.intestDuringPartialWorkerRun()
 
 		sizeBefore := w.chk.MemoryUsage()
 		w.chk.SwapColumns(chk)
