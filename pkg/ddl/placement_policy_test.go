@@ -2550,7 +2550,7 @@ func TestAlterPartitioningWithPlacementPolicy(t *testing.T) {
 	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
 	require.NoError(t, err)
-	// REORGANIZE keeps the table id, but the the internal rules may change
+	// REORGANIZE keeps the table id, but the internal rules may change
 	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
 	// Two new partition level bundles
 	require.Len(t, newBundles, 2)

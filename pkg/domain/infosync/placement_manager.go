@@ -119,27 +119,39 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		}
 	}
 
-	// Check that no bundles are overlapping
+	// Check that no bundles have leaders overlapping ranges
 	type keyRange struct {
-		start string
-		end   string
+		start    string
+		end      string
+		id       string
+		string   int
+		override bool
 	}
 	keys := make([]keyRange, 0, rules)
 	for k := range m.bundles {
 		for _, rule := range m.bundles[k].Rules {
-			if rule.Role == pd.Leader && !m.bundles[k].Override {
-				keys = append(keys, keyRange{start: k + ":" + rule.StartKeyHex, end: k + ":" + rule.EndKeyHex})
+			if rule.Role == pd.Leader {
+				keys = append(keys, keyRange{
+					id:       rule.ID,
+					start:    rule.GroupID + ":" + rule.StartKeyHex,
+					end:      rule.GroupID + ":" + rule.EndKeyHex,
+					override: rule.Override,
+				})
 			}
 		}
 	}
+	// Sort on Start (includes group_id), id, end
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].start == keys[j].start {
-			return keys[i].end < keys[j].end
+			if keys[i].id == keys[j].id {
+				return keys[i].end < keys[j].end
+			}
+			return keys[i].id < keys[j].id
 		}
 		return keys[i].start < keys[j].start
 	})
 	for i := 1; i < len(keys); i++ {
-		if keys[i].start < keys[i-1].end {
+		if keys[i].start < keys[i-1].end && !keys[i].override {
 			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
 		}
 	}
