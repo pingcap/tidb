@@ -70,9 +70,10 @@ func TestShowCommentsFromJob(t *testing.T) {
 		UseCloudStorage: true,
 		Concurrency:     8,
 		BatchSize:       1024,
+		MaxWriteSpeed:   1024 * 1024,
 	}
 	res = showCommentsFromJob(job)
-	require.Equal(t, "ingest, DXF, cloud, thread=8, batch_size=1024", res)
+	require.Equal(t, "ingest, DXF, cloud, thread=8, batch_size=1024, max_write_speed=1048576", res)
 
 	job.ReorgMeta = &model.DDLReorgMeta{
 		ReorgTp:         model.ReorgTypeLitMerge,
@@ -80,6 +81,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 		UseCloudStorage: true,
 		Concurrency:     variable.DefTiDBDDLReorgWorkerCount,
 		BatchSize:       variable.DefTiDBDDLReorgBatchSize,
+		MaxWriteSpeed:   variable.DefTiDBDDLReorgMaxWriteSpeed,
 	}
 	res = showCommentsFromJob(job)
 	require.Equal(t, "ingest, DXF, cloud", res)
@@ -90,6 +92,7 @@ func TestShowCommentsFromJob(t *testing.T) {
 		UseCloudStorage: true,
 		Concurrency:     variable.DefTiDBDDLReorgWorkerCount,
 		BatchSize:       variable.DefTiDBDDLReorgBatchSize,
+		MaxWriteSpeed:   variable.DefTiDBDDLReorgMaxWriteSpeed,
 		TargetScope:     "background",
 	}
 	res = showCommentsFromJob(job)
