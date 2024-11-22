@@ -640,6 +640,14 @@ func (job *Job) IsPausable() bool {
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
+// IsAlterable checks whether the job type can be altered.
+func (job *Job) IsAlterable() bool {
+	// Currently, only non-distributed add index reorg task can be altered
+	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
+}
+
 // IsResumable checks whether the job can be rollback.
 func (job *Job) IsResumable() bool {
 	return job.IsPaused()
@@ -783,7 +791,6 @@ type SubJob struct {
 	CtxVars     []any           `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -851,8 +858,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
+	if proxyJob.ReorgMeta != nil {
+		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	}
 }
 
 // FillArgs fills args.

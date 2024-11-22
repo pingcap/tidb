@@ -1459,3 +1459,43 @@ func boostJobScheduleForTest(t *testing.T) func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval"))
 	}
 }
+
+func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	m1 := ttlworker.NewJobManager("test-ttl-job-manager-1", nil, store, nil, nil)
+	require.NoError(t, m1.InfoSchemaCache().Update(se))
+	require.NoError(t, m1.TableStatusCache().Update(ctx, se))
+
+	now := se.Now()
+	_, err = m1.LockJob(context.Background(), se, m1.InfoSchemaCache().Tables[testTable.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running"))
+
+	// lose heartbeat. Simulate the situation that m1 doesn't update the hearbeat for 8 hours.
+	now = now.Add(time.Hour * 8)
+
+	// stop the tidb_ttl_job_enable
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
+
+	// reschedule and try to get the job
+	m2 := ttlworker.NewJobManager("test-ttl-job-manager-2", nil, store, nil, nil)
+	require.NoError(t, m2.InfoSchemaCache().Update(se))
+	require.NoError(t, m2.TableStatusCache().Update(ctx, se))
+	m2.RescheduleJobs(se, now)
+
+	// the job should have been cancelled
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
+}

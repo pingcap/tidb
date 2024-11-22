@@ -556,6 +556,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, err
 		}
 	}
+	table.ColAndIdxExistenceMap.SetChecked()
 	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
 }
 

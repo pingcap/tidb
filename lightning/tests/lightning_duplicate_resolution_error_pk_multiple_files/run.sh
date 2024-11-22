@@ -21,7 +21,7 @@ check_cluster_version 5 2 0 'duplicate detection' || exit 0
 mydir=$(dirname "${BASH_SOURCE[0]}")
 
 run_sql 'DROP TABLE IF EXISTS dup_resolve.a'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v3'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v4'
 run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
 ! run_lightning --backend local --config "${mydir}/config.toml"

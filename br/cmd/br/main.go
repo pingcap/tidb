@@ -20,7 +20,7 @@ func main() {
 		TraverseChildren: true,
 		SilenceUsage:     true,
 	}
-	AddFlags(rootCmd)
+	DefineCommonFlags(rootCmd)
 	SetDefaultContext(ctx)
 	rootCmd.AddCommand(
 		NewDebugCommand(),

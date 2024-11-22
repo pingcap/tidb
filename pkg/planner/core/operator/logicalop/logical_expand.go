@@ -33,7 +33,7 @@ import (
 
 // LogicalExpand represents a logical Expand OP serves for data replication requirement.
 type LogicalExpand struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	// distinct group by columns. (maybe projected below if it's a non-col)
 	DistinctGroupByCol  []*expression.Column `hash64-equals:"true"`
