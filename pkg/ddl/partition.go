@@ -3571,7 +3571,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			// REMOVE PARTITIONING
 			// Storing the old table ID, used for updating statistics.
 			oldTblID = tblInfo.ID
-			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
 			// TODO: How to carrie over AUTO_INCREMENT etc.?
@@ -3585,7 +3584,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 			tblInfo.ID = partInfo.NewTableID
-			if partInfo.DDLType != pmodel.PartitionTypeNone {
+			if oldTblID != physicalTableIDs[0] {
 				// if partitioned before, then also add the old table ID,
 				// otherwise it will be the already included first partition
 				physicalTableIDs = append(physicalTableIDs, oldTblID)

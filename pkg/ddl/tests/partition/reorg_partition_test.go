@@ -988,7 +988,7 @@ func TestReorgPartitionFailuresPlacementPolicy(t *testing.T) {
 		`alter table t partition p2 placement policy ='pp3'`,
 	}
 	beforeResult := testkit.Rows()
-	alter := "alter table t reorganize partition p1,p2 into (partition p1 values less than (17), partition p1b values less than (24), partition p2 values less than (30))"
+	alter := "alter table t reorganize partition p1,p2 into (partition p1 values less than (17), partition p1b values less than (24) placement policy 'pp1', partition p2 values less than (30))"
 	afterResult := testkit.Rows()
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult, "Fail4")
 }
@@ -1029,8 +1029,12 @@ func TestPartitionByFailuresPlacementPolicy(t *testing.T) {
 	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
                         partition p0 values less than (100),
                         partition p1 values less than (200))`
-	alter := "alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300)) update indexes (`primary` global)"
 	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`create or replace placement policy pp3 followers=3`,
+		`alter table t placement policy ='pp1'`,
+		`alter table t partition p0 placement policy ='pp2'`,
 		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
 		`update t set a = 11, b = "11", c = 11 where a = 1`,
 		`update t set b = "12", c = 12 where b = 2`,
@@ -1038,6 +1042,33 @@ func TestPartitionByFailuresPlacementPolicy(t *testing.T) {
 		`delete from t where b = 103`,
 	}
 	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	alter := "alter table t partition by range (b) (partition pNoneC values less than (150) placement policy 'pp3', partition p2 values less than (300)) update indexes (`primary` global)"
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestPartitionNonPartitionedFailuresPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`alter table t placement policy ='pp1'`,
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	alter := "alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300) placement policy 'pp1') update indexes (`primary` global)"
 	afterDML := []string{
 		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
 		`update t set a = 1, b = 1, c = 1 where a = 11`,
@@ -1066,15 +1097,19 @@ func TestReorganizePartitionFailuresAddPlacementPolicy(t *testing.T) {
 }
 
 func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
-	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique key (c) global) partition by range(a) (
                         partition p0 values less than (50),
                         partition p1 values less than (100),
                         partition p2 values less than (200))`
 	beforeDML := []string{
 		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`alter table t placement policy pp1`,
+		`alter table t partition p2 placement policy pp2`,
+		`insert into t values (4,4,4),(50,50,50),(111,111,111),(155,155,155)`,
 	}
-	beforeResult := testkit.Rows()
-	alter := `alter table t partition by range (a) (partition p2 values less than (200), partition pMax values less than (maxvalue) placement policy pp1)`
+	beforeResult := testkit.Rows("111 111 111", "155 155 155", "4 4 4", "50 50 50")
+	alter := "alter table t partition by range (a) (partition p1 values less than (150), partition pMax values less than (maxvalue) placement policy pp1) update indexes (`primary` local, `c` global)"
 	afterResult := beforeResult
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
 }
