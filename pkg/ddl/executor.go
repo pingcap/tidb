@@ -4923,10 +4923,10 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 	m := NewDDLReorgMeta(sctx)
 	setReorgParam := func() {
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
-			m.Concurrency = variable.TidbOptInt(sv, 0)
+			m.SetConcurrency(variable.TidbOptInt(sv, 0))
 		}
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
-			m.BatchSize = variable.TidbOptInt(sv, 0)
+			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
 	}
 	setDistTaskParam := func() error {
@@ -4989,8 +4989,8 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
-		zap.Int("concurrency", m.Concurrency),
-		zap.Int("batchSize", m.BatchSize),
+		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
+		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)
 	return nil
 }

@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -41,14 +42,16 @@ func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, 
 		return ctx, nil
 	}, 8, 8, 0)
 	sessPool := session.NewSessionPool(resPool)
-	srcChkPool := make(chan *chunk.Chunk, 10)
-	for i := 0; i < 10; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+	srcChkPool := &sync.Pool{
+		New: func() any {
+			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
+				batchSize)
+		},
 	}
 	opCtx, cancel := ddl.NewLocalOperatorCtx(context.Background(), 1)
 	defer cancel()
 	src := testutil.NewOperatorTestSource(ddl.TableScanTask{ID: 1, Start: startKey, End: endKey})
-	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0)
+	scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 1, nil, 0, nil)
 	sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 	operator.Compose[ddl.TableScanTask](src, scanOp)
