@@ -92,6 +92,9 @@ func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
 
 // SetConcurrency sets the concurrency in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
+	if dm == nil {
+		dm = &DDLReorgMeta{}
+	}
 	atomic.StoreInt64(&dm.Concurrency, int64(concurrency))
 }
 
@@ -106,6 +109,9 @@ func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
 
 // SetBatchSize sets the batch size in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
+	if dm == nil {
+		dm = &DDLReorgMeta{}
+	}
 	atomic.StoreInt64(&dm.BatchSize, int64(batchSize))
 }
 
@@ -120,6 +126,9 @@ func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault(defaultVal int) int {
 
 // SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
 func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
+	if dm == nil {
+		dm = &DDLReorgMeta{}
+	}
 	atomic.StoreInt64(&dm.MaxWriteSpeed, int64(maxWriteSpeed))
 }
 
