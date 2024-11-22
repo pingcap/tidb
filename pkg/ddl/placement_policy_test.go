@@ -2414,20 +2414,230 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp3")
 }
 
-func TestPartitionByWithLabels(t *testing.T) {
+func getChangedBundles(old, new []*placement.Bundle) (retOld, retNew []*placement.Bundle) {
+OldLoop:
+	for i := range old {
+		for j := range new {
+			if old[i].ID == new[j].ID {
+				continue OldLoop
+			}
+		}
+		retOld = append(retOld, old[i])
+	}
+NewLoop:
+	for i := range new {
+		for j := range old {
+			if old[j].ID == new[i].ID {
+				continue NewLoop
+			}
+		}
+		retNew = append(retNew, new[i])
+	}
+	return retOld, retNew
+}
+
+func TestAlterPartitioningWithPlacementPolicy(t *testing.T) {
+	util.EmulatorGCDisable()
 	store, do := testkit.CreateMockStoreAndDomain(t)
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	tk.MustExec("create placement policy pp1 primary_region='r1' regions='r1,r2'")
+	tk.MustExec("create placement policy pp2 primary_region='r2' regions='r1,r2'")
 
 	tk.MustExec(`CREATE TABLE t1 (id INT)`)
+	tk.MustExec(`INSERT INTO t1 values (1),(2),(100),(150),(200),(213)`)
 	tk.MustExec(`ALTER TABLE t1 placement policy pp1`)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	origBundles, err := infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
 	tk.MustExec(`ALTER TABLE t1 PARTITION BY HASH (id) PARTITIONS 3`)
+	bundlesBeforeGC, err := infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err := infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles := getChangedBundles(origBundles, bundlesBeforeGC)
+	require.Len(t, newBundles, 1)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	require.Len(t, oldBundles, 1)
 	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
 		"t1 CREATE TABLE `t1` (\n" +
 		"  `id` int(11) DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
 		"PARTITION BY HASH (`id`) PARTITIONS 3"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 ADD PARTITION (PARTITION p3 placement policy 'pp2')`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// One new partition level bundle
+	require.Len(t, newBundles, 1)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// No old bundles removed
+	require.Len(t, oldBundles, 0)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY HASH (`id`)\n" +
+		"(PARTITION `p0`,\n" +
+		" PARTITION `p1`,\n" +
+		" PARTITION `p2`,\n" +
+		" PARTITION `p3` /*T![placement] PLACEMENT POLICY=`pp2` */)"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 REMOVE PARTITIONING`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// One table level bundle, due to new table id.
+	require.Len(t, newBundles, 1)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// One table level due to new table id and one partition level policy removed
+	require.Len(t, oldBundles, 2)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 PARTITION BY RANGE (id) (partition p1 values less than (100) placement policy pp2,partition p2 values less than (maxvalue))`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// One new bundle for the new table ID and one for the partition specific
+	require.Len(t, newBundles, 2)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// Only one old table level bundle
+	require.Len(t, oldBundles, 1)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`pp2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (MAXVALUE))"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 REORGANIZE PARTITION p2 into (partition p2 values less than (200) placement policy pp1,partition pMax values less than (maxvalue) placement policy 'pp2')`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	// REORGANIZE keeps the table id, but the the internal rules may change
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// Two new partition level bundles
+	require.Len(t, newBundles, 2)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// No change in table ID and the reorganized partition did not have a partition level policy.
+	require.Len(t, oldBundles, 0)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`pp2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (200) /*T![placement] PLACEMENT POLICY=`pp1` */,\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE) /*T![placement] PLACEMENT POLICY=`pp2` */)"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 TRUNCATE PARTITION pMax`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// One new partition level bundle
+	require.Len(t, newBundles, 1)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// One old partition level bundle
+	require.Len(t, oldBundles, 1)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p1` VALUES LESS THAN (100) /*T![placement] PLACEMENT POLICY=`pp2` */,\n" +
+		" PARTITION `p2` VALUES LESS THAN (200) /*T![placement] PLACEMENT POLICY=`pp1` */,\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE) /*T![placement] PLACEMENT POLICY=`pp2` */)"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 DROP PARTITION p1,pMax`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// No new partition level bundles
+	require.Len(t, newBundles, 0)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// Two dropped partition level bundles.
+	require.Len(t, oldBundles, 2)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p2` VALUES LESS THAN (200) /*T![placement] PLACEMENT POLICY=`pp1` */)"))
+	checkExistTableBundlesInPD(t, do, "test", "t1")
+
+	origBundles = bundlesAfterGC
+	tk.MustExec(`ALTER TABLE t1 ADD PARTITION (PARTITION pMax VALUES LESS THAN (MAXVALUE) placement policy 'pp2')`)
+	bundlesBeforeGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+	bundlesAfterGC, err = infosync.GetAllRuleBundles(context.TODO())
+	require.NoError(t, err)
+	oldBundles, newBundles = getChangedBundles(origBundles, bundlesBeforeGC)
+	// One new partition level bundles
+	require.Len(t, newBundles, 1)
+	require.Len(t, oldBundles, 0)
+	oldBundles, newBundles = getChangedBundles(bundlesBeforeGC, bundlesAfterGC)
+	require.Len(t, newBundles, 0)
+	// No change in table ID.
+	require.Len(t, oldBundles, 0)
+	tk.MustQuery("show create table t1").Check(testkit.Rows("" +
+		"t1 CREATE TABLE `t1` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![placement] PLACEMENT POLICY=`pp1` */\n" +
+		"PARTITION BY RANGE (`id`)\n" +
+		"(PARTITION `p2` VALUES LESS THAN (200) /*T![placement] PLACEMENT POLICY=`pp1` */,\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE) /*T![placement] PLACEMENT POLICY=`pp2` */)"))
 	checkExistTableBundlesInPD(t, do, "test", "t1")
 }
