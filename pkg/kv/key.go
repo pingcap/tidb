@@ -723,10 +723,13 @@ func (ph PartitionHandle) Copy() Handle {
 
 // Equal implements the Handle interface.
 func (ph PartitionHandle) Equal(h Handle) bool {
+	// Compare pid and handle if both sides are `PartitionHandle`.
 	if ph2, ok := h.(PartitionHandle); ok {
 		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
 	}
-	return false
+
+	// Otherwise, use underlying handle to do comparation.
+	return ph.Handle.Equal(h)
 }
 
 // Compare implements the Handle interface.

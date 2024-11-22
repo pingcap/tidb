@@ -1352,6 +1352,7 @@ func doReorgWorkForCreateIndex(
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
+		failpoint.InjectCall("BeforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -2023,14 +2024,6 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
 		return nil
-	}
-	if idxInfo.Global {
-		// 'handle' comes from reading directly from a partition, without partition id,
-		// so we can only compare the handle part of the key.
-		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
-			// table row has been back-filled already, OK to add the index entry
-			return nil
-		}
 	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
