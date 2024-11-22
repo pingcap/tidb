@@ -2414,24 +2414,24 @@ func TestRecoverTableWithPlacementPolicy(t *testing.T) {
 	checkExistTableBundlesInPD(t, dom, "test", "tp3")
 }
 
-func getChangedBundles(old, new []*placement.Bundle) (retOld, retNew []*placement.Bundle) {
+func getChangedBundles(oldBundle, newBundle []*placement.Bundle) (retOld, retNew []*placement.Bundle) {
 OldLoop:
-	for i := range old {
-		for j := range new {
-			if old[i].ID == new[j].ID {
+	for i := range oldBundle {
+		for j := range newBundle {
+			if oldBundle[i].ID == newBundle[j].ID {
 				continue OldLoop
 			}
 		}
-		retOld = append(retOld, old[i])
+		retOld = append(retOld, oldBundle[i])
 	}
 NewLoop:
-	for i := range new {
-		for j := range old {
-			if old[j].ID == new[i].ID {
+	for i := range newBundle {
+		for j := range oldBundle {
+			if oldBundle[j].ID == newBundle[i].ID {
 				continue NewLoop
 			}
 		}
-		retNew = append(retNew, new[i])
+		retNew = append(retNew, newBundle[i])
 	}
 	return retOld, retNew
 }
