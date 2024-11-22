@@ -278,7 +278,7 @@ func alterTablePartitionBundles(t *meta.Mutator, tblInfo *model.TableInfo, addDe
 	p := tblInfo.Partition
 	if p != nil {
 		// skip the original table as partition if partitioning a non-partitioned table
-		if p.DDLAction != model.ActionAlterTablePartitioning || p.Type != pmodel.PartitionTypeNone {
+		if p.Definitions[0].ID != tblInfo.ID {
 			// prepend with existing partitions
 			addDefs = append(p.Definitions, addDefs...)
 		}
