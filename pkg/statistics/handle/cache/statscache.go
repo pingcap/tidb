@@ -65,7 +65,11 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) error {
-	start := time.Now()
+	totalStart := time.Now()
+	logger := logutil.BgLogger()
+
+	// Step 1: Get version and execute query
+	queryStart := time.Now()
 	lastVersion := s.GetNextCheckVersionWithOffset()
 	var (
 		rows []chunk.Row
@@ -81,47 +85,51 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 	}); err != nil {
 		return errors.Trace(err)
 	}
+	logger.Info("stats cache query completed",
+		zap.Duration("query_time", time.Since(queryStart)),
+		zap.Int("rows_count", len(rows)))
 
+	// Step 2: Process rows
+	processStart := time.Now()
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 
+	var skipCount, errorCount, deletedCount, updatedCount int
 	for _, row := range rows {
+		rowStart := time.Now()
 		version := row.GetUint64(0)
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		snapshot := row.GetUint64(4)
 
-		// Detect the context cancel signal, since it may take a long time for the loop.
-		// TODO: add context to TableInfoByID and remove this code block?
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
 		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
-			logutil.BgLogger().Debug(
-				"unknown physical ID in stats meta table, maybe it has been dropped",
-				zap.Int64("ID", physicalID),
-			)
+			deletedCount++
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
+
 		tableInfo := table.Meta()
-		// If the table is not updated, we can skip it.
 		if oldTbl, ok := s.Get(physicalID); ok &&
 			oldTbl.Version >= version &&
 			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			skipCount++
 			continue
 		}
+
 		tbl, err := s.statsHandle.TableStatsFromStorage(
 			tableInfo,
 			physicalID,
 			false,
 			0,
 		)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
+			errorCount++
 			statslogutil.StatsLogger().Error(
 				"error occurred when read table stats",
 				zap.String("table", tableInfo.Name.O),
@@ -130,29 +138,46 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 			continue
 		}
 		if tbl == nil {
+			deletedCount++
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
+
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		// It only occurs in the following situations:
-		// 1. The table has already been analyzed,
-		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
-		//	it only analyzes _row_id and refreshes stats_meta, in which case the snapshot is not zero.
-		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
-		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
-		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
 		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
 		tables = append(tables, tbl)
+		updatedCount++
+
+		if updatedCount%100 == 0 { // Log every 100 tables
+			logger.Info("stats cache processing progress",
+				zap.Int("processed_tables", updatedCount),
+				zap.Duration("single_table_time", time.Since(rowStart)))
+		}
 	}
 
+	logger.Info("stats cache processing completed",
+		zap.Duration("process_time", time.Since(processStart)),
+		zap.Int("total_rows", len(rows)),
+		zap.Int("skipped", skipCount),
+		zap.Int("errors", errorCount),
+		zap.Int("deleted", deletedCount),
+		zap.Int("updated", updatedCount))
+
+	// Step 3: Update cache
+	updateStart := time.Now()
 	s.UpdateStatsCache(tables, deletedTableIDs)
-	dur := time.Since(start)
-	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
+
+	totalDur := time.Since(totalStart)
+	logger.Info("stats cache update completed",
+		zap.Duration("total_time", totalDur),
+		zap.Duration("cache_update_time", time.Since(updateStart)))
+
+	tidbmetrics.StatsDeltaLoadHistogram.Observe(totalDur.Seconds())
 	return nil
 }
 
