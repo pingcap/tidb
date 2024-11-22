@@ -732,6 +732,12 @@ func mTruncatedTo(to uint64) migOP {
 	}
 }
 
+func mVersion(ver backuppb.MigrationVersion) migOP {
+	return func(m *backuppb.Migration) {
+		m.Version = ver
+	}
+}
+
 // tmp creates a temporary storage.
 func tmp(t *testing.T) *storage.LocalStorage {
 	tmpDir := t.TempDir()
@@ -2829,4 +2835,22 @@ func TestWithSimpleTruncate(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestUnsupportedVersion(t *testing.T) {
+	s := tmp(t)
+	m := mig(mVersion(backuppb.MigrationVersion(65535)))
+	pmig(s, 1, m)
+
+	est := MigerationExtension(s)
+	ctx := context.Background()
+	_, err := est.Load(ctx)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "ErrMigrationVersionNotSupported")
+}
+
+func TestCreator(t *testing.T) {
+	mig := NewMigration()
+	require.Contains(t, mig.Creator, "br")
+	require.Equal(t, mig.Version, SupportedMigVersion)
 }

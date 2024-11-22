@@ -51,16 +51,14 @@ func (s *SortItem) Hash64(h base.Hasher) {
 
 // Equals implements the HashEquals interface.
 func (s *SortItem) Equals(other any) bool {
-	if other == nil {
+	s2, ok := other.(*SortItem)
+	if !ok {
 		return false
 	}
-	var s2 *SortItem
-	switch x := other.(type) {
-	case *SortItem:
-		s2 = x
-	case SortItem:
-		s2 = &x
-	default:
+	if s == nil {
+		return s2 == nil
+	}
+	if s2 == nil {
 		return false
 	}
 	return s.Col.Equals(s2.Col) && s.Desc == s2.Desc

@@ -22,17 +22,9 @@ import (
 
 func encodeFloatToCmpUint64(f float64) uint64 {
 	u := math.Float64bits(f)
-	// Check the sign bit (the highest bit in the IEEE 754 representation).
-	// If the sign bit is 0, the number is non-negative (+0 is considered non-negative).
-	if u&signMask == 0 {
-		// For non-negative numbers (+0 included), set the sign bit to 1.
-		// This ensures non-negative numbers are ordered after negative numbers
-		// when compared as unsigned integers.
+	if f >= 0 {
 		u |= signMask
 	} else {
-		// For negative numbers (-0 included), invert all bits.
-		// This reorders negative numbers so that the smallest (closest to 0)
-		// has the smallest encoded value, and the most negative has the largest.
 		u = ^u
 	}
 	return u

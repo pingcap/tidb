@@ -404,6 +404,7 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 		// In this time if we do the campaign operation, the etcd server will return ErrLeaseNotFound.
 		if terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
 			close(leaseNotFoundCh)
+			err = nil
 			continue
 		}
 
