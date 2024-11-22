@@ -185,11 +185,20 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
 		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
-		// penalty is applied to a full table scan. This may also penalize a full table scan where
-		// USE/FORCE was applied to the primary key.
-		shouldApplyPenalty := hasFullRangeScan && (sessionVars.StmtCtx.GetIndexForce() || preferRangeScanCondition)
+		// penalty is applied to a full table scan (not range scan). This may also penalize a
+		// full table scan where USE/FORCE was applied to the primary key.
+		hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
+		shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
 		if shouldApplyPenalty {
-			newRowCount := max(rows, max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount))))
+			// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
+			// step further - because we don't differentiate USE/FORCE - the added penalty applies to
+			// both, and it also applies to any full table scan in the query.
+			if hasIndexForce {
+				rows += MaxPenaltyRowCount
+			} else {
+				rows = max(rows, MaxPenaltyRowCount)
+			}
+			newRowCount := max(rows, float64(tblColHists.RealtimeCount))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
