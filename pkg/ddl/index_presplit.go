@@ -40,7 +40,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO(tangenta): support global index and temp index.
+// TODO(tangenta): support global index.
 // Wrap the job.Query to with special comments.
 func presplitIndexRegions(
 	ctx context.Context,
@@ -56,6 +56,8 @@ func presplitIndexRegions(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeLitMerge ||
+		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
 		idxArg := args.IndexArgs[i]
 		splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
@@ -68,6 +70,11 @@ func presplitIndexRegions(
 		splitKeys, err := getSplitIdxKeys(sctx, tblInfo, idxInfo, splitArgs)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if splitOnTempIdx {
+			for i := range splitKeys {
+				tablecodec.IndexKey2TempIndexKey(splitKeys[i])
+			}
 		}
 		err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 		if err != nil {
@@ -96,7 +103,8 @@ func getSplitIdxKeys(
 		return getSplitIdxKeysFromValueList(sctx, tblInfo, idxInfo, args.byRows)
 	}
 
-	return getSplitIdxKeysFromBound(sctx, tblInfo, idxInfo, args.betweenLower, args.betweenUpper, args.regionsCnt)
+	return getSplitIdxKeysFromBound(
+		sctx, tblInfo, idxInfo, args.betweenLower, args.betweenUpper, args.regionsCnt)
 }
 
 func getSplitIdxKeysFromValueList(
@@ -171,11 +179,13 @@ func getSplitIdxKeysFromBound(
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		keys = make([][]byte, 0, splitNum)
-		return getSplitIdxPhysicalKeysFromBound(sctx, tblInfo, idxInfo, tblInfo.ID, lower, upper, splitNum, keys)
+		return getSplitIdxPhysicalKeysFromBound(
+			sctx, tblInfo, idxInfo, tblInfo.ID, lower, upper, splitNum, keys)
 	}
 	keys = make([][]byte, 0, splitNum*len(pi.Definitions))
 	for _, p := range pi.Definitions {
-		keys, err = getSplitIdxPhysicalKeysFromBound(sctx, tblInfo, idxInfo, p.ID, lower, upper, splitNum, keys)
+		keys, err = getSplitIdxPhysicalKeysFromBound(
+			sctx, tblInfo, idxInfo, p.ID, lower, upper, splitNum, keys)
 		if err != nil {
 			return nil, err
 		}
