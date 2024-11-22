@@ -5943,25 +5943,27 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		}
 	case AlterDDLJobMaxWriteSpeed:
 		var (
-			speed int64
-			err   error
+			speed    int64
+			err      error
+			speedStr string
 		)
 		v := opt.Value.(*expression.Constant)
 		switch v.RetType.EvalType() {
 		case types.ETString:
-			speedStr := opt.Value.(*expression.Constant).Value.GetString()
+			speedStr = opt.Value.(*expression.Constant).Value.GetString()
 			speed, err = units.RAMInBytes(speedStr)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		case types.ETInt:
 			speed = opt.Value.(*expression.Constant).Value.GetInt64()
+			speedStr = strconv.FormatInt(speed, 10)
 		default:
 			return fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
 		}
 		if speed < 0 || speed > units.PiB {
 			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
-				opt.Value, opt.Name, 0, units.PiB)
+				speedStr, opt.Name, 0, units.PiB)
 		}
 	}
 	return nil
