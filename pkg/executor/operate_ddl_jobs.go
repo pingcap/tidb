@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -198,28 +199,37 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 
 func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminCommandOperator) error {
 	for _, opt := range e.AlterOpts {
+		if opt.Value == nil {
+			continue
+		}
 		switch opt.Name {
 		case core.AlterDDLJobThread:
-			if opt.Value != nil {
-				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.SetConcurrency(int(cons.Value.GetInt64()))
-			}
+			cons := opt.Value.(*expression.Constant)
+			job.ReorgMeta.SetConcurrency(int(cons.Value.GetInt64()))
 			job.AdminOperator = byWho
 		case core.AlterDDLJobBatchSize:
-			if opt.Value != nil {
-				cons := opt.Value.(*expression.Constant)
-				job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
-			}
+			cons := opt.Value.(*expression.Constant)
+			job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
 			job.AdminOperator = byWho
 		case core.AlterDDLJobMaxWriteSpeed:
-			if opt.Value != nil {
-				cons := opt.Value.(*expression.Constant)
-				speed, err := units.RAMInBytes(cons.Value.GetString())
+			var (
+				speed int64
+				err   error
+			)
+			v := opt.Value.(*expression.Constant)
+			switch v.RetType.EvalType() {
+			case types.ETString:
+				speedStr := opt.Value.(*expression.Constant).Value.GetString()
+				speed, err = units.RAMInBytes(speedStr)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				job.ReorgMeta.SetMaxWriteSpeed(int(speed))
+			case types.ETInt:
+				speed = opt.Value.(*expression.Constant).Value.GetInt64()
+			default:
+				return fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
 			}
+			job.ReorgMeta.SetMaxWriteSpeed(int(speed))
 			job.AdminOperator = byWho
 		default:
 			return errors.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)

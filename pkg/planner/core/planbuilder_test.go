@@ -924,13 +924,26 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, cons.Value.GetString(), "10MiB")
 
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 max_write_speed = 1024", "", "")
 	require.NoError(t, err)
 	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
 	require.NoError(t, err)
 	plan, ok = p.(*AlterDDLJob)
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(4))
+	require.Equal(t, len(plan.Options), 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.Equal(t, cons.Value.GetInt64(), int64(1024))
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 5 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok = p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(5))
 	require.Equal(t, len(plan.Options), 3)
 	sort.Slice(plan.Options, func(i, j int) bool {
 		return plan.Options[i].Name < plan.Options[j].Name
