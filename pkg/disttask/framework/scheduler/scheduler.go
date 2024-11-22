@@ -425,6 +425,7 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 		return false, errors.Trace(err)
 	}
 	task.State = task.ModifyParam.PrevState
+	task.ModifyParam = proto.ModifyParam{}
 	s.task.Store(&task)
 	return recreateScheduler, nil
 }
