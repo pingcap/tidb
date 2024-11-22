@@ -242,9 +242,9 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobType, rowCnt := rows[0][3].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"))
-	require.False(t, strings.Contains(jobType, "cloud"))
+	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
+	require.True(t, strings.Contains(jobType, "ingest"), jobType)
+	require.False(t, strings.Contains(jobType, "cloud"), jobType)
 	require.Equal(t, rowCnt, "3")
 }
 

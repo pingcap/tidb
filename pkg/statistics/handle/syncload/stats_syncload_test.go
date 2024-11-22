@@ -55,6 +55,22 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
 }
 
+func TestSyncLoadSkipAnalyzSkipColumnItems(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(`id` bigint(20) NOT NULL AUTO_INCREMENT,content text,PRIMARY KEY (`id`))")
+	h := dom.StatsHandle()
+	h.SetLease(1)
+
+	tk.MustExec("analyze table t")
+	tk.MustExec("set @@session.tidb_analyze_skip_column_types = 'json, text, blob'") // text is not default.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic", `panic`))
+	tk.MustQuery("trace plan select * from t where content ='ab'")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/handleOneItemTaskPanic"))
+}
+
 func TestConcurrentLoadHist(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 

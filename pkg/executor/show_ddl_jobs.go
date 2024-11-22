@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -90,7 +91,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor < len(e.runningJobs) {
 		numCurBatch := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i], nil)
+			e.appendJobToChunk(req, e.runningJobs[i], nil, true)
 		}
 		e.cursor += numCurBatch
 		count += numCurBatch
@@ -107,7 +108,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job, nil)
+			e.appendJobToChunk(req, job, nil, true)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -185,7 +186,7 @@ func (e *DDLJobRetriever) initial(txn kv.Transaction, sess sessionctx.Context) e
 	return nil
 }
 
-func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager) {
+func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, checker privilege.Manager, inShowStmt bool) {
 	schemaName := job.SchemaName
 	tableName := ""
 	finishTS := uint64(0)
@@ -231,7 +232,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	req.AppendInt64(0, job.ID)
 	req.AppendString(1, schemaName)
 	req.AppendString(2, tableName)
-	req.AppendString(3, job.Type.String()+showAddIdxReorgTp(job))
+	req.AppendString(3, job.Type.String())
 	req.AppendString(4, job.SchemaState.String())
 	req.AppendInt64(5, job.SchemaID)
 	req.AppendInt64(6, job.TableID)
@@ -249,12 +250,16 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	req.AppendString(11, job.State.String())
 	if job.Type == model.ActionMultiSchemaChange {
-		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
+		var useDXF, isCloud bool
+		if job.ReorgMeta != nil {
+			useDXF = job.ReorgMeta.IsDistReorg
+			isCloud = job.ReorgMeta.UseCloudStorage
+		}
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob, isDistTask))
+			req.AppendString(3, subJob.Type.String()+" /* subjob */")
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -272,46 +277,72 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 				req.AppendNull(10)
 			}
 			req.AppendString(11, subJob.State.String())
+			if inShowStmt {
+				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+			} else {
+				req.AppendString(12, job.Query)
+			}
 		}
+	}
+	if inShowStmt {
+		req.AppendString(12, showCommentsFromJob(job))
+	} else {
+		req.AppendString(12, job.Query)
 	}
 }
 
-func showAddIdxReorgTp(job *model.Job) string {
-	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
-		if job.ReorgMeta != nil {
-			sb := strings.Builder{}
-			tp := job.ReorgMeta.ReorgTp.String()
-			if len(tp) > 0 {
-				sb.WriteString(" /* ")
-				sb.WriteString(tp)
-				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge &&
-					job.ReorgMeta.IsDistReorg &&
-					job.ReorgMeta.UseCloudStorage {
-					sb.WriteString(" cloud")
-				}
-				sb.WriteString(" */")
+func showCommentsFromJob(job *model.Job) string {
+	m := job.ReorgMeta
+	if m == nil {
+		return ""
+	}
+	var labels []string
+	if job.Type == model.ActionAddIndex ||
+		job.Type == model.ActionAddPrimaryKey {
+		switch m.ReorgTp {
+		case model.ReorgTypeTxn:
+			labels = append(labels, model.ReorgTypeTxn.String())
+		case model.ReorgTypeLitMerge:
+			labels = append(labels, model.ReorgTypeLitMerge.String())
+			if m.IsDistReorg {
+				labels = append(labels, "DXF")
 			}
-			return sb.String()
+			if m.UseCloudStorage {
+				labels = append(labels, "cloud")
+			}
+		case model.ReorgTypeTxnMerge:
+			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
 	}
-	return ""
+	if job.MayNeedReorg() {
+		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
+			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
+		}
+		if batchSize != variable.DefTiDBDDLReorgBatchSize {
+			labels = append(labels, fmt.Sprintf("batch_size=%d", batchSize))
+		}
+		if m.TargetScope != "" {
+			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
+		}
+	}
+	return strings.Join(labels, ", ")
 }
 
-func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {
-	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
-		sb := strings.Builder{}
-		tp := subJob.ReorgTp.String()
-		if len(tp) > 0 {
-			sb.WriteString(" /* ")
-			sb.WriteString(tp)
-			if subJob.ReorgTp == model.ReorgTypeLitMerge && useDistTask && subJob.UseCloud {
-				sb.WriteString(" cloud")
-			}
-			sb.WriteString(" */")
-		}
-		return sb.String()
+func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
+	var labels []string
+	if sub.ReorgTp == model.ReorgTypeNone {
+		return ""
 	}
-	return ""
+	labels = append(labels, sub.ReorgTp.String())
+	if useDXF {
+		labels = append(labels, "DXF")
+	}
+	if useDXF && useCloud {
+		labels = append(labels, "cloud")
+	}
+	return strings.Join(labels, ", ")
 }
 
 func ts2Time(timestamp uint64, loc *time.Location) types.Time {

@@ -622,7 +622,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
-	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b bigint);")
 	rowCnt := 10
 	for i := 0; i < rowCnt; i++ {

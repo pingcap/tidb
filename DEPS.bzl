@@ -4577,19 +4577,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_lance6716_pebble",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/lance6716/pebble",
-        sha256 = "8fe7ce7009c4d2b0ae28f4c3d62f38b6256ee20e47944490b58cb1d33a155725",
-        strip_prefix = "github.com/lance6716/pebble@v0.0.0-20241108073934-da961314c63f",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241108073934-da961314c63f.zip",
-            "http://ats.apps.svc/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241108073934-da961314c63f.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241108073934-da961314c63f.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lance6716/pebble/com_github_lance6716_pebble-v0.0.0-20241108073934-da961314c63f.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_lasiar_canonicalheader",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lasiar/canonicalheader",
@@ -5815,13 +5802,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "1b707429b5b938a05b250b5770be2a6aa243d6a4983d23b01bbca164e86b3e3c",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20241022082558-0607513e7fa4",
+        sha256 = "923efe448355ba420cfbd82e93df2f99b08c3fb36191b1f2cabdd3bf32904852",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20241105053214-f91fdb81a69e",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241022082558-0607513e7fa4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241105053214-f91fdb81a69e.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241105053214-f91fdb81a69e.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241105053214-f91fdb81a69e.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241105053214-f91fdb81a69e.zip",
         ],
     )
     go_repository(

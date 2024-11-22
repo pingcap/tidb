@@ -65,3 +65,11 @@ func (p *AsyncPipeline) String() string {
 	}
 	return "AsyncPipeline[" + strings.Join(opStrs, " -> ") + "]"
 }
+
+// GetLocalIngestModeReaderAndWriter returns the reader and writer in the local ingest mode.
+func (p *AsyncPipeline) GetLocalIngestModeReaderAndWriter() (operator1, operator2 Operator) {
+	if len(p.ops) != 4 {
+		return nil, nil
+	}
+	return p.ops[1], p.ops[2]
+}
