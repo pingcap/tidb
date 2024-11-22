@@ -794,7 +794,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
@@ -847,10 +847,10 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 		return err
 	}
 
-	// Adjust worker pool size dynamically.
+	// Adjust worker pool size and max write speed dynamically.
 	if job != nil {
 		go func() {
-			adjustWorkerPoolSize(ctx, pipe, job, bcCtx, avgRowSize)
+			adjustWorkerCntAndMaxWriteSpeed(ctx, pipe, job, bcCtx, avgRowSize)
 		}()
 	}
 
