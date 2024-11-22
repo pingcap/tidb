@@ -5959,7 +5959,6 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		default:
 			return fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
 		}
-
 		if speed < 0 || speed > units.PiB {
 			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
 				opt.Value, opt.Name, 0, units.PiB)
