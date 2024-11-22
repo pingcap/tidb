@@ -683,6 +683,7 @@ type copIterator struct {
 	concurrency          int
 	smallTaskConcurrency int
 	liteReqSender        bool
+	ctxForLite           context.Context
 	finishCh             chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
@@ -858,6 +859,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
 	if it.liteReqSender {
+		it.ctxForLite = ctx
 		return
 	}
 	taskCh := make(chan *copTask, 1)
@@ -1080,7 +1082,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// Otherwise all responses are returned from a single channel.
 
 	if it.liteReqSender {
-		resp = it.liteSendReq(ctx)
+		resp = it.liteSendReq(it.ctxForLite)
 		if resp == nil {
 			return nil, nil
 		}
