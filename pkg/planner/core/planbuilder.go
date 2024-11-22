@@ -269,8 +269,10 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
-	//Check whether the current building query is a CTE
+	// Check whether the current building query is a CTE
 	isCTE bool
+	// CTE table name in lower case, it can be nil
+	nameMapCTE map[string]struct{}
 
 	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
 	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
