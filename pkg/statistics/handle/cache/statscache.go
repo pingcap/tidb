@@ -16,6 +16,8 @@ package cache
 
 import (
 	"context"
+	"runtime"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -91,74 +93,103 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 
 	// Step 2: Process rows
 	processStart := time.Now()
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
+	var (
+		tables                                            = make([]*statistics.Table, 0, len(rows))
+		deletedTableIDs                                   = make([]int64, 0, len(rows))
+		mu                                                sync.Mutex
+		wg                                                sync.WaitGroup
+		skipCount, errorCount, deletedCount, updatedCount int
+	)
 
-	var skipCount, errorCount, deletedCount, updatedCount int
-	for _, row := range rows {
-		rowStart := time.Now()
-		version := row.GetUint64(0)
-		physicalID := row.GetInt64(1)
-		modifyCount := row.GetInt64(2)
-		count := row.GetInt64(3)
-		snapshot := row.GetUint64(4)
+	workers := runtime.GOMAXPROCS(0)
+	rowCh := make(chan chunk.Row, workers)
 
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for row := range rowCh {
+				if ctx.Err() != nil {
+					return
+				}
 
-		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
-		if !ok {
-			deletedCount++
-			deletedTableIDs = append(deletedTableIDs, physicalID)
-			continue
-		}
+				version := row.GetUint64(0)
+				physicalID := row.GetInt64(1)
+				modifyCount := row.GetInt64(2)
+				count := row.GetInt64(3)
+				snapshot := row.GetUint64(4)
 
-		tableInfo := table.Meta()
-		if oldTbl, ok := s.Get(physicalID); ok &&
-			oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
-			skipCount++
-			continue
-		}
+				table, ok := s.statsHandle.TableInfoByID(is, physicalID)
+				if !ok {
+					mu.Lock()
+					deletedCount++
+					deletedTableIDs = append(deletedTableIDs, physicalID)
+					mu.Unlock()
+					continue
+				}
 
-		tbl, err := s.statsHandle.TableStatsFromStorage(
-			tableInfo,
-			physicalID,
-			false,
-			0,
-		)
-		if err != nil {
-			errorCount++
-			statslogutil.StatsLogger().Error(
-				"error occurred when read table stats",
-				zap.String("table", tableInfo.Name.O),
-				zap.Error(err),
-			)
-			continue
-		}
-		if tbl == nil {
-			deletedCount++
-			deletedTableIDs = append(deletedTableIDs, physicalID)
-			continue
-		}
+				tableInfo := table.Meta()
+				if oldTbl, ok := s.Get(physicalID); ok &&
+					oldTbl.Version >= version &&
+					tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+					mu.Lock()
+					skipCount++
+					mu.Unlock()
+					continue
+				}
 
-		tbl.Version = version
-		tbl.RealtimeCount = count
-		tbl.ModifyCount = modifyCount
-		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
-			tbl.LastAnalyzeVersion = snapshot
-		}
-		tables = append(tables, tbl)
-		updatedCount++
+				tbl, err := s.statsHandle.TableStatsFromStorage(
+					tableInfo,
+					physicalID,
+					false,
+					0,
+				)
+				if err != nil {
+					mu.Lock()
+					errorCount++
+					mu.Unlock()
+					statslogutil.StatsLogger().Error(
+						"error occurred when read table stats",
+						zap.String("table", tableInfo.Name.O),
+						zap.Error(err),
+					)
+					continue
+				}
+				if tbl == nil {
+					mu.Lock()
+					deletedCount++
+					deletedTableIDs = append(deletedTableIDs, physicalID)
+					mu.Unlock()
+					continue
+				}
 
-		if updatedCount%100 == 0 { // Log every 100 tables
-			logger.Info("stats cache processing progress",
-				zap.Int("processed_tables", updatedCount),
-				zap.Duration("single_table_time", time.Since(rowStart)))
-		}
+				tbl.Version = version
+				tbl.RealtimeCount = count
+				tbl.ModifyCount = modifyCount
+				tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+				if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+					tbl.LastAnalyzeVersion = snapshot
+				}
+
+				mu.Lock()
+				tables = append(tables, tbl)
+				updatedCount++
+				currentUpdated := updatedCount
+				mu.Unlock()
+
+				if currentUpdated%100 == 0 {
+					logger.Info("stats cache processing progress",
+						zap.Int("processed_tables", currentUpdated))
+				}
+			}
+		}()
 	}
+
+	for _, row := range rows {
+		rowCh <- row
+	}
+	close(rowCh)
+	wg.Wait()
 
 	logger.Info("stats cache processing completed",
 		zap.Duration("process_time", time.Since(processStart)),
