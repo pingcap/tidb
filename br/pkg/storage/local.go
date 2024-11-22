@@ -262,7 +262,9 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 }
 
 // Close implements ExternalStorage interface.
-func (*LocalStorage) Close() {}
+func (l *LocalStorage) Close() {
+	_ = l.baseFD.Close()
+}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
