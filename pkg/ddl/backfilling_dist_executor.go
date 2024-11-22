@@ -154,7 +154,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
 		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
-		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load())),
+		job.ReorgMeta.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load())),
 		job.RealStartTS,
 	)
 }
