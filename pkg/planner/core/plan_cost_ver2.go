@@ -169,7 +169,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		tblColHists := p.tblColHists
 
 		// hasUnreliableStats is a check for pseudo or zero stats
-		hasUnreliableStats := tblColHists.Pseudo || rows <= 1
+		hasUnreliableStats := tblColHists.Pseudo || tblColHists.GetAnalyzeRowCount() < 1
 		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
 		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
 		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
@@ -184,9 +184,12 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
+		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
+		// penalty is applied to a full table scan. This may also penalize a full table scan where
+		// USE/FORCE was applied to the primary key.
 		shouldApplyPenalty := hasFullRangeScan && (sessionVars.StmtCtx.GetIndexForce() || preferRangeScanCondition)
 		if shouldApplyPenalty {
-			newRowCount := max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+			newRowCount := max(rows, max(MaxPenaltyRowCount, max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount))))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
