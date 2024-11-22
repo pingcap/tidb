@@ -431,8 +431,14 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 		})
 
 		// Change the batch size dynamically.
-		newBatchCnt := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
-		w.GetCtx().batchCnt = newBatchCnt
+		currentBatchCnt := w.GetCtx().batchCnt
+		targetBatchSize := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		if targetBatchSize != currentBatchCnt {
+			w.GetCtx().batchCnt = targetBatchSize
+			logger.Info("adjust ddl job config success",
+				zap.Int64("jobID", job.ID),
+				zap.Int("current batch size", w.GetCtx().batchCnt))
+		}
 		result := w.handleBackfillTask(d, task, bf)
 		w.sendResult(result)
 
@@ -770,7 +776,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe)
+	err = executeAndClosePipeline(opCtx, pipe, job, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -787,11 +793,59 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline) error {
+func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) {
+	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
+	if opR == nil || opW == nil {
+		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
+		return
+	}
+	reader, readerOk := opR.(*TableScanOperator)
+	writer, writerOk := opW.(*IndexIngestOperator)
+	if !readerOk || !writerOk {
+		logutil.DDLIngestLogger().Error(
+			"unexpected operator types, config can't be adjusted",
+			zap.Int64("jobID", job.ID),
+			zap.Bool("isReaderValid", readerOk),
+			zap.Bool("isWriterValid", writerOk),
+		)
+		return
+	}
+	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(
+				job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
+			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+			if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
+				continue
+			}
+			reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+			writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+			logutil.DDLIngestLogger().Info("adjust ddl job config success",
+				zap.Int64("jobID", job.ID),
+				zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
+				zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+		}
+	}
+}
+
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
 	}
+
+	// Adjust worker pool size dynamically.
+	if job != nil {
+		go func() {
+			adjustWorkerPoolSize(ctx, pipe, job, avgRowSize)
+		}()
+	}
+
 	err = pipe.Close()
 	if opErr := ctx.OperatorErr(); opErr != nil {
 		return opErr
@@ -824,6 +878,9 @@ func (s *localRowCntListener) Written(rowCnt int) {
 func (s *localRowCntListener) SetTotal(total int) {
 	s.reorgCtx.setRowCount(s.prevPhysicalRowCnt + int64(total))
 }
+
+// UpdateDDLJobReorgCfgInterval is the interval to check and update reorg configuration.
+const UpdateDDLJobReorgCfgInterval = 2 * time.Second
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
@@ -929,14 +986,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
-					// We try to adjust the worker size regularly to reduce
-					// the overhead of loading the DDL related global variables.
-					err2 = scheduler.adjustWorkerSize()
-					if err2 != nil {
-						logutil.DDLLogger().Warn("cannot adjust backfill worker size",
-							zap.Int64("job ID", reorgInfo.ID),
-							zap.Error(err2))
-					}
 					failpoint.InjectCall("afterUpdateReorgMeta")
 				}
 			}
@@ -977,6 +1026,31 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		scheduler.close(false)
 		return nil
 	})
+
+	// update the worker cnt goroutine
+	go func() {
+		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				currentWorkerCnt := scheduler.currentWorkerSize()
+				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+				if currentWorkerCnt != targetWorkerCnt {
+					err := scheduler.adjustWorkerSize()
+					if err != nil {
+						logutil.DDLLogger().Error("adjust ddl job config failed",
+							zap.Error(err))
+					} else {
+						logutil.DDLLogger().Info("adjust ddl job config success",
+							zap.Int("current worker count", scheduler.currentWorkerSize()))
+					}
+				}
+			}
+		}
+	}()
 
 	return eg.Wait()
 }

@@ -360,6 +360,21 @@ func TestIssue32422(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
+func TestSnapshotWithConcurrentWrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
+
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for j := 0; j < 16; j++ {
+		tk.MustExec("insert into t1 (b) select /*+ use_index(t1, b) */ id from t1;")
+	}
+	tk.MustQuery("select count(1) from t1").Check(testkit.Rows("524288")) // 8 * 2^16 rows
+	tk.MustExec("rollback")
+}
+
 func BenchmarkUnionScanRead(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 

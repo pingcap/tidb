@@ -1429,6 +1429,15 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	waitFor(4, "write only")
+	tkTmp := testkit.NewTestKit(t, store)
+	tkTmp.MustExec(`begin`)
+	tkTmp.MustExec("use test")
+	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+	tk2.MustExec(`rollback`)
+	tk2.MustExec(`begin`)
+	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	tkTmp.MustExec(`rollback`)
 	waitFor(4, "delete only")
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec(`begin`)
@@ -1437,16 +1446,21 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk3.MustQuery(`explain format='brief' select c from test_global use index(idx_c) where c = 15`).CheckContain("Point_Get")
 	tk3.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk3.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
-	// Here it will fail with
-	// the partition is not in public.
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
-	require.ErrorContains(t, err, "the partition is in not in public")
+	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
 	tk2.MustExec(`commit`)
+	waitFor(4, "delete reorganization")
+	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
+	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
+	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
+	require.NoError(t, err)
+	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
+	tk.MustExec(`commit`)
 	<-syncChan
 	result := tk.MustQuery("select * from test_global;")
-	result.Sort().Check(testkit.Rows(`1 1 1`, `2 2 2`, `5 5 5`))
+	result.Sort().Check(testkit.Rows(`1 1 1`, `15 15 15`, `2 2 2`, `5 5 5`))
 
 	tt = external.GetTableByName(t, tk, "test", "test_global")
 	idxInfo := tt.Meta().FindIndexByName("idx_b")
@@ -1487,12 +1501,12 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err := tk1.ExecToErr("update test_global set a = 2 where a = 11")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 
 	tk.MustExec("alter table test_global truncate partition p1")
-	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("11 11 11", "12 12 12"))
+	tk.MustQuery("select * from test_global use index(idx_b) order by a").Check(testkit.Rows("2 11 11", "12 12 12"))
 }
 
 func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
@@ -1515,7 +1529,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("update test_global set a = 1 where a = 12")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 
@@ -1577,7 +1591,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			err = tk1.ExecToErr("insert into test_global values(2, 2, 2)")
-			assert.NotNil(t, err)
+			assert.NoError(t, err)
 		}
 	})
 
@@ -3168,6 +3182,8 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	tk2.MustExec(`COMMIT`)
 
 	/*
+		// Currently there is an duplicate entry issue, so it will rollback in WriteReorganization
+		// instead of continuing.
 		waitFor(4, "t", "delete reorganization")
 		tk2.MustExec(`BEGIN`)
 		tk2.MustExec(`insert into t values (null, 24)`)
@@ -3654,4 +3670,24 @@ func checkGlobalAndPK(t *testing.T, tk *testkit.TestKit, name string, indexes in
 		require.Equal(t, global, idxInfo.Global)
 		require.True(t, idxInfo.Primary)
 	}
+}
+
+func TestTruncateNumberOfPhases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 3`)
+	ctx := tk.Session()
+	dom := domain.GetDomain(ctx)
+	schemaVersion := dom.InfoSchema().SchemaMetaVersion()
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`alter table t truncate partition p1`)
+	// Without global index, truncate partition should be a single state change
+	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`create table t (a int primary key , b varchar(255), unique key (b) global) partition by hash(a) partitions 3`)
+	schemaVersion = dom.InfoSchema().SchemaMetaVersion()
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`alter table t truncate partition p1`)
+	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }

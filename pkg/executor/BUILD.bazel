@@ -359,6 +359,7 @@ go_test(
         "select_into_test.go",
         "select_test.go",
         "set_test.go",
+        "show_ddl_jobs_test.go",
         "show_placement_labels_test.go",
         "show_placement_test.go",
         "show_stats_test.go",
