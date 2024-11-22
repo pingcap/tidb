@@ -37,8 +37,8 @@ func RegisterTaskMetaWithDXFCtx(c *TestDXFContext, schedulerExt scheduler.Extens
 // RegisterTaskMeta initialize mock components for dist task.
 func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
 	executorExt := mock.NewMockExtension(ctrl)
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockStepExecutor := GetMockStepExecutor(ctrl)
 	if runSubtaskFn == nil {
 		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
@@ -58,7 +58,7 @@ func RegisterTaskMeta(t testing.TB, ctrl *gomock.Controller, schedulerExt schedu
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
+	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRoutine)
 }
 
 func registerTaskMetaInner(t testing.TB, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {

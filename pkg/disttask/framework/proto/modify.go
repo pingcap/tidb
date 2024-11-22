@@ -47,6 +47,6 @@ type Modification struct {
 }
 
 // String implements fmt.Stringer interface.
-func (m *Modification) String() string {
+func (m Modification) String() string {
 	return fmt.Sprintf("{type: %s, to: %d}", m.Type, m.To)
 }
