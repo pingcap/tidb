@@ -93,8 +93,8 @@ func TestConcurrentLock(t *testing.T) {
 			ch <- struct{}{}
 		}
 	}
-	// sync.OnceFunc holds a `Mutex` during executing `f`...
-	onceFunc := func(f func()) func() {
+
+	asyncOnceFunc := func(f func()) func() {
 		run := new(atomic.Bool)
 		return func() {
 			if run.CompareAndSwap(false, true) {
@@ -103,9 +103,9 @@ func TestConcurrentLock(t *testing.T) {
 		}
 	}
 	chA := make(chan struct{})
-	onceA := onceFunc(waitRecvTwice(chA))
+	onceA := asyncOnceFunc(waitRecvTwice(chA))
 	chB := make(chan struct{})
-	onceB := onceFunc(waitRecvTwice(chB))
+	onceB := asyncOnceFunc(waitRecvTwice(chB))
 
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1", onceA))
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2", onceB))
