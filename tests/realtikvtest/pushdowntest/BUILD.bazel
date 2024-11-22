@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "pushdowntest_test",
+    timeout = "short",
+    srcs = [
+        "expr_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/testkit",
+        "//tests/realtikvtest",
+        "@com_github_stretchr_testify//require",
+    ],
+)

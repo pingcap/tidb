@@ -34,6 +34,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/mathutil",
         "//pkg/util/table-filter",
+        "//pkg/util/versioninfo",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fatih_color//:color",
         "@com_github_klauspost_compress//zstd",
@@ -64,7 +65,7 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
-    shard_count = 44,
+    shard_count = 46,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
