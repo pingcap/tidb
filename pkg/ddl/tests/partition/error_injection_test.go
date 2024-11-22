@@ -75,7 +75,6 @@ func TestTruncatePartitionListFailuresWithGlobalIndex(t *testing.T) {
 		`delete from t where b = 2`,
 	}
 	beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
-	//beforeResult := testkit.Rows("4 3 3", "6 6 6", "7 7 7", "9 9 9")
 	afterDML := []string{
 		`insert into t values (1,1,1),(5,5,5),(8,8,8)`,
 		`update t set a = 2, b = 2, c = 2 where a = 1`,
@@ -197,12 +196,6 @@ func runOneTest(t *testing.T, test InjectedTest, recoverable bool, failpointName
 		require.Equal(t, pid, tt.Meta().Partition.Definitions[i].ID, name)
 	}
 	tk.MustExec(`admin check table t /* ` + name + ` */`)
-	// TMP debug
-	//tk.MustQuery(`select * from t where a = 9 /* ` + name + ` */`).Check(testkit.Rows("kalle"))
-	//globalIndexData := getAllDataForTableID(t, tk.Session(), tt.Meta().ID)
-	//p2Data := getAllDataForTableID(t, tk.Session(), tt.Meta().Partition.Definitions[2].ID)
-	//require.GreaterOrEqual(t, 1, len(globalIndexData.keys))
-	//require.GreaterOrEqual(t, 1, len(p2Data.keys))
 	tk.MustExec(`update t set b = 7 where a = 9 /* ` + name + ` */`)
 	for _, sql := range afterDML {
 		tk.MustExec(sql + " /* " + name + " */")

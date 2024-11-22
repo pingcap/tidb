@@ -317,11 +317,6 @@ func rollingbackExchangeTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 }
 
 func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	if job.SchemaState == model.StatePublic {
-		job.State = model.JobStateCancelled
-		return ver, dbterror.ErrCancelledDDLJob
-	}
-
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -331,7 +326,7 @@ func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 }
 
 func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
-	if job.SchemaState != model.StatePublic && job.SchemaState != model.StateWriteOnly {
+	if !job.IsRollbackable() {
 		// Only Original state and StateWrite can be rolled back, otherwise new partitions
 		// may have been used and new data would get lost.
 		// So we must continue to roll forward!
