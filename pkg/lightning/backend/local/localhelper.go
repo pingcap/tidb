@@ -154,19 +154,18 @@ func newStoreWriteLimiter(limit int) *storeWriteLimiter {
 	}
 }
 
-func calculateLimitAndBurst(limit int) (int64, int64) {
-	if limit <= 0 {
+func calculateLimitAndBurst(writeLimit int) (limit int64, burst int64) {
+	if writeLimit <= 0 {
 		return 0, 0
 	}
-	var burst int
-	// Allow burst of at most 20% of the limit.
-	if limit <= math.MaxInt-limit/5 {
-		burst = limit + limit/5
+	// Allow burst of at most 20% of the writeLimit.
+	if writeLimit <= math.MaxInt-writeLimit/5 {
+		burst = int64(writeLimit) + int64(writeLimit)/5
 	} else {
 		// If overflowed, set burst to math.MaxInt.
 		burst = math.MaxInt
 	}
-	return int64(limit), int64(burst)
+	return int64(writeLimit), burst
 }
 
 func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) error {
