@@ -247,9 +247,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if option.SessionMemTracker != nil && option.EnabledRateLimitAction {
 		option.SessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
-		it.liteReqSender = true
-	} else {
+	if (it.concurrency + it.smallTaskConcurrency) > 1 {
 		it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
 	}
 	return it, nil
@@ -682,7 +680,7 @@ type copIterator struct {
 	req                  *kv.Request
 	concurrency          int
 	smallTaskConcurrency int
-	liteReqSender        bool
+	liteWorker           *liteCopIteratorWorker
 	ctxForLite           context.Context
 	finishCh             chan struct{}
 
@@ -723,6 +721,11 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+}
+
+type liteCopIteratorWorker struct {
+	ctx    context.Context
+	worker *copIteratorWorker
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -858,8 +861,11 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
-	if it.liteReqSender {
-		it.ctxForLite = ctx
+	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
+		it.liteWorker = &liteCopIteratorWorker{
+			ctx:    ctx, // the ctx contains some info(such as rpc interceptor), this ctx is used for handle cop task later.
+			worker: newCopIteratorWorker(it, nil),
+		}
 		return
 	}
 	taskCh := make(chan *copTask, 1)
@@ -1081,8 +1087,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 
-	if it.liteReqSender {
-		resp = it.liteSendReq(it.ctxForLite)
+	if it.liteWorker != nil {
+		resp = it.liteSendReq()
 		if resp == nil {
 			return nil, nil
 		}
@@ -1147,11 +1153,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
+func (it *copIterator) liteSendReq() (resp *copResponse) {
 	if len(it.tasks) == 0 {
 		return nil
 	}
-	worker := newCopIteratorWorker(it, nil)
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -1162,6 +1167,8 @@ func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
 		}
 	}()
 
+	worker := it.liteWorker.worker
+	ctx := it.liteWorker.ctx
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
