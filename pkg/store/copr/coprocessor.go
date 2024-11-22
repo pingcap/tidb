@@ -247,7 +247,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if option.SessionMemTracker != nil && option.EnabledRateLimitAction {
 		option.SessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-	it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
+	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
+		it.liteReqSender = true
+	} else {
+		it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
+	}
 	return it, nil
 }
 
@@ -853,8 +857,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
-	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
-		it.liteReqSender = true
+	if it.liteReqSender {
 		return
 	}
 	taskCh := make(chan *copTask, 1)
@@ -1017,6 +1020,16 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *cop
 }
 
 func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
+	worker.checkRespOOM(resp, checkOOM)
+	select {
+	case respCh <- resp:
+	case <-worker.finishCh:
+		exit = true
+	}
+	return
+}
+
+func (worker *copIteratorWorker) checkRespOOM(resp *copResponse, checkOOM bool) {
 	if worker.memTracker != nil && checkOOM {
 		consumed := resp.MemSize()
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
@@ -1029,12 +1042,6 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		worker.memTracker.Consume(consumed)
 	}
-	select {
-	case respCh <- resp:
-	case <-worker.finishCh:
-		exit = true
-	}
-	return
 }
 
 // MockResponseSizeForTest mock the response size
@@ -1073,7 +1080,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// Otherwise all responses are returned from a single channel.
 
 	if it.liteReqSender {
-		resp = it.sendReq(ctx)
+		resp = it.liteSendReq(ctx)
 		if resp == nil {
 			return nil, nil
 		}
@@ -1088,6 +1095,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			})
 			it.memTracker.Consume(-consumed)
 		}
+		//it.actionOnExceed.destroyTokenIfNeeded(func() {})
 	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
@@ -1137,7 +1145,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
+func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
 	if len(it.tasks) == 0 {
 		return nil
 	}
@@ -1161,6 +1169,7 @@ func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
+			worker.checkRespOOM(resp, true)
 			return resp
 		}
 		if len(tasks) > 0 {
@@ -1170,7 +1179,9 @@ func (it *copIterator) sendReq(ctx context.Context) (resp *copResponse) {
 		}
 		select {
 		case resp = <-respCh:
-			return resp
+			if resp != nil {
+				return resp
+			}
 		default:
 			continue
 		}

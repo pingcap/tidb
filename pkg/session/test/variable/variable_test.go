@@ -62,7 +62,6 @@ func TestForbidSettingBothTSVariable(t *testing.T) {
 }
 
 func TestCoprocessorOOMAction(t *testing.T) {
-	t.Skip("fix me later")
 	// Assert Coprocessor OOMAction
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
