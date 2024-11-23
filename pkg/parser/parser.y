@@ -8410,9 +8410,13 @@ SumExpr:
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4, $7}}
 		}
 	}
-|	"PERCENTILE_CONT" '(' Expression ')' "WITHIN" "GROUP" '(' OrderBySingle ')'
+|	"PERCENTILE_CONT" '(' Expression ')' "WITHIN" "GROUP" '(' OrderBySingle ')' OptWindowingClause
 	{
-		$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Order: $8.(*ast.OrderByClause)}
+		if $10 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Order: $8.(*ast.OrderByClause), Spec: *($10.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Order: $8.(*ast.OrderByClause)}
+		}
 	}
 
 OptGConcatSeparator:

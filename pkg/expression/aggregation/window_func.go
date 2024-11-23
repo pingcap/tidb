@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -28,6 +29,7 @@ import (
 // WindowFuncDesc describes a window function signature, only used in planner.
 type WindowFuncDesc struct {
 	baseFuncDesc
+	OrderByItems []*util.ByItems
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
@@ -80,7 +82,7 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	if err != nil {
 		return nil, err
 	}
-	return &WindowFuncDesc{base}, nil
+	return &WindowFuncDesc{baseFuncDesc: base}, nil
 }
 
 // noFrameWindowFuncs is the functions that operate on the entire partition,
@@ -120,7 +122,12 @@ func NeedFrame(name string) bool {
 
 // Clone makes a copy of SortItem.
 func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
-	return &WindowFuncDesc{*s.baseFuncDesc.clone()}
+	clone := &WindowFuncDesc{baseFuncDesc: *s.baseFuncDesc.clone()}
+	clone.OrderByItems = make([]*util.ByItems, len(s.OrderByItems))
+	for i, byItem := range s.OrderByItems {
+		clone.OrderByItems[i] = byItem.Clone()
+	}
+	return clone
 }
 
 // WindowFuncToPBExpr converts aggregate function to pb.

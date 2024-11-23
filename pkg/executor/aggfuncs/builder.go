@@ -196,7 +196,7 @@ func buildPercentileCont(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFu
 	percent, _, err := aggFuncDesc.Args[0].EvalInt(sctx, chunk.Row{})
 	if err != nil {
 		// Should not reach here
-		logutil.BgLogger().Error("Error happened when buildApproxPercentile", zap.Error(err))
+		logutil.BgLogger().Error("Error happened when buildPercentileCont", zap.Error(err))
 		return nil
 	}
 

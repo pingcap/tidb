@@ -913,6 +913,9 @@ type WindowFuncExpr struct {
 	FromLast bool
 	// Spec is the specification of this window.
 	Spec WindowSpec
+	
+	// Order is used in PERCENTILE_CONT
+	Order *OrderByClause
 }
 
 // Restore implements Node interface.

@@ -6904,6 +6904,32 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
+
+			if windowFunc.Order != nil {
+				// trueArgs := aggFunc.Args[:len(aggFunc.Args)-1] // the last argument is SEPARATOR, remote it.
+				// orderArgs := make([]ast.ExprN/ode, len(windowFunc.Order.Items))
+				// resolver := &aggOrderByResolver{
+				// 	ctx:  b.ctx,
+				// 	// args: []ast.ExprNode{windowFunc.Order.Items},
+				// }
+				for _, item := range windowFunc.Order.Items {
+					// resolver.exprDepth = 0
+					// resolver.err = nil
+					// retExpr, _ := item.Expr.Accept(resolver)
+					// if resolver.err != nil {
+						// return nil, nil, errors.Trace(resolver.err)
+					// }
+					// orderByItem, np, err := b.rewrite(ctx, retExpr.(ast.ExprNode), p, nil, true)
+					orderByItem, np, err := b.rewrite(ctx, item.Expr, p, nil, true)
+
+					if err != nil {
+						return nil, nil, err
+					}
+					p = np
+					desc.OrderByItems = append(desc.OrderByItems, &util.ByItems{Expr: orderByItem, Desc: item.Desc})
+				}
+			}
+			
 			descs = append(descs, desc)
 			windowMap[windowFunc] = schema.Len()
 			schema.Append(&expression.Column{

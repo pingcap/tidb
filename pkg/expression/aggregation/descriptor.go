@@ -61,7 +61,7 @@ func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, desc *WindowFuncDesc, h
 	if desc.RetTp == nil { // safety check
 		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
 	}
-	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
+	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, OrderByItems: desc.OrderByItems, HasDistinct: hasDistinct}, nil
 }
 
 // String implements the fmt.Stringer interface.
