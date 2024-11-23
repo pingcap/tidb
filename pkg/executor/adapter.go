@@ -258,8 +258,6 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
-	// Text represents the origin query text.
-	Text string
 
 	StmtNode ast.StmtNode
 
@@ -379,6 +377,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.StmtNode.OriginalText()
+}
+
+// Text returns utf8 encoded statement as a string.
+func (a *ExecStmt) Text() string {
+	return a.StmtNode.Text()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
