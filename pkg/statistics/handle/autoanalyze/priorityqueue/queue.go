@@ -854,9 +854,9 @@ func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.initialized = false
 	// The rest fields will be reset when the priority queue is initialized.
 	// But we do it here for double safety.
-	pq.syncFields.inner = nil
-	pq.syncFields.runningJobs = nil
-	pq.syncFields.mustRetryJobs = nil
+	pq.syncFields.inner = newHeap()
+	pq.syncFields.runningJobs = make(map[int64]struct{})
+	pq.syncFields.mustRetryJobs = make(map[int64]struct{})
 	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
 	pq.syncFields.cancel = nil
 }
