@@ -57,6 +57,9 @@ func (f *AnalysisJobFactory) CreateNonPartitionedTableAnalysisJob(
 	tblInfo *model.TableInfo,
 	tblStats *statistics.Table,
 ) AnalysisJob {
+	if tblStats == nil {
+		return nil
+	}
 	if !tblStats.IsEligibleForAnalysis() {
 		return nil
 	}
@@ -92,6 +95,9 @@ func (f *AnalysisJobFactory) CreateStaticPartitionAnalysisJob(
 	partitionID int64,
 	partitionStats *statistics.Table,
 ) AnalysisJob {
+	if partitionStats == nil {
+		return nil
+	}
 	if !partitionStats.IsEligibleForAnalysis() {
 		return nil
 	}
@@ -128,6 +134,9 @@ func (f *AnalysisJobFactory) CreateDynamicPartitionedTableAnalysisJob(
 	globalTblStats *statistics.Table,
 	partitionStats map[PartitionIDAndName]*statistics.Table,
 ) AnalysisJob {
+	if globalTblStats == nil {
+		return nil
+	}
 	if !globalTblStats.IsEligibleForAnalysis() {
 		return nil
 	}

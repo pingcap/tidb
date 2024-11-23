@@ -644,7 +644,8 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 					zap.Int64("tableID", job.GetTableID()),
 					zap.String("job", job.String()),
 				)
-				// TODO: Remove this after handling the DDL event.
+				// Delete the job from the queue since its table is missing. This is a safeguard -
+				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
 					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
@@ -652,6 +653,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 						zap.String("job", job.String()),
 					)
 				}
+				continue
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
