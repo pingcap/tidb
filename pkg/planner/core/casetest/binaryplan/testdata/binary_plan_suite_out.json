@@ -184,7 +184,7 @@
                 "children": [
                   {
                     "name": "TableFullScan_5",
-                    "cost": 4546159.475587022,
+                    "cost": 4773467.449366372,
                     "est_rows": 10000,
                     "act_rows": 2,
                     "task_type": 2,
@@ -192,14 +192,14 @@
                     "operator_info": "keep order:false, stats:pseudo"
                   }
                 ],
-                "cost": 5045159.475587022,
+                "cost": 5272467.449366372,
                 "est_rows": 3333.3333333333335,
                 "task_type": 2,
                 "store_type": 2,
                 "operator_info": "gt(test.t.a, 100)"
               }
             ],
-            "cost": 350423.9650391348,
+            "cost": 365577.82995775813,
             "est_rows": 3333.3333333333335,
             "task_type": 1,
             "store_type": 1,
