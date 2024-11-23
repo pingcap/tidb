@@ -754,11 +754,24 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	job.RegisterSuccessHook(func(j AnalysisJob) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil
+		// check is expected when the job finishes after the switch.
+		if pq.syncFields.runningJobs == nil {
+			return
+		}
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
 	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil check
+		// is expected when jobs finish after the switch. Failed jobs will be handled by the next
+		// initialization, so we can safely ignore them here.
+		if pq.syncFields.runningJobs == nil || pq.syncFields.mustRetryJobs == nil {
+			return
+		}
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 		if needRetry {
@@ -854,9 +867,9 @@ func (pq *AnalysisPriorityQueue) Close() {
 	pq.syncFields.initialized = false
 	// The rest fields will be reset when the priority queue is initialized.
 	// But we do it here for double safety.
-	pq.syncFields.inner = newHeap()
-	pq.syncFields.runningJobs = make(map[int64]struct{})
-	pq.syncFields.mustRetryJobs = make(map[int64]struct{})
+	pq.syncFields.inner = nil
+	pq.syncFields.runningJobs = nil
+	pq.syncFields.mustRetryJobs = nil
 	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
 	pq.syncFields.cancel = nil
 }
