@@ -465,6 +465,8 @@ func TestPartialStatsInExplain(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
 	tk.MustExec("analyze table tp all columns")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
