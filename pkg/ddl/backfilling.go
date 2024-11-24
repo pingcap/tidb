@@ -823,7 +823,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 				bcCtx.GetLocalBackend().UpdateLimiter(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", job.ID),
-					zap.Int("max write speed", maxWriteSpeed))
+					zap.Int("max write speed", bcCtx.GetLocalBackend().GetLimiterSpeed()))
 			}
 
 			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
