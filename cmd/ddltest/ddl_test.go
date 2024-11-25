@@ -97,7 +97,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
-	config.GetGlobalConfig().Store = "tikv"
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
@@ -1161,5 +1161,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
+	_ = store.Register(config.StoreTypeTiKV, tidbdriver.TiKVDriver{})
 }

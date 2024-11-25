@@ -672,7 +672,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
 		}
 		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == "unistore" {
+	} else if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		return nil, err
 	}
 

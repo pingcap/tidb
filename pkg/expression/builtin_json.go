@@ -1089,7 +1089,8 @@ func (b *builtinJSONValidOthersSig) Clone() builtinFunc {
 // evalInt evals a builtinJSONValidOthersSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/json-attribute-functions.html#function_json-valid
 func (b *builtinJSONValidOthersSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	return 0, false, nil
+	datum, err := b.args[0].Eval(ctx, row)
+	return 0, datum.IsNull(), err
 }
 
 type jsonArrayAppendFunctionClass struct {

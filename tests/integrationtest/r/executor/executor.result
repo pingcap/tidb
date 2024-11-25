@@ -3821,9 +3821,7 @@ show warnings;
 Level	Code	Message
 Warning	1364	Field 'a' doesn't have a default value
 insert t values (null);
-show warnings;
-Level	Code	Message
-Warning	1048	Column 'a' cannot be null
+Error 1048 (23000): Column 'a' cannot be null
 insert ignore t values (null);
 show warnings;
 Level	Code	Message
@@ -3835,7 +3833,6 @@ Warning	1048	Column 'a' cannot be null
 insert t values (1000);
 select * from t order by a;
 a
-0
 0
 0
 0

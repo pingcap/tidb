@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core/generator/hash64_equals",
     visibility = ["//visibility:private"],
     deps = [
+        "//pkg/parser/types",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/operator/logicalop",
     ],

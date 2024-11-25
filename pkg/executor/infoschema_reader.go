@@ -166,8 +166,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
 			err = e.setDataFromTableConstraints(ctx, sctx)
-		case infoschema.TableSessionVar:
-			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -242,11 +240,26 @@ func getAutoIncrementID(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
+	if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		if ok, v2 := infoschema.IsV2(raw.InfoSchema); ok {
+			isCached := v2.TableIsCached(tblInfo.ID)
+			if !isCached {
+				// Loading table info from kv storage invalidates the cached auto_increment id.
+				return 0
+			}
+		}
+	}
 	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
+	alloc := tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	if alloc == nil || alloc.Base() == 0 {
+		// It may not be loaded yet.
+		// To show global next autoID, one should use `show table x next_row_id`.
+		return 0
+	}
+	return alloc.Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -921,10 +934,7 @@ type hugeMemTableRetriever struct {
 
 // retrieve implements the infoschemaRetriever interface
 func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor.SkipRequest {
-		e.retrieved = true
-	}
-	if e.retrieved {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
 

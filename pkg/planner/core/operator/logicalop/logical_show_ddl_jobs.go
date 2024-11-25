@@ -25,7 +25,7 @@ import (
 
 // LogicalShowDDLJobs is for showing DDL job list.
 type LogicalShowDDLJobs struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	JobNumber int64
 }

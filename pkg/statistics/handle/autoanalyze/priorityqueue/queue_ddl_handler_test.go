@@ -106,6 +106,8 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	job1, err := pq.Pop()
 	require.NoError(t, err)
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID())
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 
 	// Check if the running job is still in the queue.
 	runningJobs = pq.GetRunningJobs()
@@ -939,6 +941,8 @@ func TestAddIndexTriggerAutoAnalyzeWithStatsVersion1(t *testing.T) {
 	job, err := pq.Peek()
 	require.NoError(t, err)
 	require.Equal(t, tableInfo.ID, job.GetTableID())
+	valid, _ := job.ValidateAndPrepare(testKit.Session())
+	require.True(t, valid)
 	require.NoError(t, job.Analyze(h, do.SysProcTracker()))
 
 	// Check the stats of the indexes.

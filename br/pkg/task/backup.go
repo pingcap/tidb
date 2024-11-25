@@ -42,7 +42,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -159,7 +158,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
-func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	timeAgo, err := flags.GetDuration(flagBackupTimeago)
 	if err != nil {
 		return errors.Trace(err)
@@ -212,9 +211,13 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.CompressionConfig = *compressionCfg
 
-	if err = cfg.Config.ParseFromFlags(flags); err != nil {
-		return errors.Trace(err)
+	// parse common flags if needed
+	if !skipCommonConfig {
+		if err = cfg.Config.ParseFromFlags(flags); err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
@@ -788,18 +791,15 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-func DefaultBackupConfig() BackupConfig {
+func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineBackupFlags(fs)
 	cfg := BackupConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible operation failed.", zap.Error(err))
+		log.Panic("failed to parse backup flags to config", zap.Error(err))
 	}
+	cfg.Config = commonConfig
 	return cfg
 }
 

@@ -44,7 +44,7 @@ func TestBuildDupTask(t *testing.T) {
 	info, err := ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	// Test build duplicate detecting task.
@@ -100,7 +100,7 @@ func TestBuildDupTask(t *testing.T) {
 	info, err = ddl.MockTableInfo(mock.NewContext(), node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err = tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err = tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 	require.Len(t, tbl.Meta().Indices, 3)
 	require.Equal(t, "primary", tbl.Meta().Indices[0].Name.L)
@@ -145,7 +145,7 @@ func buildTableForTestConvertToErrFoundConflictRecords(t *testing.T, node []ast.
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 108)
 	require.NoError(t, err)
 	info.State = model.StatePublic
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := encode.SessionOptions{

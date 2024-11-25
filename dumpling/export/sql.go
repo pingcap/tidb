@@ -907,7 +907,7 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 		}()
 		tidbConfig, err := getTiDBConfig(conn)
 		if err == nil {
-			return tidbConfig.Store == "tikv", nil
+			return tidbConfig.Store == dbconfig.StoreTypeTiKV, nil
 		}
 	}
 	var count int
