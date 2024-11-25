@@ -403,7 +403,7 @@ func (s *BaseScheduler) onRunning() error {
 // onModifying is called when task is in modifying state.
 // the first return value indicates whether the scheduler should be recreated.
 func (s *BaseScheduler) onModifying() (bool, error) {
-	task := *s.GetTask()
+	task := s.getTaskClone()
 	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
 	recreateScheduler := false
 	for _, m := range task.ModifyParam.Modifications {
@@ -421,12 +421,12 @@ func (s *BaseScheduler) onModifying() (bool, error) {
 			s.logger.Warn("unsupported modification type", zap.Stringer("type", m.Type))
 		}
 	}
-	if err := s.taskMgr.ModifiedTask(s.ctx, &task); err != nil {
+	if err := s.taskMgr.ModifiedTask(s.ctx, task); err != nil {
 		return false, errors.Trace(err)
 	}
 	task.State = task.ModifyParam.PrevState
 	task.ModifyParam = proto.ModifyParam{}
-	s.task.Store(&task)
+	s.task.Store(task)
 	return recreateScheduler, nil
 }
 
