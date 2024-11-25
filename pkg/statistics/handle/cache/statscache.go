@@ -80,7 +80,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(
 			sctx,
-			"SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? order by version limit 5000",
+			"SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? order by version limit 2000",
 			lastVersion,
 		)
 		return err
@@ -101,7 +101,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema) e
 		skipCount, errorCount, deletedCount, updatedCount int
 	)
 
-	workers := runtime.GOMAXPROCS(0)
+	workers := runtime.GOMAXPROCS(0) / 2
 	rowCh := make(chan chunk.Row, workers)
 
 	for i := 0; i < workers; i++ {
