@@ -5931,13 +5931,19 @@ func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminSt
 func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	switch opt.Name {
 	case AlterDDLJobThread:
-		thread := opt.Value.(*expression.Constant).Value.GetInt64()
+		thread, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
 		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
 			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
 				thread, opt.Name, variable.MaxConfigurableConcurrency)
 		}
 	case AlterDDLJobBatchSize:
-		batchSize := opt.Value.(*expression.Constant).Value.GetInt64()
+		batchSize, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
 		bs := int32(batchSize)
 		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
 			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
@@ -5954,6 +5960,17 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 		}
 	}
 	return nil
+}
+
+// GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.
+func GetThreadOrBatchSizeFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value for %s is invalid, only integer is allowed", opt.Name)
+	}
 }
 
 // GetMaxWriteSpeedFromExpression gets the numeric value of the max write speed from the expression.
