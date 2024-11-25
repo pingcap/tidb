@@ -24,14 +24,13 @@ import (
 // The `failed` state is used to mean the framework cannot run the task, such as
 // invalid task type, scheduler init error(fatal), etc.
 //
-//	                            ┌────────┐
-//	                ┌───────────│resuming│◄────────┐
-//	                │           └────────┘         │
-//	┌──────┐        │           ┌───────┐       ┌──┴───┐
-//	│failed│        │ ┌────────►│pausing├──────►│paused│
-//	└──────┘        │ │         └───────┘       └──────┘
-//	   ▲            ▼ │
-//	┌──┴────┐     ┌───┴───┐     ┌────────┐
+// normal execution state transition:
+//
+//	┌──────┐
+//	│failed│
+//	└──────┘
+//	   ▲
+//	┌──┴────┐     ┌───────┐     ┌────────┐
 //	│pending├────►│running├────►│succeed │
 //	└──┬────┘     └──┬┬───┘     └────────┘
 //	   │             ││         ┌─────────┐     ┌────────┐
@@ -40,6 +39,32 @@ import (
 //	   │          ┌──────────┐    ▲
 //	   └─────────►│cancelling├────┘
 //	              └──────────┘
+//
+// pause/resume state transition:
+// as we don't know the state of the task before `paused`, so the state after
+// `resuming` is always `running`.
+//
+//	┌───────┐
+//	│pending├──┐
+//	└───────┘  │     ┌───────┐       ┌──────┐
+//	           ├────►│pausing├──────►│paused│
+//	┌───────┐  │     └───────┘       └───┬──┘
+//	│running├──┘                         │
+//	└───▲───┘        ┌────────┐          │
+//	    └────────────┤resuming│◄─────────┘
+//	                 └────────┘
+//
+// modifying state transition:
+//
+//	┌───────┐
+//	│pending├──┐
+//	└───────┘  │
+//	┌───────┐  │     ┌─────────┐
+//	│running├──┼────►│modifying├────► original state
+//	└───────┘  │     └─────────┘
+//	┌───────┐  │
+//	│paused ├──┘
+//	└───────┘
 const (
 	TaskStatePending    TaskState = "pending"
 	TaskStateRunning    TaskState = "running"
@@ -51,6 +76,7 @@ const (
 	TaskStatePausing    TaskState = "pausing"
 	TaskStatePaused     TaskState = "paused"
 	TaskStateResuming   TaskState = "resuming"
+	TaskStateModifying  TaskState = "modifying"
 )
 
 type (
@@ -66,6 +92,11 @@ func (t TaskType) String() string {
 
 func (s TaskState) String() string {
 	return string(s)
+}
+
+// CanMoveToModifying checks if current state can move to 'modifying' state.
+func (s TaskState) CanMoveToModifying() bool {
+	return s == TaskStatePending || s == TaskStateRunning || s == TaskStatePaused
 }
 
 const (
@@ -154,8 +185,9 @@ type Task struct {
 	// changed in below case, and framework will update the task meta in the storage.
 	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
 	// 	- on task cleanup, we might do some redaction on the meta.
-	Meta  []byte
-	Error error
+	Meta        []byte
+	Error       error
+	ModifyParam ModifyParam
 }
 
 var (

@@ -16,12 +16,16 @@ package storage_test
 
 import (
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -125,4 +129,57 @@ func TestTaskState(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
+}
+
+func TestModifyTask(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
+	require.NoError(t, err)
+
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStateReverting,
+	}), storage.ErrTaskStateNotAllow)
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, 123123123, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}), storage.ErrTaskNotFound)
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}), storage.ErrTaskChanged)
+
+	// task changed in middle of modifying
+	ch := make(chan struct{})
+	var wg tidbutil.WaitGroupWrapper
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeMoveToModifying", func() {
+		once.Do(func() {
+			<-ch
+			<-ch
+		})
+	})
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePending, task.State)
+	wg.Run(func() {
+		ch <- struct{}{}
+		require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+		ch <- struct{}{}
+	})
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStatePending,
+	}), storage.ErrTaskChanged)
+	wg.Wait()
+
+	// move to 'modifying' success
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.NoError(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStateRunning,
+	}))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateModifying, task.State)
+	require.Equal(t, proto.TaskStateRunning, task.ModifyParam.PrevState)
 }
