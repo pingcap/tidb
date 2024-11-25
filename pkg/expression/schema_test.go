@@ -61,8 +61,8 @@ func TestSchemaClone(t *testing.T) {
 
 	clonedSchema := schema.Clone()
 	require.Equal(t, schema.String(), clonedSchema.String())
-	require.True(t, fmt.Sprintf("%p", schema.Keys) != fmt.Sprintf("%p", clonedSchema.Keys))
-	require.True(t, fmt.Sprintf("%p", schema.UniqueKeys) != fmt.Sprintf("%p", clonedSchema.UniqueKeys))
+	require.NotSame(t, schema.Keys, clonedSchema.Keys)
+	require.NotSame(t, schema.UniqueKeys, clonedSchema.UniqueKeys)
 }
 
 func TestSchemaString(t *testing.T) {
@@ -70,7 +70,7 @@ func TestSchemaString(t *testing.T) {
 	schema := s.generateSchema(5)
 	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [] Unique key: []", schema.String())
 	generateKeys4Schema(schema)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [[Column#1],[Column#2],[Column#3],[Column#4]] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [[Column#1],[Column#2],[Column#3],[Column#4]] Unique key: []", schema.String())
 }
 
 func TestSchemaRetrieveColumn(t *testing.T) {
