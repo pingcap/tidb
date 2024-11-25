@@ -149,7 +149,6 @@ func CheckBundle(bundle *placement.Bundle) error {
 	}
 
 	// Additionally check for range overlapping leaders.
-	j = 0
 	keys = keys[:0]
 	for i := 0; i < len(applyKeys); i++ {
 		if applyKeys[i].isLeader {
