@@ -535,7 +535,8 @@ func (e *BaseTaskExecutor) onError(err error) {
 	}
 
 	if errors.HasStack(err) {
-		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"), zap.String("error stack", fmt.Sprintf("%+v", err)))
+		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"),
+			zap.String("error stack", fmt.Sprintf("%+v", err)))
 	} else {
 		e.logger.Error("onError", zap.Error(err), zap.Stack("stack"))
 	}

@@ -1274,7 +1274,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = variable.CloudStorageURI.Load()
-	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
+	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
@@ -1352,6 +1352,7 @@ func doReorgWorkForCreateIndex(
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
+		failpoint.InjectCall("BeforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -2023,14 +2024,6 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	hasBeenBackFilled := h.Equal(handle)
 	if hasBeenBackFilled {
 		return nil
-	}
-	if idxInfo.Global {
-		// 'handle' comes from reading directly from a partition, without partition id,
-		// so we can only compare the handle part of the key.
-		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
-			// table row has been back-filled already, OK to add the index entry
-			return nil
-		}
 	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }

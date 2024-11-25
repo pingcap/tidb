@@ -82,16 +82,14 @@ func (e *GroupExpression) Hash64(h base2.Hasher) {
 
 // Equals implements the Equals interface.
 func (e *GroupExpression) Equals(other any) bool {
-	if other == nil {
+	e2, ok := other.(*GroupExpression)
+	if !ok {
 		return false
 	}
-	var e2 *GroupExpression
-	switch x := other.(type) {
-	case *GroupExpression:
-		e2 = x
-	case GroupExpression:
-		e2 = &x
-	default:
+	if e == nil {
+		return e2 == nil
+	}
+	if e2 == nil {
 		return false
 	}
 	if len(e.Inputs) != len(e2.Inputs) {
