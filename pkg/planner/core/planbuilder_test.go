@@ -932,7 +932,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(4))
 	require.Equal(t, len(plan.Options), 1)
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
+	require.Equal(t,AlterDDLJobMaxWriteSpeed,  plan.Options[0].Name)
 	cons, ok = plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
 	require.Equal(t, cons.Value.GetInt64(), int64(1024))
