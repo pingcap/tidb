@@ -15,13 +15,12 @@
 package initstats
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +32,7 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 		conf.Performance.LiteInitStats = false
 		conf.Performance.ConcurrentlyInitStats = true
 	})
-	handle.IsFullCacheFunc = func(cache statstypes.StatsCache, total uint64) bool {
+	handle.IsFullCacheFunc = func(cache util.StatsCache, total uint64) bool {
 		return true
 	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -51,7 +50,7 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	is := dom.InfoSchema()
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
-	require.NoError(t, h.InitStats(context.Background(), is))
+	require.NoError(t, h.InitStats(is))
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where a = 1", i)).CheckNotContain("pseudo")
 	}
