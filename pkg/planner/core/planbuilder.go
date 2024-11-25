@@ -5964,12 +5964,12 @@ func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, e
 		speedStr := v.Value.GetString()
 		maxWriteSpeed, err = units.RAMInBytes(speedStr)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return 0, errors.Annotate(err, "parse max_write_speed value error")
 		}
 	case types.ETInt:
 		maxWriteSpeed = v.Value.GetInt64()
 	default:
-		return 0, fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
+		return 0, fmt.Errorf("the value %s for %s is invalid", fmt.Sprintf("%v", v.Value.GetValue()), opt.Name)
 	}
 	return maxWriteSpeed, nil
 }

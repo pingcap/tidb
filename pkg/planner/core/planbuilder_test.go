@@ -17,12 +17,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"unsafe"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -965,4 +967,34 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.Build(ctx, resolve.NewNodeW(stmt))
 	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
+}
+
+func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
+	parser := parser.New()
+	sctx := MockContext()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+	// random speed value
+	n := rand.Intn(units.PiB + 1)
+	stmt, err := parser.ParseOneStmt(fmt.Sprintf("admin alter ddl jobs 1 max_write_speed = %d ", n), "", "")
+	require.NoError(t, err)
+	p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok := p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(1))
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
+	_, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	maxWriteSpeed, err := GetMaxWriteSpeedFromExpression(plan.Options[0])
+	require.NoError(t, err)
+	require.Equal(t, int64(n), maxWriteSpeed)
+	// parse speed string error
+	opt := &AlterDDLJobOpt{
+		Name:  "test",
+		Value: expression.NewStrConst("MiB"),
+	}
+	_, err = GetMaxWriteSpeedFromExpression(opt)
+	require.Equal(t, "invalid size: 'MiB'", err.Error())
 }
