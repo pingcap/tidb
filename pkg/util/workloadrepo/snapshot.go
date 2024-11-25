@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package repository
+package workloadrepo
 
 import (
 	"context"
@@ -157,7 +157,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				for i := 0; i < 5; i++ {
 					snapID, err := w.getSnapID(ctx)
 					if err != nil {
-						logutil.BgLogger().Info("repository cannot get current snapid", zap.NamedError("err", err))
+						logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))
 						continue
 					}
 					// use upsert such that this SQL does not fail on duplicated snapID
@@ -168,15 +168,15 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 					// it is unwanted but acceptable. because two owners should share
 					// similar datetime, same cluster versions.
 					if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
-						logutil.BgLogger().Info("repository could not insert into hist_snapshots", zap.NamedError("err", err))
+						logutil.BgLogger().Info("workload repository could not insert into hist_snapshots", zap.NamedError("err", err))
 						continue
 					}
 					err = w.updateSnapID(ctx, snapID, snapID+1)
 					if err != nil {
-						logutil.BgLogger().Info("repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
+						logutil.BgLogger().Info("workload repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
 						continue
 					}
-					logutil.BgLogger().Info("repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
+					logutil.BgLogger().Info("workload repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
 					break
 				}
 			case resp := <-wch:
@@ -184,7 +184,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 					// since there is no event, we don't know the latest snapid either
 					// really should not happen except creation
 					// but let us just skip
-					logutil.BgLogger().Debug("repository cannot get snap ID update")
+					logutil.BgLogger().Debug("workload repository cannot get snap ID update")
 					continue
 				}
 
@@ -195,7 +195,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				snapIDStr := string(resp.Events[len(resp.Events)-1].Kv.Value)
 				snapID, err := strconv.ParseUint(snapIDStr, 10, 64)
 				if err != nil {
-					logutil.BgLogger().Info("repository snapshot failed: could not parse snapID", zap.String("snapID", snapIDStr), zap.NamedError("err", err))
+					logutil.BgLogger().Info("workload repository snapshot failed: could not parse snapID", zap.String("snapID", snapIDStr), zap.NamedError("err", err))
 					continue
 				}
 
@@ -216,7 +216,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				wg.Wait()
 
 				if err := updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
-					logutil.BgLogger().Info("repository snapshot failed: could not update hist_snapshots", zap.NamedError("err", err))
+					logutil.BgLogger().Info("workload repository snapshot failed: could not update hist_snapshots", zap.NamedError("err", err))
 				}
 			}
 		}

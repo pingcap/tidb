@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package repository
+package workloadrepo
 
 import (
 	"time"
@@ -21,9 +21,9 @@ import (
 )
 
 const (
-	ownerKey  = "/tidb/repository/owner"
-	promptKey = "repository"
-	snapIDKey = "/tidb/repository/snap_id"
+	ownerKey  = "/tidb/workloadrepo/owner"
+	promptKey = "workloadrepo"
+	snapIDKey = "/tidb/workloadrepo/snap_id"
 
 	etcdOpTimeout = 5 * time.Second
 
@@ -31,7 +31,7 @@ const (
 	defSnapshotInterval = 3600
 	defRententionDays   = 7
 
-	// WorkloadSchema is the name of database for repository worker.
+	// WorkloadSchema is the name of database for workloadrepo worker.
 	WorkloadSchema     = "WORKLOAD_SCHEMA"
 	histSnapshotsTable = "HIST_SNAPSHOTS"
 )

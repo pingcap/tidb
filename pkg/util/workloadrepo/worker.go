@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package repository
+package workloadrepo
 
 import (
 	"context"
@@ -101,7 +101,7 @@ type sessionPool interface {
 	Put(resource pools.Resource)
 }
 
-// worker is the main struct for repository.
+// worker is the main struct for workload repository.
 type worker struct {
 	sync.Mutex
 	etcdClient *clientv3.Client
@@ -178,7 +178,7 @@ func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string,
 	w.etcdClient = etcdCli
 	w.sesspool = sesspool
 	w.newOwner = newOwner
-	w.wg = util.NewWaitGroupEnhancedWrapper("repository", nil, false)
+	w.wg = util.NewWaitGroupEnhancedWrapper("workloadrepo", nil, false)
 }
 
 // SetupRepository finishes the initialization of the workload repository.
@@ -190,25 +190,25 @@ func SetupRepository(dom *domain.Domain) {
 
 	if workerCtx.enabled {
 		if err := workerCtx.start(); err != nil {
-			logutil.BgLogger().Info("repository could not be started", zap.Any("err", err))
+			logutil.BgLogger().Info("workload repository could not be started", zap.Any("err", err))
 			workerCtx.enabled = false
 		}
 	}
 }
 
-// StopRepository stops any the go routines for the repository.
+// StopRepository stops any the go routines for the workload repository.
 func StopRepository() {
 	workerCtx.Lock()
 	defer workerCtx.Unlock()
 
 	workerCtx.stop()
-	// prevent the repository from being restarted
+	// prevent the workload repository from being restarted
 	workerCtx.sesspool = nil
 }
 
 func runQuery(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) (v []chunk.Row, e error) {
 	defer func() {
-		logutil.BgLogger().Debug("repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
+		logutil.BgLogger().Debug("workload repository execute SQL", zap.String("sql", sql), zap.NamedError("err", e))
 	}()
 	exec := sctx.(sqlexec.SQLExecutor)
 	res, err := exec.ExecuteInternal(ctx, sql, args...)
@@ -239,7 +239,7 @@ func (w *worker) getSessionWithRetry() pools.Resource {
 	for {
 		_sessctx, err := w.sesspool.Get()
 		if err != nil {
-			logutil.BgLogger().Warn("repository cannot init session")
+			logutil.BgLogger().Warn("workload repository cannot init session")
 			time.Sleep(time.Second)
 			continue
 		}
@@ -288,7 +288,7 @@ func (w *worker) startRepository(ctx context.Context) func() {
 				if w.owner.IsOwner() {
 					logutil.BgLogger().Info("repository has owner!")
 					if err := w.createAllTables(ctx); err != nil {
-						logutil.BgLogger().Error("repository cannot create tables", zap.NamedError("err", err))
+						logutil.BgLogger().Error("workload repository cannot create tables", zap.NamedError("err", err))
 					}
 				}
 
@@ -298,18 +298,18 @@ func (w *worker) startRepository(ctx context.Context) func() {
 
 				if err := w.readInstanceID(); err != nil {
 					// if this fails try it again
-					logutil.BgLogger().Info("repository could not get instance ID", zap.NamedError("err", err))
+					logutil.BgLogger().Info("workload repository could not get instance ID", zap.NamedError("err", err))
 					continue
 				}
 
 				w.wg.RunWithRecover(w.startSample(ctx), func(err any) {
-					logutil.BgLogger().Info("repository sample panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("workload repository sample panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "sample")
 				w.wg.RunWithRecover(w.startSnapshot(ctx), func(err any) {
-					logutil.BgLogger().Info("repository snapshot panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("workload repository snapshot panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "snapshot")
 				w.wg.RunWithRecover(w.startHouseKeeper(ctx), func(err any) {
-					logutil.BgLogger().Info("repository housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
+					logutil.BgLogger().Info("workload repository housekeeper panic", zap.Any("err", err), zap.Stack("stack"))
 				}, "housekeeper")
 
 				return
@@ -337,7 +337,7 @@ func (w *worker) start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
-		logutil.BgLogger().Info("repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
+		logutil.BgLogger().Info("workload repository prestart panic", zap.Any("err", err), zap.Stack("stack"))
 	}, "prestart")
 	return nil
 }

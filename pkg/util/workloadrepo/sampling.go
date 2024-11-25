@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package repository
+package workloadrepo
 
 import (
 	"context"
@@ -32,13 +32,13 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 
 	if rt.insertStmt == "" {
 		if err := buildInsertQuery(ctx, sess, rt); err != nil {
-			logutil.BgLogger().Info("repository sampling failed: could not generate insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
+			logutil.BgLogger().Info("workload repository sampling failed: could not generate insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
 			return
 		}
 	}
 
 	if _, err := runQuery(ctx, sess, rt.insertStmt, w.instanceID); err != nil {
-		logutil.BgLogger().Info("repository sampling failed: could not run insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
+		logutil.BgLogger().Info("workload repository sampling failed: could not run insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
 	}
 }
 

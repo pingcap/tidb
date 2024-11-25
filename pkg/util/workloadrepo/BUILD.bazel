@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "repository",
+    name = "workloadrepo",
     srcs = [
         "const.go",
         "housekeeper.go",
@@ -11,7 +11,7 @@ go_library(
         "utils.go",
         "worker.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/domain/repository",
+    importpath = "github.com/pingcap/tidb/pkg/util/workloadrepo",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
@@ -38,10 +38,10 @@ go_library(
 )
 
 go_test(
-    name = "repository_test",
+    name = "workloadrepo_test",
     timeout = "short",
     srcs = ["worker_test.go"],
-    embed = [":repository"],
+    embed = [":workloadrepo"],
     flaky = True,
     deps = [
         "//pkg/domain",

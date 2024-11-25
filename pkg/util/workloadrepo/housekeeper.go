@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package repository
+package workloadrepo
 
 import (
 	"context"
@@ -43,7 +43,7 @@ func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infosc
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
+			logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			return err
 		}
 		tbInfo := tbSchema.Meta()
@@ -54,7 +54,7 @@ func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infosc
 			fmt.Fprintf(sb, ")")
 			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
-				logutil.BgLogger().Info("repository cannot add partitions", zap.String("parts", sb.String()), zap.NamedError("err", err))
+				logutil.BgLogger().Info("workload repository cannot add partitions", zap.String("parts", sb.String()), zap.NamedError("err", err))
 				return err
 			}
 		}
@@ -76,14 +76,14 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
+			logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			continue
 		}
 		tbInfo := tbSchema.Meta()
 		for _, pt := range tbInfo.GetPartitionInfo().Definitions {
 			ot, err := time.Parse("p20060102", pt.Name.L)
 			if err != nil {
-				logutil.BgLogger().Info("repository cannot parse partition name", zap.String("part", pt.Name.L), zap.NamedError("err", err))
+				logutil.BgLogger().Info("workload repository cannot parse partition name", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break
 			}
 			if int(now.Sub(ot).Hours()/24) < retention {
@@ -94,7 +94,7 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 				WorkloadSchema, tbl.destTable, pt.Name.L)
 			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
-				logutil.BgLogger().Info("repository cannot drop partition", zap.String("part", pt.Name.L), zap.NamedError("err", err))
+				logutil.BgLogger().Info("workload repository cannot drop partition", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break
 			}
 		}
