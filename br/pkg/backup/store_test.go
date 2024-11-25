@@ -102,7 +102,7 @@ func TestTimeoutRecvCanceled(t *testing.T) {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	tctx, trecv := StartTimeoutRecv(cctx, time.Hour)
+	tctx, trecv := StartTimeoutRecv(cctx, time.Hour, 0)
 	trecv.Stop()
 	require.Equal(t, "context canceled", tctx.Err().Error())
 }
