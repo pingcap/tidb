@@ -875,6 +875,11 @@ func (w *worker) runOneJobStep(
 			})
 		}
 	}
+	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
+	// the unmarshalled job will have a nil value for the ReorgMeta field.
+	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{}
+	}
 
 	prevState := job.State
 
