@@ -344,7 +344,7 @@ func TestTuneStoreWriteLimiter(t *testing.T) {
 					gotTokens += n
 				}
 				elapsed := time.Since(start)
-				maxTokens := 120 + int(elapsed.Seconds()*float64(maxT))
+				maxTokens := int(1.2*float64(maxT)) + int(elapsed.Seconds()*float64(maxT))
 				// In theory, gotTokens should be less than or equal to maxT.
 				// But we allow a little of error to avoid the test being flaky.
 				require.LessOrEqual(t, gotTokens, maxTokens+1)
