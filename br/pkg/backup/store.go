@@ -207,8 +207,8 @@ func startBackup(
 		// handle the backup response or internal error here.
 		// handle the store error(reboot or network partition) outside.
 		reqs := SplitBackupReqRanges(backupReq, concurrency)
-		logutil.CL(pctx).Info("start backup to corresponse store", zap.Uint64("storeID", storeID),
-			zap.Int("reqCount", len(reqs)), zap.Uint("concurrency", concurrency))
+		logutil.CL(pctx).Info("starting backup to the corresponding store", zap.Uint64("storeID", storeID),
+			zap.Int("requestCount", len(reqs)), zap.Uint("concurrency", concurrency))
 
 		// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
 		// terminate the backup if it does not receive any new response for a long time.
