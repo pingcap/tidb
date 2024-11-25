@@ -71,18 +71,7 @@ type HashAggPartialWorker struct {
 	inflightChunkSync *sync.WaitGroup
 }
 
-func (w *HashAggPartialWorker) getChildInput() bool {
-	needDone := false
-
-	defer func() {
-		if err := recover(); err != nil {
-			if needDone {
-				w.inflightChunkSync.Done()
-			}
-			panic(err)
-		}
-	}()
-
+func (w *HashAggPartialWorker) getChildInput(needDone *bool) bool {
 	select {
 	case <-w.finishCh:
 		return false
@@ -91,7 +80,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 			return false
 		}
 
-		needDone = true
+		*needDone = true
 
 		w.intestDuringPartialWorkerRun()
 
@@ -113,15 +102,20 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		return false
 	}
 
+	needDone := false
+	defer func() {
+		if needDone {
+			w.inflightChunkSync.Done()
+		}
+	}()
+
 	waitStart := time.Now()
-	ok := w.getChildInput()
+	ok := w.getChildInput(&needDone)
 	updateWaitTime(w.stats, waitStart)
 
 	if !ok {
 		return false
 	}
-
-	defer w.inflightChunkSync.Done()
 
 	execStart := time.Now()
 	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
