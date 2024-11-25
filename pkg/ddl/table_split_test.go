@@ -124,7 +124,7 @@ func TestScatterRegion(t *testing.T) {
 	tk2 = testkit.NewTestKit(t, store)
 	tk2.MustQuery("select @@tidb_scatter_region;").Check(testkit.Rows("table"))
 
-	tk.MustExec("set global tidb_scatter_region = 'global';")
+	tk.MustExec("set global tidb_scatter_region = 'GLOBAL';")
 	tk.MustQuery("select @@global.tidb_scatter_region;").Check(testkit.Rows("global"))
 	tk.MustExec("set global tidb_scatter_region = '';")
 	tk.MustQuery("select @@global.tidb_scatter_region;").Check(testkit.Rows(""))
