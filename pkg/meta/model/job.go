@@ -546,9 +546,6 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 // decode special args for this job.
 func (job *Job) Decode(b []byte) error {
 	err := json.Unmarshal(b, job)
-	if job.MayNeedReorg() && job.ReorgMeta == nil {
-		job.ReorgMeta = &DDLReorgMeta{}
-	}
 	return errors.Trace(err)
 }
 
