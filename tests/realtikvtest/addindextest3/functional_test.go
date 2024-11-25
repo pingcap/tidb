@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -150,16 +151,24 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	checkIdxRegionCnt := func(idxID int64, count int) {
+	var splitKeyHex [][]byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
+		for _, k := range splitKeys {
+			splitKeyHex = append(splitKeyHex, bytes.Clone(k))
+		}
+	})
+	checkSplitKeys := func(idxID int64, count int, reset bool) {
 		cnt := 0
-		ret := tk.MustQuery("show table t regions;").Rows()
-		for _, r := range ret {
-			startKey := r[1].(string)
-			if strings.Contains(startKey, fmt.Sprintf("_i_%d", idxID)) {
+		for _, k := range splitKeyHex {
+			indexID, err := tablecodec.DecodeIndexID(k)
+			if err == nil && indexID == idxID {
 				cnt++
 			}
 		}
-		require.Equal(t, count, cnt, ret)
+		require.Equal(t, count, cnt, splitKeyHex)
+		if reset {
+			splitKeyHex = nil
+		}
 	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
@@ -171,16 +180,18 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	require.Len(t, retRows, 1)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
-	tk.MustExec("alter table t add index idx1(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkIdxRegionCnt(1, 3)
-	tk.MustExec("drop index idx1 on t;")
-	tk.MustExec("alter table t add index idx2(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
-	checkIdxRegionCnt(2, 3)
-	tk.MustExec("drop index idx2 on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(1, 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(2, 2, true)
+	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
-	tk.MustExec("alter table t add index idx3(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkIdxRegionCnt(3, 3)
-	checkIdxRegionCnt(tablecodec.TempIndexPrefix|4, 1)
+
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(3, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|3, 3, true)
+
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 
 	// Test partition tables.
@@ -190,15 +201,15 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}
-	tk.MustExec("alter table t add index idx1(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkIdxRegionCnt(1, 3*3)
-	tk.MustExec("drop index idx1 on t;")
-	tk.MustExec("alter table t add index idx2(c) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
-	checkIdxRegionCnt(2, 3*4)
-	tk.MustExec("drop index idx2 on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(1, 3*4, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(2, 2*4, true)
+	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
-	tk.MustExec("alter table t add index idx3(b) pre_split_regions = (by (10000), (20000), (30000));")
-	checkIdxRegionCnt(3, 1)
-	checkIdxRegionCnt(tablecodec.TempIndexPrefix|4, 1)
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(3, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 }

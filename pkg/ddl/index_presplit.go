@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -76,6 +77,7 @@ func presplitIndexRegions(
 				tablecodec.IndexKey2TempIndexKey(splitKeys[i])
 			}
 		}
+		failpoint.InjectCall("beforePresplitIndex", splitKeys)
 		err = splitIndexRegionAndWait(ctx, sctx, store, tblInfo, idxInfo, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
