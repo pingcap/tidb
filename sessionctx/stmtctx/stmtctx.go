@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -880,6 +881,22 @@ func (sc *StatementContext) HandleTruncate(err error) error {
 	if err == nil {
 		return nil
 	}
+
+	err = errors.Cause(err)
+	if e, ok := err.(*errors.Error); !ok ||
+		(e.Code() != errno.ErrTruncatedWrongValue &&
+			e.Code() != errno.ErrDataTooLong &&
+			e.Code() != errno.ErrTruncatedWrongValueForField &&
+			e.Code() != errno.ErrWarnDataOutOfRange &&
+			e.Code() != errno.ErrDataOutOfRange &&
+			e.Code() != errno.ErrBadNumber &&
+			e.Code() != errno.ErrWrongValueForType &&
+			e.Code() != errno.ErrDatetimeFunctionOverflow &&
+			e.Code() != errno.WarnDataTruncated &&
+			e.Code() != errno.ErrIncorrectDatetimeValue) {
+		return err
+	}
+
 	if sc.IgnoreTruncate {
 		return nil
 	}

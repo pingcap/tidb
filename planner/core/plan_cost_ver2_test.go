@@ -177,6 +177,7 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 	tk.MustExec(`create table t (pk int, a int, b int, c int, d int, primary key(pk), index ab(a, b), index abc(a, b, c))`)
 	tk.MustExec("insert into t values (1, 1, 1, 1, 1)")
 	tk.MustExec(`set @@tidb_cost_model_version=2`)
+	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
 
 	cases := []struct {
 		query       string

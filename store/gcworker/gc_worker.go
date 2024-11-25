@@ -719,16 +719,6 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			continue
 		}
 
-		err = util.CompleteDeleteRange(se, r)
-		if err != nil {
-			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
-				zap.String("uuid", w.uuid),
-				zap.Stringer("startKey", startKey),
-				zap.Stringer("endKey", endKey),
-				zap.Error(err))
-			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
-		}
-
 		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
 			logutil.Logger(ctx).Error("[gc worker] gc placement rules failed on range",
 				zap.String("uuid", w.uuid),
@@ -744,6 +734,16 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 				zap.Int64("elementID", r.ElementID),
 				zap.Error(err))
 			continue
+		}
+
+		err = util.CompleteDeleteRange(se, r)
+		if err != nil {
+			logutil.Logger(ctx).Error("[gc worker] failed to mark delete range task done",
+				zap.String("uuid", w.uuid),
+				zap.Stringer("startKey", startKey),
+				zap.Stringer("endKey", endKey),
+				zap.Error(err))
+			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 	}
 	logutil.Logger(ctx).Info("[gc worker] finish delete ranges",

@@ -406,3 +406,12 @@ func TestGreatestLeastFunc(t *testing.T) {
 	_, err = funcs[ast.Least].getFunction(ctx, []Expression{NewZero(), NewOne()})
 	require.NoError(t, err)
 }
+
+func TestIssue46475(t *testing.T) {
+	ctx := createContext(t)
+	args := []interface{}{nil, dt, nil}
+
+	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
+	require.NoError(t, err)
+	require.Equal(t, f.GetType().GetType(), mysql.TypeDate)
+}

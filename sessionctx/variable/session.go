@@ -1727,6 +1727,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableReuseCheck:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
 		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
