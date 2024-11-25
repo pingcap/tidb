@@ -159,7 +159,8 @@ func CheckBundle(bundle *placement.Bundle) error {
 		return nil
 	}
 
-	// Sort on Start (includes group_id), id, end
+	// Sort on Start, id, end
+	// Could use pd's placement.sortRules() instead.
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].start == keys[j].start {
 			if keys[i].id == keys[j].id {
@@ -174,7 +175,6 @@ func CheckBundle(bundle *placement.Bundle) error {
 	for i := 1; i < len(keys); i++ {
 		if keys[i].start < prevEnd {
 			if !keys[i].override {
-
 				return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
 			}
 			continue
@@ -183,7 +183,6 @@ func CheckBundle(bundle *placement.Bundle) error {
 			prevEnd = keys[i].end
 		}
 	}
-
 	return nil
 }
 
