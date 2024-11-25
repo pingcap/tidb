@@ -62,7 +62,9 @@ func (s *Schema) String() string {
 	for _, key := range s.Keys {
 		ukStrs = append(ukStrs, key.String())
 	}
-	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+	return "Column: [" + strings.Join(colStrs, ",") +
+		"] Key: [" + strings.Join(ukStrs, ",") +
+		"] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
