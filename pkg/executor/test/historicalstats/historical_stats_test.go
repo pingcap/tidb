@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package historicalstats
 
 import (
 	"context"
@@ -203,6 +203,53 @@ func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`))")
 	tk.MustExec("analyze table test.t")
+	is := dom.InfoSchema()
+	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	// dump historical stats
+	h := dom.StatsHandle()
+	hsWorker := dom.GetHistoricalStatsWorker()
+	tblID := hsWorker.GetOneHistoricalStatsTable()
+	err = hsWorker.DumpHistoricalStats(tblID, h)
+	require.Nil(t, err)
+
+	time.Sleep(1 * time.Second)
+	snapshot := oracle.GoTimeToTS(time.Now())
+	jsTable, _, err := h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.NotEqual(t, jsTable.Version, uint64(0))
+	originVersion := jsTable.Version
+
+	// assert historical stats non-change after drop column
+	tk.MustExec("alter table t drop column b")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, _, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+
+	// assert historical stats non-change after drop index
+	tk.MustExec("alter table t drop index idx")
+	h.GCStats(is, 0)
+	snapshot = oracle.GoTimeToTS(time.Now())
+	jsTable, _, err = h.DumpHistoricalStatsBySnapshot("test", tableInfo.Meta(), snapshot)
+	require.NoError(t, err)
+	require.NotNil(t, jsTable)
+	require.Equal(t, jsTable.Version, originVersion)
+}
+
+func TestAssertHistoricalStatsAfterAlterTablePartition(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats")
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_enable_historical_stats = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10),c int, KEY `idx` (`c`)) partition by hash (a) partitions 16")
+	tk.MustExec("analyze table test.t all columns")
 	is := dom.InfoSchema()
 	tableInfo, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

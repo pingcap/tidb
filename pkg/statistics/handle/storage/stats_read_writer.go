@@ -333,6 +333,7 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 		TableName:    tableInfo.Name.L,
 		Partitions:   make(map[string]*util.JSONTable, len(pi.Definitions)),
 	}
+	var version uint64
 	for _, def := range pi.Definitions {
 		tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
 		if err != nil {
@@ -342,6 +343,7 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
 		}
 		jsonTbl.Partitions[def.Name.L] = tbl
+		version = max(version, tbl.Version)
 	}
 	tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
 	if err != nil {
@@ -353,7 +355,9 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 	// dump its global-stats if existed
 	if tbl != nil {
 		jsonTbl.Partitions[util.TiDBGlobalStats] = tbl
+		version = max(version, tbl.Version)
 	}
+	jsonTbl.Version = version
 	return jsonTbl, fallbackTbls, nil
 }
 
