@@ -16,7 +16,7 @@ package model
 
 import (
 	"encoding/json"
-	"sync/atomic"
+	"go.uber.org/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
