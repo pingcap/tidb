@@ -5015,6 +5015,27 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 	if opt == nil {
 		return nil, nil
 	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &model.IndexArgSplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, nil
+	}
+
 	lowers := make([]string, 0, len(opt.Lower))
 	for _, expL := range opt.Lower {
 		var sb strings.Builder
@@ -5035,25 +5056,16 @@ func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, 
 		}
 		uppers = append(uppers, sb.String())
 	}
-	valLists := make([][]string, 0, len(opt.ValueLists))
-	for _, lst := range opt.ValueLists {
-		values := make([]string, 0, len(lst))
-		for _, exp := range lst {
-			var sb strings.Builder
-			rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
-			err := exp.Restore(rCtx)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			values = append(values, sb.String())
-		}
-		valLists = append(valLists, values)
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should be greater than 0")
 	}
 	return &model.IndexArgSplitOpt{
-		Lower:      lowers,
-		Upper:      uppers,
-		Num:        opt.Num,
-		ValueLists: valLists,
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
 	}, nil
 }
 

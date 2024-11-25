@@ -211,5 +211,11 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
 	checkSplitKeys(3, 0, false)
 	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
+	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 0);",
+		"Split index region num should be greater than 0")
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 10000);",
+		"Split index region num exceeded the limit 1000")
 }

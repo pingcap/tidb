@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -305,7 +304,7 @@ func evalSplitDatumFromArgs(
 	// Split index regions by lower, upper value.
 	checkLowerUpperValue := func(valuesItem []string, name string) ([]types.Datum, error) {
 		if len(valuesItem) == 0 {
-			return nil, errors.Errorf("Split index `%v` region %s value count should more than 0", idxInfo.Name, name)
+			return nil, errors.Errorf("Split index `%v` region %s value count should be greater than 0", idxInfo.Name, name)
 		}
 		if len(valuesItem) > len(idxInfo.Columns) {
 			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", idxInfo.Name, name)
@@ -323,13 +322,6 @@ func evalSplitDatumFromArgs(
 	splitArgs := &splitArgs{
 		betweenLower: lowerValues,
 		betweenUpper: upperValues,
-	}
-
-	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
-	if opt.Num > maxSplitRegionNum {
-		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
-	} else if opt.Num < 1 {
-		return nil, errors.Errorf("Split index region num should more than 0")
 	}
 	splitArgs.regionsCnt = int(opt.Num)
 	return splitArgs, nil
@@ -350,19 +342,19 @@ func evalConstExprNodes(
 			return nil, err
 		}
 		evalCtx := buildCtx.GetEvalCtx()
-		value, err := exp.Eval(evalCtx, chunk.Row{})
+		evaluatedVal, err := exp.Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
 
-		d, err := value.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
+		d, err := evaluatedVal.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
 		if err != nil {
 			if !types.ErrTruncated.Equal(err) &&
 				!types.ErrTruncatedWrongVal.Equal(err) &&
 				!types.ErrBadNumber.Equal(err) {
 				return nil, err
 			}
-			valStr, err1 := value.ToString()
+			valStr, err1 := evaluatedVal.ToString()
 			if err1 != nil {
 				return nil, err
 			}

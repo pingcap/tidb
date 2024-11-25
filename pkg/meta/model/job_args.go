@@ -1323,6 +1323,7 @@ type IndexArg struct {
 	IfExist  bool  `json:"if_exist,omitempty"`
 	IsGlobal bool  `json:"is_global,omitempty"`
 
+	// Only used for job args v2.
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
 }
 
