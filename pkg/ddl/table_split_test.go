@@ -131,10 +131,18 @@ func TestScatterRegion(t *testing.T) {
 
 	err := tk.ExecToErr("set @@tidb_scatter_region = 'test';")
 	require.ErrorContains(t, err, "invalid value for 'test', it should be either '', 'table' or 'global'")
+	err = tk.ExecToErr("set @@tidb_scatter_region = 'te st';")
+	require.ErrorContains(t, err, "invalid value for 'te st', it should be either '', 'table' or 'global'")
 	err = tk.ExecToErr("set @@tidb_scatter_region = '1';")
 	require.ErrorContains(t, err, "invalid value for '1', it should be either '', 'table' or 'global'")
 	err = tk.ExecToErr("set @@tidb_scatter_region = 0;")
 	require.ErrorContains(t, err, "invalid value for '0', it should be either '', 'table' or 'global'")
+
+	tk.MustQuery("select @@tidb_scatter_region;").Check(testkit.Rows(""))
+	tk.MustExec("set @@tidb_scatter_region = 'TaBlE';")
+	tk.MustQuery("select @@tidb_scatter_region;").Check(testkit.Rows("table"))
+	tk.MustExec("set @@tidb_scatter_region = 'gLoBaL';")
+	tk.MustQuery("select @@tidb_scatter_region;").Check(testkit.Rows("global"))
 }
 
 type kvStore interface {
