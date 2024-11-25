@@ -218,4 +218,6 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 		"Split index region num should be greater than 0")
 	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 10000);",
 		"Split index region num exceeded the limit 1000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr", "2*return")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
 }

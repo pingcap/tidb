@@ -261,11 +261,15 @@ func splitIndexRegionAndWait(
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	if err != nil {
-		logutil.DDLLogger().Warn("split table index region failed",
+		logutil.DDLLogger().Error("split table index region failed",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", tblInfo.Name.L),
 			zap.Error(err))
+		return err
 	}
+	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
+		failpoint.Return(context.DeadlineExceeded)
+	})
 	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	logutil.DDLLogger().Info("split table index region finished",
 		zap.String("table", tblInfo.Name.L),
