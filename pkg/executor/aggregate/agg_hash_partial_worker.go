@@ -91,13 +91,12 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	waitStart := time.Now()
 	chk, ok := w.getChildInput()
-	updateWaitTime(w.stats, waitStart)
-
 	if !ok {
 		return false
 	}
 
 	defer w.inflightChunkSync.Done()
+	updateWaitTime(w.stats, waitStart)
 
 	w.intestDuringPartialWorkerRun()
 
