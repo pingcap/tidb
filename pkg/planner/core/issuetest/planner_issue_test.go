@@ -134,3 +134,17 @@ func TestIssue53175(t *testing.T) {
 	tk.MustQuery(`select * from t group by null`)
 	tk.MustQuery(`select * from v`)
 }
+
+func TestIssue51523(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`drop table if exists t0, t1`)
+	tk.MustExec(`CREATE TABLE t0(c0 INT UNSIGNED, c1 INT UNSIGNED, c2 BOOL)`)
+	tk.MustExec(`CREATE TABLE t1 LIKE t0`)
+	tk.MustExec(`INSERT IGNORE INTO t0 VALUES (1, -2, true)`)
+	res1 := tk.MustQuery(`SELECT FIELD(t0.c1, '', t1.c1, 2) FROM t0 LEFT JOIN t1 ON t0.c0`)
+	res2 := tk.MustQuery(`SELECT * FROM t0 LEFT JOIN t1 ON t0.c0 WHERE FIELD(t0.c1, '', t1.c1, 2)`)
+	require.Equal(t, 1, len(res1.Rows()))
+	require.Equal(t, 1, len(res2.Rows()))
+}

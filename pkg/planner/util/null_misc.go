@@ -87,6 +87,8 @@ func IsNullRejected(ctx base.PlanContext, innerSchema *expression.Schema, predic
 			return IsNullRejected(ctx, innerSchema, expr.GetArgs()[1])
 		} else if expr.FuncName.L == ast.In {
 			return isNullRejectedInList(ctx, expr, innerSchema)
+		} else if expr.FuncName.L == ast.Field {
+			return false
 		} else {
 			return isNullRejectedSimpleExpr(ctx, innerSchema, expr)
 		}

@@ -10,7 +10,7 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
-    shard_count = 4,
+    shard_count = 5,
     deps = [
         "//pkg/parser",
         "//pkg/planner",
