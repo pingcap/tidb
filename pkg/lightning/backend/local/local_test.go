@@ -1223,7 +1223,7 @@ func TestCheckPeersBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1347,7 +1347,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		BackendConfig: BackendConfig{
 			ShouldCheckWriteStall: true,
@@ -1446,7 +1446,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
@@ -1542,7 +1542,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 			},
 		},
 		logger:             log.L(),
-		writeLimiter:       noopStoreWriteLimiter{},
+		writeLimiter:       newStoreWriteLimiter(0),
 		supportMultiIngest: true,
 		tikvCodec:          keyspace.CodecV1,
 		BackendConfig: BackendConfig{
