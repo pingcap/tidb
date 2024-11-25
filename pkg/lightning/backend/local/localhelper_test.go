@@ -357,7 +357,7 @@ func TestTuneStoreWriteLimiter(t *testing.T) {
 	defer cancel0()
 	testLimiter(ctx0, 100)
 
-	limiter.UpdateLimiter(200)
+	limiter.UpdateLimit(200)
 	ctx1, cancel1 := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel1()
 	testLimiter(ctx1, 200)

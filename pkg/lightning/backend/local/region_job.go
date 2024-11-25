@@ -780,13 +780,13 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	return resp, nil
 }
 
-// UpdateLimiter updates the write limiter of the backend.
-func (local *Backend) UpdateLimiter(limit int) {
-	local.writeLimiter.UpdateLimiter(limit)
+// UpdateWriteSpeedLimit updates the write limiter of the backend.
+func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+	local.writeLimiter.UpdateLimit(limit)
 }
 
-// GetLimiterSpeed returns the speed of the write limiter.
-func (local *Backend) GetLimiterSpeed() int {
+// GetWriteSpeedLimit returns the speed of the write limiter.
+func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 

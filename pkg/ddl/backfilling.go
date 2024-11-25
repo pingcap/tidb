@@ -819,11 +819,11 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 			return
 		case <-ticker.C:
 			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load()))
-			if maxWriteSpeed != bcCtx.GetLocalBackend().GetLimiterSpeed() {
-				bcCtx.GetLocalBackend().UpdateLimiter(maxWriteSpeed)
+			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
+				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", job.ID),
-					zap.Int("max write speed", bcCtx.GetLocalBackend().GetLimiterSpeed()))
+					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
 			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
@@ -848,7 +848,7 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	}
 
 	// Adjust worker pool size and max write speed dynamically.
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
 		wg.Add(1)

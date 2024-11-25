@@ -591,12 +591,12 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 		wg.Add(2)
 		go func(limit int) {
 			defer wg.Done()
-			backend.UpdateLimiter(limit)
+			backend.UpdateWriteSpeedLimit(limit)
 		}(i)
 
 		go func() {
 			defer wg.Done()
-			_ = backend.GetLimiterSpeed()
+			_ = backend.GetWriteSpeedLimit()
 		}()
 	}
 	wg.Wait()

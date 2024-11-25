@@ -134,24 +134,25 @@ func largerStartKey(a, b []byte) []byte {
 type StoreWriteLimiter interface {
 	WaitN(ctx context.Context, storeID uint64, n int) error
 	Limit() int
-	UpdateLimiter(limit int)
+	UpdateLimit(limit int)
 }
 
 type storeWriteLimiter struct {
 	rwm      sync.RWMutex
 	limiters map[uint64]*rate.Limiter
 	// limit and burst can only be non-negative, 0 means no rate limiting.
-	limit int64
-	burst int64
+	limit atomic.Int64
+	burst atomic.Int64
 }
 
 func newStoreWriteLimiter(limit int) *storeWriteLimiter {
 	l, b := calculateLimitAndBurst(limit)
-	return &storeWriteLimiter{
+	s := &storeWriteLimiter{
 		limiters: make(map[uint64]*rate.Limiter),
-		limit:    l,
-		burst:    b,
 	}
+	s.limit.Store(l)
+	s.burst.Store(b)
+	return s
 }
 
 func calculateLimitAndBurst(writeLimit int) (limit int64, burst int64) {
@@ -185,11 +186,11 @@ func (s *storeWriteLimiter) WaitN(ctx context.Context, storeID uint64, n int) er
 }
 
 func (s *storeWriteLimiter) Limit() int {
-	return int(atomic.LoadInt64(&s.limit))
+	return int(s.limit.Load())
 }
 
 func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
-	if atomic.LoadInt64(&s.limit) == 0 {
+	if s.limit.Load() == 0 {
 		return nil
 	}
 	s.rwm.RLock()
@@ -202,44 +203,32 @@ func (s *storeWriteLimiter) getLimiter(storeID uint64) *rate.Limiter {
 	defer s.rwm.Unlock()
 	limiter, ok = s.limiters[storeID]
 	if !ok {
-		limiter = rate.NewLimiter(rate.Limit(atomic.LoadInt64(&s.limit)), int(atomic.LoadInt64(&s.burst)))
+		limiter = rate.NewLimiter(rate.Limit(s.limit.Load()), int(s.burst.Load()))
 		s.limiters[storeID] = limiter
 	}
 	return limiter
 }
 
-func (s *storeWriteLimiter) UpdateLimiter(newLimit int) {
+func (s *storeWriteLimiter) UpdateLimit(newLimit int) {
 	limit, burst := calculateLimitAndBurst(newLimit)
-	if atomic.LoadInt64(&s.limit) == limit {
+	if s.limit.Load() == limit {
 		return
 	}
 
-	atomic.StoreInt64(&s.limit, limit)
-	atomic.StoreInt64(&s.burst, burst)
+	s.limit.Store(limit)
+	s.burst.Store(burst)
 	// Update all existing limiters with the new limit and burst values.
 	s.rwm.Lock()
 	defer s.rwm.Unlock()
-	if atomic.LoadInt64(&s.limit) == 0 {
+	if s.limit.Load() == 0 {
 		s.limiters = make(map[uint64]*rate.Limiter)
 		return
 	}
 	for _, limiter := range s.limiters {
-		limiter.SetLimit(rate.Limit(atomic.LoadInt64(&s.limit)))
-		limiter.SetBurst(int(atomic.LoadInt64(&s.burst)))
+		limiter.SetLimit(rate.Limit(s.limit.Load()))
+		limiter.SetBurst(int(s.burst.Load()))
 	}
 }
-
-type noopStoreWriteLimiter struct{}
-
-func (noopStoreWriteLimiter) WaitN(_ context.Context, _ uint64, _ int) error {
-	return nil
-}
-
-func (noopStoreWriteLimiter) Limit() int {
-	return math.MaxInt
-}
-
-func (noopStoreWriteLimiter) UpdateLimiter(_ int) {}
 
 // compaction threshold
 const (
