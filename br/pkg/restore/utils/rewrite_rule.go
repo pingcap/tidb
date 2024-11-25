@@ -47,6 +47,15 @@ type RewriteRules struct {
 	NewKeyspace []byte
 	// used to record checkpoint data
 	NewTableID int64
+	// used to record backup files to pitr.
+	// note: should NewTableID merged with this?
+	TableIDRemapHint []TableIDRemap
+}
+
+// TableIDRemap presents a remapping of table id during rewriting.
+type TableIDRemap struct {
+	Origin    int64
+	Rewritten int64
 }
 
 // Append append its argument to this rewrite rules.
@@ -75,9 +84,11 @@ func GetRewriteRules(
 ) *RewriteRules {
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
 				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -101,7 +112,8 @@ func GetRewriteRules(
 	}
 
 	return &RewriteRules{
-		Data: dataRules,
+		Data:             dataRules,
+		TableIDRemapHint: remaps,
 	}
 }
 
@@ -112,8 +124,10 @@ func GetRewriteRulesMap(
 
 	tableIDs := GetTableIDMap(newTable, oldTable)
 	indexIDs := GetIndexIDMap(newTable, oldTable)
+	remaps := make([]TableIDRemap, 0)
 
 	for oldTableID, newTableID := range tableIDs {
+		remaps = append(remaps, TableIDRemap{Origin: oldTableID, Rewritten: newTableID})
 		dataRules := make([]*import_sstpb.RewriteRule, 0)
 		if getDetailRule {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
@@ -137,7 +151,8 @@ func GetRewriteRulesMap(
 		}
 
 		rules[oldTableID] = &RewriteRules{
-			Data: dataRules,
+			Data:             dataRules,
+			TableIDRemapHint: remaps,
 		}
 	}
 
@@ -152,7 +167,7 @@ func GetRewriteRuleOfTable(
 	getDetailRule bool,
 ) *RewriteRules {
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
-
+	remaps := []TableIDRemap{{Origin: oldTableID, Rewritten: newTableID}}
 	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
 			OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
@@ -174,7 +189,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules, NewTableID: newTableID}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID, TableIDRemapHint: remaps}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.

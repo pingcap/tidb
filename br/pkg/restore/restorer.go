@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -107,6 +108,32 @@ func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet
 		SSTFiles:     files,
 		RewriteRules: rules,
 	}
+}
+
+// DualRestorer is a composite restorer that combines two SstRestorers into a single restorer.
+type DualRestorer struct {
+	A SstRestorer
+	B SstRestorer
+}
+
+// Dual creates a new DualRestorer from two SstRestorers.
+func Dual(a, b SstRestorer) *DualRestorer {
+	return &DualRestorer{
+		A: a,
+		B: b,
+	}
+}
+
+func (c *DualRestorer) Close() error {
+	return multierr.Combine(c.A.Close(), c.B.Close())
+}
+
+func (c *DualRestorer) WaitUntilFinish() error {
+	return multierr.Combine(c.A.WaitUntilFinish(), c.B.WaitUntilFinish())
+}
+
+func (c *DualRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+	return multierr.Combine(c.A.GoRestore(onProgress, batchFileSets...), c.B.GoRestore(onProgress, batchFileSets...))
 }
 
 // SstRestorer defines the essential methods required for restoring SST files in various backup formats:

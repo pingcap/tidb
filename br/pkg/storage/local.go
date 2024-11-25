@@ -258,6 +258,14 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 // Close implements ExternalStorage interface.
 func (*LocalStorage) Close() {}
 
+func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	bs, err := e.ReadFile(ctx, spec.From)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return l.WriteFile(ctx, spec.To, bs)
+}
+
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
 	if err != nil {

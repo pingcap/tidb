@@ -150,6 +150,8 @@ type SnapClient struct {
 	// checkpoint information for snapshot restore
 	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	pitrColl *pitrCollector
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -165,6 +167,7 @@ func NewRestoreClient(
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
+		pitrColl:      new(pitrCollector),
 	}
 }
 
@@ -411,6 +414,16 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 		}
 	}
 	return dbPool, nil
+}
+
+func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	collector, err := newPiTRColl(ctx, deps)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	rc.pitrColl = collector
+	rc.restorer = restore.Dual(rc.pitrColl.createRestorer(ctx), rc.restorer)
+	return nil
 }
 
 // Init create db connection and domain for storage.

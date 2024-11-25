@@ -491,7 +491,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 }
 
 func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
-	ext := stream.MigerationExtension(rc.storage)
+	ext := stream.MigrationExtension(rc.storage)
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -2566,7 +2566,7 @@ func TestBasicMigration(t *testing.T) {
 	)
 
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 	res := MergeMigrations(mig1, mig2)
 
 	resE := mig(
@@ -2632,7 +2632,7 @@ func TestMergeAndMigrateTo(t *testing.T) {
 	mig3p := pmig(s, 3, mig3)
 
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 
 	ctx := context.Background()
 	migs, err := est.Load(ctx)
@@ -2700,7 +2700,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(20),
 	)
 	bs := storage.Batch(s)
-	est := MigerationExtension(bs)
+	est := MigrationExtension(bs)
 
 	merged := MergeMigrations(mig1, mig2)
 	requireMigrationsEqual(t, merged, mig(
@@ -2739,7 +2739,7 @@ func TestRetry(t *testing.T) {
 	require.NoError(t,
 		failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_write_file_err", `1*return("this disk remembers nothing")`))
 	ctx := context.Background()
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	mg := est.MergeAndMigrateTo(ctx, 2)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk remembers nothing")
@@ -2770,7 +2770,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 	)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_delete_file_err", `1*return("this disk will never forget")`))
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	mg := est.MigrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk will never forget")
@@ -2814,7 +2814,7 @@ func TestWithSimpleTruncate(t *testing.T) {
 		},
 	}))
 
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	m := mig(mTruncatedTo(65))
 	var res MigratedTo
 	effs := est.DryRun(func(me MigrationExt) { res = me.MigrateTo(ctx, m) })
@@ -2842,7 +2842,7 @@ func TestUnsupportedVersion(t *testing.T) {
 	m := mig(mVersion(backuppb.MigrationVersion(65535)))
 	pmig(s, 1, m)
 
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	ctx := context.Background()
 	_, err := est.Load(ctx)
 	require.Error(t, err)

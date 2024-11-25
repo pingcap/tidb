@@ -39,13 +39,14 @@ const (
 	baseTmp           = "BASE_TMP"
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
+	lockPrefix        = "v1/LOCK"
 
-	SupportedMigVersion = pb.MigrationVersion_M1
+	SupportedMigVersion = pb.MigrationVersion_M2
 )
 
 func NewMigration() *pb.Migration {
 	return &pb.Migration{
-		Version: pb.MigrationVersion_M1,
+		Version: pb.MigrationVersion_M2,
 		Creator: fmt.Sprintf("br;commit=%s;branch=%s", versioninfo.TiDBGitHash, versioninfo.TiDBGitBranch),
 	}
 }
@@ -204,7 +205,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
-	est := MigerationExtension(hst)
+	est := MigrationExtension(hst)
 	est.Hooks = updateFnHook{updateFn: updateFn}
 	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
@@ -516,7 +517,7 @@ func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                   
 func (NoHooks) HandingMetaEditDone()                                               {}
 
 // MigrateionExtnsion installs the extension methods to an `ExternalStorage`.
-func MigerationExtension(s storage.ExternalStorage) MigrationExt {
+func MigrationExtension(s storage.ExternalStorage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
@@ -534,6 +535,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.TruncatedTo = max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
+	out.ExtraFullBackups = append(out.ExtraFullBackups, m1.GetExtraFullBackups()...)
 	return out
 }
 
@@ -656,11 +658,20 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 }
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
+	lock, err := storage.TryLockRemoteWrite(ctx, m.s, lockPrefix, "AppendMigration")
+	if err != nil {
+		return 0, err
+	}
+	defer lock.Unlock(ctx)
+
 	migs, err := m.Load(ctx)
 	if err != nil {
 		return 0, err
 	}
-	newSN := migs.Layers[len(migs.Layers)-1].SeqNum + 1
+	newSN := 1
+	if len(migs.Layers) > 0 {
+		newSN = migs.Layers[len(migs.Layers)-1].SeqNum + 1
+	}
 	name := path.Join(migrationPrefix, nameOf(mig, newSN))
 	data, err := mig.Marshal()
 	if err != nil {
@@ -738,6 +749,16 @@ func (m MigrationExt) MergeAndMigrateTo(
 	targetSpec int,
 	opts ...MergeAndMigrateToOpt,
 ) (result MergeAndMigratedTo) {
+	lock, err := storage.TryLockRemoteWrite(ctx, m.s, lockPrefix, "AppendMigration")
+	if err != nil {
+		result.MigratedTo = MigratedTo{
+			Warnings: []error{
+				errors.Annotate(err, "failed to get the lock, nothing will happen"),
+			}}
+		return
+	}
+	defer lock.Unlock(ctx)
+
 	config := mergeAndMigrateToConfig{}
 	for _, o := range opts {
 		o(&config)
@@ -1064,6 +1085,16 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 		m.tryRemovePrefix(ctx, pfx, result)
 	}
 
+	for _, extraBackup := range mig.ExtraFullBackups {
+		if extraBackup.AsIfTs > mig.TruncatedTo {
+			result.NewBase.ExtraFullBackups = append(result.NewBase.ExtraFullBackups, extraBackup)
+		} else {
+			for _, pfx := range extraBackup.Files {
+				m.tryRemovePrefix(ctx, pfx.Name, result)
+			}
+		}
+	}
+
 	result.NewBase.TruncatedTo = mig.TruncatedTo
 
 	m.Hooks.StartLoadingMetaForTruncating()
@@ -1320,6 +1351,21 @@ func isEmptyMetadata(md *pb.Metadata) bool {
 	return len(md.FileGroups) == 0 && len(md.Files) == 0
 }
 
+/* Below are hash algorithms for hashing a component of the migration.
+ * Sadly there isn't a document describes the behavior of the algorithms.
+ * Perhaps we can standardlize them in the future.
+ * Maybe by defining a ordering-insensitive object hash algorithm for protocol buffer.
+ *
+ * Note: For now, the canon of the hash algorithm for a message should follow the following rules:
+ * - If a hash algorithm for a message exists both in TiKV and BR and conflicting, we
+ *   follow the implementation at where the message firstly creates (say, for compactions,
+ *   TiKV will be the canonical implementation. while for extra full backups, BR is canonical.).
+ * - For commonly used fields, follow the implementation in BR.
+ *
+ * Another note: nowadays, the hash of a migration is mainly used for detecting duplicated works,
+ * so the difference between hash algorithms won't result in something too bad...
+ */
+
 func hashMigration(m *pb.Migration) uint64 {
 	var crc64 uint64 = 0
 	for _, compaction := range m.Compactions {
@@ -1328,7 +1374,18 @@ func hashMigration(m *pb.Migration) uint64 {
 	for _, metaEdit := range m.EditMeta {
 		crc64 ^= hashMetaEdit(metaEdit)
 	}
+	for _, extBkup := range m.ExtraFullBackups {
+		crc64 ^= hashExtraBackup(extBkup)
+	}
 	return crc64 ^ m.TruncatedTo
+}
+
+func hashExtraBackup(extBkup *pb.ExtraFullBackup) uint64 {
+	bs, err := extBkup.Marshal()
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal message, this shouldn't happen: %s", err))
+	}
+	return crc64.Checksum(bs, crc64.MakeTable(crc64.ISO))
 }
 
 func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
