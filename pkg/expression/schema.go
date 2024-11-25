@@ -58,16 +58,16 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	kStrs := make([]string, 0, len(s.Keys))
+	strs := make([]string, 0, len(s.Keys))
 	for _, key := range s.Keys {
-		kStrs = append(kStrs, key.String())
+		strs = append(strs, key.String())
 	}
 	ukStrs := make([]string, 0, len(s.Keys))
 	for _, key := range s.UniqueKeys {
 		ukStrs = append(ukStrs, key.String())
 	}
 	return "Column: [" + strings.Join(colStrs, ",") +
-		"] Key: [" + strings.Join(kStrs, ",") +
+		"] Key: [" + strings.Join(strs, ",") +
 		"] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
