@@ -214,11 +214,16 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			where id = %? and state = %?`,
 			prevState, task.Concurrency, task.Meta, task.ID, proto.TaskStateModifying,
 		)
+		if err != nil {
+			return err
+		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			// might be handled by other owner nodes, skip.
 			return nil
 		}
 		// subtask in final state are not changed.
+		// subtask might have different concurrency later, see TaskExecInfo, we
+		// need to handle it too, but ok for now.
 		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 			update mysql.tidb_background_subtask
 			set concurrency = %?, state_update_time = unix_timestamp()
