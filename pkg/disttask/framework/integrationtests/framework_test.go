@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,12 +157,12 @@ func TestFrameworkCancelTask(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var once sync.Once
+	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/beforeCallOnSubtaskFinished",
 		func(subtask *proto.Subtask) {
-			once.Do(func() {
+			if counter.Add(1) == 1 {
 				require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, subtask.TaskID))
-			})
+			}
 		},
 	)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
@@ -183,12 +183,12 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 func TestOwnerChangeWhenSchedule(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var once sync.Once
+	var counter atomic.Int32
 	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", func() {
-		once.Do(func() {
+		if counter.Add(1) == 1 {
 			c.AsyncChangeOwner()
 			time.Sleep(time.Second)
-		})
+		}
 	}))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange"))
@@ -238,12 +238,12 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var once sync.Once
+	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterOnFinishedCalled",
 		func(e *taskexecutor.BaseTaskExecutor) {
-			once.Do(func() {
+			if counter.Add(1) == 1 {
 				e.CancelRunningSubtask()
-			})
+			}
 		},
 	)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
@@ -255,12 +255,12 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	t.Run("meet cancel on run subtask", func(t *testing.T) {
-		var once sync.Once
+		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
 			func(errP *error) {
-				once.Do(func() {
+				if counter.Add(1) == 1 {
 					*errP = taskexecutor.ErrCancelSubtask
-				})
+				}
 			},
 		)
 		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
@@ -268,12 +268,12 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	})
 
 	t.Run("meet some error on run subtask", func(t *testing.T) {
-		var once sync.Once
+		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
 			func(errP *error) {
-				once.Do(func() {
+				if counter.Add(1) == 1 {
 					*errP = errors.New("MockExecutorRunErr")
-				})
+				}
 			},
 		)
 		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
@@ -324,11 +324,11 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 1, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var once sync.Once
+	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", func(taskID int64) {
-		once.Do(func() {
+		if counter.Add(1) == 1 {
 			require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, taskID))
-		})
+		}
 	})
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
