@@ -833,6 +833,7 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	return nil
 }
 
+// IsFullCacheFunc is whether the cache is full or not. but we can only change it when to test
 var IsFullCacheFunc func(cache util.StatsCache, total uint64) bool = isFullCache
 
 func isFullCache(cache util.StatsCache, total uint64) bool {
