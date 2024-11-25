@@ -2259,10 +2259,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
 	defer r.End()
 	if r.Span != nil {
-		r.Span.LogKV("sql", s.OriginText())
+		r.Span.LogKV("sql", s.Text())
 	}
 
-	se.SetValue(sessionctx.QueryString, s.OriginText())
+	se.SetValue(sessionctx.QueryString, s.Text())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
 		se.SetValue(sessionctx.LastExecuteDDL, true)
 	} else {
@@ -4148,7 +4148,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query),
 		}
-		if ot := execStmt.OriginText(); ot != execStmt.Text {
+		if ot := execStmt.OriginText(); ot != execStmt.Text() {
 			fields = append(fields, zap.String("originText", strconv.Quote(ot)))
 		}
 		logutil.GeneralLogger.Info("GENERAL_LOG", fields...)
