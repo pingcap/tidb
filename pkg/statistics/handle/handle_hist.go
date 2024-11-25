@@ -135,21 +135,25 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 		select {
 		case result, ok := <-resultCh:
 			if !ok {
+				logutil.BgLogger().Info("fuck close")
 				return errors.New("sync load stats channel closed unexpectedly")
 			}
 			// this error is from statsSyncLoad.SendLoadRequests which start to task and send task into worker,
 			// not the stats loading error
 			if result.Err != nil {
+				logutil.BgLogger().Info("fuck get", zap.Error(result.Err))
 				errorMsgs = append(errorMsgs, result.Err.Error())
 			} else {
 				val := result.Val.(stmtctx.StatsLoadResult)
 				// this error is from the stats loading error
 				if val.HasError() {
+					logutil.BgLogger().Info("fuck get", zap.String("err", val.ErrorMsg()))
 					errorMsgs = append(errorMsgs, val.ErrorMsg())
 				}
 				delete(resultCheckMap, val.Item)
 			}
 		case <-timer.C:
+			logutil.BgLogger().Info("fuck timeout")
 			metrics.SyncLoadTimeoutCounter.Inc()
 			return errors.New("sync load stats timeout")
 		}
@@ -527,10 +531,12 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
 		if !ok || c.IsFullLoad() {
-			return true
+			tbl = tbl.Copy()
+			tbl.Columns[item.ID] = colHist
+		} else {
+			tbl = tbl.Copy()
+			tbl.Columns[c.ID] = colHist
 		}
-		tbl = tbl.Copy()
-		tbl.Columns[c.ID] = colHist
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
 		if !ok || index.IsFullLoad() {

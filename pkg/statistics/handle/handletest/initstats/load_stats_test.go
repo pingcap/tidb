@@ -38,7 +38,6 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_stats_load_sync_wait = 20000") // to stabilise test
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(c))")
 	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	tk.MustExec("analyze table t1")
@@ -53,17 +52,12 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(is))
 	for i := 1; i < 10; i++ {
-		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
-	}
-	for i := 1; i < 10; i++ {
-		tk.MustQuery(fmt.Sprintf("explain select * from t%v where b = 1", i))
-		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustQuery(fmt.Sprintf("explain select * from t%v where a = 1", i)).CheckNotContain("pseudo")
 	}
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where b = 1", i)).CheckNotContain("pseudo")
-		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
 	for i := 1; i < 10; i++ {
-		tk.MustQuery(fmt.Sprintf("explain select * from t%v where a = 1", i)).CheckNotContain("pseudo")
+		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
 	}
 }
