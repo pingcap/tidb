@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 type bundleCheck struct {
@@ -2639,4 +2640,214 @@ func TestAlterPartitioningWithPlacementPolicy(t *testing.T) {
 		"(PARTITION `p2` VALUES LESS THAN (200) /*T![placement] PLACEMENT POLICY=`pp1` */,\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE) /*T![placement] PLACEMENT POLICY=`pp2` */)"))
 	checkExistTableBundlesInPD(t, do, "test", "t1")
+}
+
+func TestCheckBundle(t *testing.T) {
+	type tc struct {
+		bundle  *placement.Bundle
+		success bool
+	}
+	testCases := []tc{
+		{
+			bundle: &placement.Bundle{
+				ID:       "TiDB_DDL_1",
+				Index:    1,
+				Override: false,
+				Rules: []*pd.Rule{
+					{
+						GroupID:     "TiDB_DDL_1",
+						ID:          "TiDB_DDL_1",
+						Override:    false,
+						StartKeyHex: "F0",
+						EndKeyHex:   "F2",
+						Role:        pd.Leader,
+					},
+					{
+						GroupID:     "TiDB_DDL_2",
+						ID:          "TiDB_DDL_1",
+						Override:    false,
+						StartKeyHex: "01",
+						EndKeyHex:   "02",
+						Role:        pd.Leader,
+					},
+				},
+			},
+			success: true,
+		},
+		{
+			bundle: &placement.Bundle{
+				ID:       "TiDB_DDL_1",
+				Index:    1,
+				Override: false,
+				Rules: []*pd.Rule{
+					{
+						GroupID:     "TiDB_DDL_1",
+						ID:          "TiDB_DDL_1",
+						Override:    false,
+						StartKeyHex: "01",
+						EndKeyHex:   "0F",
+						Role:        pd.Leader,
+					},
+					{
+						GroupID:     "TiDB_DDL_1",
+						ID:          "TiDB_DDL_1",
+						Override:    true,
+						StartKeyHex: "02",
+						EndKeyHex:   "03",
+						Role:        pd.Leader,
+					},
+					{
+						GroupID:     "TiDB_DDL_1",
+						ID:          "TiDB_DDL_1",
+						Override:    false,
+						StartKeyHex: "04",
+						EndKeyHex:   "05",
+						Role:        pd.Leader,
+					},
+				},
+			},
+			// TODO: reconsider if we should make this test fail?
+			success: true,
+		},
+		{
+			// What issue #55705 looked like, i.e. both partition and table had the same range.
+			bundle: &placement.Bundle{
+				ID:       "TiDB_DDL_112",
+				Index:    40,
+				Override: true,
+				Rules: []*pd.Rule{
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "table_rule_112_0",
+						Index:       40,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "leader",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "table_rule_112_1",
+						Index:       40,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "table_rule_112_2",
+						Index:       40,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_112_0",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "leader",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_112_1",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_112_2",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7000000000000000f8",
+						EndKeyHex:   "7480000000000000ff7100000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_115_0",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7300000000000000f8",
+						EndKeyHex:   "7480000000000000ff7400000000000000f8",
+						Role:        "leader",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_115_1",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7300000000000000f8",
+						EndKeyHex:   "7480000000000000ff7400000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_115_2",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7300000000000000f8",
+						EndKeyHex:   "7480000000000000ff7400000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_116_0",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7400000000000000f8",
+						EndKeyHex:   "7480000000000000ff7500000000000000f8",
+						Role:        "leader",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_116_1",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7400000000000000f8",
+						EndKeyHex:   "7480000000000000ff7500000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_116_2",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7400000000000000f8",
+						EndKeyHex:   "7480000000000000ff7500000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_117_0",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7500000000000000f8",
+						EndKeyHex:   "7480000000000000ff7600000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_117_1",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7500000000000000f8",
+						EndKeyHex:   "7480000000000000ff7600000000000000f8",
+						Role:        "voter",
+					},
+					{
+						GroupID:     "TiDB_DDL_112",
+						ID:          "partition_rule_117_2",
+						Index:       80,
+						StartKeyHex: "7480000000000000ff7500000000000000f8",
+						EndKeyHex:   "7480000000000000ff7600000000000000f8",
+						Role:        "voter",
+					},
+				},
+			},
+			success: false,
+		},
+	}
+
+	for _, test := range testCases {
+		err := infosync.CheckBundle(test.bundle)
+		if test.success {
+			require.NoError(t, err)
+		} else {
+			require.Error(t, err)
+		}
+	}
 }

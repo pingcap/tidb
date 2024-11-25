@@ -101,6 +101,103 @@ func (m *mockPlacementManager) GetAllRuleBundles(_ context.Context) ([]*placemen
 	return bundles, nil
 }
 
+type keyRange struct {
+	groupID  string
+	start    string
+	end      string
+	id       string
+	string   int
+	override bool
+	isLeader bool
+}
+
+// CheckBundle check that the rules don't overlap without explicit Override
+// Exported for testing reasons.
+// Tries to match prepareRulesForApply + checkApplyRules from pd.
+// And additionally checks for key overlaps.
+func CheckBundle(bundle *placement.Bundle) error {
+	keys := make([]keyRange, 0, len(bundle.Rules))
+	for _, rule := range bundle.Rules {
+		keys = append(keys, keyRange{
+			groupID:  rule.GroupID,
+			id:       rule.ID,
+			start:    rule.StartKeyHex,
+			end:      rule.EndKeyHex,
+			override: rule.Override,
+			isLeader: rule.Role == pd.Leader,
+		})
+	}
+	if len(keys) == 0 {
+		return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, no rule left`)
+	}
+	// Skip overridden rules, but only within the bundle, not across groups
+	applyKeys := keys[:0]
+	j := 0
+	for i := 1; i < len(keys); i++ {
+		if keys[i].groupID != keys[j].groupID {
+			// currently not checking if the group overrides all other groups!
+			applyKeys = append(applyKeys, keys[j:i]...) // save rules belong to previous groups
+			j = i
+		}
+		if keys[i].override {
+			j = i // skip all previous rules in the same group
+		}
+	}
+	applyKeys = append(applyKeys, keys[j:]...)
+	if len(applyKeys) == 0 {
+		return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, no rule left`)
+	}
+
+	// Additionally check for range overlapping leaders.
+	j = 0
+	keys = keys[:0]
+	for i := 0; i < len(applyKeys); i++ {
+		if applyKeys[i].isLeader {
+			keys = append(keys, applyKeys[i])
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+
+	// Sort on Start (includes group_id), id, end
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].start == keys[j].start {
+			if keys[i].id == keys[j].id {
+				return keys[i].end < keys[j].end
+			}
+			return keys[i].id < keys[j].id
+		}
+		return keys[i].start < keys[j].start
+	})
+
+	prevEnd := keys[0].end
+	for i := 1; i < len(keys); i++ {
+		if keys[i].start < prevEnd {
+			if !keys[i].override {
+
+				return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
+			}
+			continue
+		}
+		if keys[i].end > prevEnd {
+			prevEnd = keys[i].end
+		}
+	}
+
+	return nil
+}
+
+func checkBundles(bundles map[string]*placement.Bundle) error {
+	// Check that no bundles have leaders overlapping ranges
+	for k := range bundles {
+		if err := CheckBundle(bundles[k]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*placement.Bundle) error {
 	m.Lock()
 	defer m.Unlock()
@@ -119,42 +216,5 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		}
 	}
 
-	// Check that no bundles have leaders overlapping ranges
-	type keyRange struct {
-		start    string
-		end      string
-		id       string
-		string   int
-		override bool
-	}
-	keys := make([]keyRange, 0, rules)
-	for k := range m.bundles {
-		for _, rule := range m.bundles[k].Rules {
-			if rule.Role == pd.Leader {
-				keys = append(keys, keyRange{
-					id:       rule.ID,
-					start:    rule.GroupID + ":" + rule.StartKeyHex,
-					end:      rule.GroupID + ":" + rule.EndKeyHex,
-					override: rule.Override,
-				})
-			}
-		}
-	}
-	// Sort on Start (includes group_id), id, end
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].start == keys[j].start {
-			if keys[i].id == keys[j].id {
-				return keys[i].end < keys[j].end
-			}
-			return keys[i].id < keys[j].id
-		}
-		return keys[i].start < keys[j].start
-	})
-	for i := 1; i < len(keys); i++ {
-		if keys[i].start < keys[i-1].end && !keys[i].override {
-			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
-		}
-	}
-
-	return nil
+	return checkBundles(m.bundles)
 }
