@@ -22,10 +22,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -42,7 +45,8 @@ func registerExampleTask(t testing.TB, ctrl *gomock.Controller, schedulerExt sch
 	if runSubtaskFn == nil {
 		runSubtaskFn = getCommonSubtaskRunFn(testContext)
 	}
-	executorExt := testutil.GetCommonTaskExecutorExt(ctrl, runSubtaskFn)
+	stepExecutor := testutil.GetCommonStepExecutor(ctrl, runSubtaskFn)
+	executorExt := testutil.GetCommonTaskExecutorExt(ctrl, stepExecutor)
 	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(ctrl))
 }
 
@@ -153,25 +157,25 @@ func TestFrameworkCancelTask(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)")
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
-	require.Equal(t, proto.TaskStateReverted, task.State)
-}
-
-func TestFrameworkSubTaskFailed(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 1, 16, true)
-
-	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)")
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/beforeCallOnSubtaskFinished",
+		func(subtask *proto.Subtask) {
+			once.Do(func() {
+				require.NoError(t, c.TaskMgr.CancelTask(c.Ctx, subtask.TaskID))
+			})
+		},
+	)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
 func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 1, 16, true)
-	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockExecSubtaskInitEnvErr", "return()")
+	schedulerExt := testutil.GetMockBasicSchedulerExt(c.MockCtrl)
+	stepExec := mockexecute.NewMockStepExecutor(c.MockCtrl)
+	stepExec.EXPECT().Init(gomock.Any()).Return(errors.New("mockExecSubtaskInitEnvErr")).AnyTimes()
+	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, stepExec)
+	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
@@ -234,18 +238,47 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockSubtaskFinishedCancel", "1*return(true)")
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterOnFinishedCalled",
+		func(e *taskexecutor.BaseTaskExecutor) {
+			once.Do(func() {
+				e.CancelRunningSubtask()
+			})
+		},
+	)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }
 
-func TestFrameworkRunSubtaskCancel(t *testing.T) {
+func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskCancel", "1*return(true)")
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
-	require.Equal(t, proto.TaskStateReverted, task.State)
+	t.Run("meet cancel on run subtask", func(t *testing.T) {
+		var once sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
+			func(errP *error) {
+				once.Do(func() {
+					*errP = taskexecutor.ErrCancelSubtask
+				})
+			},
+		)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
+		require.Equal(t, proto.TaskStateReverted, task.State)
+	})
+
+	t.Run("meet some error on run subtask", func(t *testing.T) {
+		var once sync.Once
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
+			func(errP *error) {
+				once.Do(func() {
+					*errP = errors.New("MockExecutorRunErr")
+				})
+			},
+		)
+		task := testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
+		require.Equal(t, proto.TaskStateReverted, task.State)
+	})
 }
 
 func TestFrameworkCleanUpRoutine(t *testing.T) {

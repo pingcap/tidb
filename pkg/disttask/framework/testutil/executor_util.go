@@ -24,7 +24,7 @@ import (
 
 // InitTaskExecutor inits all mock components for TaskExecutor.
 func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
-	executorExt := GetCommonTaskExecutorExt(ctrl, runSubtaskFn)
+	executorExt := GetCommonTaskExecutorExt(ctrl, GetCommonStepExecutor(ctrl, runSubtaskFn))
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)

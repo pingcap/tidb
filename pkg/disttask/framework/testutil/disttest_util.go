@@ -30,17 +30,16 @@ import (
 )
 
 // GetCommonTaskExecutorExt returns a common task executor extension.
-func GetCommonTaskExecutorExt(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mock.MockExtension {
-	mockStepExecutor := getMockStepExecutor(ctrl, runSubtaskFn)
+func GetCommonTaskExecutorExt(ctrl *gomock.Controller, stepExec *mockexecute.MockStepExecutor) *mock.MockExtension {
 	executorExt := mock.NewMockExtension(ctrl)
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any()).Return(stepExec, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	return executorExt
 }
 
-// getMockStepExecutor returns one mock subtaskExecutor.
-func getMockStepExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mockexecute.MockStepExecutor {
+// GetCommonStepExecutor returns one mock subtaskExecutor.
+func GetCommonStepExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) *mockexecute.MockStepExecutor {
 	executor := mockexecute.NewMockStepExecutor(ctrl)
 	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
@@ -100,7 +99,7 @@ func RegisterTaskTypeForRollback(t testing.TB, ctrl *gomock.Controller, schedule
 		testContext.CollectSubtask(subtask)
 		return nil
 	}
-	executorExt := GetCommonTaskExecutorExt(ctrl, subtaskRunFn)
+	executorExt := GetCommonTaskExecutorExt(ctrl, GetCommonStepExecutor(ctrl, subtaskRunFn))
 	RegisterExampleTask(t, schedulerExt, executorExt, GetCommonCleanUpRoutine(ctrl))
 }
 
