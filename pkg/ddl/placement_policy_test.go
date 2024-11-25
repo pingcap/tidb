@@ -2707,6 +2707,8 @@ func TestCheckBundle(t *testing.T) {
 				},
 			},
 			// TODO: reconsider if we should make this test fail?
+			// https://github.com/pingcap/tidb/issues/57693
+			// Currently the second rule overrides the first rule in whole, not just the overlapping range.
 			success: true,
 		},
 		{
