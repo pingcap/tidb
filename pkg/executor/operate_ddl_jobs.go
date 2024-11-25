@@ -210,7 +210,7 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 			job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
 			job.AdminOperator = byWho
 		case core.AlterDDLJobMaxWriteSpeed:
-			speed, err := core.GetMaxWriteSpeedNumericValFromExpression(opt)
+			speed, err := core.GetMaxWriteSpeedFromExpression(opt)
 			if err != nil {
 				return err
 			}
