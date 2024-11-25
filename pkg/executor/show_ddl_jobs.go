@@ -317,7 +317,7 @@ func showCommentsFromJob(job *model.Job) string {
 	if job.MayNeedReorg() {
 		concurrency := m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 		batchSize := m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
-		maxWriteSpeed := m.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load()))
+		maxWriteSpeed := m.GetMaxWriteSpeedOrDefault()
 		if concurrency != variable.DefTiDBDDLReorgWorkerCount {
 			labels = append(labels, fmt.Sprintf("thread=%d", concurrency))
 		}

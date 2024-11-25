@@ -708,7 +708,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load()))
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
 		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
 	if err != nil {
@@ -818,7 +818,7 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault(int(variable.DDLReorgMaxWriteSpeed.Load()))
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",

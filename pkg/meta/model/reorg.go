@@ -111,7 +111,7 @@ func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
 
 // GetMaxWriteSpeedOrDefault gets the max write speed from DDLReorgMeta.
 // 0 means no limit.
-func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault(defaultVal int) int {
+func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault() int {
 	return int(dm.MaxWriteSpeed.Load())
 }
 
