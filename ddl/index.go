@@ -836,7 +836,9 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 				store, ok2 := d.store.(tikv.Storage)
 				if ok2 {
 					pdLeaderAddr = store.GetRegionCache().PDClient().GetLeaderAddr()
-				} else {
+				}
+				// happens in unit tests
+				if !ok2 || pdLeaderAddr == "mockpd" {
 					pdLeaderAddr = config.GetGlobalConfig().Path
 				}
 			}
