@@ -213,6 +213,13 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+}
+
+func TestAddIndexPresplitFunctional(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
 
 	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 0);",
 		"Split index region num should be greater than 0")
@@ -220,4 +227,10 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 		"Split index region num exceeded the limit 1000")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr", "2*return")
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10, 1);")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
+	tk.MustExec("drop table t;")
 }
