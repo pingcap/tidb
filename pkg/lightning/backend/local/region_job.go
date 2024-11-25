@@ -405,6 +405,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 				ResourceGroupName: local.ResourceGroupName,
 			},
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
+			TxnSource:     kv.LightningPhysicalImportTxnSource,
 		},
 	}
 	for _, peer := range region.GetPeers() {
