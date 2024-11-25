@@ -833,8 +833,12 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			var pdLeaderAddr string
 			if d != nil {
-				//nolint:forcetypeassert
-				pdLeaderAddr = d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
+				store, ok2 := d.store.(tikv.Storage)
+				if ok2 {
+					pdLeaderAddr = store.GetRegionCache().PDClient().GetLeaderAddr()
+				} else {
+					pdLeaderAddr = config.GetGlobalConfig().Path
+				}
 			}
 			bc, err = ingest.LitBackCtxMgr.Register(
 				w.ctx,
