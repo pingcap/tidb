@@ -23,10 +23,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -216,26 +218,47 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 
 // Exec is a helper function to execute sql and return RecordSet.
 func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	return ExecWithCtx(StatsCtx, sctx, sql, args...)
+}
+
+// ExecWithCtx is a helper function to execute sql and return RecordSet.
+func ExecWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	sql string,
+	args ...any,
+) (sqlexec.RecordSet, error) {
 	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
-	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
+	return sqlExec.ExecuteInternal(ctx, sql, args...)
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
+}
+
+// ExecRowsWithCtx is a helper function to execute sql and return rows and fields.
+func ExecRowsWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	sql string,
+	args ...any,
+) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
-			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
-				UseCurrentSessionOpt, sql, args...)
+			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(
+				StatsCtx, UseCurrentSessionOpt, sql, args...,
+			)
 		}
 	}
 
 	sqlExec := sctx.GetRestrictedSQLExecutor()
-	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
+	return sqlExec.ExecRestrictedSQL(ctx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
@@ -308,4 +331,20 @@ type JSONPredicateColumn struct {
 	LastUsedAt     *string `json:"last_used_at"`
 	LastAnalyzedAt *string `json:"last_analyzed_at"`
 	ID             int64   `json:"id"`
+}
+
+// IsSpecialGlobalIndex checks a index is a special global index or not.
+// A special global index is one that is a global index and has virtual generated columns or prefix columns.
+func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	if !idx.Global {
+		return false
+	}
+	for _, col := range idx.Columns {
+		colInfo := tblInfo.Columns[col.Offset]
+		isPrefixCol := col.Length != types.UnspecifiedLength
+		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			return true
+		}
+	}
+	return false
 }

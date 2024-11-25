@@ -70,7 +70,7 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMeta(txn)
+	m := meta.NewMutator(txn)
 	size, isNull, err := m.GetSchemaCacheSize()
 	require.NoError(t, err)
 	require.Equal(t, size, uint64(0))
@@ -84,7 +84,7 @@ func TestSchemaCacheSizeVar(t *testing.T) {
 
 	txn, err = store.Begin()
 	require.NoError(t, err)
-	m = meta.NewMeta(txn)
+	m = meta.NewMutator(txn)
 	size, isNull, err = m.GetSchemaCacheSize()
 	require.NoError(t, err)
 	require.Equal(t, size, uint64(variable.DefTiDBSchemaCacheSize))

@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -80,7 +81,7 @@ func TestBasic(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
@@ -180,7 +181,7 @@ func TestTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	_, err := tk.Session().Execute(context.Background(), "CREATE TABLE test.t (c1 tinyint, c2 smallint, c3 int, c4 bigint, c5 text, c6 blob, c7 varchar(64), c8 time, c9 timestamp null default CURRENT_TIMESTAMP, c10 decimal(10,1))")
 	require.NoError(t, err)
-	_, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	_, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, "insert test.t values (1, 2, 3, 4, '5', '6', '7', '10:10:10', null, 1.4)")
 	require.NoError(t, err)
@@ -234,7 +235,7 @@ func TestUniqueIndexMultipleNullEntries(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(ctx, "CREATE TABLE test.t (a int primary key auto_increment, b varchar(255) unique)")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Greater(t, tb.Meta().ID, int64(0))
 	require.Equal(t, "t", tb.Meta().Name.L)
@@ -314,7 +315,7 @@ func TestUnsignedPK(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tPK (a bigint unsigned primary key, b varchar(255))")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tPK"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tPK"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
@@ -342,7 +343,7 @@ func TestIterRecords(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	txn, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tIter"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tIter"))
 	require.NoError(t, err)
 	totalCount := 0
 	err = tables.IterRecords(tb, tk.Session(), tb.Cols(), func(_ kv.Handle, rec []types.Datum, cols []*table.Column) (bool, error) {
@@ -363,7 +364,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
 	_, err := tk.Session().Txn(true)
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("meta"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("meta"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta().Clone()
 
@@ -385,7 +386,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 
 	tk.MustExec(`create table t_mock (id int) partition by range (id) (partition p0 values less than maxvalue)`)
-	tb, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_mock"))
+	tb, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_mock"))
 	require.NoError(t, err)
 	tt := table.MockTableFromMeta(tb.Meta())
 	_, ok := tt.(table.PartitionedTable)
@@ -394,7 +395,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.Equal(t, table.NormalTable, tt.Type())
 
 	tk.MustExec("create table t_meta (a int) shard_row_id_bits = 15")
-	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_meta"))
+	tb, err = domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_meta"))
 	require.NoError(t, err)
 	_, err = tables.AllocHandle(context.Background(), tk.Session().GetTableCtx(), tb)
 	require.NoError(t, err)
@@ -415,7 +416,7 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE t (a int primary key, b int as (a+1), c int, d int as (c+1) stored, e int, f tinyint as (a+1));")
 	tk.MustExec("insert into t values (1, default, 3, default, 5, default);")
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_hidden"), model.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test_hidden"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	colInfo := tb.Meta().Columns
 	// Set column b, d, f to hidden
@@ -580,7 +581,7 @@ func TestAddRecordWithCtx(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Session().Execute(context.Background(), "CREATE TABLE test.tRecord (a bigint unsigned primary key, b varchar(255))")
 	require.NoError(t, err)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tRecord"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tRecord"))
 	require.NoError(t, err)
 	defer func() {
 		_, err := tk.Session().Execute(context.Background(), "DROP TABLE test.tRecord")
@@ -943,7 +944,7 @@ func TestSkipWriteUntouchedIndices(t *testing.T) {
 	tk.MustExec("insert into t values(4, 5, 6)")
 	defer tk.MustExec("rollback")
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	ctx := tk.Session().GetTableCtx()
 
@@ -1017,7 +1018,7 @@ func TestDupKeyCheckMode(t *testing.T) {
 		require.NoError(t, err)
 		return txn
 	}
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	ctx := tk.Session().GetTableCtx()
 	getHandleFlags := func(h kv.Handle, memBuffer kv.MemBuffer) kv.KeyFlags {

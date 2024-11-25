@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -76,9 +76,8 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2(gp *gp.Pool) *statistics
 		isSpecial := false
 		for _, col := range idx.Columns {
 			colInfo := e.colsInfo[col.Offset]
-			isVirtualCol := colInfo.IsGenerated() && !colInfo.GeneratedStored
 			isPrefixCol := col.Length != types.UnspecifiedLength
-			if isVirtualCol || isPrefixCol {
+			if colInfo.IsVirtualGenerated() || isPrefixCol {
 				isSpecial = true
 				break
 			}

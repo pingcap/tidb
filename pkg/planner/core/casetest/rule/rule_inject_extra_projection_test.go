@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -29,7 +29,7 @@ import (
 )
 
 func TestWrapCastForAggFuncs(t *testing.T) {
-	ctx := contextstatic.NewStaticEvalContext()
+	ctx := exprstatic.NewEvalContext()
 
 	aggNames := []string{ast.AggFuncSum}
 	modes := []aggregation.AggFunctionMode{aggregation.CompleteMode,

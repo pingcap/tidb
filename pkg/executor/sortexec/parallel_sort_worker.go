@@ -20,9 +20,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -50,6 +52,8 @@ type parallelSortWorker struct {
 	chunkIters         []*chunk.Iterator4Chunk
 	rowNumInChunkIters int
 	merger             *multiWayMerger
+
+	sqlKiller *sqlkiller.SQLKiller
 }
 
 func newParallelSortWorker(
@@ -62,7 +66,9 @@ func newParallelSortWorker(
 	memTracker *memory.Tracker,
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int,
-	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
+	spillHelper *parallelSortSpillHelper,
+	sqlKiller *sqlkiller.SQLKiller,
+) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
@@ -75,6 +81,7 @@ func newParallelSortWorker(
 		sortedRowsIter:         sortedRowsIter,
 		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
+		sqlKiller:              sqlKiller,
 	}
 }
 
@@ -112,7 +119,32 @@ func (p *parallelSortWorker) multiWayMergeLocalSortedRows() ([]chunk.Row, error)
 		return nil, err
 	}
 
+	loopCnt := uint64(0)
+
 	for {
+		var err error
+		failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+			if val.(bool) {
+				randNum := rand.Int31n(10000)
+				if randNum < 2 {
+					err = errors.NewNoStackErrorf("failpoint error")
+				}
+			}
+		})
+
+		if err != nil {
+			return nil, err
+		}
+
+		if loopCnt%100 == 0 && p.sqlKiller != nil {
+			err := p.sqlKiller.HandleSignal()
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		loopCnt++
+
 		// It's impossible to return error here as rows are in memory
 		row, _ := p.merger.next()
 		if row.IsEmpty() {
@@ -202,9 +234,12 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() bool {
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
-	if p.timesOfRowCompare >= SignalCheckpointForSort {
-		// Trigger Consume for checking the NeedKill signal
-		p.memTracker.Consume(1)
+	if p.timesOfRowCompare >= SignalCheckpointForSort && p.sqlKiller != nil {
+		err := p.sqlKiller.HandleSignal()
+		if err != nil {
+			panic(err)
+		}
+
 		p.timesOfRowCompare = 0
 	}
 

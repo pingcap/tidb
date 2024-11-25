@@ -34,19 +34,19 @@ import (
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression
+	Exprs []expression.Expression `hash64-equals:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
-	CalculateNoDelay bool
+	CalculateNoDelay bool `hash64-equals:"true"`
 
 	// Proj4Expand is used for expand to project same column reference, while these
 	// col may be filled with null so we couldn't just eliminate this projection itself.
-	Proj4Expand bool
+	Proj4Expand bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalProjection.
@@ -55,7 +55,7 @@ func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProj
 	return &p
 }
 
-// *************************** start implementation of Plan interface ***************************
+// *************************** start implementation of Plan interface **********************************
 
 // ExplainInfo implements Plan interface.
 func (p *LogicalProjection) ExplainInfo() string {
@@ -71,7 +71,7 @@ func (p *LogicalProjection) ReplaceExprColumns(replace map[string]*expression.Co
 	}
 }
 
-// *************************** end implementation of Plan interface ***************************
+// *************************** end implementation of Plan interface ************************************
 
 // *************************** start implementation of logicalPlan interface ***************************
 

@@ -17,14 +17,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unsafe"
 
-	"github.com/cznic/mathutil"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"golang.org/x/exp/slices"
 )
 
 // UnspecifiedLength is unspecified length.
@@ -39,6 +38,21 @@ const (
 var (
 	TiDBStrictIntegerDisplayWidth bool
 )
+
+// IHasher is internal usage represent cascades/base.Hasher
+type IHasher interface {
+	HashBool(val bool)
+	HashInt(val int)
+	HashInt64(val int64)
+	HashUint64(val uint64)
+	HashFloat64(val float64)
+	HashRune(val rune)
+	HashString(val string)
+	HashByte(val byte)
+	HashBytes(val []byte)
+	Reset()
+	Sum64() uint64
+}
 
 // FieldType records field type information.
 type FieldType struct {
@@ -59,6 +73,66 @@ type FieldType struct {
 	elemsIsBinaryLit []bool
 	array            bool
 	// Please keep in mind that jsonFieldType should be updated if you add a new field here.
+}
+
+// Hash64 implements the cascades/base.Hasher.<0th> interface.
+func (ft *FieldType) Hash64(h IHasher) {
+	h.HashByte(ft.tp)
+	h.HashUint64(uint64(ft.flag))
+	h.HashInt(ft.flen)
+	h.HashInt(ft.decimal)
+	h.HashString(ft.charset)
+	h.HashString(ft.collate)
+	h.HashInt(len(ft.elems))
+	for _, elem := range ft.elems {
+		h.HashString(elem)
+	}
+	h.HashInt(len(ft.elemsIsBinaryLit))
+	for _, elem := range ft.elemsIsBinaryLit {
+		h.HashBool(elem)
+	}
+	h.HashBool(ft.array)
+}
+
+// Equals implements the cascades/base.Hasher.<1th> interface.
+func (ft *FieldType) Equals(other any) bool {
+	ft2, ok := other.(*FieldType)
+	if !ok {
+		return false
+	}
+	if ft == nil {
+		return ft2 == nil
+	}
+	if other == nil {
+		return false
+	}
+	ok = ft.tp == ft2.tp &&
+		ft.flag == ft2.flag &&
+		ft.flen == ft2.flen &&
+		ft.decimal == ft2.decimal &&
+		ft.charset == ft2.charset &&
+		ft.collate == ft2.collate &&
+		ft.array == ft2.array
+	if !ok {
+		return false
+	}
+	if len(ft.elems) != len(ft2.elems) {
+		return false
+	}
+	for i, one := range ft.elems {
+		if one != ft2.elems[i] {
+			return false
+		}
+	}
+	if len(ft.elemsIsBinaryLit) != len(ft2.elemsIsBinaryLit) {
+		return false
+	}
+	for i, one := range ft.elemsIsBinaryLit {
+		if one != ft2.elemsIsBinaryLit[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NewFieldType returns a FieldType,
@@ -166,7 +240,7 @@ func (ft *FieldType) SetFlen(flen int) {
 // SetFlenUnderLimit sets the length of the field to the value of the argument
 func (ft *FieldType) SetFlenUnderLimit(flen int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.flen = mathutil.Min(flen, mysql.MaxDecimalWidth)
+		ft.flen = min(flen, mysql.MaxDecimalWidth)
 	} else {
 		ft.flen = flen
 	}
@@ -180,7 +254,7 @@ func (ft *FieldType) SetDecimal(decimal int) {
 // SetDecimalUnderLimit sets the decimal of the field to the value of the argument
 func (ft *FieldType) SetDecimalUnderLimit(decimal int) {
 	if ft.GetType() == mysql.TypeNewDecimal {
-		ft.decimal = mathutil.Min(decimal, mysql.MaxDecimalScale)
+		ft.decimal = min(decimal, mysql.MaxDecimalScale)
 	} else {
 		ft.decimal = decimal
 	}
@@ -342,6 +416,8 @@ func (ft *FieldType) EvalType() EvalType {
 		return ETDuration
 	case mysql.TypeJSON:
 		return ETJson
+	case mysql.TypeTiDBVectorFloat32:
+		return ETVectorFloat32
 	case mysql.TypeEnum, mysql.TypeSet:
 		if ft.flag&mysql.EnumSetAsIntFlag > 0 {
 			return ETInt

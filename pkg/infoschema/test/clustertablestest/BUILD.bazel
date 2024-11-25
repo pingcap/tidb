@@ -20,6 +20,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/auth",
         "//pkg/parser/model",

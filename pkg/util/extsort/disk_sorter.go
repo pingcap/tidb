@@ -991,7 +991,6 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 	g, gCtx := errgroup.WithContext(ctx)
 	g.SetLimit(d.opts.Concurrency)
 	for _, c := range compactions {
-		c := c
 		g.Go(func() error {
 			if gCtx.Err() != nil {
 				return errors.Trace(gCtx.Err())

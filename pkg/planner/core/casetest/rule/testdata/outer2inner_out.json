@@ -279,26 +279,25 @@
         ]
       },
       {
-        "SQL": "WITH cte AS ( SELECT alias1.col_date AS field1 FROM d AS alias1 LEFT JOIN dd AS alias2 ON alias1.col_blob_key=alias2.col_blob_key WHERE alias1.col_varchar_key IS NULL OR alias1.col_blob_key >= 'a') DELETE FROM outr1.*, outr2.* USING d AS outr1 LEFT OUTER JOIN dd AS outr2 ON (outr1.col_date=outr2.col_date) JOIN cte AS outrcte ON outr2.col_blob_key=outrcte.field1 -- nested complex case",
+        "SQL": "WITH cte AS ( SELECT alias1.col_date AS field1 FROM d AS alias1 LEFT JOIN dd AS alias2 ON alias1.col_blob_key=alias2.col_blob_key WHERE alias1.col_varchar_key IS NULL OR alias1.col_blob_key >= 'a') SELECT * FROM d AS outr1 LEFT OUTER JOIN dd AS outr2 ON (outr1.col_date=outr2.col_date) JOIN cte AS outrcte ON outr2.col_blob_key=outrcte.field1 -- nested complex case",
         "Plan": [
-          "Delete N/A root  N/A",
-          "└─Projection 6523.44 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.d._tidb_rowid, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, test.dd._tidb_rowid, test.d.col_date",
-          "  └─HashJoin 6523.44 root  inner join, equal:[eq(test.d.col_date, Column#41)]",
-          "    ├─HashJoin(Build) 4175.00 root  left outer join, equal:[eq(test.d.col_blob_key, test.dd.col_blob_key)]",
-          "    │ ├─TableReader(Build) 3340.00 root  data:Selection",
-          "    │ │ └─Selection 3340.00 cop[tikv]  or(isnull(test.d.col_varchar_key), ge(test.d.col_blob_key, \"a\"))",
-          "    │ │   └─TableFullScan 10000.00 cop[tikv] table:alias1 keep order:false, stats:pseudo",
-          "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
-          "    │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.d._tidb_rowid, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, test.dd._tidb_rowid, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#41",
-          "      └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
-          "        ├─TableReader(Build) 9990.00 root  data:Selection",
-          "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
-          "        │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
-          "        └─TableReader(Probe) 9990.00 root  data:Selection",
-          "          └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
-          "            └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
+          "Projection 6523.44 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, test.d.col_date",
+          "└─HashJoin 6523.44 root  inner join, equal:[eq(test.d.col_date, Column#41)]",
+          "  ├─HashJoin(Build) 4175.00 root  left outer join, equal:[eq(test.d.col_blob_key, test.dd.col_blob_key)]",
+          "  │ ├─TableReader(Build) 3340.00 root  data:Selection",
+          "  │ │ └─Selection 3340.00 cop[tikv]  or(isnull(test.d.col_varchar_key), ge(test.d.col_blob_key, \"a\"))",
+          "  │ │   └─TableFullScan 10000.00 cop[tikv] table:alias1 keep order:false, stats:pseudo",
+          "  │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
+          "  │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
+          "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#41",
+          "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
+          "      ├─TableReader(Build) 9990.00 root  data:Selection",
+          "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -648,6 +647,28 @@
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  },
+  {
+    "Name": "TestOuter2InnerIssue55886",
+    "Cases": [
+      {
+        "SQL": "with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from  cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end)",
+        "Plan": [
+          "HashJoin 800000000000.00 root  CARTESIAN semi join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Projection(Probe) 1000000000000.00 root  1->Column#28",
+          "  └─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:le(1, cast(case(istrue_with_null(cast(case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz), double BINARY)), \"1\", case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz)), double BINARY))",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:ref_0 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 100000000.00 root  CARTESIAN right outer join, right cond:ne(test.t2.c_g7eofzlxn, 1)",
+          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "      │ └─TableFullScan 10000.00 cop[tikv] table:ref_5 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:ref_4 keep order:false, stats:pseudo"
         ]
       }
     ]

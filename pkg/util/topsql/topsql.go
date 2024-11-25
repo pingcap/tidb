@@ -51,7 +51,8 @@ func init() {
 }
 
 // SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL() {
+func SetupTopSQL(updater collector.ProcessCPUTimeUpdater) {
+	globalTopSQLReport.BindProcessCPUTimeUpdater(updater)
 	globalTopSQLReport.Start()
 	singleTargetDataSink.Start()
 
@@ -146,6 +147,13 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 	return ctx
 }
 
+// AttachAndRegisterProcessInfo attach the ProcessInfo into Goroutine labels.
+func AttachAndRegisterProcessInfo(ctx context.Context, connID uint64, sqlID uint64) context.Context {
+	ctx = collector.CtxWithProcessInfo(ctx, connID, sqlID)
+	pprof.SetGoroutineLabels(ctx)
+	return ctx
+}
+
 // MockHighCPULoad mocks high cpu load, only use in failpoint test.
 func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 	lowerSQL := strings.ToLower(sql)
@@ -167,7 +175,7 @@ func MockHighCPULoad(sql string, sqlPrefixs []string, load int64) bool {
 		if time.Since(start) > 12*time.Millisecond*time.Duration(load) {
 			break
 		}
-		for i := 0; i < 10e5; i++ {
+		for range int(10e5) {
 			continue
 		}
 	}

@@ -8,7 +8,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
 )
@@ -53,7 +54,7 @@ type Session interface {
 	Execute(ctx context.Context, sql string) error
 	ExecuteInternal(ctx context.Context, sql string, args ...any) error
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
-	CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo,
+	CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()

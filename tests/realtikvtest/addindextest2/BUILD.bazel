@@ -11,10 +11,9 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
-        "//pkg/disttask/framework/scheduler",
         "//pkg/kv",
         "//pkg/lightning/backend/external",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",
         "//pkg/tablecodec",

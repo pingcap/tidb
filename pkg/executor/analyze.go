@@ -42,6 +42,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -165,6 +166,18 @@ TASKLOOP:
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err
+		}
+	}
+
+	if intest.InTest {
+		for {
+			stop := true
+			failpoint.Inject("mockStuckAnalyze", func() {
+				stop = false
+			})
+			if stop {
+				break
+			}
 		}
 	}
 
@@ -413,11 +426,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	wg := util.NewWaitGroupPool(e.gp)
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
+	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
 	for i := 0; i < saveStatsConcurrency; i++ {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
-			worker.run(ctx1, statsHandle, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
+			worker.run(ctx1, statsHandle, enableAnalyzeSnapshot)
 		})
 	}
 	tableIDs := map[int64]struct{}{}

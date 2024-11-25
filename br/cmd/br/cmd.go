@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -86,8 +85,8 @@ func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("br.log.2006-01-02T15.04.05Z0700"))
 }
 
-// AddFlags adds flags to the given cmd.
-func AddFlags(cmd *cobra.Command) {
+// DefineCommonFlags defines the common flags for all BR cmd operation.
+func DefineCommonFlags(cmd *cobra.Command) {
 	cmd.Version = build.Info()
 	cmd.Flags().BoolP(flagVersion, flagVersionShort, false, "Display version information about BR")
 	cmd.SetVersionTemplate("{{printf \"%s\" .Version}}\n")
@@ -104,6 +103,8 @@ func AddFlags(cmd *cobra.Command) {
 		"Set whether to redact sensitive info in log")
 	cmd.PersistentFlags().String(FlagStatusAddr, "",
 		"Set the HTTP listening address for the status report service. Set to empty string to disable")
+
+	// defines BR task common flags, this is shared by cmd and sql(brie)
 	task.DefineCommonFlags(cmd.PersistentFlags())
 
 	cmd.PersistentFlags().StringP(FlagSlowLogFile, "", "",
@@ -205,7 +206,7 @@ func Init(cmd *cobra.Command) (err error) {
 				memlimit := calculateMemoryLimit(memleft)
 				// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
 				// the memory limit cannot limit anyway and then finally OOM.
-				memlimit = mathutil.Max(memlimit, quarterGiB)
+				memlimit = max(memlimit, quarterGiB)
 				log.Info("calculate the rest memory",
 					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
 				// No need to set memory limit because the left memory is sufficient.

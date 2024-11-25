@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -29,14 +29,14 @@ import (
 var _ sqlexec.RecordSet = &staticRecordSet{}
 
 type staticRecordSet struct {
-	fields   []*ast.ResultField
+	fields   []*resolve.ResultField
 	executor exec.Executor
 
 	sqlText string
 }
 
 // New creates a new staticRecordSet
-func New(fields []*ast.ResultField, executor exec.Executor, sqlText string) sqlexec.RecordSet {
+func New(fields []*resolve.ResultField, executor exec.Executor, sqlText string) sqlexec.RecordSet {
 	return &staticRecordSet{
 		fields:   fields,
 		executor: executor,
@@ -44,7 +44,7 @@ func New(fields []*ast.ResultField, executor exec.Executor, sqlText string) sqle
 	}
 }
 
-func (s *staticRecordSet) Fields() []*ast.ResultField {
+func (s *staticRecordSet) Fields() []*resolve.ResultField {
 	return s.fields
 }
 

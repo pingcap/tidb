@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/contextopt"
+	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -57,6 +57,7 @@ var (
 	_ builtinFunc = &builtinInTimeSig{}
 	_ builtinFunc = &builtinInDurationSig{}
 	_ builtinFunc = &builtinInJSONSig{}
+	_ builtinFunc = &builtinInVectorFloat32Sig{}
 	_ builtinFunc = &builtinRowSig{}
 	_ builtinFunc = &builtinSetStringVarSig{}
 	_ builtinFunc = &builtinSetIntVarSig{}
@@ -153,6 +154,11 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	case types.ETJson:
 		sig = &builtinInJSONSig{baseBuiltinFunc: bf}
 		sig.setPbCode(tipb.ScalarFuncSig_InJson)
+	case types.ETVectorFloat32:
+		sig = &builtinInVectorFloat32Sig{baseBuiltinFunc: bf}
+		// sig.setPbCode(tipb.ScalarFuncSig_InVectorFloat32)
+	default:
+		return nil, errors.Errorf("%s is not supported for IN()", args[0].GetType(ctx.GetEvalCtx()).EvalType())
 	}
 	return sig, nil
 }
@@ -185,6 +191,10 @@ type baseInSig struct {
 	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
 	hasNull         bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -192,6 +202,10 @@ type builtinInIntSig struct {
 	baseInSig
 	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
 	hashSet map[int64]bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -284,6 +298,10 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 type builtinInStringSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -358,6 +376,10 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 type builtinInRealSig struct {
 	baseInSig
 	hashSet set.Float64Set
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -429,6 +451,10 @@ func (b *builtinInRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDecimalSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -509,6 +535,10 @@ func (b *builtinInDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 type builtinInTimeSig struct {
 	baseInSig
 	hashSet map[types.CoreTime]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -580,6 +610,10 @@ func (b *builtinInTimeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDurationSig struct {
 	baseInSig
 	hashSet map[time.Duration]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -650,6 +684,9 @@ func (b *builtinInDurationSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 // builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInJSONSig) Clone() builtinFunc {
@@ -681,6 +718,42 @@ func (b *builtinInJSONSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	return 0, hasNull, nil
 }
 
+type builtinInVectorFloat32Sig struct {
+	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinInVectorFloat32Sig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinInVectorFloat32Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	arg0, isNull0, err := b.args[0].EvalVectorFloat32(ctx, row)
+	if isNull0 || err != nil {
+		return 0, isNull0, err
+	}
+	var hasNull bool
+	for _, arg := range b.args[1:] {
+		evaledArg, isNull, err := arg.EvalVectorFloat32(ctx, row)
+		if err != nil {
+			return 0, true, err
+		}
+		if isNull {
+			hasNull = true
+			continue
+		}
+		result := arg0.Compare(evaledArg)
+		if result == 0 {
+			return 1, false, nil
+		}
+	}
+	return 0, hasNull, nil
+}
+
 type rowFunctionClass struct {
 	baseFunctionClass
 }
@@ -703,6 +776,9 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 
 type builtinRowSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRowSig) Clone() builtinFunc {
@@ -752,7 +828,7 @@ func (c *setVarFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 type builtinSetStringVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetStringVarSig) Clone() builtinFunc {
@@ -790,7 +866,7 @@ func (b *builtinSetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (res
 
 type builtinSetRealVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetRealVarSig) Clone() builtinFunc {
@@ -826,7 +902,7 @@ func (b *builtinSetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (res flo
 
 type builtinSetDecimalVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetDecimalVarSig) Clone() builtinFunc {
@@ -861,7 +937,7 @@ func (b *builtinSetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*
 
 type builtinSetIntVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetIntVarSig) Clone() builtinFunc {
@@ -896,7 +972,7 @@ func (b *builtinSetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 
 type builtinSetTimeVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 }
 
 func (b *builtinSetTimeVarSig) Clone() builtinFunc {
@@ -986,7 +1062,9 @@ func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinGetStringVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetStringVarSig) Clone() builtinFunc {
@@ -995,21 +1073,13 @@ func (b *builtinGetStringVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetStringVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return "", true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		// We cannot use v.GetString() here, because the datum may be in KindMysqlTime, which
 		// stores the data in datum.x.
 		// This seems controversial with https://dev.mysql.com/doc/refman/8.0/en/user-variables.html:
@@ -1046,7 +1116,9 @@ func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinGetIntVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetIntVarSig) Clone() builtinFunc {
@@ -1055,21 +1127,13 @@ func (b *builtinGetIntVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetIntVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return 0, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		return v.GetInt64(), false, nil
 	}
 	return 0, true, nil
@@ -1094,7 +1158,9 @@ func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetRealVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetRealVarSig) Clone() builtinFunc {
@@ -1103,21 +1169,13 @@ func (b *builtinGetRealVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetRealVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return 0, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		d, err := v.ToFloat64(typeCtx(ctx))
 		if err != nil {
 			return 0, false, err
@@ -1146,7 +1204,9 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinGetDecimalVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
@@ -1155,21 +1215,13 @@ func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetDecimalVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return nil, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		d, err := v.ToDecimal(typeCtx(ctx))
 		if err != nil {
 			return nil, false, err
@@ -1206,7 +1258,9 @@ func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetTimeVarSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetTimeVarSig) Clone() builtinFunc {
@@ -1215,21 +1269,13 @@ func (b *builtinGetTimeVarSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinGetTimeVarSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
-}
-
 func (b *builtinGetTimeVarSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	sessionVars, err := b.GetSessionVars(ctx)
-	if err != nil {
-		return types.ZeroTime, true, err
-	}
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
 	varName = strings.ToLower(varName)
-	if v, ok := sessionVars.GetUserVarVal(varName); ok {
+	if v, ok := ctx.GetUserVarsReader().GetUserVarVal(varName); ok {
 		return v.GetMysqlTime(), false, nil
 	}
 	return types.ZeroTime, true, nil
@@ -1265,13 +1311,17 @@ func (c *valuesFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		sig = &builtinValuesDurationSig{baseBuiltinFunc: bf, offset: c.offset}
 	case types.ETJson:
 		sig = &builtinValuesJSONSig{baseBuiltinFunc: bf, offset: c.offset}
+	case types.ETVectorFloat32:
+		sig = &builtinValuesVectorFloat32Sig{baseBuiltinFunc: bf, offset: c.offset}
+	default:
+		return nil, errors.Errorf("%s is not supported for VALUES()", c.tp.EvalType())
 	}
 	return sig, nil
 }
 
 type builtinValuesIntSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1321,7 +1371,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 
 type builtinValuesRealSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1361,7 +1411,7 @@ func (b *builtinValuesRealSig) evalReal(ctx EvalContext, _ chunk.Row) (float64, 
 
 type builtinValuesDecimalSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1398,7 +1448,7 @@ func (b *builtinValuesDecimalSig) evalDecimal(ctx EvalContext, _ chunk.Row) (*ty
 
 type builtinValuesStringSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1444,7 +1494,7 @@ func (b *builtinValuesStringSig) evalString(ctx EvalContext, _ chunk.Row) (strin
 
 type builtinValuesTimeSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1481,7 +1531,7 @@ func (b *builtinValuesTimeSig) evalTime(ctx EvalContext, _ chunk.Row) (types.Tim
 
 type builtinValuesDurationSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1519,7 +1569,7 @@ func (b *builtinValuesDurationSig) evalDuration(ctx EvalContext, _ chunk.Row) (t
 
 type builtinValuesJSONSig struct {
 	baseBuiltinFunc
-	contextopt.SessionVarsPropReader
+	expropt.SessionVarsPropReader
 
 	offset int
 }
@@ -1554,6 +1604,43 @@ func (b *builtinValuesJSONSig) evalJSON(ctx EvalContext, _ chunk.Row) (types.Bin
 	return types.BinaryJSON{}, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
 }
 
+type builtinValuesVectorFloat32Sig struct {
+	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+
+	offset int
+}
+
+func (b *builtinValuesVectorFloat32Sig) Clone() builtinFunc {
+	newSig := &builtinValuesVectorFloat32Sig{offset: b.offset}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinValuesVectorFloat32Sig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+// evalVectorFloat32 evals a builtinValuesVectorFloat32Sig.
+// See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
+func (b *builtinValuesVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, _ chunk.Row) (types.VectorFloat32, bool, error) {
+	sessionvar, err := b.GetSessionVars(ctx)
+	if err != nil {
+		return types.ZeroVectorFloat32, true, err
+	}
+	row := sessionvar.CurrInsertValues
+	if row.IsEmpty() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	if b.offset < row.Len() {
+		if row.IsNull(b.offset) {
+			return types.ZeroVectorFloat32, true, nil
+		}
+		return row.GetVectorFloat32(b.offset), false, nil
+	}
+	return types.ZeroVectorFloat32, true, errors.Errorf("Session current insert values len %d and column's offset %v don't match", row.Len(), b.offset)
+}
+
 type bitCountFunctionClass struct {
 	baseFunctionClass
 }
@@ -1573,6 +1660,9 @@ func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinBitCountSig) Clone() builtinFunc {
@@ -1616,6 +1706,9 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {

@@ -29,8 +29,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -330,7 +330,7 @@ func (r *HistoryReader) scheduleTasks(
 	waitParseAllDone := parseWg.Wait
 
 	// Half of workers are scheduled to scan files and then parse lines.
-	for i := 0; i < concurrent/2; i++ {
+	for range concurrent / 2 {
 		go func() {
 			scanWorker.run(filesCh, linesCh, innerErrCh)
 			scanDone()
