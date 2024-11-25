@@ -5957,7 +5957,7 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 }
 
 // GetMaxWriteSpeedNumericValFromExpression gets the numeric value of the max write speed from the expression.
-func GetMaxWriteSpeedNumericValFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (int64, error) {
 	var (
 		speed int64
 		err   error
