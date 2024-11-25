@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
@@ -1028,4 +1029,45 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	require.Equal(t, 3, tbl.Meta().Columns[3].Offset)
 
 	tk.MustExec("drop table if exists t")
+}
+
+func TestModifyColumnReorgCheckpoint(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 1;")
+	tk.MustExec("create table t (a int primary key, b bigint);")
+	rowCnt := 10
+	for i := 0; i < rowCnt; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))
+	}
+	splitTableSQL := fmt.Sprintf("split table t between (0) and (%d*10000) regions %d;", rowCnt, rowCnt)
+	tk.MustQuery(splitTableSQL).Check(testkit.Rows(fmt.Sprintf("%d 1", rowCnt-1)))
+
+	retireOwner := false
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterUpdateReorgMeta", func() {
+		if !retireOwner {
+			retireOwner = true
+			dom.DDL().OwnerManager().ResignOwner(context.Background())
+		}
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterUpdateReorgMeta"))
+	}()
+
+	rangeCnts := []int{}
+	err = failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterLoadTableRanges", func(rangeCnt int) {
+		rangeCnts = append(rangeCnts, rangeCnt)
+	})
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterLoadTableRanges"))
+	}()
+
+	tk.MustExec("alter table t modify column b int;")
+	require.Len(t, rangeCnts, 2)                // It should have two rounds for loading table ranges.
+	require.Less(t, rangeCnts[1], rangeCnts[0]) // Verify if the checkpoint is progressing.
 }
