@@ -48,6 +48,23 @@ func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	return NewSchema(cols...)
 }
 
+func TestSchemaClone(t *testing.T) {
+	s := &schemaGenerator{}
+	schema := s.generateSchema(5)
+	generateKeys4Schema(schema)
+
+	uniKeys := make([]KeyInfo, 0, len(schema.Columns)-1)
+	for i := 0; i < len(schema.Columns)-1; i++ {
+		uniKeys = append(uniKeys, []*Column{schema.Columns[i]})
+	}
+	schema.SetUniqueKeys(uniKeys)
+
+	clonedSchema := schema.Clone()
+	require.Equal(t, schema.String(), clonedSchema.String())
+	require.True(t, fmt.Sprintf("%p", schema.Keys) != fmt.Sprintf("%p", clonedSchema.Keys))
+	require.True(t, fmt.Sprintf("%p", schema.UniqueKeys) != fmt.Sprintf("%p", clonedSchema.UniqueKeys))
+}
+
 func TestSchemaString(t *testing.T) {
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
