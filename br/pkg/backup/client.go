@@ -1172,7 +1172,7 @@ func (bc *Client) fineGrainedBackup(
 		for {
 			select {
 			case err := <-errCh:
-				// TODO: should we handle err here?
+				// TODO: (Ris)handle error here
 				return errors.Trace(err)
 			case resp, ok := <-respCh:
 				if !ok {
