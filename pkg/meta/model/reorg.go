@@ -16,11 +16,11 @@ package model
 
 import (
 	"encoding/json"
-	"go.uber.org/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"go.uber.org/atomic"
 )
 
 // BackfillState is the state used by the backfill-merge process.
