@@ -996,5 +996,5 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 		Value: expression.NewStrConst("MiB"),
 	}
 	_, err = GetMaxWriteSpeedFromExpression(opt)
-	require.Equal(t, "invalid size: 'MiB'", err.Error())
+	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
 }
