@@ -935,7 +935,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.Equal(t,AlterDDLJobMaxWriteSpeed,  plan.Options[0].Name)
 	cons, ok = plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
-	require.Equal(t, cons.Value.GetInt64(), int64(1024))
+	require.EqualValues(t, 1024, cons.Value.GetInt64())
 
 	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 5 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
 	require.NoError(t, err)
