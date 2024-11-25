@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -212,22 +210,9 @@ func (e *AlterDDLJobExec) updateReorgMeta(job *model.Job, byWho model.AdminComma
 			job.ReorgMeta.SetBatchSize(int(cons.Value.GetInt64()))
 			job.AdminOperator = byWho
 		case core.AlterDDLJobMaxWriteSpeed:
-			var (
-				speed int64
-				err   error
-			)
-			v := opt.Value.(*expression.Constant)
-			switch v.RetType.EvalType() {
-			case types.ETString:
-				speedStr := opt.Value.(*expression.Constant).Value.GetString()
-				speed, err = units.RAMInBytes(speedStr)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			case types.ETInt:
-				speed = opt.Value.(*expression.Constant).Value.GetInt64()
-			default:
-				return fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
+			speed, err := core.GetMaxWriteSpeedNumericValFromExpression(opt)
+			if err != nil {
+				return err
 			}
 			job.ReorgMeta.SetMaxWriteSpeed(int(speed))
 			job.AdminOperator = byWho

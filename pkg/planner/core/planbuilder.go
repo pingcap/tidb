@@ -5944,29 +5944,36 @@ func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
 		}
 	case AlterDDLJobMaxWriteSpeed:
-		var (
-			speed    int64
-			err      error
-			speedStr string
-		)
-		v := opt.Value.(*expression.Constant)
-		switch v.RetType.EvalType() {
-		case types.ETString:
-			speedStr = opt.Value.(*expression.Constant).Value.GetString()
-			speed, err = units.RAMInBytes(speedStr)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		case types.ETInt:
-			speed = opt.Value.(*expression.Constant).Value.GetInt64()
-			speedStr = strconv.FormatInt(speed, 10)
-		default:
-			return fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
+		speed, err := GetMaxWriteSpeedNumericValFromExpression(opt)
+		if err != nil {
+			return err
 		}
 		if speed < 0 || speed > units.PiB {
 			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
-				speedStr, opt.Name, 0, units.PiB)
+				strconv.FormatInt(speed, 10), opt.Name, 0, units.PiB)
 		}
 	}
 	return nil
+}
+
+// GetMaxWriteSpeedNumericValFromExpression gets the numeric value of the max write speed from the expression.
+func GetMaxWriteSpeedNumericValFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+	var (
+		speed int64
+		err   error
+	)
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETString:
+		speedStr := v.Value.GetString()
+		speed, err = units.RAMInBytes(speedStr)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+	case types.ETInt:
+		speed = v.Value.GetInt64()
+	default:
+		return 0, fmt.Errorf("the value %s for %s is invalid", opt.Name, opt.Value)
+	}
+	return speed, nil
 }
