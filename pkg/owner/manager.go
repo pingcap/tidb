@@ -503,7 +503,8 @@ func GetOwnerKeyInfo(
 		return "", 0, errors.Trace(err)
 	}
 	if string(ownerID) != id {
-		logutil.BgLogger().Warn("is not the owner", zap.String("id", id), zap.String("ownerID", string(ownerID)))
+		logutil.BgLogger().Warn("is not the owner", zap.String("key", etcdKey),
+			zap.String("id", id), zap.String("ownerID", string(ownerID)))
 		return "", 0, errors.New("ownerInfoNotMatch")
 	}
 
