@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -259,11 +260,13 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 func (*LocalStorage) Close() {}
 
 func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
-	bs, err := e.ReadFile(ctx, spec.From)
-	if err != nil {
-		return errors.Trace(err)
+	sl, ok := e.(*LocalStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "expect source to be LocalStorage, got %T", e)
 	}
-	return l.WriteFile(ctx, spec.To, bs)
+	from := filepath.Join(sl.base, spec.From)
+	to := filepath.Join(l.base, spec.To)
+	return os.Link(from, to)
 }
 
 func pathExists(_path string) (bool, error) {

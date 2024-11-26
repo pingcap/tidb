@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/encryption"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -268,11 +269,33 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			return r.Err
 		}
 		i := r.Item
-		rewriteRules, ok := rules[i.TableID()]
+
+		tid := i.TableID()
+		if r, ok := i.(RewrittenSST); ok && r.RewrittenTo() > 0 {
+			tid = r.RewrittenTo()
+		}
+		rewriteRules, ok := rules[tid]
 		if !ok {
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
+
+		if r, ok := i.(RewrittenSST); ok {
+			rewritten := r.RewrittenTo()
+			if rewritten > 0 && rewritten != i.TableID() {
+				rewriteRules = rewriteRules.Clone()
+				if !rewriteRules.RewriteSourceTableID(rewritten, i.TableID()) {
+					return errors.Annotatef(
+						berrors.ErrUnknown,
+						"table rewritten from a table id (%d) to (%d) which doesn't exist in the stream",
+						rewritten,
+						i.TableID(),
+					)
+				}
+				log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", i.TableID()), zap.Int64("rewritten_to", rewritten))
+			}
+		}
+
 		set := restore.BackupFileSet{
 			TableID:      i.TableID(),
 			SSTFiles:     i.GetSSTs(),

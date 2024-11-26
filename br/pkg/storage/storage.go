@@ -102,6 +102,7 @@ type ReaderOption struct {
 }
 
 type Copier interface {
+	// CopyFrom copies a object to the current external storage by the specification.
 	CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error
 }
 

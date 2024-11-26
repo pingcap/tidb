@@ -363,7 +363,10 @@ func (rc *LogFileManager) GetExtraFullBackupSSTs(ctx context.Context) iter.TryNe
 		return iter.TryMap(iter.FromSlice(c.Files), func(f *backup.File) (SSTs, error) {
 			sst := &AddedSSTs{File: f}
 			if id, ok := remap[sst.TableID()]; ok && id != sst.TableID() {
-				return nil, errors.Annotatef(berrors.ErrInvalidArgument, "table id %d is rewritten to %d in upstream", sst.TableID(), id)
+				sst.Rewritten = backuppb.RewrittenTableID{
+					UpstreamOfUpstream: sst.TableID(),
+					Upstream:           id,
+				}
 			}
 			return sst, nil
 		})

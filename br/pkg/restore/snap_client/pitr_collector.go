@@ -67,7 +67,7 @@ func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets .
 
 // WaitUntilFinish blocks until all pending restore files have completed processing.
 func (p pitrCollectorRestorer) WaitUntilFinish() error {
-	return errors.Annotate(p.wg.Wait(), "failed to wait on wait pitrCollector")
+	return errors.Annotate(p.wg.Wait(), "failed to wait on pitrCollector")
 }
 
 // Close releases any resources associated with the restoration process.

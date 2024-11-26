@@ -49,7 +49,7 @@ func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
 		endKey := codec.EncodeBytes(nil, f.EndKey)
 		cs.AccumulateCount += 1
 		if f.TotalKvs == 0 || f.Size_ == 0 {
-			log.Error("No key-value pairs in subcompaction", zap.String("name", f.Name))
+			log.Warn("No key-value pairs in subcompaction", zap.String("name", f.Name))
 			continue
 		}
 		// The number of MVCC entries in the compacted SST files can be excessive.
@@ -82,14 +82,27 @@ func (cs *CompactedFileSplitStrategy) ShouldSplit() bool {
 	return cs.AccumulateCount > (4096 / impactFactor)
 }
 
-func (cs *CompactedFileSplitStrategy) ShouldSkip(subCompaction SSTs) bool {
-	_, exist := cs.Rules[subCompaction.TableID()]
-	if !exist {
-		log.Info("skip for no rule files", zap.Int64("tableID", subCompaction.TableID()))
+func hasARule[T any](ssts SSTs, rules map[int64]T) bool {
+	if _, exist := rules[ssts.TableID()]; exist {
 		return true
 	}
-	sstOutputs := make([]*backuppb.File, 0, len(subCompaction.GetSSTs()))
-	for _, sst := range subCompaction.GetSSTs() {
+
+	if r, ok := ssts.(RewrittenSST); ok {
+		if _, exist := rules[r.RewrittenTo()]; exist {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (cs *CompactedFileSplitStrategy) ShouldSkip(ssts SSTs) bool {
+	if !hasARule(ssts, cs.Rules) {
+		log.Warn("skip for no rule files", zap.Int64("tableID", ssts.TableID()), zap.Any("ssts", ssts))
+		return true
+	}
+	sstOutputs := make([]*backuppb.File, 0, len(ssts.GetSSTs()))
+	for _, sst := range ssts.GetSSTs() {
 		if _, ok := cs.checkpointSets[sst.Name]; !ok {
 			sstOutputs = append(sstOutputs, sst)
 		} else {

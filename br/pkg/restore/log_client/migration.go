@@ -157,9 +157,7 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
 
-		for _, fullBackup := range mig.ExtraFullBackups {
-			fullBackups = append(fullBackups, fullBackup)
-		}
+		fullBackups = append(fullBackups, mig.ExtraFullBackups...)
 	}
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,

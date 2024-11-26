@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
@@ -50,6 +51,35 @@ type RewriteRules struct {
 	// used to record backup files to pitr.
 	// note: should NewTableID merged with this?
 	TableIDRemapHint []TableIDRemap
+}
+
+func (r *RewriteRules) RewriteSourceTableID(from, to int64) (rewritten bool) {
+	toPrefix := tablecodec.EncodeTablePrefix(to)
+	fromPrefix := tablecodec.EncodeTablePrefix(from)
+	for _, rule := range r.Data {
+		if bytes.HasPrefix(rule.OldKeyPrefix, fromPrefix) {
+			rule.OldKeyPrefix = append(toPrefix, rule.OldKeyPrefix[len(toPrefix):]...)
+			rewritten = true
+		}
+	}
+	return
+}
+
+func (r *RewriteRules) Clone() *RewriteRules {
+	data := make([]*import_sstpb.RewriteRule, len(r.Data))
+	for i, rule := range r.Data {
+		data[i] = util.ProtoV1Clone(rule)
+	}
+	remap := make([]TableIDRemap, len(r.TableIDRemapHint))
+	copy(remap, r.TableIDRemapHint)
+
+	return &RewriteRules{
+		Data:             data,
+		TableIDRemapHint: remap,
+		OldKeyspace:      r.OldKeyspace,
+		NewKeyspace:      r.NewKeyspace,
+		NewTableID:       r.NewTableID,
+	}
 }
 
 // TableIDRemap presents a remapping of table id during rewriting.
