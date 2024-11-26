@@ -210,6 +210,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TablePlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3833,6 +3835,11 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 		rows = append(rows, row)
 	}
 	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessionctx.Context) error {
+	// TODO
 	return nil
 }
 
