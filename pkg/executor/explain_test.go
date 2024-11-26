@@ -370,9 +370,13 @@ func TestTotalTimeCases(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
 	rows = tk.MustQuery("explain analyze select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;").Rows()
 	require.True(t, len(rows) == 11)
-	// Line0-2 Line9 Line10 is walltime, Line3 is tikv_task, others should be all total_time
+	// Line0-2 is walltime, Line3 is tikv_task, Line9 Line10 are special, they are total time in integration environment, while
+	// walltime in uts due to only one IndexLookUp executor is actually open, others should be all total_time.
 	for i := 0; i < 11; i++ {
-		if i < 3 || i == 9 || i == 10 {
+		if i == 9 || i == 10 {
+			continue
+		}
+		if i < 3 {
 			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
 		} else if i > 3 {
 			require.True(t, strings.HasPrefix(rows[i][5].(string), "total_time:"))
