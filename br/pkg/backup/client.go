@@ -1191,7 +1191,7 @@ func (bc *Client) fineGrainedBackup(
 				if !ok {
 					return errors.Trace(err)
 				}
-				
+
 				storeID := storeErr.storeID
 				message := storeErr.message
 				maxDisconnect[storeID]++
