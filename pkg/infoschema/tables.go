@@ -214,8 +214,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
-	// TablePlanCache is the plan cache table.
-	TablePlanCache = "TIDB_PLAN_CACHE"
+	// TableTiDBPlanCache is the plan cache table.
+	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
 )
 
 const (
@@ -340,7 +340,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
-	TablePlanCache:                       autoid.InformationSchemaDBID + 96,
+	TableTiDBPlanCache:                   autoid.InformationSchemaDBID + 96,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables

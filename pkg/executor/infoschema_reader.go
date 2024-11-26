@@ -210,7 +210,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
-		case infoschema.TablePlanCache:
+		case infoschema.TableTiDBPlanCache:
 			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
