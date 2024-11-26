@@ -3904,7 +3904,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
