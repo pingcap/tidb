@@ -1111,22 +1111,19 @@ func (bc *Client) fineGrainedBackup(
 		for {
 			select {
 			case err := <-errCh:
-				if berrors.Is(err, berrors.ErrFailedToConnect) {
-					var storeID uint64
-					var message string
-					if storeErr, ok := err.(*StoreBasedErr); ok {
-						storeID = storeErr.storeID
-						message = storeErr.message
-					} else {
-						return errors.Trace(err)
-					}
-
-					maxDisconnect[storeID]++
-					if maxDisconnect[storeID] > 3 {
-						return errors.Annotatef(err, "Store ID %d: %s", storeID, message)
-					}
-				} else {
+				if !berrors.Is(err, berrors.ErrFailedToConnect) {
 					return errors.Trace(err)
+				}
+				storeErr, ok := err.(*StoreBasedErr)
+				if !ok {
+					return errors.Trace(err)
+				}
+				
+				storeID := storeErr.storeID
+				message := storeErr.message
+				maxDisconnect[storeID]++
+				if maxDisconnect[storeID] > 3 {
+					return errors.Annotatef(err, "Store ID %d: %s", storeID, message)
 				}
 			case resp, ok := <-respCh:
 				if !ok {
