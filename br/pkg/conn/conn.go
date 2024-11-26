@@ -116,7 +116,7 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 
 			return errors.Trace(err)
 		},
-		utils.NewPDReqBackoffer(),
+		utils.NewAggressivePDBackoffStrategy(),
 	)
 
 	return stores, errors.Trace(errRetry)
@@ -420,7 +420,7 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 				return err
 			}
 			return nil
-		}, utils.NewPDReqBackoffer())
+		}, utils.NewAggressivePDBackoffStrategy())
 		if err != nil {
 			// if one store failed, break and return error
 			return err
