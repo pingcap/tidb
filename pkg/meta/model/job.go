@@ -752,6 +752,12 @@ func (job *Job) IsRollbackable() bool {
 			job.SchemaState == StateWriteOnly {
 			return false
 		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
+			return false
+		}
 	}
 	return true
 }
