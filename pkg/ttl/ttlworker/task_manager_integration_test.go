@@ -356,3 +356,64 @@ func TestMeetTTLRunningTasks(t *testing.T) {
 	require.False(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusWaiting))
 	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusRunning))
 }
+
+func TestShrinkScanWorkerTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	tk.MustExec("set global tidb_ttl_running_tasks = 32")
+
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	for id := 0; id < 4; id++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", testTable.Meta().ID, id)
+		tk.MustExec(sql)
+	}
+
+	se := sessionFactory()
+	now := se.Now()
+
+	isc := cache.NewInfoSchemaCache(time.Minute)
+	require.NoError(t, isc.Update(se))
+	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-1", store)
+	workers := []ttlworker.Worker{}
+	for j := 0; j < 4; j++ {
+		scanWorker := ttlworker.NewMockScanWorker(t)
+		scanWorker.Start()
+		workers = append(workers, scanWorker)
+	}
+
+	startBlockNotifyCh := make(chan struct{})
+	blockCancelCh := make(chan struct{})
+	workers[0].(ttlworker.WorkerTestExt).SetCtx(func(ctx context.Context) context.Context {
+		return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
+			startBlockNotifyCh <- struct{}{}
+			<-blockCancelCh
+		})
+	})
+	m.SetScanWorkers4Test(workers)
+
+	m.RescheduleTasks(se, now)
+	require.Len(t, m.GetRunningTasks(), 4)
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	<-startBlockNotifyCh
+
+	// shrink scan workers, one of them will timeout
+	require.Error(t, m.ResizeScanWorkers(0))
+	require.Len(t, m.GetScanWorkers(), 0)
+
+	// the canceled 3 tasks are still running, but they have results, so after `CheckFinishedTask`, it should be finished
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	m.CheckFinishedTask(se, now)
+	require.Len(t, m.GetRunningTasks(), 0)
+	// now, the task should be finished
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("0"))
+
+	require.NoError(t, m.ResizeDelWorkers(0))
+	close(blockCancelCh)
+}
