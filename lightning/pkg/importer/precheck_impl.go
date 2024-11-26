@@ -17,6 +17,7 @@ package importer
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -1432,4 +1433,69 @@ loop:
 func hasDefault(col *model.ColumnInfo) bool {
 	return col.DefaultIsExpr || col.DefaultValue != nil || !mysql.HasNotNullFlag(col.GetFlag()) ||
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
+}
+
+type pdTiDBFromSameClusterCheckItem struct {
+	db            *sql.DB
+	pdAddrsGetter func(context.Context) []string
+}
+
+// NewPDTiDBFromSameClusterCheckItem creates a new pdTiDBFromSameClusterCheckItem.
+func NewPDTiDBFromSameClusterCheckItem(
+	db *sql.DB,
+	pdAddrsGetter func(context.Context) []string,
+) precheck.Checker {
+	return &pdTiDBFromSameClusterCheckItem{
+		db:            db,
+		pdAddrsGetter: pdAddrsGetter,
+	}
+}
+
+func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.CheckResult, error) {
+	theResult := &precheck.CheckResult{
+		Item:     i.GetCheckItemID(),
+		Severity: precheck.Critical,
+		Passed:   true,
+		Message:  "PD and TiDB in configuration are from the same cluster",
+	}
+
+	pdAddrs := i.pdAddrsGetter(ctx)
+	pdAddrsMap := make(map[string]struct{}, len(pdAddrs))
+	for _, addr := range pdAddrs {
+		pdAddrsMap[addr] = struct{}{}
+	}
+
+	pdAddrsFromTiDB := make([]string, 0, len(pdAddrs))
+	rows, err := i.db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var addr string
+		err = rows.Scan(&addr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// if intersection is not empty, we can say URLs from TiDB and PD are from the same cluster
+		if _, ok := pdAddrsMap[addr]; ok {
+			return theResult, nil
+		}
+		pdAddrsFromTiDB = append(pdAddrsFromTiDB, addr)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	theResult.Passed = false
+	theResult.Message = fmt.Sprintf(
+		"PD and TiDB in configuration are not from the same cluster, "+
+			"PD addresses read from PD are: %v, PD addresses read from TiDB are %v",
+		pdAddrs, pdAddrsFromTiDB,
+	)
+	return theResult, nil
+}
+
+func (i *pdTiDBFromSameClusterCheckItem) GetCheckItemID() precheck.CheckItemID {
+	return precheck.CheckPDTiDBFromSameCluster
 }
