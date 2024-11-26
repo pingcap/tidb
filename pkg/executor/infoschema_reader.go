@@ -3839,7 +3839,19 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 }
 
 func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessionctx.Context) error {
-	pc := domain.GetDomain(sctx).GetInstancePlanCache()
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		pcv := v.(*plannercore.PlanCacheValue)
+		flat := plannercore.FlattenPhysicalPlan(pcv.Plan, false)
+		binaryPlan := plannercore.BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+
+		row := make([]types.Datum, 0, 1)
+		row = append(row, types.NewStringDatum(binaryPlan))
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
 	return nil
 }
 

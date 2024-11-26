@@ -1723,8 +1723,9 @@ var tableTiDBIndexUsage = []columnInfo{
 }
 
 var tablePlanCache = []columnInfo{
-	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
-	{name: "SQL_TEXT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	//{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	//{name: "SQL_TEXT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "PLAN_BINARY", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
