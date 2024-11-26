@@ -77,6 +77,20 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+type StoreBasedErr struct{
+	storeID uint64
+	message string
+	err     error
+}
+
+func (e *StoreBasedErr) Error() string {
+	return fmt.Sprintf("Store ID '%d': %v", e.storeID, e.err.Error())
+}
+
+func (e *StoreBasedErr) Unwrap() error {
+	return e.err
+}
+
 const (
 	// backupFineGrainedMaxBackoff is 1 hour.
 	// given it begins the fine-grained backup, there must be some problems in the cluster.
@@ -1122,7 +1136,7 @@ func (bc *Client) fineGrainedBackup(
 	})
 
 	bo := utils.AdaptTiKVBackoffer(ctx, backupFineGrainedMaxBackoff, berrors.ErrUnknown)
-	maxDisconnect := make(map[int]int)
+	maxDisconnect := make(map[uint64]uint)
 	for {
 		// Step1, check whether there is any incomplete range
 		incomplete := pr.Res.GetIncompleteRange(req.StartKey, req.EndKey)
@@ -1171,12 +1185,11 @@ func (bc *Client) fineGrainedBackup(
 			select {
 			case err := <-errCh:
 				if berrors.Is(err, berrors.ErrFailedToConnect) {
-					storeID := 0
-					if strings.Contains(err.Error(), "failed to connect to store") {
-						_, scanErr := fmt.Sscanf(err.Error(), "failed to connect to store %d", &storeID)
-						if scanErr != nil {
-							log.Warn("failed to parse store ID", zap.Error(scanErr))
-						}
+					var storeID uint64
+					if storeErr, ok := err.(*StoreBasedErr); ok {
+						storeID = storeErr.storeID
+					} else {
+						break
 					}
 
 					if _, ok := maxDisconnect[storeID]; !ok {
@@ -1299,7 +1312,11 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, errors.WithMessage(err, fmt.Sprintf("failed to connect to store %d", storeID))
+			return 20000, &StoreBasedErr{
+				storeID: storeID,
+				message: "failed to connect to store",
+				err:     err,
+				}
 		}
 
 		logutil.CL(ctx).Error("fail to connect store", zap.Uint64("StoreID", storeID))
@@ -1338,7 +1355,11 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, errors.WithMessage(err, fmt.Sprintf("failed to connect to store %d", storeID))
+			return 20000, &StoreBasedErr{
+				storeID: storeID,
+				message: "failed to connect to store",
+				err:     err,
+				}
 		}
 		logutil.CL(ctx).Error("failed to send fine-grained backup", zap.Uint64("storeID", storeID), logutil.ShortError(err))
 		return 0, errors.Annotatef(err, "failed to send fine-grained backup [%s, %s)",
