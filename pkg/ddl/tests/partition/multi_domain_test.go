@@ -422,6 +422,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 		tkO.MustQuery(`select * from t where b = "5"`).Sort().Check(testkit.Rows("5 5"))
 		tkO.MustExec(`admin check table t`)
 		tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "10 10", "101 101", "102 102", "11 11", "12 12", "13 13", "14 14", "15 15", "16 16", "2 2", "5 5", "6 6", "7 7", "8 8", "9 9", "984 984", "985 985", "986 986", "987 987", "988 988", "989 989", "990 990", "991 991", "992 992", "993 993", "994 994", "995 995", "998 998", "999 999"))
+<<<<<<< HEAD
 		tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
 			"t CREATE TABLE `t` (\n" +
 			"  `a` int(11) NOT NULL,\n" +
@@ -433,6 +434,62 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 			"(PARTITION `p0` VALUES LESS THAN (100),\n" +
 			" PARTITION `p1` VALUES LESS THAN (200),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+=======
+		// TODO: Verify that there are no KV entries for old partitions or old indexes!!!
+		delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
+		s := ""
+		for _, row := range delRange {
+			if s != "" {
+				s += "\n"
+			}
+			for i, col := range row {
+				if i != 0 {
+					s += " "
+				}
+				s += col.(string)
+			}
+		}
+		logutil.BgLogger().Info("gc_delete_range_done", zap.String("rows", s))
+		tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
+		ctx := tkO.Session()
+		is := domain.GetDomain(ctx).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		tableID = tbl.Meta().ID
+		// Save this for the fix of https://github.com/pingcap/tidb/issues/56822
+		//GlobalLoop:
+		//	for _, globIdx := range originalGlobalIndexIDs {
+		//		for _, idx := range tbl.Meta().Indices {
+		//			if idx.ID == globIdx {
+		//				continue GlobalLoop
+		//			}
+		//		}
+		//		// Global index removed
+		//		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
+		//	}
+	LocalLoop:
+		for _, locIdx := range originalIndexIDs {
+			for _, idx := range tbl.Meta().Indices {
+				if idx.ID == locIdx {
+					continue LocalLoop
+				}
+			}
+			// local index removed
+			for _, part := range tbl.Meta().Partition.Definitions {
+				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
+			}
+		}
+	PartitionLoop:
+		for _, partID := range originalPartitions {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == partID {
+					continue PartitionLoop
+				}
+			}
+			// old partitions removed
+			require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
+		}
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }

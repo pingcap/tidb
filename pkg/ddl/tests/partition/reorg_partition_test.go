@@ -412,17 +412,24 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 				idxID = tOrg.Meta().Indices[0].ID
 			}
 			oldCreate := tk.MustQuery(`show create table t` + suffixComment).Rows()
+<<<<<<< HEAD
 			// Run GC to clean changes in beforeDML
 			require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 			oldBundles, err := infosync.GetAllRuleBundles(context.TODO())
 			require.NoError(t, err)
+=======
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			term := "return(true)"
 			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
 				term = "10*" + term
 			}
 			testfailpoint.Enable(t, name, term)
+<<<<<<< HEAD
 			err = tk.ExecToErr(alterSQL + suffixComment)
+=======
+			err := tk.ExecToErr(alterSQL + suffixComment)
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
 			rollback := false
@@ -431,11 +438,15 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			} else {
 				rollback = true
 				require.Error(t, err, "failpoint reorgPart"+suffix)
+<<<<<<< HEAD
 				// TODO: gracefully handle failures during WriteReorg also for nonclustered tables
 				// with unique indexes.
 				// Currently it can also do:
 				// 	Error "[kv:1062]Duplicate entry '7' for key 't.c'" does not contain "Injected error by reorgPartFail2"
 				//require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+=======
+				require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
 				if partition == nil {
 					require.Nil(t, tOrg.Meta().Partition, suffix)
@@ -452,12 +463,16 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			}
 			tk.MustExec(`admin check table t` + suffixComment)
+<<<<<<< HEAD
 			require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
 			noNewTablesAfter(t, tk, tk.Session(), tt, suffix)
+=======
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 			for _, sql := range afterDML {
 				tk.MustExec(sql + suffixComment)
 			}
 			tk.MustQuery(`select * from t` + suffixComment).Sort().Check(afterResult)
+<<<<<<< HEAD
 			if rollback {
 				newBundles, err := infosync.GetAllRuleBundles(context.TODO())
 				require.NoError(t, err)
@@ -474,6 +489,8 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 				}
 				require.Equal(t, len(oldBundles), len(newBundles), suffix)
 			}
+=======
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 			tk.MustExec(`drop table t` + suffixComment)
 			// TODO: Check TiFlash replicas
 			// TODO: Check Label rules
@@ -1048,6 +1065,7 @@ func TestPartitionIssue56634(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	// Changed, since StatePublic can no longer rollback!
 	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")
+<<<<<<< HEAD
 }
 
 func TestReorgPartitionFailuresPlacementPolicy(t *testing.T) {
@@ -1190,4 +1208,6 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 	alter := "alter table t partition by range (a) (partition p1 values less than (150), partition pMax values less than (maxvalue) placement policy pp1) update indexes (`primary` local, `c` global)"
 	afterResult := beforeResult
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
+=======
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 }

@@ -1950,6 +1950,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	defer memBuffer.Cleanup(sh)
 
 	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
+<<<<<<< HEAD
 	newRecordHandle := h
 	finishFunc := func(err error, _ kv.Handle) error {
 		if err != nil {
@@ -1960,6 +1961,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	}
 	if from == to && t.Meta().HasClusteredIndex() {
 		err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+=======
+	// The old and new data locate in different partitions.
+	// Remove record from old partition and add record to new partition.
+	if from != to {
+		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2141,9 +2148,48 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	var newHandle kv.Handle
 	if !h.Equal(newRecordHandle) {
 		newHandle = newRecordHandle
+=======
+	if _, ok := t.reorganizePartitions[to]; ok {
+		// Even if to == from, in the reorganized partitions they may differ
+		// like in case of a split
+		newTo, err := t.locateReorgPartition(ectx.GetEvalCtx(), newData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if newTo == newFrom {
+			tbl = t.getPartition(newTo)
+			if deleteOnly {
+				err = tbl.RemoveRecord(ctx, txn, h, currData)
+			} else {
+				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+			memBuffer.Release(sh)
+			return nil
+		}
+		tbl = t.getPartition(newFrom)
+		err = tbl.RemoveRecord(ctx, txn, h, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !deleteOnly {
+			tbl = t.getPartition(newTo)
+			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+>>>>>>> 2125737520f (*: Reorganize partition one extra state (#56974))
 	}
 	return finishFunc(err, newHandle)
 }
