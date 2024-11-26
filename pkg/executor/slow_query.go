@@ -514,7 +514,7 @@ func (*slowQueryRetriever) sendParsedSlowLogCh(t slowLogTask, re parsedSlowLog) 
 
 func getLineIndex(offset offset, index int) int {
 	var fileLine int
-	if offset.length <= index {
+	if offset.length > 0 && offset.length <= index {
 		fileLine = index - offset.length + 1
 	} else {
 		fileLine = offset.offset + index + 1
