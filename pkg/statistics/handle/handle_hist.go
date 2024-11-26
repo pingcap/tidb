@@ -367,9 +367,11 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 			if err != nil {
 				return nil, err
 			}
-			hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
-			if err != nil {
-				return nil, errors.Trace(err)
+			if hg != nil {
+				hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
 			}
 			c = &statistics.Column{
 				Info:     colInfo,
