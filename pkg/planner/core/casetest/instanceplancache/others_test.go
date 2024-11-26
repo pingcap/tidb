@@ -567,3 +567,43 @@ func TestInstancePlanCacheMetaInfo(t *testing.T) {
 	require.True(t, v3.OptimizerEnvHash != "") // not empty
 	require.Equal(t, "(1, 2)", v3.ParseValues)
 }
+
+func TestInstancePlanCacheRuntimeInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st1 from "select a from t where a<=?"`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`prepare st2 from "select a from t where a=? and b=?"`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustExec(`execute st2 using @a, @b`)
+
+	sctx := tk.Session()
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	require.Len(t, values, 2)
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].(*plannercore.PlanCacheValue).SQLDigest <
+			values[j].(*plannercore.PlanCacheValue).SQLDigest
+	})
+	v0 := values[0].(*plannercore.PlanCacheValue)
+	v1 := values[1].(*plannercore.PlanCacheValue)
+
+	require.Equal(t, v0.SQLText, "select a from t where a<=?")
+	require.Equal(t, int(v0.Executions), 4)
+	require.True(t, v0.SumLatency != 0)
+
+	require.Equal(t, v1.SQLText, "select a from t where a=? and b=?")
+	require.Equal(t, int(v1.Executions), 2)
+	require.True(t, v1.SumLatency != 0)
+
+	tk.MustExec(`execute st1 using @a`)
+	require.Equal(t, int(v0.Executions), 5)
+}

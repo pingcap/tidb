@@ -25,6 +25,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -435,9 +436,17 @@ type PlanCacheValue struct {
 	OptimizerEnvHash string // other environment information that might affect the plan like "time_zone", "sql_mode".
 	ParseValues      string // the actual values used when parsing/compiling this plan.
 
+	// Runtime Info
+	Memory             int64     // the memory usage of this plan, in bytes.
+	LoadTime           time.Time // the time when this plan is loaded into the cache.
+	Executions         uint64    // the execution times.
+	ProcessedKeys      uint64    // the total number of processed keys in TiKV.
+	TotalKeys          uint64    // the total number of returned keys in TiKV.
+	SumLatency         uint64    // the total latency of this plan, in nanoseconds.
+	LastUsedTimeInUnix int64     // the last time when this plan is used, in Unix timestamp.
+
 	Plan          base.Plan          // not-read-only, session might update it before reusing
 	OutputColumns types.NameSlice    // read-only
-	memoryUsage   int64              // read-only
 	testKey       int64              // test-only
 	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
 	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
@@ -447,14 +456,23 @@ type PlanCacheValue struct {
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
 
+// UpdateRuntimeInfo accumulates the runtime information of the plan.
+func (v *PlanCacheValue) UpdateRuntimeInfo(proKeys, totKeys, latency uint64) {
+	atomic.AddUint64(&v.Executions, 1)
+	atomic.AddUint64(&v.ProcessedKeys, proKeys)
+	atomic.AddUint64(&v.TotalKeys, totKeys)
+	atomic.AddUint64(&v.SumLatency, latency)
+	atomic.StoreInt64(&v.LastUsedTimeInUnix, time.Now().Unix())
+}
+
 // MemoryUsage return the memory usage of PlanCacheValue
 func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	if v == nil {
 		return
 	}
 
-	if v.memoryUsage > 0 {
-		return v.memoryUsage
+	if v.Memory > 0 {
+		return v.Memory
 	}
 	switch x := v.Plan.(type) {
 	case base.PhysicalPlan:
@@ -483,7 +501,11 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	}
 	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) +
 		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
-	v.memoryUsage = sum
+
+	// Runtime Info Size
+	sum += size.SizeOfFloat64 * 7
+
+	v.Memory = sum
 	return
 }
 
@@ -525,7 +547,7 @@ func NewPlanCacheValue(
 	hasher.Reset()
 	planCacheHasherPool.Put(hasher)
 
-	return &PlanCacheValue{
+	pcv := &PlanCacheValue{
 		SQLDigest:        stmt.SQLDigest.String(),
 		SQLText:          stmt.StmtText,
 		StmtType:         stmt.PreparedAst.StmtType,
@@ -534,11 +556,14 @@ func NewPlanCacheValue(
 		OptimizerEnvHash: optEnvHash,
 		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
 
+		LoadTime:      time.Now(),
 		Plan:          plan,
 		OutputColumns: names,
 		paramTypes:    userParamTypes,
 		stmtHints:     stmtHints.Clone(),
 	}
+	pcv.MemoryUsage() // initialize the memory usage field
+	return pcv
 }
 
 // planCacheStmtProcessor records all query features which may affect plan selection.

@@ -292,6 +292,7 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		return nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
+	sctx.GetSessionVars().PlanCacheValue = pcv
 	return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
 }
 
@@ -358,6 +359,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		} else {
 			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
 		}
+		sctx.GetSessionVars().PlanCacheValue = cached
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err
