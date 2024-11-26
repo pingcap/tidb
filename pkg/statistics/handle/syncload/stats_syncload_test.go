@@ -399,13 +399,13 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	timeout := time.Nanosecond * 100
 	require.NoError(t, h.SendLoadRequests(stmtCtx, neededColumns, timeout))
 	for _, resultCh := range stmtCtx.StatsLoad.ResultCh {
-		rs1, _ := <-resultCh
+		rs1 := <-resultCh
 		require.Error(t, rs1.Err)
 	}
 	stmtCtx1 := stmtctx.NewStmtCtx()
 	require.NoError(t, h.SendLoadRequests(stmtCtx1, neededColumns, timeout))
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
-		rs1, _ := <-resultCh
+		rs1 := <-resultCh
 		require.Error(t, rs1.Err)
 	}
 }
