@@ -2507,6 +2507,18 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		return ver, errors.Trace(dbterror.ErrPartitionMgmtOnNonpartitioned)
 	}
 
+	if job.IsRollingback() {
+		return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
+	}
+
+	failpoint.Inject("truncatePartCancel1", func(val failpoint.Value) {
+		if val.(bool) {
+			job.State = model.JobStateCancelled
+			err = errors.New("Injected error by truncatePartCancel1")
+			failpoint.Return(ver, err)
+		}
+	})
+
 	var oldDefinitions []model.PartitionDefinition
 	var newDefinitions []model.PartitionDefinition
 
@@ -2522,11 +2534,19 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = job.SchemaState
 		return updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteOnly:
+		// We can still rollback here, since we have not yet started to write to the new partitions!
 		oldDefinitions, newDefinitions, err = replaceTruncatePartitions(job, jobCtx.metaMut, tblInfo, oldIDs, newIDs)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
+		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by truncatePartFail1")
+				failpoint.Return(ver, err)
+			}
+		})
 		// This work as a flag to ignore Global Index entries from the old partitions!
 		// Used in IDsInDDLToIgnore() for filtering old partitions from
 		// the global index
@@ -2554,6 +2574,13 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		if err != nil || !done {
 			return ver, errors.Trace(err)
 		}
+		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by truncatePartFail2")
+				failpoint.Return(ver, err)
+			}
+		})
 		// For the truncatePartitionEvent
 		oldDefinitions = pi.DroppingDefinitions
 		newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
@@ -2562,21 +2589,25 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 			newDef.ID = newIDs[i]
 			newDefinitions = append(newDefinitions, newDef)
 		}
-		// TODO: Test injecting failure
 
 		pi.DroppingDefinitions = nil
 		pi.NewPartitionIDs = nil
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
+		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by truncatePartFail3")
+				failpoint.Return(ver, err)
+			}
+		})
 		// used by ApplyDiff in updateSchemaVersion
 		args.ShouldUpdateAffectedPartitions = true
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		// Finish this job.
-		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
 		truncatePartitionEvent := notifier.NewTruncatePartitionEvent(
 			tblInfo,
 			&model.PartitionInfo{Definitions: newDefinitions},
