@@ -2370,6 +2370,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableTiDBPlanCache:                      tablePlanCache,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
