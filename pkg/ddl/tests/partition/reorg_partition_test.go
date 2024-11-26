@@ -114,7 +114,7 @@ ROW:
 	}
 }
 
-func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
+func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) allTableData {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -128,8 +128,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		vals: make([][]byte, 0),
 		tp:   make([]string, 0),
 	}
-	pid := physTable.GetPhysicalID()
-	prefix := tablecodec.EncodeTablePrefix(pid)
+	prefix := tablecodec.EncodeTablePrefix(tableID)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
 	for it.Valid() {
@@ -141,7 +140,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
-			require.Equal(t, pid, tblID)
+			require.Equal(t, tableID, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
@@ -812,7 +811,7 @@ func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Ta
 	require.NotNil(t, pt)
 	cnt := 0
 	for _, def := range defs {
-		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
+		data := getAllDataForTableID(t, ctx, def.ID)
 		require.True(t, len(data.keys) == len(data.vals))
 		require.True(t, len(data.keys) == len(data.tp))
 		for _, s := range data.tp {
@@ -986,7 +985,6 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`create table kb ` + cols + ` partition by key(b) partitions 2`)
 	tk.MustExec(`create table kf ` + cols + ` partition by key(f) partitions 2`)
 	tk.MustExec(`create table kts ` + cols + ` partition by key(ts) partitions 2`)
-	// HASH/LIST/RANGE - Treats bit values as int, BIT(>=32) for HASH fails due to overflow...
 	tk.MustExec(`create table hb ` + cols + ` partition by hash(b) partitions 2`)
 	tk.MustExec(`insert into hb values ` + vals)
 	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("1"))
@@ -994,9 +992,9 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into hb values ` + vals)
 	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("2"))
 	tk.MustExec(`create table hb32 ` + cols + ` partition by hash(b32) partitions 2`)
-	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`insert into hb32 values ` + vals)
 	tk.MustExec(`alter table hb32 partition by hash(b32) partitions 3`)
-	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`insert into hb32 values ` + vals)
 	tk.MustExec(`create table rb ` + cols + ` partition by range (b) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb values ` + vals)
 	tk.MustExec(`alter table rb partition by range(b) (partition pMax values less than (MAXVALUE))`)

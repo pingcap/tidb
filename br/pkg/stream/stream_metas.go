@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -38,7 +39,16 @@ const (
 	baseTmp           = "BASE_TMP"
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
+
+	SupportedMigVersion = pb.MigrationVersion_M1
 )
+
+func NewMigration() *pb.Migration {
+	return &pb.Migration{
+		Version: pb.MigrationVersion_M1,
+		Creator: fmt.Sprintf("br;commit=%s;branch=%s", versioninfo.TiDBGitHash, versioninfo.TiDBGitBranch),
+	}
+}
 
 type StreamMetadataSet struct {
 	// if set true, the metadata and datafile won't be removed
@@ -196,7 +206,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	hst := ms.hook(st)
 	est := MigerationExtension(hst)
 	est.Hooks = updateFnHook{updateFn: updateFn}
-	res := MigratedTo{NewBase: new(pb.Migration)}
+	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
 
 	if bst, ok := hst.ExternalStorage.(*storage.Batched); ok {
@@ -517,7 +527,7 @@ func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 // Merge merges two migrations.
 // The merged migration contains all operations from the two arguments.
 func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
-	out := new(pb.Migration)
+	out := NewMigration()
 	out.EditMeta = mergeMetaEdits(m1.GetEditMeta(), m2.GetEditMeta())
 	out.Compactions = append(out.Compactions, m1.GetCompactions()...)
 	out.Compactions = append(out.Compactions, m2.GetCompactions()...)
@@ -563,6 +573,24 @@ type OrderedMigration struct {
 	Content pb.Migration `json:"content"`
 }
 
+func (o *OrderedMigration) unmarshalContent(b []byte) error {
+	err := o.Content.Unmarshal(b)
+	if err != nil {
+		return err
+	}
+	if o.Content.Version > SupportedMigVersion {
+		return errors.Annotatef(
+			berrors.ErrMigrationVersionNotSupported,
+			"the migration at %s has version %s(%d), the max version we support is %s(%d)",
+			o.Path,
+			o.Content.Version, o.Content.Version,
+			SupportedMigVersion, SupportedMigVersion,
+		)
+	}
+
+	return nil
+}
+
 // Load loads the current living migrations from the storage.
 func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	opt := &storage.WalkOption{
@@ -575,6 +603,11 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = t.unmarshalContent(b)
+		if err != nil {
+			return err
+		}
+
 		if t.SeqNum == baseMigrationSN {
 			// NOTE: the legacy truncating isn't implemented by appending a migration.
 			// We load their checkpoint here to be compatible with them.
@@ -585,7 +618,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 			}
 			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
 		}
-		return t.Content.Unmarshal(b)
+		return nil
 	})
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
@@ -605,7 +638,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		// The BASE migration isn't persisted.
 		// This happens when `migrate-to` wasn't run ever.
 		result = Migrations{
-			Base:   new(pb.Migration),
+			Base:   NewMigration(),
 			Layers: collected.Item,
 		}
 	}
@@ -818,7 +851,7 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	}
 
 	result := MigratedTo{
-		NewBase: new(pb.Migration),
+		NewBase: NewMigration(),
 	}
 	// Fills: EditMeta for new Base.
 	m.doMetaEdits(ctx, mig, &result)

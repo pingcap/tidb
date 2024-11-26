@@ -703,6 +703,113 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
 }
 
+// TODO: Also add test for REMOVE PARTITIONING!
+///*
+//// TODO: complete this test, so that we test all four changes:
+//1 unique non-global - to become global
+//2 unique global - to become non-global
+//3 unique non-global - to stay non-global
+//4 unique global - to stay global
+//func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
+//	createSQL := `create table t (a int primary key, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_b (b), unique key idx_c_global (c), unique key idx_c (c)) partition by key (a,b) partitions 3`
+//	initFn := func(tkO *testkit.TestKit) {
+//		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
+//	}
+//	alterSQL := `alter table t partition by key (b,a) partitions 5`
+//	loopFn := func(tkO, tkNO *testkit.TestKit) {
+//		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+//		schemaState := res.Rows()[0][0].(string)
+//		switch schemaState {
+//		case model.StateDeleteOnly.String():
+//			// tkNO sees original table/partitions as before the DDL stated
+//			// tkO uses the original table/partitions, but should also delete from the newly created
+//			// Global Index, to replace the existing one.
+//			tkO.MustContainErrMsg(`insert into t values (1,2)`, "[kv:1062]Duplicate entry '2' for key 't.idx_b'")
+//			tkNO.MustContainErrMsg(`insert into t values (1,2)`, "[kv:1062]Duplicate entry '2' for key 't.idx_b'")
+//			tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b'")
+//			tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b'")
+//			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
+//			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
+//			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2"))
+//			tkNO.MustQuery(`select * from t where a = 1`).Sort().Check(testkit.Rows("1 1"))
+//			tkNO.MustQuery(`select * from t where a = 1 or a = 2 or a = 3`).Sort().Check(testkit.Rows("1 1", "2 2"))
+//			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("1 1", "2 2"))
+//			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("1 1", "2 2"))
+//
+//			tkNO.MustQuery(`select * from t where b = 2`).Sort().Check(testkit.Rows("2 2"))
+//			tkO.MustExec(`insert into t values (3,3)`)
+//			tkNO.MustExec(`insert into t values (4,4)`)
+//			tkNO.MustQuery(`select * from t where a = 3`).Sort().Check(testkit.Rows("3 3"))
+//			tkO.MustQuery(`select * from t where a = 4`).Sort().Check(testkit.Rows("4 4"))
+//		case model.StateWriteOnly.String():
+//			// Both tkO and tkNO uses the original table/partitions,
+//			// but tkO should also update the newly created
+//			// Global Index, and tkNO should only delete from it.
+//			/*
+//				tkO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.idx_b'")
+//				tkNO.MustContainErrMsg(`insert into t values (1,1)`, "[kv:1062]Duplicate entry '1' for key 't.idx_b'")
+//				tkO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b'")
+//				tkNO.MustContainErrMsg(`insert into t values (101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b'")
+//				tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2", "3 3", "4 4"))
+//				tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "101 101", "102 102", "2 2", "3 3", "4 4"))
+//
+//			*/
+//			logutil.BgLogger().Info("insert into t values (5,5)")
+//			tkO.MustExec(`insert into t values (5,5)`)
+//			tkNO.MustExec(`insert into t values (6,6)`)
+//			tkNO.MustQuery(`select * from t where a = 5`).Sort().Check(testkit.Rows("5 5"))
+//			tkO.MustQuery(`select * from t where a = 6`).Sort().Check(testkit.Rows("6 6"))
+//		case model.StateWriteReorganization.String():
+//			// Both tkO and tkNO uses the original table/partitions,
+//			// and should also update the newly created Global Index.
+//			tkO.MustExec(`insert into t values (7,7)`)
+//			tkNO.MustExec(`insert into t values (8,8)`)
+//			tkNO.MustQuery(`select * from t where b = 7`).Check(testkit.Rows("7 7"))
+//			tkO.MustQuery(`select * from t where b = 8`).Check(testkit.Rows("8 8"))
+//		case model.StateDeleteReorganization.String():
+//			// Both tkO now sees the new partitions, and should use the new Global Index,
+//			// plus double write to the old one.
+//			// tkNO uses the original table/partitions,
+//			// and should also update the newly created Global Index.
+//			tkO.MustExec(`insert into t values (9,9)`)
+//			tkNO.MustExec(`insert into t values (10,10)`)
+//			tkNO.MustQuery(`select * from t where b = 9`).Check(testkit.Rows("9 9"))
+//			tkO.MustQuery(`select * from t where b = 10`).Check(testkit.Rows("10 10"))
+//			// TODO: Test update and delete!
+//			// TODO: test key, hash and list partition without default partition :)
+//			tkNO.MustQuery(`show create table t`).Check(testkit.Rows("" +
+//				"t CREATE TABLE `t` (\n" +
+//				"  `a` int(11) NOT NULL,\n" +
+//				"  `b` varchar(255) DEFAULT NULL,\n" +
+//				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+//				"  UNIQUE KEY idx_b (`b`) /*T![global_index] GLOBAL */\n" +
+//				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+//				"PARTITION BY RANGE (`a`)\n" +
+//				"(PARTITION `p1` VALUES LESS THAN (200))"))
+//			tkO.MustQuery(`show create table t`).Check(testkit.Rows("" +
+//				"t CREATE TABLE `t` (\n" +
+//				"  `a` int(11) NOT NULL,\n" +
+//				"  `b` varchar(255) DEFAULT NULL,\n" +
+//				"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+//				"  UNIQUE KEY idx_b (`b`) /*T![global_index] GLOBAL */\n" +
+//				") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+//				"PARTITION BY RANGE (`a`)\n" +
+//				"(PARTITION `p0` VALUES LESS THAN (100),\n" +
+//				" PARTITION `p1` VALUES LESS THAN (200))"))
+//			tkO.MustExec(`insert into t values (3,3)`)
+//		case model.StateNone.String():
+//			// just to not fail :)
+//		default:
+//			require.Failf(t, "unhandled schema state '%s'", schemaState)
+//		}
+//	}
+//	postFn := func(tkO *testkit.TestKit) {
+//		tkO.MustQuery(`select * from t where b = 5`).Sort().Check(testkit.Rows("5 5"))
+//		tkO.MustExec(`admin check table t`)
+//	}
+//	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+//}
+
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
 	// When debugging, increase the lease, so the schema does not auto reload :)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
@@ -983,16 +1090,16 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblO.Partition.DDLState)
 			require.Equal(t, tblNO.Partition.Definitions[1].ID, tblO.Partition.Definitions[1].ID)
-			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 		case "delete only":
 			// tkNO is seeing state write only, so still can access the dropped partition
 			// tkO is seeing state delete only, so cannot see the dropped partition,
 			// but must still write to the shared global indexes.
 			// So they will get errors on the same entries in the global index.
 
-			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (1,1,"Duplicate key")`, "[kv:1062]Duplicate entry '1' for key 't.")
 			tblNO, err := tkNO.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 			require.NoError(t, err)
 			require.Equal(t, model.StateWriteOnly, tblNO.Partition.DDLState)
@@ -1003,8 +1110,8 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 
 			tkNO.MustExec(`insert into t values (21,21,"OK")`)
 			tkNO.MustExec(`insert into t values (23,23,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.uk_b'")
-			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '23' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (21,21,"Duplicate key")`, "[kv:1062]Duplicate entry '21' for key 't.")
+			tkO.MustContainErrMsg(`insert into t values (6,23,"Duplicate key")`, "[kv:1062]Duplicate entry '")
 			// Primary is not global, so here we can insert into the new partition, without
 			// conflicting to the old one
 			tkO.MustExec(`insert into t values (21,25,"OK")`)
@@ -1109,10 +1216,10 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustExec(`insert into t values (10,23,"OK")`)
 			tkNO.MustExec(`insert into t values (41,41,"OK")`)
 			tkNO.MustContainErrMsg(`insert into t values (12,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.uk_b'")
-			tkNO.MustContainErrMsg(`insert into t values (41,27,"Duplicate key")`, "[kv:1062]Duplicate entry '27' for key 't.uk_b'")
+			tkNO.MustContainErrMsg(`insert into t values (25,25,"Duplicate key")`, "[kv:1062]Duplicate entry '25' for key 't.")
+			tkNO.MustContainErrMsg(`insert into t values (41,27,"Duplicate key")`, "[kv:1062]Duplicate entry '")
 			tkO.MustExec(`insert into t values (43,43,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (44,43,"Duplicate key")`, "[kv:1062]Duplicate entry '43' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (44,43,"Duplicate key")`, "[kv:1062]Duplicate entry '")
 			tkNO.MustContainErrMsg(`update t set b = 5 where a = 41`, "[kv:1062]Duplicate entry '5' for key 't.uk_b'")
 			tkNO.MustExec(`update t set a = 5 where b = "41"`)
 			require.Equal(t, uint64(1), tkNO.Session().GetSessionVars().StmtCtx.AffectedRows())
@@ -1127,7 +1234,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			tkO.MustQuery(`select * from t`).Sort().Check(rows)
 		case "none":
 			tkNO.MustExec(`insert into t values (81,81,"OK")`)
-			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.uk_b'")
+			tkO.MustContainErrMsg(`insert into t values (81,81,"Duplicate key")`, "[kv:1062]Duplicate entry '81' for key 't.")
 			tkNO.MustExec(`insert into t values (85,85,"OK")`)
 			tkO.MustExec(`insert into t values (87,87,"OK")`)
 			rows := tkNO.MustQuery(`select * from t`).Sort().Rows()

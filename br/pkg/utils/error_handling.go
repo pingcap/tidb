@@ -111,6 +111,14 @@ func NewDefaultContext() *ErrorContext {
 	}
 }
 
+func NewZeroRetryContext(scenario string) *ErrorContext {
+	return &ErrorContext{
+		description:              scenario,
+		encounterTimes:           make(map[uint64]int),
+		encounterTimesLimitation: 0,
+	}
+}
+
 func HandleBackupError(err *backuppb.Error, storeId uint64, ec *ErrorContext) ErrorHandlingResult {
 	if err == nil {
 		return ErrorHandlingResult{StrategyRetry, unreachableRetryMsg}
