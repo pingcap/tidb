@@ -1191,23 +1191,16 @@ func (bc *Client) fineGrainedBackup(
 						storeID = storeErr.storeID
 						message = storeErr.message
 					} else {
-						break
+						return errors.Trace(err)
 					}
 
-					if _, ok := maxDisconnect[storeID]; !ok {
-						maxDisconnect[storeID] = 0
-					} else {
-						maxDisconnect[storeID]++
-					}
-
+					maxDisconnect[storeID]++
 					if maxDisconnect[storeID] > 3 {
 						return errors.Annotatef(err, "Store ID %d: %s", storeID, message)
-					} else {
-						break
 					}
+				} else {
+					return errors.Trace(err)
 				}
-
-				return errors.Trace(err)
 			case resp, ok := <-respCh:
 				if !ok {
 					// Finished.
