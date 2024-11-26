@@ -290,7 +290,9 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), sctx, nodeW, core.WithPreprocessorReturn(ret))
 	require.NoError(t, err)
-	finalPlanTree, _, err := planner.Optimize(context.Background(), sctx, nodeW, ret.InfoSchema)
+	var finalPlanTree base.Plan
+	finalPlanTree, _, err = planner.Optimize(context.Background(), sctx, nodeW, ret.InfoSchema)
+	require.NoError(t, err)
 	physicalTree, ok := finalPlanTree.(base.PhysicalPlan)
 	require.True(t, ok)
 	// Find the PhysicalTableReader node.
