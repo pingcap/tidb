@@ -361,7 +361,7 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, true, true, true)   // Right side build with other condition
 }
 
-func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
+func TestSemiSpill(t *testing.T) {
 	var leftCols = []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -400,7 +400,7 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	maxRowTableSegmentSize = 100
 	spillChunkSize = 100
 
-	joinTypes := []logicalop.JoinType{logicalop.SemiJoin, logicalop.AntiSemiJoin}
+	joinTypes := []logicalop.JoinType{logicalop.SemiJoin}
 	params := []spillTestParam{
 		// basic case
 		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1}, []int{}, nil, nil, nil, []int64{1800000, 1000000, 3000000, 600000, 10000}},

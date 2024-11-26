@@ -111,7 +111,7 @@ func (b *baseSemiJoin) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlK
 
 	for joinedChkRemainCap > 0 && !b.unFinishedProbeRowIdxQueue.IsEmpty() {
 		probeRowIdx := b.unFinishedProbeRowIdxQueue.Pop()
-		if b.isMatchedRows[probeRowIdx] {
+		if isRightSideBuild && b.isMatchedRows[probeRowIdx] {
 			continue
 		}
 
