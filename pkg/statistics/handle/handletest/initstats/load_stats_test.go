@@ -36,6 +36,23 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	handle.IsFullCacheFunc = func(cache util.StatsCache, total uint64) bool {
 		return true
 	}
+	testConcurrentlyInitStats(t)
+}
+
+func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.LiteInitStats = false
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	handle.IsFullCacheFunc = func(cache util.StatsCache, total uint64) bool {
+		return false
+	}
+	testConcurrentlyInitStats(t)
+}
+
+func testConcurrentlyInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
