@@ -40,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, error) {
@@ -448,9 +450,10 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		return nil, err
 	}
 
-	regionsPerRange := len(regionIDs) / splitCnt
-	oversizeCnt := len(regionIDs) % splitCnt
-	ranges := make([]kv.KeyRange, 0, min(len(regionIDs), splitCnt))
+	regionsCnt := len(regionIDs)
+	regionsPerRange := regionsCnt / splitCnt
+	oversizeCnt := regionsCnt % splitCnt
+	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
 	for len(regionIDs) > 0 {
 		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
 			regionIDs[0])
@@ -483,6 +486,15 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		oversizeCnt--
 		regionIDs = regionIDs[endRegionIdx+1:]
 	}
+	logutil.BgLogger().Info("TTL table raw key ranges split",
+		zap.Int("regionsCnt", regionsCnt),
+		zap.Int("shouldSplitCnt", splitCnt),
+		zap.Int("actualSplitCnt", len(ranges)),
+		zap.Int64("tableID", t.ID),
+		zap.String("db", t.Schema.O),
+		zap.String("table", t.Name.O),
+		zap.String("partition", t.Partition.O),
+	)
 	return ranges, nil
 }
 
