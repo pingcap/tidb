@@ -131,7 +131,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutor
 		})
 
@@ -181,7 +181,7 @@ func TestManager(t *testing.T) {
 		3: mock.NewMockTaskExecutor(ctrl),
 	}
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutors[task.ID]
 		})
 	id := "test"
@@ -222,7 +222,7 @@ func TestManagerHandleTasks(t *testing.T) {
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutor
 		})
 	id := "test"
@@ -303,7 +303,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		3: mock.NewMockTaskExecutor(ctrl),
 	}
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutors[task.ID]
 		})
 	id := "test"

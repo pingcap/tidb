@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
@@ -65,7 +66,12 @@ func newTaskExecutorRunEnv(t *testing.T) *taskExecutorRunEnv {
 
 	task1 := proto.Task{TaskBase: proto.TaskBase{State: proto.TaskStateRunning, Step: proto.StepOne,
 		Type: proto.TaskTypeExample, ID: 1, Concurrency: 10}}
-	taskExecutor := NewBaseTaskExecutor(context.Background(), "id", &task1, taskTable)
+	taskExecutor := NewBaseTaskExecutor(context.Background(), &task1, Param{
+		taskTable: taskTable,
+		slotMgr:   newSlotManager(16),
+		nodeRc:    newNodeResource(16, 32*units.GiB),
+		execID:    "id",
+	})
 	taskExecutor.Extension = taskExecExt
 
 	t.Cleanup(func() {
@@ -105,25 +111,25 @@ func TestTaskExecutorRun(t *testing.T) {
 	t.Run("context done when run", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.taskExecutor.cancel()
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
 	t.Run("task not found when run", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
 	t.Run("task state is not running when run", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.revertingTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -132,7 +138,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, errors.New("some err"))
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, errors.New("some err"))
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -144,7 +150,7 @@ func TestTaskExecutorRun(t *testing.T) {
 				unfinishedNormalSubtaskStates...).Return(nil, errors.New("some err"))
 		}
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -155,10 +161,10 @@ func TestTaskExecutorRun(t *testing.T) {
 			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
 		taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
 		e.taskExecExt.EXPECT().GetStepExecutor(gomock.Any()).Return(nil, taskExecutorRegisterErr)
-		e.taskTable.EXPECT().FailSubtask(gomock.Any(), e.taskExecutor.id, e.task1.ID, taskExecutorRegisterErr).Return(nil)
+		e.taskTable.EXPECT().FailSubtask(gomock.Any(), e.taskExecutor.execID, e.task1.ID, taskExecutorRegisterErr).Return(nil)
 		// used to break the loop, below too
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -171,9 +177,9 @@ func TestTaskExecutorRun(t *testing.T) {
 		initErr := errors.New("init error")
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
 		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(false)
-		e.taskTable.EXPECT().FailSubtask(gomock.Any(), e.taskExecutor.id, e.task1.ID, initErr).Return(nil)
+		e.taskTable.EXPECT().FailSubtask(gomock.Any(), e.taskExecutor.execID, e.task1.ID, initErr).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -187,7 +193,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
 		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -207,7 +213,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", e.task1.ID, proto.SubtaskStateFailed, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -233,7 +239,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			},
 		)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -269,7 +275,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		}
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -302,7 +308,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// exit
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -319,7 +325,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", int64(1), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -348,7 +354,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -394,7 +400,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// end the loop
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -423,7 +429,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", step2Subtask.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(errors.New("some error 2"))
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -439,7 +445,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", subtaskID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -459,7 +465,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// second round of the run loop
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -479,7 +485,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", e.task1.ID, proto.SubtaskStateCanceled, nil).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -497,7 +503,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			return context.Canceled
 		})
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -511,7 +517,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(storage.ErrSubtaskNotFound)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -534,7 +540,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -543,7 +549,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil).Times(8)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 
@@ -567,7 +573,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
+		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
 	})
 }
@@ -580,7 +586,12 @@ func TestCheckBalanceSubtask(t *testing.T) {
 
 	ctx := context.Background()
 	task := &proto.Task{TaskBase: proto.TaskBase{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}}
-	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)
+	taskExecutor := NewBaseTaskExecutor(ctx, task, Param{
+		taskTable: mockSubtaskTable,
+		slotMgr:   newSlotManager(16),
+		nodeRc:    newNodeResource(16, 32*units.GiB),
+		execID:    "tidb1",
+	})
 	taskExecutor.Extension = mockExtension
 
 	bak := checkBalanceSubtaskInterval
@@ -658,7 +669,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 }
 
 func TestInject(t *testing.T) {
-	e := &EmptyStepExecutor{}
+	e := &BaseStepExecutor{}
 	r := &proto.StepResource{CPU: proto.NewAllocatable(1)}
 	execute.SetFrameworkInfo(e, proto.StepOne, r)
 	got := e.GetResource()

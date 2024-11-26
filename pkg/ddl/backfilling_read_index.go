@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -39,7 +40,7 @@ import (
 )
 
 type readIndexExecutor struct {
-	execute.StepExecFrameworkInfo
+	taskexecutor.BaseStepExecutor
 	d       *ddl
 	job     *model.Job
 	indexes []*model.IndexInfo
@@ -109,8 +110,9 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	defer cancel()
 	r.curRowCount.Store(0)
 
+	concurrency := int(r.GetResource().CPU.Capacity())
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
+		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, concurrency)
 		if err != nil {
 			return err
 		}
@@ -120,7 +122,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return r.onFinished(ctx, subtask)
 	}
 
-	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
+	pipe, err := r.buildLocalStorePipeline(opCtx, sm, concurrency)
 	if err != nil {
 		return err
 	}

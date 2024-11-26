@@ -190,6 +190,11 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
+	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
+	// or 'paused', then they are not executable, if it's 'running', it should be
+	// queried out soon as 'modifying' is a fast process.
+	// it's possible that after we create task executor for a 'running' task, it
+	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)
@@ -294,7 +299,7 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		m.logger.Info("cancelTasks", zap.Int64("task-id", task.ID))
+		m.logger.Info("cancel task executor", zap.Int64("task-id", task.ID))
 		if executor, ok := m.mu.taskExecutors[task.ID]; ok {
 			executor.Cancel()
 		}
@@ -309,24 +314,39 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
 		return
 	}
-	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
+	if !m.slotManager.alloc(&task.TaskBase) {
+		return
+	}
+	executorStarted := false
+	defer func() {
+		// free the slot if executor not started.
+		if !executorStarted {
+			m.slotManager.free(task.ID)
+		}
+	}()
+
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.failSubtask(err, task.ID, nil)
 		return
 	}
-	executor := factory(m.ctx, m.id, task, m.taskTable)
+	executor := factory(m.ctx, task, Param{
+		taskTable: m.taskTable,
+		slotMgr:   m.slotManager,
+		nodeRc:    m.getNodeResource(),
+		execID:    m.id,
+	})
 	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
 		return
 	}
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(&task.TaskBase)
-	resource := m.getStepResource(task.Concurrency)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
-		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
+		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
+		zap.Int("remaining-slots", m.slotManager.availableSlots()))
+	executorStarted = true
 	m.executorWG.RunWithLog(func() {
 		defer func() {
 			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
@@ -335,16 +355,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 			m.delTaskExecutor(executor)
 			executor.Close()
 		}()
-		executor.Run(resource)
+		executor.Run()
 	})
 }
 
-func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
-	return &proto.StepResource{
-		CPU: proto.NewAllocatable(int64(concurrency)),
-		// same proportion as CPU
-		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(m.totalCPU) * float64(m.totalMem))),
-	}
+func (m *Manager) getNodeResource() *nodeResource {
+	return newNodeResource(m.totalCPU, m.totalMem)
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
@@ -398,4 +414,24 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 		m.logger.Warn(msg, zap.Error(err1))
 	}
 	return err1
+}
+
+type nodeResource struct {
+	totalCPU int
+	totalMem int64
+}
+
+func newNodeResource(totalCPU int, totalMem int64) *nodeResource {
+	return &nodeResource{
+		totalCPU: totalCPU,
+		totalMem: totalMem,
+	}
+}
+
+func (nr *nodeResource) getStepResource(concurrency int) *proto.StepResource {
+	return &proto.StepResource{
+		CPU: proto.NewAllocatable(int64(concurrency)),
+		// same proportion as CPU
+		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(nr.totalCPU) * float64(nr.totalMem))),
+	}
 }

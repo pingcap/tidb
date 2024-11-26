@@ -15,6 +15,7 @@
 package proto
 
 import (
+	"cmp"
 	"time"
 )
 
@@ -146,16 +147,13 @@ func (t *TaskBase) CompareTask(other *Task) int {
 // Compare compares two tasks by task rank.
 // returns < 0 represents rank of t is higher than 'other'.
 func (t *TaskBase) Compare(other *TaskBase) int {
-	if t.Priority != other.Priority {
-		return t.Priority - other.Priority
+	if r := cmp.Compare(t.Priority, other.Priority); r != 0 {
+		return r
 	}
-	if t.CreateTime != other.CreateTime {
-		if t.CreateTime.Before(other.CreateTime) {
-			return -1
-		}
-		return 1
+	if r := t.CreateTime.Compare(other.CreateTime); r != 0 {
+		return r
 	}
-	return int(t.ID - other.ID)
+	return cmp.Compare(t.ID, other.ID)
 }
 
 // Task represents the task of distributed framework.
