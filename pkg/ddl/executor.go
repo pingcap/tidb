@@ -4928,6 +4928,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
+		m.SetMaxWriteSpeed(int(variable.DDLReorgMaxWriteSpeed.Load()))
 	}
 	setDistTaskParam := func() error {
 		m.IsDistReorg = variable.EnableDistTask.Load()
