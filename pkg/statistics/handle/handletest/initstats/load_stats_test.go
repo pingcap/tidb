@@ -52,6 +52,11 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
+	for _, val := range h.StatsCache.Values() {
+		for _, col := range val.HistColl.GetColSlice() {
+			require.False(t, col.IsFullLoad())
+		}
+	}
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where a = 1", i)).CheckNotContain("pseudo")
 	}
@@ -60,5 +65,10 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	}
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
+	}
+	for _, val := range h.StatsCache.Values() {
+		for _, col := range val.HistColl.GetColSlice() {
+			require.False(t, col.IsAllEvicted())
+		}
 	}
 }
