@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"math/rand"
 	"sync"
 	"testing"
@@ -534,6 +535,11 @@ func TestCancelBalancer(t *testing.T) {
 	cancel()
 	<-done
 	jobWg.Wait()
+}
+
+func TestNewWriteRequest(T *testing.T) {
+	req := newWriteRequest(&sst.SSTMeta{}, "", "")
+	require.Equal(T, req.Context.TxnSource, uint64(kv.LightningPhysicalImportTxnSource))
 }
 
 func TestStoreBalancerNoRace(t *testing.T) {

@@ -314,6 +314,21 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
+func newWriteRequest(meta *sst.SSTMeta, ResourceGroupName, TaskType string) *sst.WriteRequest {
+	return &sst.WriteRequest{
+		Chunk: &sst.WriteRequest_Meta{
+			Meta: meta,
+		},
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: ResourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, TaskType),
+			TxnSource:     kv.LightningPhysicalImportTxnSource,
+		},
+	}
+}
+
 func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
@@ -396,18 +411,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	leaderID := j.region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.GetPeers()))
-	req := &sst.WriteRequest{
-		Chunk: &sst.WriteRequest_Meta{
-			Meta: meta,
-		},
-		Context: &kvrpcpb.Context{
-			ResourceControlContext: &kvrpcpb.ResourceControlContext{
-				ResourceGroupName: local.ResourceGroupName,
-			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
-			TxnSource:     kv.LightningPhysicalImportTxnSource,
-		},
-	}
+	req := newWriteRequest(meta, local.ResourceGroupName, local.TaskType)
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
