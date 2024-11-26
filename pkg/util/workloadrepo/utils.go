@@ -38,7 +38,7 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool 
 	// add new partitions per day
 	// if all partitions to be added existed, do nothing
 	allExisted := true
-	for i := 0; i < newPtNum; i++ {
+	for i := range newPtNum {
 		// TODO: should we make this UTC? timezone issues
 		newPtTime := now.AddDate(0, 0, i+1)
 		newPtName := "p" + newPtTime.Format("20060102")

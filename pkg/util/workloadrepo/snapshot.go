@@ -154,7 +154,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 					continue
 				}
 
-				for i := 0; i < 5; i++ {
+				for range 5 {
 					snapID, err := w.getSnapID(ctx)
 					if err != nil {
 						logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))

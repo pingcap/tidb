@@ -168,7 +168,7 @@ func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName
 	}
 
 	tbInfo := tbSchema.Meta()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		newPtTime := now.AddDate(0, 0, i+1)
 		newPtName := "p" + newPtTime.Format("20060102")
 		ptInfos := tbInfo.GetPartitionInfo().Definitions
