@@ -488,7 +488,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 }
 
 var planCacheHasherPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return sha256.New()
 	},
 }
