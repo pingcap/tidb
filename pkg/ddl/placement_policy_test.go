@@ -2664,7 +2664,7 @@ func TestCheckBundle(t *testing.T) {
 						Role:        pd.Leader,
 					},
 					{
-						GroupID:     "TiDB_DDL_2",
+						GroupID:     "TiDB_DDL_1",
 						ID:          "TiDB_DDL_1",
 						Override:    false,
 						StartKeyHex: "01",

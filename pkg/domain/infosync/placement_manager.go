@@ -118,6 +118,9 @@ type keyRange struct {
 func CheckBundle(bundle *placement.Bundle) error {
 	keys := make([]keyRange, 0, len(bundle.Rules))
 	for _, rule := range bundle.Rules {
+		if rule.GroupID != bundle.ID {
+			return fmt.Errorf("rule group id %s is not same as bundle id %s", rule.GroupID, bundle.ID)
+		}
 		keys = append(keys, keyRange{
 			groupID:  rule.GroupID,
 			id:       rule.ID,
@@ -134,13 +137,9 @@ func CheckBundle(bundle *placement.Bundle) error {
 	applyKeys := keys[:0]
 	j := 0
 	for i := 1; i < len(keys); i++ {
-		if keys[i].groupID != keys[j].groupID {
-			// currently not checking if the group overrides all other groups!
-			applyKeys = append(applyKeys, keys[j:i]...) // save rules belong to previous groups
-			j = i
-		}
 		if keys[i].override {
 			j = i // skip all previous rules in the same group
+			// TODO: Should we only override the matching key range?
 		}
 	}
 	applyKeys = append(applyKeys, keys[j:]...)
@@ -171,16 +170,9 @@ func CheckBundle(bundle *placement.Bundle) error {
 		return keys[i].start < keys[j].start
 	})
 
-	prevEnd := keys[0].end
 	for i := 1; i < len(keys); i++ {
-		if keys[i].start < prevEnd {
-			if !keys[i].override {
-				return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
-			}
-			continue
-		}
-		if keys[i].end > prevEnd {
-			prevEnd = keys[i].end
+		if keys[i].start < keys[i-1].end {
+			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
 		}
 	}
 	return nil
