@@ -3921,6 +3921,7 @@ func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessi
 		row = append(row, types.NewStringDatum(binaryPlan))
 		row = append(row, types.NewStringDatum(pcv.Binding))
 		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
+		row = append(row, types.NewStringDatum(pcv.ParseValues))
 		row = append(row, types.NewIntDatum(pcv.Memory))
 		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.Executions)))
 		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.ProcessedKeys)))
