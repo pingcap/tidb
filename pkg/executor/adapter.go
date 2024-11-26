@@ -2172,13 +2172,13 @@ func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
 	}
 
 	execDetail := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
-	var procKeys, totKeys uint64
+	var procKeys, totKeys int64
 	if execDetail.ScanDetail != nil { // only support TiKV
-		procKeys = uint64(execDetail.ScanDetail.ProcessedKeys)
-		totKeys = uint64(execDetail.ScanDetail.TotalKeys)
+		procKeys = execDetail.ScanDetail.ProcessedKeys
+		totKeys = execDetail.ScanDetail.TotalKeys
 	}
 	costTime := a.Ctx.GetSessionVars().GetTotalCostDuration()
-	pcv.UpdateRuntimeInfo(procKeys, totKeys, uint64(costTime))
+	pcv.UpdateRuntimeInfo(procKeys, totKeys, int64(costTime))
 	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 

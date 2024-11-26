@@ -435,14 +435,15 @@ type PlanCacheValue struct {
 	Binding          string // the binding of this plan.
 	OptimizerEnvHash string // other environment information that might affect the plan like "time_zone", "sql_mode".
 	ParseValues      string // the actual values used when parsing/compiling this plan.
+	PlanDigest       string
 
 	// Runtime Info
 	Memory             int64     // the memory usage of this plan, in bytes.
 	LoadTime           time.Time // the time when this plan is loaded into the cache.
-	Executions         uint64    // the execution times.
-	ProcessedKeys      uint64    // the total number of processed keys in TiKV.
-	TotalKeys          uint64    // the total number of returned keys in TiKV.
-	SumLatency         uint64    // the total latency of this plan, in nanoseconds.
+	Executions         int64    // the execution times.
+	ProcessedKeys      int64    // the total number of processed keys in TiKV.
+	TotalKeys          int64    // the total number of returned keys in TiKV.
+	SumLatency         int64    // the total latency of this plan, in nanoseconds.
 	LastUsedTimeInUnix int64     // the last time when this plan is used, in Unix timestamp.
 
 	Plan          base.Plan          // not-read-only, session might update it before reusing
@@ -457,11 +458,11 @@ type PlanCacheValue struct {
 const unKnownMemoryUsage = int64(50 * size.KB)
 
 // UpdateRuntimeInfo accumulates the runtime information of the plan.
-func (v *PlanCacheValue) UpdateRuntimeInfo(proKeys, totKeys, latency uint64) {
-	atomic.AddUint64(&v.Executions, 1)
-	atomic.AddUint64(&v.ProcessedKeys, proKeys)
-	atomic.AddUint64(&v.TotalKeys, totKeys)
-	atomic.AddUint64(&v.SumLatency, latency)
+func (v *PlanCacheValue) UpdateRuntimeInfo(proKeys, totKeys, latency int64) {
+	atomic.AddInt64(&v.Executions, 1)
+	atomic.AddInt64(&v.ProcessedKeys, proKeys)
+	atomic.AddInt64(&v.TotalKeys, totKeys)
+	atomic.AddInt64(&v.SumLatency, latency)
 	atomic.StoreInt64(&v.LastUsedTimeInUnix, time.Now().Unix())
 }
 
@@ -555,6 +556,7 @@ func NewPlanCacheValue(
 		Binding:          binding,
 		OptimizerEnvHash: optEnvHash,
 		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
+		PlanDigest:       stmt.PlanDigest.String(),
 
 		LoadTime:      time.Now(),
 		Plan:          plan,

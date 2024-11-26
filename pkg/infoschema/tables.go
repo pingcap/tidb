@@ -214,6 +214,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableTiDBPlanCache is the plan cache table.
+	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
 )
 
 const (
@@ -338,6 +340,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TableTiDBPlanCache:                   autoid.InformationSchemaDBID + 96,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1719,6 +1722,25 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+var tablePlanCache = []columnInfo{
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "STMT_TYPE", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARSE_USER", tp: mysql.TypeVarchar, size: 64},
+	{name: "PLAN_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "BINARY_PLAN", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "BINDING", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "OPT_ENV", tp: mysql.TypeVarchar, size: 64},
+	{name: "PARSE_VALUES", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+	{name: "MEM_SIZE", tp: mysql.TypeLonglong, size: 21},
+	{name: "EXECUTIONS", tp: mysql.TypeLonglong, size: 21},
+	{name: "PROCESSED_KEYS", tp: mysql.TypeLonglong, size: 21},
+	{name: "TOTAL_KEYS", tp: mysql.TypeLonglong, size: 21},
+	{name: "SUM_LATENCY", tp: mysql.TypeLonglong, size: 21},
+	{name: "LOAD_TIME", tp: mysql.TypeDatetime, size: 19},
+	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2362,6 +2384,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableTiDBPlanCache:                      tablePlanCache,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
