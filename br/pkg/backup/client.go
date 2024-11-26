@@ -1172,10 +1172,10 @@ func (bc *Client) fineGrainedBackup(
 			case err := <-errCh:
 				if berrors.Is(err, berrors.ErrFailedToConnect) {
 					storeID := 0
-					if strings.Contains(err.Error(), "store") {
+					if strings.Contains(err.Error(), "failed to connect to store") {
 						_, scanErr := fmt.Sscanf(err.Error(), "failed to connect to store %d", &storeID)
 						if scanErr != nil {
-							log.Warn("failed to parse store ID from error message", zap.Error(scanErr))
+							log.Warn("failed to parse store ID", zap.Error(scanErr))
 						}
 					}
 
@@ -1294,17 +1294,12 @@ func (bc *Client) handleFineGrained(
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
 
-	failpoint.Inject("connect-error", func(v failpoint.Value) {
-		// create a berrors.ErrFailedToConnect
-		err = berrors.ErrFailedToConnect
-	})
-
 	if err != nil {
 		if berrors.Is(err, berrors.ErrFailedToConnect) {
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, errors.Annotatef(err, "failed to connect to store %d", storeID)
+			return 20000, errors.WithMessage(err, fmt.Sprintf("failed to connect to store %d", storeID))
 		}
 
 		logutil.CL(ctx).Error("fail to connect store", zap.Uint64("StoreID", storeID))
@@ -1343,7 +1338,7 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, errors.Annotatef(err, "failed to connect to store %d", storeID)
+			return 20000, errors.WithMessage(err, fmt.Sprintf("failed to connect to store %d", storeID))
 		}
 		logutil.CL(ctx).Error("failed to send fine-grained backup", zap.Uint64("storeID", storeID), logutil.ShortError(err))
 		return 0, errors.Annotatef(err, "failed to send fine-grained backup [%s, %s)",
