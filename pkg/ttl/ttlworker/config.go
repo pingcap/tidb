@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 const jobManagerLoopTickerInterval = 10 * time.Second
@@ -95,4 +98,19 @@ func getCheckJobTriggeredInterval() time.Duration {
 		return time.Duration(val.(int))
 	})
 	return 2 * time.Second
+}
+
+func getScanSplitCnt(store kv.Storage) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return splitScanCount
+	}
+
+	if cache := tikvStore.GetRegionCache(); cache != nil {
+		if tikvCnt := len(cache.GetStoresByType(tikvrpc.TiKV)); tikvCnt > splitScanCount {
+			return tikvCnt
+		}
+	}
+
+	return splitScanCount
 }

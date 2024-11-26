@@ -92,8 +92,6 @@ const (
 	TableKeyColumn = "KEY_COLUMN_USAGE"
 	// TableReferConst is the string constant of REFERENTIAL_CONSTRAINTS.
 	TableReferConst = "REFERENTIAL_CONSTRAINTS"
-	// TableSessionVar is the string constant of SESSION_VARIABLES.
-	TableSessionVar = "SESSION_VARIABLES"
 	tablePlugins    = "PLUGINS"
 	// TableConstraints is the string constant of TABLE_CONSTRAINTS.
 	TableConstraints = "TABLE_CONSTRAINTS"
@@ -106,15 +104,12 @@ const (
 	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
-	TableViews           = "VIEWS"
-	tableRoutines        = "ROUTINES"
-	tableParameters      = "PARAMETERS"
-	tableEvents          = "EVENTS"
-	tableGlobalStatus    = "GLOBAL_STATUS"
-	tableGlobalVariables = "GLOBAL_VARIABLES"
-	tableSessionStatus   = "SESSION_STATUS"
-	tableOptimizerTrace  = "OPTIMIZER_TRACE"
-	tableTableSpaces     = "TABLESPACES"
+	TableViews          = "VIEWS"
+	tableRoutines       = "ROUTINES"
+	tableParameters     = "PARAMETERS"
+	tableEvents         = "EVENTS"
+	tableOptimizerTrace = "OPTIMIZER_TRACE"
+	tableTableSpaces    = "TABLESPACES"
 	// TableCollationCharacterSetApplicability is the string constant of infoschema memory table.
 	TableCollationCharacterSetApplicability = "COLLATION_CHARACTER_SET_APPLICABILITY"
 	// TableProcesslist is the string constant of infoschema table.
@@ -245,35 +240,37 @@ const (
 )
 
 var tableIDMap = map[string]int64{
-	TableSchemata:                           autoid.InformationSchemaDBID + 1,
-	TableTables:                             autoid.InformationSchemaDBID + 2,
-	TableColumns:                            autoid.InformationSchemaDBID + 3,
-	tableColumnStatistics:                   autoid.InformationSchemaDBID + 4,
-	TableStatistics:                         autoid.InformationSchemaDBID + 5,
-	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
-	TableCollations:                         autoid.InformationSchemaDBID + 7,
-	tableFiles:                              autoid.InformationSchemaDBID + 8,
-	CatalogVal:                              autoid.InformationSchemaDBID + 9,
-	TableProfiling:                          autoid.InformationSchemaDBID + 10,
-	TablePartitions:                         autoid.InformationSchemaDBID + 11,
-	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
-	TableReferConst:                         autoid.InformationSchemaDBID + 13,
-	TableSessionVar:                         autoid.InformationSchemaDBID + 14,
-	tablePlugins:                            autoid.InformationSchemaDBID + 15,
-	TableConstraints:                        autoid.InformationSchemaDBID + 16,
-	tableTriggers:                           autoid.InformationSchemaDBID + 17,
-	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
-	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
-	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
-	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
-	TableEngines:                            autoid.InformationSchemaDBID + 22,
-	TableViews:                              autoid.InformationSchemaDBID + 23,
-	tableRoutines:                           autoid.InformationSchemaDBID + 24,
-	tableParameters:                         autoid.InformationSchemaDBID + 25,
-	tableEvents:                             autoid.InformationSchemaDBID + 26,
-	tableGlobalStatus:                       autoid.InformationSchemaDBID + 27,
-	tableGlobalVariables:                    autoid.InformationSchemaDBID + 28,
-	tableSessionStatus:                      autoid.InformationSchemaDBID + 29,
+	TableSchemata:         autoid.InformationSchemaDBID + 1,
+	TableTables:           autoid.InformationSchemaDBID + 2,
+	TableColumns:          autoid.InformationSchemaDBID + 3,
+	tableColumnStatistics: autoid.InformationSchemaDBID + 4,
+	TableStatistics:       autoid.InformationSchemaDBID + 5,
+	TableCharacterSets:    autoid.InformationSchemaDBID + 6,
+	TableCollations:       autoid.InformationSchemaDBID + 7,
+	tableFiles:            autoid.InformationSchemaDBID + 8,
+	CatalogVal:            autoid.InformationSchemaDBID + 9,
+	TableProfiling:        autoid.InformationSchemaDBID + 10,
+	TablePartitions:       autoid.InformationSchemaDBID + 11,
+	TableKeyColumn:        autoid.InformationSchemaDBID + 12,
+	TableReferConst:       autoid.InformationSchemaDBID + 13,
+	// Removed, see https://github.com/pingcap/tidb/issues/9154
+	// TableSessionVar:    autoid.InformationSchemaDBID + 14,
+	tablePlugins:          autoid.InformationSchemaDBID + 15,
+	TableConstraints:      autoid.InformationSchemaDBID + 16,
+	tableTriggers:         autoid.InformationSchemaDBID + 17,
+	TableUserPrivileges:   autoid.InformationSchemaDBID + 18,
+	tableSchemaPrivileges: autoid.InformationSchemaDBID + 19,
+	tableTablePrivileges:  autoid.InformationSchemaDBID + 20,
+	tableColumnPrivileges: autoid.InformationSchemaDBID + 21,
+	TableEngines:          autoid.InformationSchemaDBID + 22,
+	TableViews:            autoid.InformationSchemaDBID + 23,
+	tableRoutines:         autoid.InformationSchemaDBID + 24,
+	tableParameters:       autoid.InformationSchemaDBID + 25,
+	tableEvents:           autoid.InformationSchemaDBID + 26,
+	// Removed, see https://github.com/pingcap/tidb/issues/9154
+	// tableGlobalStatus:                    autoid.InformationSchemaDBID + 27,
+	// tableGlobalVariables:                 autoid.InformationSchemaDBID + 28,
+	// tableSessionStatus:                   autoid.InformationSchemaDBID + 29,
 	tableOptimizerTrace:                     autoid.InformationSchemaDBID + 30,
 	tableTableSpaces:                        autoid.InformationSchemaDBID + 31,
 	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
@@ -804,21 +801,6 @@ var tableEventsCols = []columnInfo{
 	{name: "CHARACTER_SET_CLIENT", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "COLLATION_CONNECTION", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "DATABASE_COLLATION", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
-}
-
-var tableGlobalStatusCols = []columnInfo{
-	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
-}
-
-var tableGlobalVariablesCols = []columnInfo{
-	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
-}
-
-var tableSessionStatusCols = []columnInfo{
-	{name: "VARIABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "VARIABLE_VALUE", tp: mysql.TypeVarchar, size: 1024},
 }
 
 var tableOptimizerTraceCols = []columnInfo{
@@ -2314,7 +2296,6 @@ var tableNameToColumns = map[string][]columnInfo{
 	TablePartitions:                         partitionsCols,
 	TableKeyColumn:                          keyColumnUsageCols,
 	TableReferConst:                         referConstCols,
-	TableSessionVar:                         sessionVarCols,
 	tablePlugins:                            pluginsCols,
 	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
@@ -2327,9 +2308,6 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
-	tableGlobalStatus:                       tableGlobalStatusCols,
-	tableGlobalVariables:                    tableGlobalVariablesCols,
-	tableSessionStatus:                      tableSessionStatusCols,
 	tableOptimizerTrace:                     tableOptimizerTraceCols,
 	tableTableSpaces:                        tableTableSpacesCols,
 	TableCollationCharacterSetApplicability: tableCollationCharacterSetApplicabilityCols,

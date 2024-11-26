@@ -33,7 +33,7 @@ import (
 type LogicalSort struct {
 	BaseLogicalPlan
 
-	ByItems []*util.ByItems
+	ByItems []*util.ByItems `hash64-equals:"true"`
 }
 
 // Init initializes LogicalSort.

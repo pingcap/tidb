@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -23,10 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -35,43 +38,171 @@ import (
 type CollectPredicateColumnsPoint struct{}
 
 // Optimize implements LogicalOptRule.<0th> interface.
-func (CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.LogicalPlan, _ *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
 		return plan, planChanged, nil
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
-	predicateColumns, histNeededColumns, visitedPhysTblIDs := CollectColumnStatsUsage(plan, histNeeded)
+	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
-		plan.SCtx().UpdateColStatsUsage(predicateColumns)
+		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below, and trigger extra sync/async
 	// stats loading for the determinate mode.
-	is := plan.SCtx().GetInfoSchema().(infoschema.InfoSchema)
-	tblID2Tbl := make(map[int64]table.Table)
+	is := plan.SCtx().GetDomainInfoSchema()
+	tblID2TblInfo := make(map[int64]*model.TableInfo)
 	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, int64(physicalTblID))
-		if tbl == nil {
+		tblInfo, _ := is.TableInfoByID(int64(physicalTblID))
+		if tblInfo == nil {
 			return
 		}
-		tblID2Tbl[int64(physicalTblID)] = tbl
+		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
+
+	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, histNeeded)
+	if !histNeeded {
+		return plan, planChanged, nil
+	}
+	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
+	for item, fullLoad := range predicateColumns {
+		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
+	}
 
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
 	// the virtual columns themselves. It's because virtual columns themselves don't have statistics, while expression
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
-	dependingVirtualCols := CollectDependingVirtualCols(tblID2Tbl, histNeededColumns)
+	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2Tbl)
+	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
-	if histNeeded && len(histNeededItems) > 0 {
+	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
+	if len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
 	}
 	return plan, planChanged, nil
+}
+
+// markAtLeastOneFullStatsLoadForEachTable marks at least one full stats load for each table.
+// It should be called after we use c.predicateCols to update the usage of predicate columns.
+func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
+	sctx planctx.PlanContext,
+	visitedPhysTblIDs *intset.FastIntSet,
+	tblID2TblInfo map[int64]*model.TableInfo,
+	predicateCols map[model.TableItemID]bool,
+	histNeeded bool,
+) {
+	statsHandle := domain.GetDomain(sctx).StatsHandle()
+	if statsHandle == nil {
+		// If there's no stats handler, it's abnormal status. Return directly.
+		return
+	}
+	physTblIDsWithNeededCols := intset.NewFastIntSet()
+	for neededCol, fullLoad := range predicateCols {
+		if !fullLoad {
+			continue
+		}
+		tblInfo := tblID2TblInfo[neededCol.TableID]
+		// If we don't find its table info, it might be deleted. Skip.
+		if tblInfo == nil {
+			continue
+		}
+		tableStats := statsHandle.GetTableStats(tblInfo)
+		if tableStats == nil || tableStats.Pseudo {
+			continue
+		}
+		if !tableStats.ColAndIdxExistenceMap.HasAnalyzed(neededCol.ID, neededCol.IsIndex) {
+			continue
+		}
+		physTblIDsWithNeededCols.Insert(int(neededCol.TableID))
+	}
+	visitedPhysTblIDs.ForEach(func(physicalTblID int) {
+		// 1. collect table metadata
+		tbl := tblID2TblInfo[int64(physicalTblID)]
+		if tbl == nil {
+			return
+		}
+
+		// 2. get the stats table
+		// If we already collected some columns that need trigger sync loading on this table, we don't need to
+		// additionally do anything for determinate mode.
+		if physTblIDsWithNeededCols.Has(physicalTblID) {
+			return
+		}
+		tblStats := statsHandle.GetTableStats(tbl)
+		if tblStats == nil || tblStats.Pseudo {
+			return
+		}
+		var colToTriggerLoad *model.TableItemID
+		for _, col := range tbl.Columns {
+			// Skip the column that satisfies any of the following conditions:
+			// 1. not in public state.
+			// 2. virtual generated column.
+			// 3. unanalyzed column.
+			if col.State != model.StatePublic || (col.IsGenerated() && !col.GeneratedStored) || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
+				continue
+			}
+			if colStats := tblStats.GetCol(col.ID); colStats != nil {
+				// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+				if colStats.IsFullLoad() {
+					colToTriggerLoad = nil
+					break
+				}
+			}
+			// Choose the first column we meet to trigger stats loading.
+			colToTriggerLoad = &model.TableItemID{TableID: int64(physicalTblID), ID: col.ID, IsIndex: false}
+			break
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		for _, idx := range tbl.Indices {
+			if idx.State != model.StatePublic || idx.MVIndex {
+				continue
+			}
+			// If any stats are already full loaded, we don't need to trigger stats loading on this table.
+			if idxStats := tblStats.GetIdx(idx.ID); idxStats != nil && idxStats.IsFullLoad() {
+				colToTriggerLoad = nil
+				break
+			}
+		}
+		if colToTriggerLoad == nil {
+			return
+		}
+		if histNeeded {
+			predicateCols[*colToTriggerLoad] = true
+		} else {
+			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
+		}
+	})
+}
+
+func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
+	histNeededItems []model.StatsLoadItem,
+	tid2pids map[int64][]int64,
+) []model.StatsLoadItem {
+	curLen := len(histNeededItems)
+	for i := 0; i < curLen; i++ {
+		partitionIDs := tid2pids[histNeededItems[i].TableID]
+		if len(partitionIDs) == 0 {
+			continue
+		}
+		for _, pid := range partitionIDs {
+			histNeededItems = append(histNeededItems, model.StatsLoadItem{
+				TableItemID: model.TableItemID{
+					TableID: pid,
+					ID:      histNeededItems[i].ID,
+					IsIndex: histNeededItems[i].IsIndex,
+				},
+				FullLoad: histNeededItems[i].FullLoad,
+			})
+		}
+	}
+	return histNeededItems
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.
@@ -179,7 +310,7 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 // but d will not be collected.
 // It's because currently it's impossible that statistics related to indirectly depending columns are actually needed.
 // If we need to check indirect dependency some day, we can easily extend the logic here.
-func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.StatsLoadItem) []model.StatsLoadItem {
+func CollectDependingVirtualCols(tblID2Tbl map[int64]*model.TableInfo, neededItems []model.StatsLoadItem) []model.StatsLoadItem {
 	generatedCols := make([]model.StatsLoadItem, 0)
 
 	// group the neededItems by table id
@@ -200,16 +331,16 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 		// collect the needed columns on this table into a set for faster lookup
 		colNameSet := make(map[string]struct{}, len(colIDs))
 		for _, colID := range colIDs {
-			name := tbl.Meta().FindColumnNameByID(colID)
+			name := tbl.FindColumnNameByID(colID)
 			if name == "" {
 				continue
 			}
 			colNameSet[name] = struct{}{}
 		}
 		// iterate columns in this table, and collect the virtual columns that depend on the needed columns
-		for _, col := range tbl.Cols() {
+		for _, col := range tbl.Columns {
 			// only handles virtual columns
-			if !col.IsVirtualGenerated() {
+			if col.State != model.StatePublic || !col.IsVirtualGenerated() {
 				continue
 			}
 			// If this column is already needed, then skip it.
@@ -235,7 +366,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
 func collectSyncIndices(ctx base.PlanContext,
 	histNeededColumns []model.StatsLoadItem,
-	tblID2Tbl map[int64]table.Table,
+	tblID2Tbl map[int64]*model.TableInfo,
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
@@ -247,18 +378,18 @@ func collectSyncIndices(ctx base.PlanContext,
 		if tbl == nil {
 			continue
 		}
-		colName := tbl.Meta().FindColumnNameByID(column.ID)
+		colName := tbl.FindColumnNameByID(column.ID)
 		if colName == "" {
 			continue
 		}
-		for _, idx := range tbl.Indices() {
-			if idx.Meta().State != model.StatePublic {
+		for _, idx := range tbl.Indices {
+			if idx.State != model.StatePublic {
 				continue
 			}
-			idxCol := idx.Meta().FindColumnByName(colName)
-			idxID := idx.Meta().ID
+			idxCol := idx.FindColumnByName(colName)
+			idxID := idx.ID
 			if idxCol != nil {
-				tblStats := stats.GetTableStats(tbl.Meta())
+				tblStats := stats.GetTableStats(tbl)
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
@@ -274,11 +405,11 @@ func collectSyncIndices(ctx base.PlanContext,
 }
 
 func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
-	histNeededItems = make([]model.StatsLoadItem, 0, len(histNeededColumns)+len(histNeededIndices))
+	histNeededItems = make([]model.StatsLoadItem, len(histNeededColumns), len(histNeededColumns)+len(histNeededIndices))
+	copy(histNeededItems, histNeededColumns)
 	for idx := range histNeededIndices {
 		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
-	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
 }
 

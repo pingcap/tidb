@@ -59,17 +59,17 @@ func (g *Group) Hash64(h base.Hasher) {
 
 // Equals implements the HashEquals.<1st> interface.
 func (g *Group) Equals(other any) bool {
-	if other == nil {
+	g2, ok := other.(*Group)
+	if !ok {
 		return false
 	}
-	switch x := other.(type) {
-	case *Group:
-		return g.groupID == x.groupID
-	case Group:
-		return g.groupID == x.groupID
-	default:
+	if g == nil {
+		return g2 == nil
+	}
+	if g2 == nil {
 		return false
 	}
+	return g.groupID == g2.groupID
 }
 
 // ******************************************* end of HashEqual methods *******************************************

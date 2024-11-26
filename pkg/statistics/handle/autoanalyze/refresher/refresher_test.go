@@ -377,6 +377,53 @@ func TestAnalyzeHighestPriorityTablesConcurrently(t *testing.T) {
 	require.Equal(t, int64(6), tblStats3.RealtimeCount)
 }
 
+func TestDoNotRetryTableNotExistJob(t *testing.T) {
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int, index idx(a))")
+	// Insert some data.
+	tk.MustExec("insert into t1 values (1, 1)")
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	sysProcTracker := dom.SysProcTracker()
+	r := refresher.NewRefresher(handle, sysProcTracker, dom.DDLNotifier())
+	defer r.Close()
+
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.True(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
+	require.Equal(t, 0, r.Len())
+	r.WaitAutoAnalyzeFinishedForTest()
+
+	// Insert more data.
+	tk.MustExec("insert into t1 values (4, 4), (5, 5), (6, 6)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	r.ProcessDMLChangesForTest()
+	require.Equal(t, 1, r.Len())
+
+	// Drop the database.
+	tk.MustExec("drop database test")
+
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.False(t, r.AnalyzeHighestPriorityTables(sctx))
+		return nil
+	}))
+	require.Equal(t, 0, r.Len())
+
+	r.ProcessDMLChangesForTest()
+	require.Equal(t, 0, r.Len())
+}
+
 func TestAnalyzeHighestPriorityTablesWithFailedAnalysis(t *testing.T) {
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {

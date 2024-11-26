@@ -31,36 +31,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
-	var tblInfo *model.TableInfo
-	var prefix string
-	if tbl, ok := is.TableByID(context.Background(), tblColID.TableID); ok {
-		tblInfo = tbl.Meta()
-		prefix = tblInfo.Name.L + "."
-	} else {
-		db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
-		require.True(t, exists, comment)
-		tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
-		require.NoError(t, err)
-		for _, tbl := range tblInfos {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				if def.ID == tblColID.TableID {
-					tblInfo = tbl
-					prefix = tbl.Name.L + "." + def.Name.L + "."
-					break
-				}
-			}
-			if tblInfo != nil {
-				break
+func getTblInfoByPhyID(t *testing.T, is infoschema.InfoSchema, physicalTblID int64) (*model.TableInfo, string) {
+	if tbl, ok := is.TableByID(context.Background(), physicalTblID); ok {
+		tblInfo := tbl.Meta()
+		return tblInfo, tblInfo.Name.L
+	}
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, exists)
+	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
+	require.NoError(t, err)
+	for _, tbl := range tblInfos {
+		pi := tbl.GetPartitionInfo()
+		if pi == nil {
+			continue
+		}
+		for _, def := range pi.Definitions {
+			if def.ID == physicalTblID {
+				return tbl, tbl.Name.L + "." + def.Name.L
 			}
 		}
-
-		require.NotNil(t, tblInfo, comment)
 	}
+	require.Fail(t, "table not found, physical ID: %d", physicalTblID)
+	return nil, ""
+}
+
+func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableItemID, comment string) string {
+	tblInfo, prefix := getTblInfoByPhyID(t, is, tblColID.TableID)
+	prefix += "."
 
 	var colName string
 	for _, col := range tblInfo.Columns {
@@ -83,10 +80,9 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 }
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
-	var tblColIDs []model.TableItemID
-	tblColIDs, _, _ = CollectColumnStatsUsage(lp, false)
+	tblColIDs, _, _ := CollectColumnStatsUsage(lp, false)
 	cols := make([]string, 0, len(tblColIDs))
-	for _, tblColID := range tblColIDs {
+	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
 		cols = append(cols, col)
 	}
@@ -94,16 +90,35 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 	require.Equal(t, expected, cols, comment)
 }
 
-func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
-	var loadItems []model.StatsLoadItem
-	_, loadItems, _ = CollectColumnStatsUsage(lp, true)
+func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
+	predicateCols, _, expandedPartitions := CollectColumnStatsUsage(lp, true)
+	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
+	for tblColID, fullLoad := range predicateCols {
+		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
+	}
 	cols := make([]string, 0, len(loadItems))
 	for _, item := range loadItems {
 		col := getStatsLoadItem(t, is, item, comment)
 		cols = append(cols, col)
 	}
 	sort.Strings(cols)
-	require.Equal(t, expected, cols, comment+", we get %v", cols)
+	require.Equal(t, expectedCols, cols, comment+", we get %v", cols)
+	if len(expectedParts) == 0 {
+		require.Empty(t, expandedPartitions, comment)
+		return
+	}
+	expanded := make(map[string][]string, len(expandedPartitions))
+	for tblID, partIDs := range expandedPartitions {
+		_, tblName := getTblInfoByPhyID(t, is, tblID)
+		parts := make([]string, 0, len(partIDs))
+		for _, partID := range partIDs {
+			_, partName := getTblInfoByPhyID(t, is, partID)
+			parts = append(parts, partName)
+		}
+		sort.Strings(parts)
+		expanded[tblName] = parts
+	}
+	require.Equal(t, expectedParts, expanded, comment)
 }
 
 func TestSkipSystemTables(t *testing.T) {
@@ -325,54 +340,56 @@ func TestCollectPredicateColumns(t *testing.T) {
 func TestCollectHistNeededColumns(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/disablePseudoCheck")
 	tests := []struct {
-		pruneMode string
-		sql       string
-		res       []string
+		pruneMode     string
+		sql           string
+		res           []string
+		expandedParts map[string][]string
 	}{
 		{
 			sql: "select * from t where a > 2",
-			res: []string{"t.a full", "t.b meta", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+			res: []string{"t.a full"},
 		},
 		{
 			sql: "select * from t where b in (2, 5) or c = 5",
-			res: []string{"t.a meta", "t.b full", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+			res: []string{"t.b full", "t.c full"},
 		},
 		{
 			sql: "select * from t where a + b > 1",
-			res: []string{"t.a full", "t.b full", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+			res: []string{"t.a full", "t.b full"},
 		},
 		{
 			sql: "select b, count(a) from t where b > 1 group by b having count(a) > 2",
-			res: []string{"t.a meta", "t.b full", "t.c meta", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta"},
+			res: []string{"t.a meta", "t.b full"},
 		},
 		{
 			sql: "select * from t as x join t2 as y on x.b + y.b > 2 and x.c > 1 and y.a < 1",
-			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a full", "t2.b meta", "t2.c meta"},
+			res: []string{"t.b meta", "t.c full", "t2.a full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > all(select b from t where t.c > 2)",
-			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b > any(select b from t where t.c > 2)",
-			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			sql: "select * from t2 where t2.b in (select b from t where t.c > 2)",
-			res: []string{"t.a meta", "t.b meta", "t.c full", "t.c_str meta", "t.d meta", "t.d_str meta", "t.e meta", "t.e_str meta", "t.f meta", "t.g meta", "t.h meta", "t.i_date meta", "t2.a meta", "t2.b meta", "t2.c meta"},
+			res: []string{"t.b meta", "t.c full", "t2.b meta"},
 		},
 		{
 			pruneMode: "static",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.p1.a meta", "pt1.p1.b full", "pt1.p1.c meta", "pt1.p1.c_str meta", "pt1.p1.d meta", "pt1.p1.d_str meta", "pt1.p1.e meta", "pt1.p1.e_str meta", "pt1.p1.f meta", "pt1.p1.g meta", "pt1.p1.h meta", "pt1.p1.i_date meta", "pt1.p1.ptn full", "pt1.p2.a meta", "pt1.p2.b full", "pt1.p2.c meta", "pt1.p2.c_str meta", "pt1.p2.d meta", "pt1.p2.d_str meta", "pt1.p2.e meta", "pt1.p2.e_str meta", "pt1.p2.f meta", "pt1.p2.g meta", "pt1.p2.h meta", "pt1.p2.i_date meta", "pt1.p2.ptn full"},
+			res:       []string{"pt1.b full", "pt1.ptn full"},
+			expandedParts: map[string][]string{
+				"pt1": {"pt1.p1", "pt1.p2"},
+			},
 		},
 		{
 			pruneMode: "dynamic",
 			sql:       "select * from pt1 where ptn < 20 and b > 1",
-			res:       []string{"pt1.a meta", "pt1.b full", "pt1.c meta", "pt1.c_str meta", "pt1.d meta", "pt1.d_str meta", "pt1.e meta", "pt1.e_str meta", "pt1.f meta", "pt1.g meta", "pt1.h meta", "pt1.i_date meta", "pt1.ptn full"},
+			res:       []string{"pt1.b full", "pt1.ptn full"},
 		},
 	}
 
@@ -405,6 +422,6 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags &= ^(rule.FlagJoinReOrder | rule.FlagPruneColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, comment)
+		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, tt.expandedParts, comment)
 	}
 }

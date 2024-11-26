@@ -114,7 +114,7 @@ ROW:
 	}
 }
 
-func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
+func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) allTableData {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -128,8 +128,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		vals: make([][]byte, 0),
 		tp:   make([]string, 0),
 	}
-	pid := physTable.GetPhysicalID()
-	prefix := tablecodec.EncodeTablePrefix(pid)
+	prefix := tablecodec.EncodeTablePrefix(tableID)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
 	for it.Valid() {
@@ -141,7 +140,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
-			require.Equal(t, pid, tblID)
+			require.Equal(t, tableID, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
@@ -336,6 +335,14 @@ func TestCoalesceKeyPartitionFailures(t *testing.T) {
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
 }
 
+func TestPartitionByNonPartitionedTable(t *testing.T) {
+	create := `create table t (a int)`
+	alter := `alter table t partition by range (a) (partition p0 values less than (20))`
+	beforeResult := testkit.Rows()
+	afterResult := testkit.Rows()
+	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult, "Fail4")
+}
+
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -385,7 +392,10 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			}
 			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
 			tOrg := external.GetTableByName(t, tk, "test", "t")
-			idxID := tOrg.Meta().Indices[0].ID
+			var idxID int64
+			if len(tOrg.Meta().Indices) > 0 {
+				idxID = tOrg.Meta().Indices[0].ID
+			}
 			oldCreate := tk.MustQuery(`show create table t`).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			testfailpoint.Enable(t, name, `return(true)`)
@@ -396,11 +406,17 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
-			require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
-			require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
-			require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			if partition == nil {
+				require.Nil(t, tOrg.Meta().Partition, suffix)
+			} else {
+				require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
+				require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+				require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+			}
 			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
-			require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			if idxID != 0 {
+				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
+			}
 			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
 			tk.MustExec(`admin check table t /* ` + suffix + ` */`)
 			for _, sql := range afterDML {
@@ -719,7 +735,7 @@ func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Ta
 	require.NotNil(t, pt)
 	cnt := 0
 	for _, def := range defs {
-		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
+		data := getAllDataForTableID(t, ctx, def.ID)
 		require.True(t, len(data.keys) == len(data.vals))
 		require.True(t, len(data.keys) == len(data.tp))
 		for _, s := range data.tp {
@@ -799,7 +815,7 @@ func TestReorgPartitionRollback(t *testing.T) {
 	// TODO: Check that there are no additional placement rules,
 	// bundles, or ranges with non-completed tableIDs
 	// (partitions used during reorg, but was dropped)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(1)`)
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
 	tk.MustExec(`admin check table t`)
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr")
@@ -916,4 +932,16 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into rb64 values ` + vals)
 	tk.MustExec(`alter table rb64 partition by range(b64) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb64 values ` + vals)
+}
+
+func TestPartitionIssue56634(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustContainErrMsg("alter table t partition by range(a) (partition p1 values less than (20))", "[ddl:-1]DDL job rollback, error msg: Injected error in StateDeleteReorganization") // should NOT panic
 }

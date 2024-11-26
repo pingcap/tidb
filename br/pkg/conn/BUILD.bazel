@@ -15,6 +15,7 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
         "@com_github_docker_go_units//:go-units",

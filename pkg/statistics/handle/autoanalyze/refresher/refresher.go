@@ -144,7 +144,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
 		}
-		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
+		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
@@ -186,6 +186,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 
 	statslogutil.SingletonStatsSamplerLogger().Info("No tables to analyze")
 	return false
+}
+
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return r.jobs.Snapshot()
 }
 
 func (r *Refresher) setAutoAnalysisTimeWindow(
@@ -256,6 +261,7 @@ func (*Refresher) OnBecomeOwner() {
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
 func (r *Refresher) OnRetireOwner() {
-	// Stop the worker and close the queue.
+	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
+	// To avoid blocking etcd leader re-election, we only close the priority queue.
 	r.jobs.Close()
 }

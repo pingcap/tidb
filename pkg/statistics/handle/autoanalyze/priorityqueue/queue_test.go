@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -217,6 +218,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	job2, err := pq.Pop()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID())
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	valid, _ = job2.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -330,6 +335,8 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID(), "t1 should not be in the queue since it's a running job")
 
 	// Analyze the job.
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 
 	// Add more rows to t1.
@@ -380,7 +387,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	sctx := tk.Session().(sessionctx.Context)
-	ok, _ := job.IsValidToAnalyze(sctx)
+	ok, _ := job.ValidateAndPrepare(sctx)
 	require.False(t, ok)
 
 	// Insert more rows.
@@ -601,4 +608,48 @@ func TestPQCanBeClosedAndReInitialized(t *testing.T) {
 
 	// Check if the priority queue is initialized.
 	require.True(t, pq.IsInitialized())
+}
+
+func TestPQHandlesTableDeletionGracefully(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t1 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Check the priority queue is not empty.
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.NotEqual(t, 0, l)
+
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Drop the table and mock the table stats is removed from the cache.
+	tk.MustExec("drop table t1")
+	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	require.NotNil(t, deleteEvent)
+	require.NoError(t, handle.HandleDDLEvent(deleteEvent))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Make sure handle.Get() returns false.
+	_, ok := handle.Get(tbl.Meta().ID)
+	require.False(t, ok)
+
+	require.NotPanics(t, func() {
+		pq.RefreshLastAnalysisDuration()
+	})
 }
