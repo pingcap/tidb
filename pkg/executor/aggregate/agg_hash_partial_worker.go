@@ -71,25 +71,16 @@ type HashAggPartialWorker struct {
 	inflightChunkSync *sync.WaitGroup
 }
 
-func (w *HashAggPartialWorker) getChildInput() bool {
+func (w *HashAggPartialWorker) getChildInput() (*chunk.Chunk, bool) {
 	select {
 	case <-w.finishCh:
-		return false
+		return nil, false
 	case chk, ok := <-w.inputCh:
 		if !ok {
-			return false
+			return nil, false
 		}
-
-		sizeBefore := w.chk.MemoryUsage()
-		w.chk.SwapColumns(chk)
-		w.memTracker.Consume(w.chk.MemoryUsage() - sizeBefore)
-
-		w.giveBackCh <- &HashAggInput{
-			chk:        chk,
-			giveBackCh: w.inputCh,
-		}
+		return chk, true
 	}
-	return true
 }
 
 func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
@@ -99,14 +90,24 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	}
 
 	waitStart := time.Now()
-	ok := w.getChildInput()
-	updateWaitTime(w.stats, waitStart)
-
+	chk, ok := w.getChildInput()
 	if !ok {
 		return false
 	}
 
 	defer w.inflightChunkSync.Done()
+	updateWaitTime(w.stats, waitStart)
+
+	w.intestDuringPartialWorkerRun()
+
+	sizeBefore := w.chk.MemoryUsage()
+	w.chk.SwapColumns(chk)
+	w.memTracker.Consume(w.chk.MemoryUsage() - sizeBefore)
+
+	w.giveBackCh <- &HashAggInput{
+		chk:        chk,
+		giveBackCh: w.inputCh,
+	}
 
 	execStart := time.Now()
 	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
