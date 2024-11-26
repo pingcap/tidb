@@ -77,7 +77,7 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
-type StoreBasedErr struct{
+type StoreBasedErr struct {
 	storeID uint64
 	message string
 	err     error
@@ -1186,8 +1186,10 @@ func (bc *Client) fineGrainedBackup(
 			case err := <-errCh:
 				if berrors.Is(err, berrors.ErrFailedToConnect) {
 					var storeID uint64
+					var message string
 					if storeErr, ok := err.(*StoreBasedErr); ok {
 						storeID = storeErr.storeID
+						message = storeErr.message
 					} else {
 						break
 					}
@@ -1199,12 +1201,12 @@ func (bc *Client) fineGrainedBackup(
 					}
 
 					if maxDisconnect[storeID] > 3 {
-						return errors.Annotatef(err, "failed to connect to store %d for 3 times", storeID)
+						return errors.Annotatef(err, "Store ID %d: %s", storeID, message)
 					} else {
 						break
 					}
 				}
-				
+
 				return errors.Trace(err)
 			case resp, ok := <-respCh:
 				if !ok {
@@ -1316,7 +1318,7 @@ func (bc *Client) handleFineGrained(
 				storeID: storeID,
 				message: "failed to connect to store",
 				err:     err,
-				}
+			}
 		}
 
 		logutil.CL(ctx).Error("fail to connect store", zap.Uint64("StoreID", storeID))
@@ -1359,7 +1361,7 @@ func (bc *Client) handleFineGrained(
 				storeID: storeID,
 				message: "failed to connect to store",
 				err:     err,
-				}
+			}
 		}
 		logutil.CL(ctx).Error("failed to send fine-grained backup", zap.Uint64("storeID", storeID), logutil.ShortError(err))
 		return 0, errors.Annotatef(err, "failed to send fine-grained backup [%s, %s)",
