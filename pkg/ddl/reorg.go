@@ -932,8 +932,8 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
 
-		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
-			return &info, errors.New("occur an error when update reorg handle")
+		failpoint.Inject("errorUpdateReorgHandle", func() {
+			failpoint.Return(&info, errors.New("occur an error when update reorg handle"))
 		})
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {
