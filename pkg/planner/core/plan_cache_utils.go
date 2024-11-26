@@ -436,14 +436,15 @@ type PlanCacheValue struct {
 	OptimizerEnvHash string // other environment information that might affect the plan like "time_zone", "sql_mode".
 	ParseValues      string // the actual values used when parsing/compiling this plan.
 	PlanDigest       string
+	BinaryPlan       string
 
 	// Runtime Info
 	Memory             int64     // the memory usage of this plan, in bytes.
 	LoadTime           time.Time // the time when this plan is loaded into the cache.
-	Executions         int64    // the execution times.
-	ProcessedKeys      int64    // the total number of processed keys in TiKV.
-	TotalKeys          int64    // the total number of returned keys in TiKV.
-	SumLatency         int64    // the total latency of this plan, in nanoseconds.
+	Executions         int64     // the execution times.
+	ProcessedKeys      int64     // the total number of processed keys in TiKV.
+	TotalKeys          int64     // the total number of returned keys in TiKV.
+	SumLatency         int64     // the total latency of this plan, in nanoseconds.
 	LastUsedTimeInUnix int64     // the last time when this plan is used, in Unix timestamp.
 
 	Plan          base.Plan          // not-read-only, session might update it before reusing
@@ -500,7 +501,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
-	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) +
+	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) + int64(len(v.BinaryPlan)) +
 		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
 
 	// Runtime Info Size
@@ -536,6 +537,9 @@ func NewPlanCacheValue(
 		userName = sctx.GetSessionVars().User.AuthUsername
 	}
 
+	flat := FlattenPhysicalPlan(plan, false)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+
 	// calculate opt env hash using cacheKey and paramTypes
 	// (cacheKey, paramTypes) contains all factors that can affect the plan
 	// use the same hash algo with SQLDigest: sha256 + hex
@@ -557,6 +561,7 @@ func NewPlanCacheValue(
 		OptimizerEnvHash: optEnvHash,
 		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
 		PlanDigest:       stmt.PlanDigest.String(),
+		BinaryPlan:       binaryPlan,
 
 		LoadTime:      time.Now(),
 		Plan:          plan,

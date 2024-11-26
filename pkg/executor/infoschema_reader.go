@@ -3909,8 +3909,6 @@ func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessi
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
 		pcv := v.(*plannercore.PlanCacheValue)
-		flat := plannercore.FlattenPhysicalPlan(pcv.Plan, false)
-		binaryPlan := plannercore.BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
 
 		row := make([]types.Datum, 0, 16)
 		row = append(row, types.NewStringDatum(pcv.SQLDigest))
@@ -3918,7 +3916,7 @@ func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessi
 		row = append(row, types.NewStringDatum(pcv.StmtType))
 		row = append(row, types.NewStringDatum(pcv.ParseUser))
 		row = append(row, types.NewStringDatum(pcv.PlanDigest))
-		row = append(row, types.NewStringDatum(binaryPlan))
+		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
 		row = append(row, types.NewStringDatum(pcv.Binding))
 		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
 		row = append(row, types.NewStringDatum(pcv.ParseValues))

@@ -607,3 +607,30 @@ func TestInstancePlanCacheRuntimeInfo(t *testing.T) {
 	tk.MustExec(`execute st1 using @a`)
 	require.Equal(t, int(v0.Executions), 5)
 }
+
+func TestInstancePlanCacheView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st1 from "select a from t where a<=?"`)
+	tk.MustExec(`prepare st2 from "select a from t where a=? and b=?"`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustExec(`execute st2 using @a, @b`)
+
+	tk.MustQuery(`select sql_text, stmt_type, parse_user, parse_values, executions from information_schema.tidb_plan_cache order by sql_text`).Check(
+		testkit.Rows("select a from t where a<=? Select root 1 2",
+			"select a from t where a=? and b=? Select root (1, 2) 2"))
+
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustQuery(`select sql_text, stmt_type, parse_user, parse_values, executions from information_schema.tidb_plan_cache order by sql_text`).Check(
+		testkit.Rows("select a from t where a<=? Select root 1 3",
+			"select a from t where a=? and b=? Select root (1, 2) 3"))
+}
