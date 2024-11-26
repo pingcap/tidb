@@ -247,9 +247,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	if option.SessionMemTracker != nil && option.EnabledRateLimitAction {
 		option.SessionMemTracker.FallbackOldAndSetNewAction(it.actionOnExceed)
 	}
-	if (it.concurrency + it.smallTaskConcurrency) > 1 {
-		it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
-	}
+	it.actionOnExceed.setEnabled(option.EnabledRateLimitAction)
 	return it, nil
 }
 
@@ -1090,8 +1088,10 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	if it.liteWorker != nil {
 		resp = it.liteSendReq()
 		if resp == nil {
+			it.actionOnExceed.close()
 			return nil, nil
 		}
+		it.actionOnExceed.destroyTokenIfNeeded(func() {})
 		if it.memTracker != nil {
 			consumed := resp.MemSize()
 			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
