@@ -58,11 +58,17 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	ukStrs := make([]string, 0, len(s.Keys))
+	strs := make([]string, 0, len(s.Keys))
 	for _, key := range s.Keys {
+		strs = append(strs, key.String())
+	}
+	ukStrs := make([]string, 0, len(s.Keys))
+	for _, key := range s.UniqueKeys {
 		ukStrs = append(ukStrs, key.String())
 	}
-	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+	return "Column: [" + strings.Join(colStrs, ",") +
+		"] Key: [" + strings.Join(strs, ",") +
+		"] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
@@ -79,7 +85,14 @@ func (s *Schema) Clone() *Schema {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
+	if s.UniqueKeys != nil {
+		uniqueKeys := make([]KeyInfo, 0, len(s.UniqueKeys))
+		for _, key := range s.UniqueKeys {
+			uniqueKeys = append(uniqueKeys, key.Clone())
+		}
+		schema.SetUniqueKeys(uniqueKeys)
+	}
 	return schema
 }
 
@@ -195,9 +208,14 @@ func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
 }
 
-// SetUniqueKeys will set the value of Schema.Keys.
-func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+// SetKeys will set the value of Schema.Keys.
+func (s *Schema) SetKeys(keys []KeyInfo) {
 	s.Keys = keys
+}
+
+// SetUniqueKeys will set the value of Schema.UniqueKeys.
+func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+	s.UniqueKeys = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.

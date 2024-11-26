@@ -1419,6 +1419,9 @@ var defaultSysVars = []*SysVar{
 			if str == "" || v < 0 {
 				return errors.Errorf("invalid tidb_instance_plan_cache_max_mem_size value %s", val)
 			}
+			if v < MinTiDBInstancePlanCacheMemSize {
+				return errors.Errorf("tidb_instance_plan_cache_max_mem_size should be at least 100MiB")
+			}
 			InstancePlanCacheMaxMemSize.Store(int64(v))
 			return nil
 		}},

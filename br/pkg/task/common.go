@@ -64,7 +64,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	flagChecksum            = "checksum"
+	FlagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -297,7 +297,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(flagChecksum, true, "Run checksum at end of task")
+	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -359,7 +359,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(FlagChecksum)
 	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
@@ -609,7 +609,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -777,6 +777,11 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	return nil
 }
 
+// OverrideDefaultForBackup override common config for backup tasks
+func (cfg *Config) OverrideDefaultForBackup() {
+	cfg.Checksum = false
+}
+
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
 	g glue.Glue, pds []string,
@@ -890,7 +895,8 @@ func ReadBackupMeta(
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
-	if f.Name == flagStorage {
+	switch f.Name {
+	case flagStorage, FlagStreamFullBackupStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
@@ -898,8 +904,14 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+		return zap.String(f.Name, "<redacted>")
+	case flagMasterKeyConfig:
+		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+		return zap.String(f.Name, "<redacted>")
+	default:
+		return zap.Stringer(f.Name, f.Value)
 	}
-	return zap.Stringer(f.Name, f.Value)
 }
 
 // LogArguments prints origin command arguments.

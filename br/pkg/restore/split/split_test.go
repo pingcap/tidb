@@ -11,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -936,8 +934,8 @@ func TestSplitPoint(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "h"), keyWithTablePrefix(tableID, "j"))
 	client.AppendRegion(keyWithTablePrefix(tableID, "j"), keyWithTablePrefix(tableID+1, "a"))
 
-	iter := NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := SplitPoint(ctx, iter, client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *RegionInfo, v []Valued) error {
+	iter := NewSplitHelperIterator([]*RewriteSplitter{{tableID: tableID, rule: rewriteRules, splitter: splitHelper}})
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *RegionInfo, v []Valued) error {
 		require.Equal(t, u, uint64(0))
 		require.Equal(t, o, int64(0))
 		require.Equal(t, ri.Region.StartKey, keyWithTablePrefix(tableID, "a"))
@@ -994,8 +992,8 @@ func TestSplitPoint2(t *testing.T) {
 	client.AppendRegion(keyWithTablePrefix(tableID, "o"), keyWithTablePrefix(tableID+1, "a"))
 
 	firstSplit := true
-	iter := NewSplitHelperIteratorForTest(splitHelper, tableID, rewriteRules)
-	err := SplitPoint(ctx, iter, client, func(ctx context.Context, rs *RegionSplitter, u uint64, o int64, ri *RegionInfo, v []Valued) error {
+	iter := NewSplitHelperIterator([]*RewriteSplitter{{tableID: tableID, rule: rewriteRules, splitter: splitHelper}})
+	err := SplitPoint(ctx, iter, client, func(ctx context.Context, u uint64, o int64, ri *RegionInfo, v []Valued) error {
 		if firstSplit {
 			require.Equal(t, u, uint64(0))
 			require.Equal(t, o, int64(0))
@@ -1027,87 +1025,4 @@ func TestSplitPoint2(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-}
-
-func fakeFile(tableID, rowID int64, length uint64, num int64) *backuppb.DataFileInfo {
-	return &backuppb.DataFileInfo{
-		StartKey:        fakeRowKey(tableID, rowID),
-		EndKey:          fakeRowKey(tableID, rowID+1),
-		TableId:         tableID,
-		Length:          length,
-		NumberOfEntries: num,
-	}
-}
-
-func fakeRowKey(tableID, rowID int64) kv.Key {
-	return codec.EncodeBytes(nil, tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(tableID), kv.IntHandle(rowID)))
-}
-
-func TestLogSplitHelper(t *testing.T) {
-	ctx := context.Background()
-	rules := map[int64]*restoreutils.RewriteRules{
-		1: {
-			Data: []*import_sstpb.RewriteRule{
-				{
-					OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
-					NewKeyPrefix: tablecodec.GenTableRecordPrefix(100),
-				},
-			},
-		},
-		2: {
-			Data: []*import_sstpb.RewriteRule{
-				{
-					OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
-					NewKeyPrefix: tablecodec.GenTableRecordPrefix(200),
-				},
-			},
-		},
-	}
-	oriRegions := [][]byte{
-		{},
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)),
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)),
-		codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)),
-	}
-	mockPDCli := NewMockPDClientForSplit()
-	mockPDCli.SetRegions(oriRegions)
-	client := NewClient(mockPDCli, nil, nil, 100, 4)
-	helper := NewLogSplitHelper(rules, client, 4*units.MiB, 400)
-
-	helper.Merge(fakeFile(1, 100, 100, 100))
-	helper.Merge(fakeFile(1, 200, 2*units.MiB, 200))
-	helper.Merge(fakeFile(2, 100, 3*units.MiB, 300))
-	helper.Merge(fakeFile(3, 100, 10*units.MiB, 100000))
-	// different regions, no split happens
-	err := helper.Split(ctx)
-	require.NoError(t, err)
-	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
-	require.NoError(t, err)
-	require.Len(t, regions, 3)
-	require.Equal(t, []byte{}, regions[0].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(100)), regions[1].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(200)), regions[2].Meta.StartKey)
-	require.Equal(t, codec.EncodeBytes(nil, tablecodec.EncodeTablePrefix(402)), regions[2].Meta.EndKey)
-
-	helper.Merge(fakeFile(1, 300, 3*units.MiB, 10))
-	helper.Merge(fakeFile(1, 400, 4*units.MiB, 10))
-	// trigger to split regions for table 1
-	err = helper.Split(ctx)
-	require.NoError(t, err)
-	regions, err = mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
-	require.NoError(t, err)
-	require.Len(t, regions, 4)
-	require.Equal(t, fakeRowKey(100, 400), kv.Key(regions[1].Meta.EndKey))
-}
-
-func NewSplitHelperIteratorForTest(helper *SplitHelper, tableID int64, rule *restoreutils.RewriteRules) *splitHelperIterator {
-	return &splitHelperIterator{
-		tableSplitters: []*rewriteSplitter{
-			{
-				tableID:  tableID,
-				rule:     rule,
-				splitter: helper,
-			},
-		},
-	}
 }

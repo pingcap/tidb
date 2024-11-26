@@ -13,7 +13,6 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
         "//pkg/disttask/importinto",

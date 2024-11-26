@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"go.uber.org/atomic"
 )
 
 // BackfillState is the state used by the backfill-merge process.
@@ -71,26 +72,52 @@ type DDLReorgMeta struct {
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`
-	// These two variables are set when corresponding session variables are set explicitly. When they are set,
-	// user cannot change it by setting the global one. Otherwise, they can be adjusted dynamically through global var.
-	Concurrency int `json:"concurrency"`
-	BatchSize   int `json:"batch_size"`
+	// These two variables are used to control the concurrency and batch size of the reorganization process.
+	// They can be adjusted dynamically through `admin alter ddl jobs` command.
+	// Note: Don't get or set these two variables directly, use the functions instead.
+	Concurrency   atomic.Int64 `json:"concurrency"`
+	BatchSize     atomic.Int64 `json:"batch_size"`
+	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
 }
 
-// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta or returns the default value.
+// GetConcurrencyOrDefault gets the concurrency from DDLReorgMeta,
+// pass the default value in case of the reorg meta coming from old cluster and Concurrency is 0.
 func (dm *DDLReorgMeta) GetConcurrencyOrDefault(defaultVal int) int {
-	if dm == nil || dm.Concurrency == 0 {
+	concurrency := dm.Concurrency.Load()
+	if concurrency == 0 {
 		return defaultVal
 	}
-	return dm.Concurrency
+	return int(concurrency)
 }
 
-// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta or returns the default value.
+// SetConcurrency sets the concurrency in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetConcurrency(concurrency int) {
+	dm.Concurrency.Store(int64(concurrency))
+}
+
+// GetBatchSizeOrDefault gets the batch size from DDLReorgMeta.
 func (dm *DDLReorgMeta) GetBatchSizeOrDefault(defaultVal int) int {
-	if dm == nil || dm.BatchSize == 0 {
+	batchSize := dm.BatchSize.Load()
+	if batchSize == 0 {
 		return defaultVal
 	}
-	return dm.BatchSize
+	return int(batchSize)
+}
+
+// SetBatchSize sets the batch size in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetBatchSize(batchSize int) {
+	dm.BatchSize.Store(int64(batchSize))
+}
+
+// GetMaxWriteSpeedOrDefault gets the max write speed from DDLReorgMeta.
+// 0 means no limit.
+func (dm *DDLReorgMeta) GetMaxWriteSpeedOrDefault() int {
+	return int(dm.MaxWriteSpeed.Load())
+}
+
+// SetMaxWriteSpeed sets the max write speed in DDLReorgMeta.
+func (dm *DDLReorgMeta) SetMaxWriteSpeed(maxWriteSpeed int) {
+	dm.MaxWriteSpeed.Store(int64(maxWriteSpeed))
 }
 
 const (
