@@ -38,7 +38,7 @@ func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey s
 func TestHANodeRandomShutdown(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 4, 15)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
 	// we keep [1, 10] nodes running, as we only have 10 subtask at stepOne
 	keepCount := int(math.Min(float64(c.NodeCount()-1), float64(c.Rand.Intn(10)+1)))
@@ -58,7 +58,7 @@ func TestHARandomShutdownInDifferentStep(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 6, 15)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// they might overlap, but will leave at least 2 nodes running
 	nodeNeedDownAtStepOne := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
 	nodeNeedDownAtStepTwo := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
@@ -92,7 +92,7 @@ func TestHAMultipleOwner(t *testing.T) {
 	}
 	require.Equal(t, prevCount+additionalOwnerCnt, c.NodeCount())
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 10; i++ {
 		taskKey := fmt.Sprintf("key%d", i)

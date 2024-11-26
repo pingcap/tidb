@@ -26,7 +26,7 @@ import (
 
 func TestFrameworkRollback(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
-	testutil.RegisterRollbackTaskMeta(t, c.MockCtrl, testutil.GetMockRollbackSchedulerExt(c.MockCtrl), c.TestContext)
+	testutil.RegisterTaskTypeForRollback(t, c.MockCtrl, testutil.GetMockRollbackSchedulerExt(c.MockCtrl), c.TestContext)
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/afterRefreshTask",
 		func(task *proto.Task) {

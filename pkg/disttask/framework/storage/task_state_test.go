@@ -19,7 +19,7 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -155,12 +155,12 @@ func TestModifyTask(t *testing.T) {
 	// task changed in middle of modifying
 	ch := make(chan struct{})
 	var wg tidbutil.WaitGroupWrapper
-	var once sync.Once
+	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeMoveToModifying", func() {
-		once.Do(func() {
+		if counter.Add(1) == 1 {
 			<-ch
 			<-ch
-		})
+		}
 	})
 	task, err := gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
