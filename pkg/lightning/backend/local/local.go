@@ -637,12 +637,7 @@ func NewBackend(
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
-	var writeLimiter StoreWriteLimiter
-	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
-	} else {
-		writeLimiter = noopStoreWriteLimiter{}
-	}
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
 		pdCli:     pdCli,
 		pdHTTPCli: pdHTTPCli,

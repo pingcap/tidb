@@ -307,9 +307,6 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	}
 	execute.SetFrameworkInfo(stepExecutor, resource)
 
-	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
-		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
-	})
 	if err := stepExecutor.Init(runStepCtx); err != nil {
 		e.onError(errors.Trace(err))
 		return e.getError()
@@ -403,24 +400,14 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		}()
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
-	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			err = ErrCancelSubtask
-		}
-	})
-
-	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
-		if val.(bool) {
-			err = context.Canceled
-		}
-	})
+	failpoint.InjectCall("changeRunSubtaskError", &err)
 
 	if err != nil {
 		e.onError(errors.Trace(err))
 	}
 
-	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
+	handled := e.markSubTaskCanceledOrFailed(ctx, subtask)
+	if handled {
 		return
 	}
 
@@ -430,24 +417,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		}
 	})
 
-	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
-		if val.(bool) {
-			e.onError(errors.New("MockExecutorRunErr"))
-		}
-	})
-	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
-		if taskID, ok := val.(int); ok {
-			mgr, err := storage.GetTaskManager()
-			if err != nil {
-				e.logger.Error("get task manager failed", zap.Error(err))
-			} else {
-				err = mgr.CancelTask(ctx, int64(taskID))
-				if err != nil {
-					e.logger.Error("cancel task failed", zap.Error(err))
-				}
-			}
-		}
-	})
+	failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
 	e.onSubtaskFinished(ctx, stepExecutor, subtask)
 }
 
@@ -456,22 +426,18 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		if err = executor.OnFinished(ctx, subtask); err != nil {
 			e.onError(errors.Trace(err))
 		}
+		failpoint.InjectCall("afterOnFinishedCalled", e)
 	}
-	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
-		if val.(bool) {
-			e.onError(errors.Trace(ErrCancelSubtask))
-		}
-	})
 
-	finished := e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
+	handled := e.markSubTaskCanceledOrFailed(ctx, subtask)
+	if handled {
 		return
 	}
 
 	e.finishSubtask(ctx, subtask)
 
-	finished = e.markSubTaskCanceledOrFailed(ctx, subtask)
-	if finished {
+	handled = e.markSubTaskCanceledOrFailed(ctx, subtask)
+	if handled {
 		return
 	}
 

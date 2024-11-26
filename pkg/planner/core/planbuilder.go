@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -5930,18 +5931,62 @@ func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminSt
 func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
 	switch opt.Name {
 	case AlterDDLJobThread:
-		thread := opt.Value.(*expression.Constant).Value.GetInt64()
+		thread, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
 		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
 			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
 				thread, opt.Name, variable.MaxConfigurableConcurrency)
 		}
 	case AlterDDLJobBatchSize:
-		batchSize := opt.Value.(*expression.Constant).Value.GetInt64()
+		batchSize, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
 		bs := int32(batchSize)
 		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
 			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
 				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
 		}
+	case AlterDDLJobMaxWriteSpeed:
+		speed, err := GetMaxWriteSpeedFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		if speed < 0 || speed > units.PiB {
+			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
+				strconv.FormatInt(speed, 10), opt.Name, 0, units.PiB)
+		}
 	}
 	return nil
+}
+
+// GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.
+func GetThreadOrBatchSizeFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value for %s is invalid, only integer is allowed", opt.Name)
+	}
+}
+
+// GetMaxWriteSpeedFromExpression gets the numeric value of the max write speed from the expression.
+func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, err error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETString:
+		speedStr := v.Value.GetString()
+		maxWriteSpeed, err = units.RAMInBytes(speedStr)
+		if err != nil {
+			return 0, errors.Annotate(err, "parse max_write_speed value error")
+		}
+	case types.ETInt:
+		maxWriteSpeed = v.Value.GetInt64()
+	default:
+		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
+	}
+	return maxWriteSpeed, nil
 }
