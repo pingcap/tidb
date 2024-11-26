@@ -214,6 +214,8 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TablePlanCache is the plan cache table.
+	TablePlanCache = "TIDB_PLAN_CACHE"
 )
 
 const (
@@ -338,6 +340,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TablePlanCache:                       autoid.InformationSchemaDBID + 96,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1717,6 +1720,11 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "PERCENTAGE_ACCESS_50_100", tp: mysql.TypeLonglong, size: 21},
 	{name: "PERCENTAGE_ACCESS_100", tp: mysql.TypeLonglong, size: 21},
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
+}
+
+var tablePlanCache = []columnInfo{
+	{name: "SQL_DIGEST", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
