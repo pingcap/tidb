@@ -196,13 +196,11 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		m.bundles = make(map[string]*placement.Bundle)
 	}
 
-	rules := 0
 	for _, bundle := range bundles {
 		if bundle.IsEmpty() {
 			delete(m.bundles, bundle.ID)
 		} else {
 			m.bundles[bundle.ID] = bundle
-			rules += len(bundle.Rules)
 		}
 	}
 
