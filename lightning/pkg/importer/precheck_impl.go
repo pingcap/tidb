@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -1466,7 +1467,7 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 	}
 
 	pdAddrsFromTiDB := make([]string, 0, len(pdAddrs))
-	rows, err := i.db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO")
+	rows, err := i.db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1477,11 +1478,17 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		u, err2 := url.Parse(addr)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
+		}
+		pdAddr := u.Host
+
 		// if intersection is not empty, we can say URLs from TiDB and PD are from the same cluster
-		if _, ok := pdAddrsMap[addr]; ok {
+		if _, ok := pdAddrsMap[pdAddr]; ok {
 			return theResult, nil
 		}
-		pdAddrsFromTiDB = append(pdAddrsFromTiDB, addr)
+		pdAddrsFromTiDB = append(pdAddrsFromTiDB, pdAddr)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, errors.Trace(err)
