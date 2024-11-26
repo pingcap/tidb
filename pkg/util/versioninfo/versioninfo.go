@@ -26,4 +26,6 @@ var (
 	TiDBGitBranch                  = "None"
 	TiDBEdition                    = CommunityEdition
 	TiDBEnterpriseExtensionGitHash = ""
+	TiDBSecurityAdvancedGitHash    = ""
+	TiDBEnterpriseUtilitiesGitHash = ""
 )
