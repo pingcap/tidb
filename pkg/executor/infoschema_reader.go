@@ -3839,7 +3839,7 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 }
 
 func (e *memtableRetriever) setDataFromPlanCache(ctx context.Context, sctx sessionctx.Context) error {
-	// TODO
+	pc := domain.GetDomain(sctx).GetInstancePlanCache()
 	return nil
 }
 
