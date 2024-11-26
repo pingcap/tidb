@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -51,8 +52,13 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(is))
-	for _, val := range h.StatsCache.Values() {
-		for _, col := range val.HistColl.Columns {
+	for i := 1; i < 10; i++ {
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.True(t, ok)
+		for _, col := range stats.Columns {
+			require.True(t, col.IsAllEvicted())
 			require.False(t, col.IsFullLoad())
 		}
 	}
@@ -65,9 +71,14 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	for i := 1; i < 10; i++ {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
 	}
-	for _, val := range h.StatsCache.Values() {
-		for _, col := range val.HistColl.Columns {
+	for i := 1; i < 10; i++ {
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.True(t, ok)
+		for _, col := range stats.Columns {
 			require.True(t, col.IsFullLoad())
+			require.False(t, col.IsAllEvicted())
 		}
 	}
 }
