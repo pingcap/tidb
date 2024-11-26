@@ -314,16 +314,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
-func newWriteRequest(meta *sst.SSTMeta, ResourceGroupName, TaskType string) *sst.WriteRequest {
+func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst.WriteRequest {
 	return &sst.WriteRequest{
 		Chunk: &sst.WriteRequest_Meta{
 			Meta: meta,
 		},
 		Context: &kvrpcpb.Context{
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
-				ResourceGroupName: ResourceGroupName,
+				ResourceGroupName: resourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, TaskType),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, taskType),
 			TxnSource:     kv.LightningPhysicalImportTxnSource,
 		},
 	}
