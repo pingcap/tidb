@@ -49,7 +49,7 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 func TestFrameworkPauseAndResume(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
 	var counter atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/beforeRefreshTask", func(task *proto.Task) {

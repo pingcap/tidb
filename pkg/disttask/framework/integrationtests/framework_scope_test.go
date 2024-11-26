@@ -65,7 +65,7 @@ func TestScopeBasic(t *testing.T) {
 	nodeCnt := 3
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
@@ -178,7 +178,7 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 func TestTargetScope(t *testing.T) {
 	nodeCnt := 10
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 	caseNum := 10
 	for i := 0; i < caseNum; i++ {
