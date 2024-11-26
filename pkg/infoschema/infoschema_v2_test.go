@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 
@@ -741,6 +742,14 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.True(t, dbItem.tomb)
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkSearchByID_100,
+		BenchmarkSearchByID_1000,
+		BenchmarkSearchByID_10000,
+	)
 }
 
 func BenchmarkSearchByID_100(b *testing.B) {
