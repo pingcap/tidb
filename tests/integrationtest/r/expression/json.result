@@ -518,9 +518,9 @@ select json_objectagg(a, b) from t;
 json_objectagg(a, b)
 {"a string": "base64:type252:YSBiaW5hcnkgc3RyaW5n"}
 select json_object(b, a) from t;
-Error 3144 (HY000): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
 select json_objectagg(b, a) from t;
-Error 3144 (HY000): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
 select cast(cast(b'010101' as json) as signed);
 cast(cast(b'010101' as json) as signed)
 0
@@ -771,3 +771,49 @@ insert into t values (NULL, NULL, NULL);
 select json_valid(j), json_valid(str), json_valid(other) from t;
 json_valid(j)	json_valid(str)	json_valid(other)
 NULL	NULL	NULL
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(id INT PRIMARY KEY, d1 DATE, d2 DATETIME, t1 TIME, t2 TIMESTAMP, b1 BIT, b2 BINARY);
+INSERT INTO t1 VALUES (1, '2024-06-14', '2024-06-14 09:37:00', '09:37:00', '2024-06-14 09:37:00', b'0', 0x41);
+SELECT JSON_TYPE(d1) FROM t1;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_type; a JSON string or JSON type is required.
+SELECT JSON_TYPE(d2) FROM t1;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_type; a JSON string or JSON type is required.
+SELECT JSON_TYPE(t1) FROM t1;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_type; a JSON string or JSON type is required.
+SELECT JSON_TYPE(t2) FROM t1;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_type; a JSON string or JSON type is required.
+SELECT JSON_TYPE(b1) FROM t1;
+Error 3146 (22032): Invalid data type for JSON data in argument 1 to function json_type; a JSON string or JSON type is required.
+SELECT JSON_TYPE(b2) FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_EXTRACT(b2, '$') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_MERGE(b2, '{a:"b"}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_CONTAINS_PATH(b2, 'one', '$.a') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT '1' member of(b2) FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_CONTAINS(b2, '{a:"b"}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_OVERLAPS(b2, '{a:"b"}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_MERGE_PATCH(b2, '{a:"b"}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_MERGE_PATCH('{a:"b"}', b2) FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_MERGE_PRESERVE(b2, '{a:"b"}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_MERGE_PRESERVE('{a:"b"}', b2) FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_SEARCH(b2, 'one', '1') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_KEYS(b2) FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+SELECT JSON_SCHEMA_VALID(b2, '{}') FROM t1;
+Error 3144 (22032): Cannot create a JSON value from a string with CHARACTER SET 'binary'.
+prepare stmt from 'select json_object(?, ?)';
+set @a=1;
+execute stmt using @a, @a;
+json_object(?, ?)
+{"1": 1}

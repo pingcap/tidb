@@ -5502,7 +5502,10 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
+		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
+		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
+		}
 	}
 
 	oldSchemaLen := p.Schema().Len()
@@ -7406,12 +7409,12 @@ func (b *PlanBuilder) genCTETableNameForError() string {
 
 func (b *PlanBuilder) buildWith(ctx context.Context, w *ast.WithClause) ([]*cteInfo, error) {
 	// Check CTE name must be unique.
-	nameMap := make(map[string]struct{})
+	b.nameMapCTE = make(map[string]struct{})
 	for _, cte := range w.CTEs {
-		if _, ok := nameMap[cte.Name.L]; ok {
+		if _, ok := b.nameMapCTE[cte.Name.L]; ok {
 			return nil, plannererrors.ErrNonUniqTable
 		}
-		nameMap[cte.Name.L] = struct{}{}
+		b.nameMapCTE[cte.Name.L] = struct{}{}
 	}
 	ctes := make([]*cteInfo, 0, len(w.CTEs))
 	for _, cte := range w.CTEs {

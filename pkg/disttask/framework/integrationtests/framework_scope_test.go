@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -65,7 +65,7 @@ func TestScopeBasic(t *testing.T) {
 	nodeCnt := 3
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, 3), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
@@ -81,10 +81,17 @@ func TestScopeBasic(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
-	<-scheduler.TestRefreshedChan
+	var fpEnabled atomic.Bool
+	ch := make(chan struct{})
+	fpEnabled.Store(true)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", func() {
+		if fpEnabled.Load() {
+			ch <- struct{}{}
+		}
+	})
+	<-ch
 	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😊", nodeCnt, "background", c.TestContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
+	fpEnabled.Store(false)
 
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
@@ -94,10 +101,10 @@ func TestScopeBasic(t *testing.T) {
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	time.Sleep(5 * time.Second)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()")
-	<-scheduler.TestRefreshedChan
+	fpEnabled.Store(true)
+	<-ch
 	taskID = submitTaskAndCheckSuccessForScope(c.Ctx, t, "😆", nodeCnt, "background", c.TestContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
+	fpEnabled.Store(false)
 	checkSubtaskOnNodes(c.Ctx, t, taskID, []string{":4000", ":4001"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows("background"))
@@ -146,12 +153,19 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 	for i := 0; i < len(testCase.nodeScopes); i++ {
 		tk.MustExec(fmt.Sprintf("update mysql.dist_framework_meta set role = \"%s\" where host = \"%s\"", testCase.nodeScopes[i], c.GetNodeIDByIdx(i)))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "3*return()")
-	<-scheduler.TestRefreshedChan
-	<-scheduler.TestRefreshedChan
-	<-scheduler.TestRefreshedChan
+	var fpEnabled atomic.Bool
+	ch := make(chan struct{})
+	fpEnabled.Store(true)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", func() {
+		if fpEnabled.Load() {
+			ch <- struct{}{}
+		}
+	})
+	<-ch
+	<-ch
+	<-ch
 	taskID := submitTaskAndCheckSuccessForScope(c.Ctx, t, "task"+strconv.Itoa(idx), nodeCnt, testCase.scope, c.TestContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
+	fpEnabled.Store(false)
 	expected := make([]string, 0)
 	for i, scope := range testCase.nodeScopes {
 		if scope == testCase.scope {
@@ -164,7 +178,7 @@ func runTargetScopeCase(t *testing.T, c *testutil.TestDXFContext, tk *testkit.Te
 func TestTargetScope(t *testing.T) {
 	nodeCnt := 10
 	c := testutil.NewTestDXFContext(t, nodeCnt, 16, true)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, getMockBasicSchedulerExtForScope(c.MockCtrl, nodeCnt), c.TestContext, nil)
 	tk := testkit.NewTestKit(t, c.Store)
 	caseNum := 10
 	for i := 0; i < caseNum; i++ {
