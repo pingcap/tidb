@@ -16,11 +16,14 @@ package instanceplancache
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -499,4 +502,68 @@ func TestInstancePlanCachePlan(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("execute stmt using %v", using))
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	}
+}
+
+func TestInstancePlanCacheMetaInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st from "select a from t where a<?"`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where a=1 and b>1`)
+	tk.MustExec(`prepare st from "select a from t where a=? and b>?"`)
+	tk.MustExec(`execute st using @a, @b`)
+	tk.MustExec(`prepare st from "insert into t values (?, 1)"`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`prepare st from "delete from t where a=?"`)
+	tk.MustExec(`execute st using @a`)
+
+	sctx := tk.Session()
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	require.Len(t, values, 4)
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].(*plannercore.PlanCacheValue).SQLDigest <
+			values[j].(*plannercore.PlanCacheValue).SQLDigest
+	})
+	v0 := values[0].(*plannercore.PlanCacheValue)
+	v1 := values[1].(*plannercore.PlanCacheValue)
+	v2 := values[2].(*plannercore.PlanCacheValue)
+	v3 := values[3].(*plannercore.PlanCacheValue)
+
+	require.Equal(t, "04fa858fa491c62d194faec2ab427261cc7998b3f1ccf8f6844febca504cb5e9", v0.SQLDigest)
+	require.Equal(t, "insert into t values (?, 1)", v0.SQLText)
+	require.Equal(t, "Insert", v0.StmtType)
+	require.Equal(t, "root", v0.UserName)
+	require.Equal(t, "", v0.Binding)
+	require.Equal(t, "f9e225bd7da9642b6b7d88fe53779d8e648498cba079813d95176bcc92ea094b", v0.OptimizerEnvHash)
+	require.Equal(t, "1", v0.PlanParameters)
+
+	require.Equal(t, "3689d7f367e2fdaf53c962c378efdf47799143b9af12f47e13ec247332269eac", v1.SQLDigest)
+	require.Equal(t, "select a from t where a<?", v1.SQLText)
+	require.Equal(t, "Select", v1.StmtType)
+	require.Equal(t, "root", v1.UserName)
+	require.Equal(t, "", v1.Binding)
+	require.Equal(t, "c1e1c3333410506a8e4d50143d88fa9236f3839b8d686d2e7023bbf4fc31d07c", v1.OptimizerEnvHash)
+	require.Equal(t, "1", v1.PlanParameters)
+
+	require.Equal(t, "4f18ccdf5f9eaf8e9a9cbcb2cd70410c8fffe9476ec80379673828cede6411b4", v2.SQLDigest)
+	require.Equal(t, "delete from t where a=?", v2.SQLText)
+	require.Equal(t, "Delete", v2.StmtType)
+	require.Equal(t, "root", v2.UserName)
+	require.Equal(t, "", v2.Binding)
+	require.Equal(t, "59d77024817209178c6ab9eb2fe20f42458b4baf8f2f294c082a77db988cbe62", v2.OptimizerEnvHash)
+	require.Equal(t, "1", v2.PlanParameters)
+
+	require.Equal(t, "7677cf31c60c2c719f6784f5fd62b07c80efd4ee3a34eca7a980826923581303", v3.SQLDigest)
+	require.Equal(t, "select a from t where a=? and b>?", v3.SQLText)
+	require.Equal(t, "Select", v3.StmtType)
+	require.Equal(t, "root", v3.UserName)
+	require.Equal(t, "SELECT /*+ use_index(`t` `a`)*/ `a` FROM `test`.`t` WHERE `a` = 1 AND `b` > 1", v3.Binding)
+	require.Equal(t, "ef22e8d6829ad940a77289e4d0c1653196443a7e1b1cb4fec8175bae696cc3cc", v3.OptimizerEnvHash)
+	require.Equal(t, "(1, 2)", v3.PlanParameters)
 }

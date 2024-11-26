@@ -17,10 +17,14 @@ package core
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"hash"
 	"math"
 	"slices"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -422,6 +426,15 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
+	// Meta Info
+	SQLDigest        string
+	SQLText          string
+	StmtType         string // select, update, insert, delete, etc.
+	UserName         string
+	Binding          string // the binding of this plan
+	OptimizerEnvHash string // other environment information that might affect the plan like "time_zone", "sql_mode".
+	PlanParameters   string // the parameter data to generate this plan
+
 	Plan          base.Plan          // not-read-only, session might update it before reusing
 	OutputColumns types.NameSlice    // read-only
 	memoryUsage   int64              // read-only
@@ -468,18 +481,59 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
+	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) +
+		int64(len(v.UserName)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.PlanParameters))
 	v.memoryUsage = sum
 	return
 }
 
+var planCacheHasherPool = sync.Pool{
+	New: func() interface{} {
+		return sha256.New()
+	},
+}
+
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
-	paramTypes []*types.FieldType, stmtHints *hint.StmtHints) *PlanCacheValue {
+func NewPlanCacheValue(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	cacheKey string,
+	binding string,
+	plan base.Plan, // the cached plan,
+	names []*types.FieldName, // output column names of this plan,
+	paramTypes []*types.FieldType, // corresponding parameter types of this plan,
+	stmtHints *hint.StmtHints, // corresponding hints of this plan,
+) *PlanCacheValue {
 	userParamTypes := make([]*types.FieldType, len(paramTypes))
 	for i, tp := range paramTypes {
 		userParamTypes[i] = tp.Clone()
 	}
+	var userName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+	}
+
+	// calculate opt env hash using cacheKey and paramTypes
+	// (cacheKey, paramTypes) contains all factors that can affect the plan
+	// use the same hash algo with SQLDigest: sha256 + hex
+	hasher := planCacheHasherPool.Get().(hash.Hash)
+	hasher.Write(hack.Slice(cacheKey))
+	for _, tp := range paramTypes {
+		hasher.Write(hack.Slice(tp.String()))
+	}
+	optEnvHash := hex.EncodeToString(hasher.Sum(nil))
+	hasher.Reset()
+	planCacheHasherPool.Put(hasher)
+
 	return &PlanCacheValue{
+		SQLDigest:        stmt.SQLDigest.String(),
+		SQLText:          stmt.StmtText,
+		StmtType:         stmt.PreparedAst.StmtType,
+		UserName:         userName,
+		Binding:          binding,
+		OptimizerEnvHash: optEnvHash,
+		PlanParameters:   types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
+
 		Plan:          plan,
 		OutputColumns: names,
 		paramTypes:    userParamTypes,
