@@ -430,10 +430,10 @@ type PlanCacheValue struct {
 	SQLDigest        string
 	SQLText          string
 	StmtType         string // select, update, insert, delete, etc.
-	UserName         string
-	Binding          string // the binding of this plan
+	ParseUser        string // the user who parses/compiles this plan.
+	Binding          string // the binding of this plan.
 	OptimizerEnvHash string // other environment information that might affect the plan like "time_zone", "sql_mode".
-	PlanParameters   string // the parameter data to generate this plan
+	ParseValues      string // the actual values used when parsing/compiling this plan.
 
 	Plan          base.Plan          // not-read-only, session might update it before reusing
 	OutputColumns types.NameSlice    // read-only
@@ -482,7 +482,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		sum += name.MemoryUsage()
 	}
 	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) +
-		int64(len(v.UserName)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.PlanParameters))
+		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
 	v.memoryUsage = sum
 	return
 }
@@ -529,10 +529,10 @@ func NewPlanCacheValue(
 		SQLDigest:        stmt.SQLDigest.String(),
 		SQLText:          stmt.StmtText,
 		StmtType:         stmt.PreparedAst.StmtType,
-		UserName:         userName,
+		ParseUser:        userName,
 		Binding:          binding,
 		OptimizerEnvHash: optEnvHash,
-		PlanParameters:   types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
+		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
 
 		Plan:          plan,
 		OutputColumns: names,
