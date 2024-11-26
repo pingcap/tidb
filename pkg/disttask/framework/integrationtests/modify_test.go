@@ -37,7 +37,7 @@ func TestModifyTaskConcurrency(t *testing.T) {
 		},
 	})
 	subtaskCh := make(chan struct{})
-	testutil.RegisterTaskMeta(t, c.MockCtrl, schedulerExt, c.TestContext,
+	registerExampleTask(t, c.MockCtrl, schedulerExt, c.TestContext,
 		func(ctx context.Context, subtask *proto.Subtask) error {
 			select {
 			case <-subtaskCh:
