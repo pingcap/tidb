@@ -119,7 +119,8 @@ func CheckBundle(bundle *placement.Bundle) error {
 	keys := make([]keyRange, 0, len(bundle.Rules))
 	for _, rule := range bundle.Rules {
 		if rule.GroupID != bundle.ID {
-			return fmt.Errorf("rule group id %s is not same as bundle id %s", rule.GroupID, bundle.ID)
+			// TODO: also check cross IDs
+			continue
 		}
 		keys = append(keys, keyRange{
 			groupID:  rule.GroupID,
@@ -131,7 +132,7 @@ func CheckBundle(bundle *placement.Bundle) error {
 		})
 	}
 	if len(keys) == 0 {
-		return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, no rule left`)
+		return nil
 	}
 	// Skip overridden rules, but only within the bundle, not across groups
 	applyKeys := keys[:0]
