@@ -145,7 +145,7 @@ func (s *BaseScheduler) refreshTaskIfNeeded() error {
 	if err != nil {
 		return err
 	}
-	// state might be changed by user to pausing/resuming/cancelling, or
+	// state might be changed by user to pausing/resuming/cancelling/modifying, or
 	// in case of network partition, state/step/meta might be changed by other scheduler,
 	// in both cases we refresh the whole task object.
 	if newTaskBase.State != task.State || newTaskBase.Step != task.Step {
@@ -206,8 +206,7 @@ func (s *BaseScheduler) scheduleTask() {
 				return
 			}
 		case proto.TaskStateResuming:
-			// Case with 2 nodes.
-			// Here is the timeline
+			// need to check allocatedSlots for the following case:
 			// 1. task in pausing state.
 			// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
 			// 3. node1's scheduler transfer the node from pausing to paused state.
@@ -221,10 +220,20 @@ func (s *BaseScheduler) scheduleTask() {
 		case proto.TaskStateReverting:
 			err = s.onReverting()
 		case proto.TaskStatePending:
+			// need to check allocatedSlots for the following case:
+			// 1. task in modifying state, node A and B start schedulers with
+			//    task in modifying state without allocatedSlots.
+			// 2. node A's scheduler finished modifying, and transfer the node
+			//    from modifying to pending state.
+			// 3. node B's scheduler call refreshTask and get task with pending
+			//    state, but this scheduler has not allocated slots.
+			if !s.allocatedSlots {
+				s.logger.Info("scheduler exit since not allocated slots", zap.Stringer("state", task.State))
+				return
+			}
 			err = s.onPending()
 		case proto.TaskStateRunning:
-			// Case with 2 nodes.
-			// Here is the timeline
+			// need to check allocatedSlots for the following case:
 			// 1. task in pausing state.
 			// 2. node1 and node2 start schedulers with task in pausing state without allocatedSlots.
 			// 3. node1's scheduler transfer the node from pausing to paused state.
@@ -236,6 +245,12 @@ func (s *BaseScheduler) scheduleTask() {
 				return
 			}
 			err = s.onRunning()
+		case proto.TaskStateModifying:
+			var recreateScheduler bool
+			recreateScheduler, err = s.onModifying()
+			if err == nil && recreateScheduler {
+				return
+			}
 		case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
 			s.onFinished()
 			return
@@ -383,6 +398,13 @@ func (s *BaseScheduler) onRunning() error {
 	s.OnTick(s.ctx, task)
 	s.logger.Debug("on running state, this task keeps current state", zap.Stringer("state", task.State))
 	return nil
+}
+
+// onModifying is called when task is in modifying state.
+// the first return value indicates whether the scheduler should be recreated.
+func (*BaseScheduler) onModifying() (bool, error) {
+	// TODO: implement me
+	panic("implement me")
 }
 
 func (s *BaseScheduler) onFinished() {

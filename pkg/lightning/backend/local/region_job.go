@@ -780,6 +780,16 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	return resp, nil
 }
 
+// UpdateWriteSpeedLimit updates the write limiter of the backend.
+func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+	local.writeLimiter.UpdateLimit(limit)
+}
+
+// GetWriteSpeedLimit returns the speed of the write limiter.
+func (local *Backend) GetWriteSpeedLimit() int {
+	return local.writeLimiter.Limit()
+}
+
 // convertStageOnIngestError will try to fix the error contained in ingest response.
 // Return (_, error) when another error occurred.
 // Return (true, nil) when the job can retry ingesting immediately.
