@@ -210,6 +210,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -727,6 +729,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -743,7 +758,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -3897,6 +3912,40 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		pcv := v.(*plannercore.PlanCacheValue)
+
+		row := make([]types.Datum, 0, 16)
+		row = append(row, types.NewStringDatum(pcv.SQLDigest))
+		row = append(row, types.NewStringDatum(pcv.SQLText))
+		row = append(row, types.NewStringDatum(pcv.StmtType))
+		row = append(row, types.NewStringDatum(pcv.ParseUser))
+		row = append(row, types.NewStringDatum(pcv.PlanDigest))
+		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
+		row = append(row, types.NewStringDatum(pcv.Binding))
+		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
+		row = append(row, types.NewStringDatum(pcv.ParseValues))
+		row = append(row, types.NewIntDatum(pcv.Memory))
+		exec, procKeys, totKeys, sumLat, lastTime := pcv.RuntimeInfo()
+		row = append(row, types.NewIntDatum(exec))
+		row = append(row, types.NewIntDatum(procKeys))
+		row = append(row, types.NewIntDatum(totKeys))
+		row = append(row, types.NewIntDatum(sumLat))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
+
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }

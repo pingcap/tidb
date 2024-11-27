@@ -275,7 +275,7 @@ func startBackup(
 						}
 						return nil
 					})
-				}, utils.NewBackupSSTBackoffer())
+				}, utils.NewBackupSSTBackoffStrategy())
 			})
 		}
 		return eg.Wait()
