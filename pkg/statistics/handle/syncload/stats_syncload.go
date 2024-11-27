@@ -105,11 +105,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 		localItem := item
 		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
 			timer := time.NewTimer(timeout)
-			finalTimer := time.NewTimer(timeout*RetryCount + time.Microsecond*10)
-			defer func() {
-				timer.Stop()
-				finalTimer.Stop()
-			}()
+			defer timer.Stop()
 			task := &statstypes.NeededItemTask{
 				Item:      localItem,
 				ToTimeout: time.Now().Local().Add(timeout),
@@ -119,7 +115,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			case s.StatsLoad.NeededItemsCh <- task:
 				metrics.SyncLoadDedupCounter.Inc()
 				select {
-				case <-finalTimer.C:
+				case <-timer.C:
 					return nil, errors.New("sync load took too long to return")
 				case result, ok := <-task.ResultCh:
 					intest.Assert(ok, "task.ResultCh cannot be closed")
