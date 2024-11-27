@@ -25,8 +25,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fatih/color"
 	"github.com/gogo/protobuf/proto"
 	"github.com/opentracing/opentracing-go"
@@ -212,6 +214,11 @@ type LogClient struct {
 
 	// checkpoint information for log restore
 	useCheckpoint bool
+
+	restoreSSTKVSize  atomic.Uint64
+	restoreSSTKVCount atomic.Uint64
+	restoreSSTPhySize atomic.Uint64
+	restoreSSTTakes   atomic.Uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -260,6 +267,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	importModeSwitcher *restore.ImportModeSwitcher,
 	onProgress func(int64),
 ) error {
+	begin := time.Now()
 	backupFileSets := make([]restore.BackupFileSet, 0, 8)
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
@@ -327,7 +335,31 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			return errors.Trace(err)
 		}
 	}
-	return rc.sstRestoreManager.restorer.WaitUntilFinish()
+	err := rc.sstRestoreManager.restorer.WaitUntilFinish()
+
+	for _, files := range backupFileSets {
+		for _, f := range files.SSTFiles {
+			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
+			rc.restoreSSTKVCount.Add(f.TotalKvs)
+			rc.restoreSSTKVSize.Add(f.TotalBytes)
+			rc.restoreSSTPhySize.Add(f.Size_)
+		}
+	}
+	rc.restoreSSTTakes.Add(uint64(time.Since(begin)))
+
+	return err
+}
+
+func (rc *LogClient) RestoreSSTStatisticFields(pushTo *[]zapcore.Field) {
+	takes := time.Duration(rc.restoreSSTTakes.Load())
+	fields := []zapcore.Field{
+		zap.Uint64("restore-sst-kv-count", rc.restoreSSTKVCount.Load()),
+		zap.Uint64("restore-sst-kv-size", rc.restoreSSTKVSize.Load()),
+		zap.Uint64("restore-sst-physical-size (after compression)", rc.restoreSSTPhySize.Load()),
+		zap.Duration("restore-sst-total-take", takes),
+		zap.String("average-speed (sst)", units.HumanSize(float64(rc.restoreSSTKVSize.Load())/takes.Seconds())+"/s"),
+	}
+	*pushTo = append(*pushTo, fields...)
 }
 
 func (rc *LogClient) SetRawKVBatchClient(

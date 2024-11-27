@@ -62,6 +62,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -129,6 +130,18 @@ type StreamConfig struct {
 
 	// Spec for the command `advancer`.
 	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+}
+
+func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	flagsDef(fs)
+	DefineCommonFlags(fs)
+	cfg := StreamConfig{}
+	err := cfg.ParseFromFlags(fs)
+	if err != nil {
+		log.Panic("failed to parse backup flags to config", zap.Error(err))
+	}
+	return cfg
 }
 
 func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
@@ -1256,6 +1269,7 @@ func restoreStream(
 		checkpointTotalKVCount uint64
 		checkpointTotalSize    uint64
 		currentTS              uint64
+		extraFields            []zapcore.Field
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1264,18 +1278,20 @@ func restoreStream(
 			summary.Log("restore log failed summary", zap.Error(err))
 		} else {
 			totalDureTime := time.Since(startTime)
-			summary.Log("restore log success summary", zap.Duration("total-take", totalDureTime),
-				zap.Uint64("source-start-point", cfg.StartTS),
-				zap.Uint64("source-end-point", cfg.RestoreTS),
-				zap.Uint64("target-end-point", currentTS),
-				zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
-				zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
-				zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
-				zap.Uint64("total-kv-count", totalKVCount),
-				zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
-				zap.String("total-size", units.HumanSize(float64(totalSize))),
-				zap.String("skipped-size-by-checkpoint", units.HumanSize(float64(checkpointTotalSize))),
-				zap.String("average-speed", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s"),
+			summary.Log("restore log success summary",
+				append([]zapcore.Field{zap.Duration("total-take", totalDureTime),
+					zap.Uint64("source-start-point", cfg.StartTS),
+					zap.Uint64("source-end-point", cfg.RestoreTS),
+					zap.Uint64("target-end-point", currentTS),
+					zap.String("source-start", stream.FormatDate(oracle.GetTimeFromTS(cfg.StartTS))),
+					zap.String("source-end", stream.FormatDate(oracle.GetTimeFromTS(cfg.RestoreTS))),
+					zap.String("target-end", stream.FormatDate(oracle.GetTimeFromTS(currentTS))),
+					zap.Uint64("total-kv-count", totalKVCount),
+					zap.Uint64("skipped-kv-count-by-checkpoint", checkpointTotalKVCount),
+					zap.String("total-size", units.HumanSize(float64(totalSize))),
+					zap.String("skipped-size-by-checkpoint", units.HumanSize(float64(checkpointTotalSize))),
+					zap.String("average-speed (log)", units.HumanSize(float64(totalSize)/totalDureTime.Seconds())+"/s")},
+					extraFields...)...,
 			)
 		}
 	}()
@@ -1297,6 +1313,7 @@ func restoreStream(
 		return errors.Annotate(err, "failed to create restore client")
 	}
 	defer client.Close(ctx)
+	defer client.RestoreSSTStatisticFields(&extraFields)
 
 	if taskInfo != nil && taskInfo.Metadata != nil {
 		// reuse the task's rewrite ts
