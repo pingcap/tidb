@@ -1522,6 +1522,7 @@ func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
 }
 
+// IsLeaseExpired returns whether lease has expired
 func (do *Domain) IsLeaseExpired() bool {
 	startReloadTime := time.Now()
 	return time.Since(startReloadTime) > do.schemaLease
