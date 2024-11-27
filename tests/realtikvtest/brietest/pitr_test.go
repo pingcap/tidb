@@ -2,8 +2,11 @@ package brietest
 
 import (
 	"context"
+	"fmt"
 	"math"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
@@ -14,6 +17,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -44,8 +49,7 @@ func (tk TestKitGlue) StartProgress(ctx context.Context, cmdName string, total i
 }
 
 // Record records some information useful for log-less summary.
-func (tk TestKitGlue) Record(name string, value uint64) {
-}
+func (tk TestKitGlue) Record(name string, value uint64) {}
 
 // GetVersion gets BR package version to run backup/restore job
 func (tk TestKitGlue) GetVersion() string {
@@ -75,6 +79,8 @@ type LogBackupKit struct {
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
 	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
+	// So the cases can finish faster...
+	tk.MustExec("set config tikv `log-backup.max-flush-interval` = '30s';")
 	return &LogBackupKit{
 		tk:      tk,
 		t:       t,
@@ -83,25 +89,77 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	}
 }
 
-func (kit *LogBackupKit) RunLogStart(taskName string) {
+func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
+	kit.mustExec(func(ctx context.Context) error {
+		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
+		cfg.Storage = "local://" + kit.base + "/full"
+
+		extConfig(&cfg)
+		return task.RunRestore(ctx, kit.Glue(), task.FullRestoreCmd, &cfg)
+	})
+}
+
+func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
+	kit.mustExec(func(ctx context.Context) error {
+		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
+		cfg.Storage = "local://" + kit.base + "/incr"
+		cfg.FullBackupStorage = "local://" + kit.base + "/full"
+
+		extConfig(&cfg)
+		return task.RunRestore(ctx, kit.Glue(), task.PointRestoreCmd, &cfg)
+	})
+}
+
+func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
+	kit.mustExec(func(ctx context.Context) error {
+		cfg := task.DefaultBackupConfig(task.DefaultConfig())
+		cfg.Storage = "local://" + kit.base + "/full"
+		extConfig(&cfg)
+		return task.RunBackup(ctx, kit.Glue(), "backup full[intest]", &cfg)
+	})
+}
+
+func (kit *LogBackupKit) StopTaskIfExists(taskName string) {
 	kit.mustExec(func(ctx context.Context) error {
 		cfg := task.DefaultStreamConfig(task.DefineStreamCommonFlags)
 		cfg.TaskName = taskName
-		return task.RunStreamStop(ctx, kit.Glue(), "stream stop[intest]", &cfg)
-	})
-
-	kit.mustExec(func(ctx context.Context) error {
-		cfg := task.DefaultStreamConfig(task.DefineStreamStartFlags)
-		cfg.Storage = "local://" + kit.base
-		cfg.TaskName = taskName
-		cfg.EndTS = math.MaxUint64
-		err := task.RunStreamStart(ctx, kit.Glue(), "stream start[intest]", &cfg)
+		err := task.RunStreamStop(ctx, kit.Glue(), "stream stop[intest]", &cfg)
+		if err != nil && strings.Contains(err.Error(), "task not found") {
+			return nil
+		}
 		return err
 	})
 }
 
-func (kit *LogBackupKit) RunLogStatus(taskName string) {
+func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.StreamConfig)) {
+	kit.mustExec(func(ctx context.Context) error {
+		cfg := task.DefaultStreamConfig(task.DefineStreamStartFlags)
+		cfg.Storage = "local://" + kit.base + "/incr"
+		cfg.TaskName = taskName
+		cfg.EndTS = math.MaxUint64
+		extConfig(&cfg)
+		err := task.RunStreamStart(ctx, kit.Glue(), "stream start[intest]", &cfg)
+		return err
+	})
+	kit.t.Cleanup(func() { kit.StopTaskIfExists(taskName) })
+}
 
+func (kit *LogBackupKit) ctx() context.Context {
+	return context.Background()
+}
+
+func (kit *LogBackupKit) TSO() uint64 {
+	ts, err := kit.tk.Session().GetStore().(tikv.Storage).GetOracle().GetTimestamp(kit.ctx(), &oracle.Option{})
+	require.NoError(kit.t, err)
+	return ts
+}
+
+func (kit *LogBackupKit) CheckpointTSOf(taskName string) uint64 {
+	task, err := kit.metaCli.GetTask(kit.ctx(), taskName)
+	require.NoError(kit.t, err)
+	ts, err := task.GetGlobalCheckPointTS(kit.ctx())
+	require.NoError(kit.t, err)
+	return ts
 }
 
 func (kit *LogBackupKit) Glue() glue.Glue {
@@ -115,7 +173,77 @@ func (kit *LogBackupKit) mustExec(f func(context.Context) error) {
 	require.NoError(kit.t, err)
 }
 
+func createSimpleTableWithData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTs test.%s", kit.t.Name()))
+	kit.tk.MustExec(fmt.Sprintf("CREATE TABLE test.%s(t text)", kit.t.Name()))
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Ear'), ('Eye'), ('Nose')", kit.t.Name()))
+}
+
+func insertSimpleIncreaseData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Body')", kit.t.Name()))
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Mind')", kit.t.Name()))
+}
+
+func verifySimpleData(kit *LogBackupKit) {
+	kit.tk.MustQuery(fmt.Sprintf("SELECT * FROM test.%s", kit.t.Name())).Check([][]any{{"Ear"}, {"Eye"}, {"Nose"}, {"Body"}, {"Mind"}})
+}
+
+func cleanSimpleData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE test.%s", kit.t.Name()))
+}
+
 func TestPiTR(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	kit.RunLogStart("fiolvit")
+
+	taskName := "simple"
+	createSimpleTableWithData(kit)
+
+	ts := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) { bc.BackupTS = ts })
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) { sc.StartTS = ts })
+
+	insertSimpleIncreaseData(kit)
+
+	ts = kit.TSO()
+	require.Eventually(t, func() bool {
+		return kit.CheckpointTSOf(taskName) >= ts
+	}, 300*time.Second, 10*time.Second)
+
+	cleanSimpleData(kit)
+
+	kit.StopTaskIfExists(taskName)
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {})
+	verifySimpleData(kit)
+}
+
+func TestPiTRAndBackup(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	createSimpleTableWithData(kit)
+	insertSimpleIncreaseData(kit)
+
+	taskName := t.Name()
+
+	kit.RunFullBackup(func(bc *task.BackupConfig) {})
+	cleanSimpleData(kit)
+
+	ts := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		bc.Storage = "local://" + kit.base + "/full2"
+		bc.BackupTS = ts
+	})
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
+		sc.StartTS = ts
+	})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+
+	ts = kit.TSO()
+	require.Eventually(t, func() bool {
+		return kit.CheckpointTSOf(taskName) >= ts
+	}, 300*time.Second, 10*time.Second)
+
+	cleanSimpleData(kit)
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.FullBackupStorage = "local://" + kit.base + "/full2"
+	})
+	verifySimpleData(kit)
 }

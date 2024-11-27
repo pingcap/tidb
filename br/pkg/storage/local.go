@@ -266,6 +266,9 @@ func (l *LocalStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec Cop
 	}
 	from := filepath.Join(sl.base, spec.From)
 	to := filepath.Join(l.base, spec.To)
+	if err := mkdirAll(filepath.Dir(to)); err != nil {
+		return errors.Trace(err)
+	}
 	return os.Link(from, to)
 }
 
