@@ -79,6 +79,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		args := []any{lastVersion}
 
 		if len(tableAndPartitionIDs) > 0 {
+			// When updating specific tables, we skip incrementing the max stats version to avoid missing
+			// delta updates for other tables. The max version only advances when doing a full update.
 			skipMoveForwardStatsCache = true
 			// Sort and deduplicate the table IDs to remove duplicates
 			slices.Sort(tableAndPartitionIDs)
