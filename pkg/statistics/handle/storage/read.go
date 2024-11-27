@@ -619,6 +619,7 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
+<<<<<<< HEAD
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
 	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
@@ -631,6 +632,41 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		return nil
 	}
 	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
+=======
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	statsTbl, ok := statsHandle.Get(col.TableID)
+	if !ok {
+		return nil
+	}
+	// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+	// so we have to get the column info from the domain.
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
+	colInfo := tblInfo.GetColumnByID(col.ID)
+	if colInfo == nil {
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
+	if !loadNeeded || !analyzed {
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
+		if loadNeeded && !analyzed {
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl.SetCol(col.ID, fakeCol)
+			statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+		}
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+		return nil
+	}
+
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		statistics.HistogramNeededItems.Delete(col)
@@ -664,30 +700,44 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		CMSketch:   cms,
 		TopN:       topN,
 		FMSketch:   fms,
+<<<<<<< HEAD
 		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+=======
+		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 		StatsVer:   statsVer,
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
+<<<<<<< HEAD
 	tbl, ok = statsCache.Get(col.TableID)
+=======
+	statsTbl, ok = statsHandle.Get(col.TableID)
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 	if !ok {
 		return nil
 	}
-	tbl = tbl.Copy()
+	statsTbl = statsTbl.Copy()
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		} else {
 			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 		}
-		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
 		if statsVer != statistics.Version0 {
-			tbl.StatsVer = int(statsVer)
+			statsTbl.LastAnalyzeVersion = max(statsTbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+			statsTbl.StatsVer = int(statsVer)
 		}
 	}
+<<<<<<< HEAD
 	tbl.Columns[col.ID] = colHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
+=======
+	statsTbl.SetCol(col.ID, colHist)
+	statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", colHist.PhysicalID),
@@ -741,10 +791,16 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	tbl = tbl.Copy()
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
+<<<<<<< HEAD
 	tbl.Indices[idx.ID] = idxHist
 	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+=======
+	tbl.SetIdx(idx.ID, idxHist)
+	statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
