@@ -354,12 +354,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		if loadNeeded && !analyzed {
-			wrapper.col = &statistics.Column{
-				PhysicalID: item.TableID,
-				Info:       wrapper.colInfo,
-				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
-			}
+			wrapper.col = statistics.EmptyColumnObject(item.TableID, isPkIsHandle, wrapper.colInfo)
 			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
