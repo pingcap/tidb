@@ -20,6 +20,27 @@ import (
 	"go.uber.org/zap"
 )
 
+const MaxErrLen = 512*1024
+
+type TruncatedErr struct {
+    err       error
+}
+
+func (te TruncatedErr) Error() string {
+    if te.err == nil {
+        return ""
+    }
+    errStr := te.err.Error()
+    if len(errStr) > MaxErrLen {
+        return errStr[:MaxErrLen] + "..."
+    }
+    return errStr
+}
+
+func TruncateErr(err error) error {
+	return TruncatedErr{err}
+}
+
 func newGeneralLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
 	// create the general logger
 	sqLogger, prop, err := log.InitLogger(newGeneralLogConfig(cfg))

@@ -53,12 +53,12 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	if cfg.FullBackupType == task.FullBackupTypeEBS {
 		if cfg.Prepare {
 			if err := task.RunRestoreEBSMeta(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
-				log.Error("failed to restore EBS meta", zap.Error(err))
+				log.Error("failed to restore EBS meta", zap.Error(logutil.TruncateErr(err)))
 				return errors.Trace(err)
 			}
 		} else {
 			if err := task.RunResolveKvData(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
-				log.Error("failed to restore data", zap.Error(err))
+				log.Error("failed to restore data", zap.Error(logutil.TruncateErr(err)))
 				return errors.Trace(err)
 			}
 		}
@@ -73,7 +73,7 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
-		log.Error("failed to restore", zap.Error(err))
+		log.Error("failed to restore", zap.Error(logutil.TruncateErr(err)))
 		printWorkaroundOnFullRestoreError(command, err)
 		return errors.Trace(err)
 	}
@@ -114,7 +114,7 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunRestoreRaw(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to restore raw kv", zap.Error(err))
+		log.Error("failed to restore raw kv", zap.Error(logutil.TruncateErr(err)))
 		return errors.Trace(err)
 	}
 	return nil
@@ -134,7 +134,7 @@ func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunRestoreTxn(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to restore txn kv", zap.Error(err))
+		log.Error("failed to restore txn kv", zap.Error(logutil.TruncateErr(err)))
 		return errors.Trace(err)
 	}
 	return nil

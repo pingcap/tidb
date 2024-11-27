@@ -40,7 +40,7 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 
 	if cfg.FullBackupType == task.FullBackupTypeEBS {
 		if err := task.RunBackupEBS(ctx, tidbGlue, &cfg); err != nil {
-			log.Error("failed to backup", zap.Error(err))
+			log.Error("failed to backup", zap.Error(logutil.TruncateErr(err)))
 			return errors.Trace(err)
 		}
 		return nil
@@ -54,7 +54,7 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 
 	if err := task.RunBackup(ctx, tidbGlue, cmdName, &cfg); err != nil {
-		log.Error("failed to backup", zap.Error(err))
+		log.Error("failed to backup", zap.Error(logutil.TruncateErr(err)))
 		return errors.Trace(err)
 	}
 	return nil
@@ -74,7 +74,7 @@ func runBackupRawCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunBackupRaw(ctx, gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to backup raw kv", zap.Error(err))
+		log.Error("failed to backup raw kv", zap.Error(logutil.TruncateErr(err)))
 		return errors.Trace(err)
 	}
 	return nil
@@ -94,7 +94,7 @@ func runBackupTxnCommand(command *cobra.Command, cmdName string) error {
 		defer trace.TracerFinishSpan(ctx, store)
 	}
 	if err := task.RunBackupTxn(ctx, gluetikv.Glue{}, cmdName, &cfg); err != nil {
-		log.Error("failed to backup txn kv", zap.Error(err))
+		log.Error("failed to backup txn kv", zap.Error(logutil.TruncateErr(err)))
 		return errors.Trace(err)
 	}
 	return nil
