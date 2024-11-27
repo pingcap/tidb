@@ -38,7 +38,7 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	random := rand.New(rand.NewSource(time.Now().UnixNano()))
 	return &PlanCacheValue{
 		Plan:       plans[random.Int()%len(plans)],
-		paramTypes: types,
+		ParamTypes: types,
 	}
 }
 
@@ -73,7 +73,7 @@ func TestLRUPCPut(t *testing.T) {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
-			paramTypes: opts,
+			ParamTypes: opts,
 		}
 		lru.Put(keys[i], vals[i], opts)
 	}
@@ -144,7 +144,7 @@ func TestLRUPCGet(t *testing.T) {
 		keys[i] = fmt.Sprintf("key-%v", i%4)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
-			paramTypes: opts,
+			ParamTypes: opts,
 		}
 		lru.Put(keys[i], vals[i], opts)
 	}
@@ -197,7 +197,7 @@ func TestLRUPCDelete(t *testing.T) {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
-			paramTypes: opts,
+			ParamTypes: opts,
 		}
 		lru.Put(keys[i], vals[i], opts)
 	}
@@ -233,7 +233,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
-			paramTypes: opts,
+			ParamTypes: opts,
 		}
 		lru.Put(keys[i], vals[i], opts)
 	}
@@ -276,7 +276,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
-			paramTypes: opts,
+			ParamTypes: opts,
 		}
 		lru.Put(keys[i], vals[i], opts)
 	}
@@ -328,7 +328,7 @@ func TestIssue37914(t *testing.T) {
 	pTypes := []*types.FieldType{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDouble)}
 	key := "key-1"
 	opts := pTypes
-	val := &PlanCacheValue{paramTypes: opts}
+	val := &PlanCacheValue{ParamTypes: opts}
 
 	require.NotPanics(t, func() {
 		lru.Put(key, val, opts)
@@ -356,7 +356,7 @@ func TestIssue38244(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
-		vals[i] = &PlanCacheValue{paramTypes: opts}
+		vals[i] = &PlanCacheValue{ParamTypes: opts}
 		lru.Put(keys[i], vals[i], opts)
 	}
 	require.Equal(t, lru.size, lru.capacity)

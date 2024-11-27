@@ -597,15 +597,18 @@ func TestInstancePlanCacheRuntimeInfo(t *testing.T) {
 	v1 := values[1].(*plannercore.PlanCacheValue)
 
 	require.Equal(t, v0.SQLText, "select a from t where a<=?")
-	require.Equal(t, int(v0.Executions), 4)
-	require.True(t, v0.SumLatency != 0)
+	exec, _, _, sumLat, _ := v0.RuntimeInfo()
+	require.Equal(t, int(exec), 4)
+	require.True(t, sumLat != 0)
 
 	require.Equal(t, v1.SQLText, "select a from t where a=? and b=?")
-	require.Equal(t, int(v1.Executions), 2)
-	require.True(t, v1.SumLatency != 0)
+	exec, _, _, sumLat, _ = v1.RuntimeInfo()
+	require.Equal(t, int(exec), 2)
+	require.True(t, sumLat != 0)
 
 	tk.MustExec(`execute st1 using @a`)
-	require.Equal(t, int(v0.Executions), 5)
+	exec, _, _, _, _ = v0.RuntimeInfo()
+	require.Equal(t, int(exec), 5)
 }
 
 func TestInstancePlanCacheView(t *testing.T) {
