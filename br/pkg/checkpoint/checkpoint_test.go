@@ -310,7 +310,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey, "")
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, d.RangeKey))
 		require.NoError(t, err)
 	}
 
@@ -320,7 +320,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey, "")
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, d.RangeKey))
 		require.NoError(t, err)
 	}
 
@@ -382,9 +382,9 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
 		require.NoError(t, err)
 	}()
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123", "")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, "123"))
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456", "")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, "456"))
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
 	require.NoError(t, err)
@@ -392,7 +392,7 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	time.Sleep(time.Second)
 	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 3, "789", "")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(3, "789"))
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
 	require.NoError(t, err)
@@ -428,9 +428,9 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, 100*time.Millisecond, 300*time.Millisecond)
 	require.NoError(t, err)
 
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "123", "")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, "123"))
 	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, "456", "")
+	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, "456"))
 	require.NoError(t, err)
 	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
 	require.NoError(t, err)
@@ -608,7 +608,7 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, "", d.Name)
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointFileItem(1, d.Name))
 		require.NoError(t, err)
 	}
 

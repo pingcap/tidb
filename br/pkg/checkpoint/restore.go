@@ -47,6 +47,20 @@ type CheckpointItem struct {
 	Name string
 }
 
+func NewCheckpointRangeKeyItem(tableID RestoreKeyType, rangeKey string) *CheckpointItem {
+	return &CheckpointItem{
+		TableID:  tableID,
+		RangeKey: rangeKey,
+	}
+}
+
+func NewCheckpointFileItem(tableID RestoreKeyType, fileName string) *CheckpointItem {
+	return &CheckpointItem{
+		TableID: tableID,
+		Name:    fileName,
+	}
+}
+
 func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType]) ([]byte, error) {
 	return json.Marshal(group)
 }
@@ -87,7 +101,7 @@ func StartCheckpointRunnerForRestore(
 func AppendRangesForRestore(
 	ctx context.Context,
 	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
-	c CheckpointItem,
+	c *CheckpointItem,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
 		GroupKey: c.TableID,

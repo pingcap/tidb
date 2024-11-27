@@ -208,10 +208,7 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 						// the table corresponding to the table-id.
 						for _, f := range set.SSTFiles {
 							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
-								checkpoint.CheckpointItem{
-									TableID: set.TableID,
-									Name:    f.GetName(),
-								}); err != nil {
+								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
 								return errors.Trace(err)
 							}
 						}
@@ -315,10 +312,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
 						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner,
-							checkpoint.CheckpointItem{
-								TableID:  filesGroup.TableID,
-								RangeKey: rangeKey,
-							}); err != nil {
+							checkpoint.NewCheckpointRangeKeyItem(filesGroup.TableID, rangeKey)); err != nil {
 							return errors.Trace(err)
 						}
 					}
