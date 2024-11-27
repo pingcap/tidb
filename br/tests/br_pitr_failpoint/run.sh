@@ -17,6 +17,7 @@
 set -eu
 . run_services
 CUR=$(cd `dirname $0`; pwd)
+TASK_NAME="br_pitr_failpoint"
 
 # const value
 PREFIX="pitr_backup_failpoint" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
@@ -42,7 +43,7 @@ sql_pid=$!
 
 # start the log backup task
 echo "start log task"
-run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
+run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$PREFIX/log"
 
 # wait until the index creation is running
 retry_cnt=0
@@ -121,6 +122,7 @@ check_contains "Column_name: y"
 check_contains "Column_name: z"
 
 # wait checkpoint advance
+<<<<<<< HEAD
 echo "wait checkpoint advance"
 sleep 10
 current_ts=$(echo $(($(date +%s%3N) << 18)))
@@ -154,9 +156,11 @@ while true; do
         exit 1
     fi
 done
+=======
+. "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
+>>>>>>> 9cc4a200d0d (br: refactor test to use wait checkpoint method (#57612))
 
 # start a new cluster
-echo "restart a services"
 restart_services
 
 # PITR restore - 1
