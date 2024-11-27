@@ -15,6 +15,7 @@
 package join
 
 import (
+	"math"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -24,11 +25,18 @@ import (
 
 type semiJoinProbe struct {
 	baseSemiJoin
+
+	// Used for right side build with other condition
+	offset int
+
+	// Used for right side build without other condition
+	offsets []int
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
 	ret := &semiJoinProbe{
 		baseSemiJoin: *newBaseSemiJoin(base, isLeftSideBuild),
+		offset:       0,
 	}
 	return ret
 }
@@ -38,6 +46,11 @@ func (s *semiJoinProbe) InitForScanRowTable() {
 		panic("should not reach here")
 	}
 	s.rowIter = commonInitForScanRowTable(&s.baseJoinProbe)
+}
+
+func (s *semiJoinProbe) resetProbeState() {
+	s.offset = 0
+	s.baseSemiJoin.resetProbeState()
 }
 
 func (s *semiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -137,7 +150,7 @@ func (s *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 		}
 	} else {
 		if hasOtherCondition {
-			err = s.probeForRightSideBuildHasOtherCondition(joinResult.chk, joinedChk, sqlKiller)
+			err = s.probeForRightSideBuildHasOtherCondition(joinResult.chk, joinedChk, remainCap, sqlKiller)
 		} else {
 			err = s.probeForRightSideBuildNoOtherCondition(joinResult.chk, remainCap, sqlKiller)
 		}
@@ -196,7 +209,7 @@ func (s *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 	for s.currentProbeRow < s.chunkRows {
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
-			if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
+			if !meta.isCurrentRowUsedWithAtomic(candidateRow) && isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
 				meta.setUsedFlag(candidateRow)
 			} else {
 				s.probeCollision++
@@ -223,14 +236,14 @@ func (s *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 	return
 }
 
-func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = s.concatenateProbeAndBuildRows(joinedChk, sqlKiller, true)
 	if err != nil {
 		return err
 	}
 
 	defer func() {
-		if s.unFinishedProbeRowIdxQueue.IsEmpty() {
+		if s.unFinishedProbeRowIdxQueue.IsEmpty() && s.offset == s.chunkRows {
 			// To avoid `Previous chunk is not probed yet` error
 			s.currentProbeRow = s.chunkRows
 		}
@@ -247,18 +260,19 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		if cap(s.selected) < s.chunkRows {
-			s.selected = make([]bool, s.chunkRows)
-		} else {
-			s.selected = s.selected[:s.chunkRows]
-		}
+		for remainCap > 0 && (s.offset < s.chunkRows) {
+			rowNumToAppend := int(math.Min(float64(remainCap), float64(s.chunkRows-s.offset)))
 
-		copy(s.selected, s.isMatchedRows)
+			for index, usedColIdx := range s.lUsed {
+				dstCol := chk.Column(index)
+				srcCol := s.currentChunk.Column(usedColIdx)
+				chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, s.isMatchedRows, s.offset, s.offset+rowNumToAppend, func(i int) int {
+					return i
+				})
+			}
 
-		for index, usedColIdx := range s.lUsed {
-			dstCol := chk.Column(index)
-			srcCol := s.currentChunk.Column(usedColIdx)
-			chunk.CopySelectedRows(dstCol, srcCol, s.selected)
+			s.offset += rowNumToAppend
+			remainCap -= rowNumToAppend
 		}
 	}
 	return
@@ -268,19 +282,29 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 	meta := s.ctx.hashTableMeta
 	tagHelper := s.ctx.hashTableContext.tagHelper
 
+	if cap(s.offsets) == 0 {
+		s.offsets = make([]int, 0, remainCap)
+	}
+
+	s.offsets = s.offsets[:0]
+	matched := false
+
 	for remainCap > 0 && s.currentProbeRow < s.chunkRows {
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
 			if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
 				s.matchedRowsHeaders[s.currentProbeRow] = 0
-				s.matchedRowsForCurrentProbeRow++
+				matched = true
 				remainCap--
 			} else {
 				s.probeCollision++
 				s.matchedRowsHeaders[s.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, s.matchedRowsHashValue[s.currentProbeRow])
 			}
 		} else {
-			s.finishLookupCurrentProbeRow()
+			if matched {
+				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
+				matched = false
+			}
 			s.currentProbeRow++
 		}
 	}
@@ -290,17 +314,19 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		return err
 	}
 
-	s.finishLookupCurrentProbeRow()
-	generateResultChk(chk, s.currentChunk, s.lUsed, s.offsetAndLengthArray)
+	if s.currentProbeRow < s.chunkRows && matched {
+		s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
+	}
+	generateResultChk(chk, s.currentChunk, s.lUsed, s.offsets)
 	return
 }
 
-func generateResultChk(resultChk *chunk.Chunk, probeChk *chunk.Chunk, lUsed []int, offsetAndLengthArray []offsetAndLength) {
+func generateResultChk(resultChk *chunk.Chunk, probeChk *chunk.Chunk, lUsed []int, offsets []int) {
 	for index, colIndex := range lUsed {
 		srcCol := probeChk.Column(colIndex)
 		dstCol := resultChk.Column(index)
-		for _, offsetAndLength := range offsetAndLengthArray {
-			dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
+		for _, offset := range offsets {
+			dstCol.AppendCellNTimes(srcCol, offset, 1)
 		}
 	}
 }
