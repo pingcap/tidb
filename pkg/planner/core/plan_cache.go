@@ -293,7 +293,7 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 	}
 	pcv := v.(*PlanCacheValue)
 	sctx.GetSessionVars().PlanCacheValue = pcv
-	return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,

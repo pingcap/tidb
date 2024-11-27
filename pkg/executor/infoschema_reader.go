@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -3934,15 +3933,15 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
 		row = append(row, types.NewStringDatum(pcv.ParseValues))
 		row = append(row, types.NewIntDatum(pcv.Memory))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.Executions)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.ProcessedKeys)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.TotalKeys)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.SumLatency)))
+		exec, procKeys, totKeys, sumLat, lastTime := pcv.RuntimeInfo()
+		row = append(row, types.NewIntDatum(exec))
+		row = append(row, types.NewIntDatum(procKeys))
+		row = append(row, types.NewIntDatum(totKeys))
+		row = append(row, types.NewIntDatum(sumLat))
 		row = append(row, types.NewTimeDatum(
 			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
-		unixTime := atomic.LoadInt64(&pcv.LastUsedTimeInUnix)
 		row = append(row, types.NewTimeDatum(
-			types.NewTime(types.FromGoTime(time.Unix(unixTime, 0)), mysql.TypeTimestamp, types.DefaultFsp)))
+			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
 
 		rows = append(rows, row)
 	}
