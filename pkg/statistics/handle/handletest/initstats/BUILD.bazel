@@ -10,6 +10,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+        "//pkg/parser/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/testkit",
