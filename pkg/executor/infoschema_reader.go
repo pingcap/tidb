@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -210,6 +211,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1615,13 +1618,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor < len(e.runningJobs) {
 		num := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i], checker)
-			req.AppendString(12, e.runningJobs[i].Query)
-			if e.runningJobs[i].MultiSchemaInfo != nil {
-				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
-					req.AppendString(12, e.runningJobs[i].Query)
-				}
-			}
+			e.appendJobToChunk(req, e.runningJobs[i], checker, false)
 		}
 		e.cursor += num
 		count += num
@@ -1635,13 +1632,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job, checker)
-			req.AppendString(12, job.Query)
-			if job.MultiSchemaInfo != nil {
-				for range job.MultiSchemaInfo.SubJobs {
-					req.AppendString(12, job.Query)
-				}
-			}
+			e.appendJobToChunk(req, job, checker, false)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -1962,7 +1953,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(ctx, tikvHelper, is, tableID)
 				if err != nil {
-					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+					if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
 						continue
 					}
 					return err
@@ -1982,6 +1973,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
+	if allRegionsInfo == nil {
+		return nil
+	}
+
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -2006,7 +2001,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
-		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
 	pt := tbl.Meta().GetPartitionInfo()
@@ -3905,6 +3900,40 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		pcv := v.(*plannercore.PlanCacheValue)
+
+		row := make([]types.Datum, 0, 16)
+		row = append(row, types.NewStringDatum(pcv.SQLDigest))
+		row = append(row, types.NewStringDatum(pcv.SQLText))
+		row = append(row, types.NewStringDatum(pcv.StmtType))
+		row = append(row, types.NewStringDatum(pcv.ParseUser))
+		row = append(row, types.NewStringDatum(pcv.PlanDigest))
+		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
+		row = append(row, types.NewStringDatum(pcv.Binding))
+		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
+		row = append(row, types.NewStringDatum(pcv.ParseValues))
+		row = append(row, types.NewIntDatum(pcv.Memory))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.Executions)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.ProcessedKeys)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.TotalKeys)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.SumLatency)))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
+		unixTime := atomic.LoadInt64(&pcv.LastUsedTimeInUnix)
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(time.Unix(unixTime, 0)), mysql.TypeTimestamp, types.DefaultFsp)))
+
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }

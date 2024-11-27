@@ -16,7 +16,7 @@ This document plans to support the same processing of vector indexes as ordinary
 
 ## **Detailed Design**
 
-The process of adding a vector index is similar to that of adding an ordinary index. However, since the actual vector index data is added to TiFlash, there is no process for populating the index data to TiKV.  
+The process of adding a vector index is similar to that of adding an ordinary index. However, since the actual vector index data is added to TiFlash, there is no process for populating the index data to TiKV.
 The following figure takes the add vector index operation as an example and briefly describes its execution process.
 
 ![Figure 1: flow chart](./imgs/vector-index.png)
@@ -42,13 +42,13 @@ CREATE TABLE foo (
 * By `IndexKeyTypeOpt` add `VECTOR` index type, and `IndexTypeOpt` add `HNSW` option type, and add vector index after creating the table.
 
 ```sql
-CREATE VECTOR INDEX idx_name USING HNSW ON foo ((VEC_COSINE_DISTANCE(data))) 
+CREATE VECTOR INDEX idx_name USING HNSW ON foo ((VEC_COSINE_DISTANCE(data)))
 -- Proposal 1, "WITH OPTION" is not supported in Phase 1
     [WITH OPTION "m=16, ef_construction=64"];
 -- Proposal 2， "VECTOR_INDEX_PARAM" is not supported in Phase 1
     [VECTOR_INDEX_PARAM "m=16, ef_construction=64"];
 
-ALTER TABLE foo ADD VECTOR INDEX idx_name USING HNSW ((VEC_COSINE_DISTANCE(data))) 
+ALTER TABLE foo ADD VECTOR INDEX idx_name USING HNSW ((VEC_COSINE_DISTANCE(data)))
 -- "WITH OPTION" is not supported in Phase 1
  [WITH OPTION "m=16, ef_construction=64"];
 ```
@@ -71,8 +71,8 @@ ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HN
 * The vector index only obtains the top n values through similarity. The following is the syntax for using a vector index when querying.
 
 ```sql
-SELECT * 
-FROM foo 
+SELECT *
+FROM foo
 ORDER BY VEC_COSINE_DISTANCE(data, '[3,1,2]')
 LIMIT 5;
 ```
@@ -91,8 +91,7 @@ type ANNQueryInfo struct {
         RefVecF32        []byte               `protobuf:"bytes,6,opt,name=ref_vec_f32,json=refVecF32" json:"ref_vec_f32,omitempty"`
         MaxDistance      float64              `protobuf:"fixed64,10,opt,name=max_distance,json=maxDistance" json:"max_distance"`
         HnswEfSearch     uint32               `protobuf:"varint,20,opt,name=hnsw_ef_search,json=hnswEfSearch" json:"hnsw_ef_search"`
-        XXX_unrecognized []byte               `json:"-"`
-        
+
         // new fields
         IndexId          int64                `protobuf:"varint,5,opt,name=column_id,json=columnId" json:"column_id"`
 }
@@ -151,7 +150,7 @@ type IndexInfo struct {
     Name          CIStr                     `json:"idx_name"`      // Index name.
     ...
     // VectorInfo is the vector index information.
-    VectorInfo    *VectorIndexInfo           `json:"is_vector"`     
+    VectorInfo    *VectorIndexInfo           `json:"is_vector"`
 }
 ```
 

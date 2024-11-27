@@ -114,7 +114,7 @@ ROW:
 	}
 }
 
-func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable table.PhysicalTable) allTableData {
+func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) allTableData {
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -128,8 +128,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		vals: make([][]byte, 0),
 		tp:   make([]string, 0),
 	}
-	pid := physTable.GetPhysicalID()
-	prefix := tablecodec.EncodeTablePrefix(pid)
+	prefix := tablecodec.EncodeTablePrefix(tableID)
 	it, err := txn.Iter(prefix, nil)
 	require.NoError(t, err)
 	for it.Valid() {
@@ -141,7 +140,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 		if tablecodec.IsRecordKey(it.Key()) {
 			all.tp = append(all.tp, "Record")
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
-			require.Equal(t, pid, tblID)
+			require.Equal(t, tableID, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
@@ -186,7 +185,7 @@ func TestReorgPartitionFailures(t *testing.T) {
 	afterResult := testkit.Rows(
 		"1 1 1", "12 12 21", "13 13 13", "17 17 17", "18 18 18", "2 2 2", "23 23 32", "45 45 54", "5 5 5",
 	)
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestRemovePartitionFailures(t *testing.T) {
@@ -211,7 +210,7 @@ func TestRemovePartitionFailures(t *testing.T) {
 		`delete from t where b = 102`,
 	}
 	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByFailures(t *testing.T) {
@@ -262,7 +261,7 @@ func TestReorganizePartitionListFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByListFailures(t *testing.T) {
@@ -310,7 +309,7 @@ func TestAddHashPartitionFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestCoalesceKeyPartitionFailures(t *testing.T) {
@@ -333,7 +332,7 @@ func TestCoalesceKeyPartitionFailures(t *testing.T) {
 		`delete from t where b = 3`,
 	}
 	afterResult := testkit.Rows("1 1 1", "2 2 2", "6 6 9", "7 7 7", "8 8 8")
-	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
 }
 
 func TestPartitionByNonPartitionedTable(t *testing.T) {
@@ -341,7 +340,7 @@ func TestPartitionByNonPartitionedTable(t *testing.T) {
 	alter := `alter table t partition by range (a) (partition p0 values less than (20))`
 	beforeResult := testkit.Rows()
 	afterResult := testkit.Rows()
-	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult, "Fail4")
+	testReorganizePartitionFailures(t, create, alter, nil, beforeResult, nil, afterResult)
 }
 
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
@@ -357,20 +356,24 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
 	// Rollback means we do full rollback before returning error.
 	tests := []struct {
-		name  string
-		count int
+		name            string
+		count           int
+		rollForwardFrom int
 	}{
 		{
 			"Cancel",
 			1,
+			-1,
 		},
 		{
 			"Fail",
 			5,
+			4,
 		},
 		{
 			"Rollback",
 			4,
+			-1,
 		},
 	}
 	oldWaitTimeWhenErrorOccurred := ddl.WaitTimeWhenErrorOccurred
@@ -387,44 +390,55 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 					continue SUBTEST
 				}
 			}
-			tk.MustExec(createSQL)
+			suffixComment := ` /* ` + suffix + ` */`
+			tk.MustExec(createSQL + suffixComment)
 			for _, sql := range beforeDML {
-				tk.MustExec(sql + ` /* ` + suffix + ` */`)
+				tk.MustExec(sql + suffixComment)
 			}
-			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(beforeResult)
+			tk.MustQuery(`select * from t ` + suffixComment).Sort().Check(beforeResult)
 			tOrg := external.GetTableByName(t, tk, "test", "t")
 			var idxID int64
 			if len(tOrg.Meta().Indices) > 0 {
 				idxID = tOrg.Meta().Indices[0].ID
 			}
-			oldCreate := tk.MustQuery(`show create table t`).Rows()
+			oldCreate := tk.MustQuery(`show create table t` + suffixComment).Rows()
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
-			testfailpoint.Enable(t, name, `return(true)`)
-			err := tk.ExecToErr(alterSQL)
-			require.Error(t, err, "failpoint reorgPart"+suffix)
-			require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
-			testfailpoint.Disable(t, name)
-			tk.MustQuery(`show create table t /* ` + suffix + ` */`).Check(oldCreate)
+			term := "return(true)"
+			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
+				term = "10*" + term
+			}
+			testfailpoint.Enable(t, name, term)
+			err := tk.ExecToErr(alterSQL + suffixComment)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
-			if partition == nil {
-				require.Nil(t, tOrg.Meta().Partition, suffix)
+			rollback := false
+			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
+				require.NoError(t, err)
 			} else {
-				require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
-				require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
-				require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+				rollback = true
+				require.Error(t, err, "failpoint reorgPart"+suffix)
+				require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
+				if partition == nil {
+					require.Nil(t, tOrg.Meta().Partition, suffix)
+				} else {
+					require.Equal(t, len(tOrg.Meta().Partition.Definitions), len(partition.Definitions), suffix)
+					require.Equal(t, 0, len(partition.AddingDefinitions), suffix)
+					require.Equal(t, 0, len(partition.DroppingDefinitions), suffix)
+				}
+				noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
 			}
+			testfailpoint.Disable(t, name)
 			require.Equal(t, len(tOrg.Meta().Indices), len(tt.Meta().Indices), suffix)
-			if idxID != 0 {
+			if rollback && idxID != 0 {
 				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			}
-			noNewTablesAfter(t, tk, tk.Session(), tOrg, suffix)
-			tk.MustExec(`admin check table t /* ` + suffix + ` */`)
+			tk.MustExec(`admin check table t` + suffixComment)
 			for _, sql := range afterDML {
-				tk.MustExec(sql + " /* " + suffix + " */")
+				tk.MustExec(sql + suffixComment)
 			}
-			tk.MustQuery(`select * from t /* ` + suffix + ` */`).Sort().Check(afterResult)
-			tk.MustExec(`drop table t /* ` + suffix + ` */`)
+			tk.MustQuery(`select * from t` + suffixComment).Sort().Check(afterResult)
+			tk.MustExec(`drop table t` + suffixComment)
 			// TODO: Check TiFlash replicas
 			// TODO: Check Label rules
 			// TODO: Check bundles
@@ -462,7 +476,8 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 			(job.SchemaState == model.StateDeleteOnly ||
 				job.SchemaState == model.StateWriteOnly ||
 				job.SchemaState == model.StateWriteReorganization ||
-				job.SchemaState == model.StateDeleteReorganization) &&
+				job.SchemaState == model.StateDeleteReorganization ||
+				job.SchemaState == model.StatePublic) &&
 			currState != job.SchemaState {
 			currState = job.SchemaState
 			<-wait
@@ -558,6 +573,61 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"15 15 15",
 		"16 16 16"))
 	currTbl.Meta().Partition = currPart
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	wait <- true
+
+	// StatePublic
+	wait <- true
+	tk.MustQuery(`select * from t where c between 10 and 22`).Sort().Check(testkit.Rows(""+
+		"10 10 10",
+		"12 12b 12",
+		"14 14 14",
+		"15 15 15",
+		"16 16 16"))
+	publicInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
+	require.Equal(t, int64(1), publicInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
+	tk.MustExec(`insert into t values (17, "17", 17)`)
+	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	partDef = oldTbl.Meta().Partition.Definitions[1]
+	require.Equal(t, "p1a", partDef.Name.O)
+	rows = getNumRowsFromPartitionDefs(t, tk, oldTbl, oldTbl.Meta().Partition.Definitions[1:2])
+	require.Equal(t, 3, rows)
+	tk.MustQuery(`select * from t partition (p1a)`).Sort().Check(testkit.Rows("10 10 10", "12 12b 12", "14 14 14"))
+	currTbl, err = publicInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	currPart = currTbl.Meta().Partition
+	currTbl.Meta().Partition = oldTbl.Meta().Partition
+	tk.MustQuery(`select * from t where b = "17"`).Sort().Check(testkit.Rows("17 17 17"))
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  `c` int(11) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`),\n" +
+		"  KEY `c` (`c`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (10),\n" +
+		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
+		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	currTbl.Meta().Partition = currPart
 	wait <- true
 	syncOnChanged <- true
 	// This reads the new schema (Schema update completed)
@@ -566,11 +636,12 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		"12 12b 12",
 		"14 14 14",
 		"15 15 15",
-		"16 16 16"))
+		"16 16 16",
+		"17 17 17"))
 	tk.MustExec(`admin check table t`)
 	newInfoSchema := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-deleteReorgInfoSchema.SchemaMetaVersion())
-	oldTbl, err = deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	require.Equal(t, int64(1), newInfoSchema.SchemaMetaVersion()-publicInfoSchema.SchemaMetaVersion())
+	oldTbl, err = publicInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	partDef = oldTbl.Meta().Partition.Definitions[1]
 	require.Equal(t, "p1a", partDef.Name.O)
@@ -588,7 +659,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 		" PARTITION `p1a` VALUES LESS THAN (15),\n" +
 		" PARTITION `p1b` VALUES LESS THAN (20),\n" +
 		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
-	newTbl, err := deleteReorgInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
+	newTbl, err := newInfoSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	newPart := newTbl.Meta().Partition
 	newTbl.Meta().Partition = oldTbl.Meta().Partition
@@ -736,7 +807,7 @@ func getNumRowsFromPartitionDefs(t *testing.T, tk *testkit.TestKit, tbl table.Ta
 	require.NotNil(t, pt)
 	cnt := 0
 	for _, def := range defs {
-		data := getAllDataForPhysicalTable(t, ctx, pt.GetPartition(def.ID))
+		data := getAllDataForTableID(t, ctx, def.ID)
 		require.True(t, len(data.keys) == len(data.vals))
 		require.True(t, len(data.keys) == len(data.tp))
 		for _, s := range data.tp {
@@ -910,7 +981,6 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`create table kb ` + cols + ` partition by key(b) partitions 2`)
 	tk.MustExec(`create table kf ` + cols + ` partition by key(f) partitions 2`)
 	tk.MustExec(`create table kts ` + cols + ` partition by key(ts) partitions 2`)
-	// HASH/LIST/RANGE - Treats bit values as int, BIT(>=32) for HASH fails due to overflow...
 	tk.MustExec(`create table hb ` + cols + ` partition by hash(b) partitions 2`)
 	tk.MustExec(`insert into hb values ` + vals)
 	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("1"))
@@ -918,9 +988,9 @@ func TestPartitionByColumnChecks(t *testing.T) {
 	tk.MustExec(`insert into hb values ` + vals)
 	tk.MustQuery(`select count(*) from hb where b = b'10'`).Check(testkit.Rows("2"))
 	tk.MustExec(`create table hb32 ` + cols + ` partition by hash(b32) partitions 2`)
-	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`insert into hb32 values ` + vals)
 	tk.MustExec(`alter table hb32 partition by hash(b32) partitions 3`)
-	tk.MustContainErrMsg(`insert into hb32 values `+vals, "[types:1690]constant 2290649224 overflows int")
+	tk.MustExec(`insert into hb32 values ` + vals)
 	tk.MustExec(`create table rb ` + cols + ` partition by range (b) (partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into rb values ` + vals)
 	tk.MustExec(`alter table rb partition by range(b) (partition pMax values less than (MAXVALUE))`)
@@ -936,13 +1006,13 @@ func TestPartitionByColumnChecks(t *testing.T) {
 }
 
 func TestPartitionIssue56634(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/updateVersionAndTableInfoErrInStateDeleteReorganization", `4*return(1)`)
 
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set global tidb_ddl_error_count_limit = 3")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int)")
-	tk.MustContainErrMsg("alter table t partition by range(a) (partition p1 values less than (20))", "[ddl:-1]DDL job rollback, error msg: Injected error in StateDeleteReorganization") // should NOT panic
+	// Changed, since StatePublic can no longer rollback!
+	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")
 }

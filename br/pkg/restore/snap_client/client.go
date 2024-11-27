@@ -660,7 +660,7 @@ func (rc *SnapClient) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) 
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
 	return utils.WithRetry(ctx, func() error {
 		return pdCtrl.ResetTS(ctx, restoreTS)
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 }
 
 // GetDatabases returns all databases.
