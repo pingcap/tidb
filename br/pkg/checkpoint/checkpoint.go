@@ -67,7 +67,7 @@ type RangeType struct {
 	*rtree.Range
 }
 
-type ValueType interface{}
+type ValueType any
 
 type CheckpointMessage[K KeyType, V ValueType] struct {
 	// start-key of the origin range
