@@ -176,15 +176,17 @@ func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endK
 
 type RetryAndSplitRequestEnv struct {
 	Env
-	GetBackoffer func() utils.Backoffer
+	GetBackoffStrategy func() utils.BackoffStrategy
 }
 
 func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
-	rs := utils.ConstantBackoff(10 * time.Second)
-	bo := utils.Backoffer(rs)
-	if r.GetBackoffer != nil {
-		bo = r.GetBackoffer()
+	var bo utils.BackoffStrategy
+	if r.GetBackoffStrategy != nil {
+		bo = r.GetBackoffStrategy()
+	} else {
+		bo = utils.ConstantBackoff(10 * time.Second)
 	}
+
 	cli, err := utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
 		cli, err := r.Env.ConnectToStore(ctx, storeID)
 		if err != nil {

@@ -316,6 +316,41 @@ func rollingbackExchangeTablePartition(jobCtx *jobContext, job *model.Job) (ver 
 	return ver, errors.Trace(err)
 }
 
+func rollingbackTruncateTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	return convertTruncateTablePartitionJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob, tblInfo)
+}
+
+func convertTruncateTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
+	if !job.IsRollbackable() {
+		// Only Original state and StateWrite can be rolled back, otherwise new partitions
+		// may have been used and new data would get lost.
+		// So we must continue to roll forward!
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
+	pi := tblInfo.Partition
+	if len(pi.NewPartitionIDs) != 0 || pi.DDLAction != model.ActionNone || pi.DDLState != model.StateNone {
+		// Rollback the changes, note that no new partitions has been used yet!
+		// so only metadata rollback and we can cancel the DDL
+		tblInfo.Partition.NewPartitionIDs = nil
+		tblInfo.Partition.DDLAction = model.ActionNone
+		tblInfo.Partition.DDLState = model.StateNone
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		return ver, nil
+	}
+	// No change yet, just cancel the job.
+	job.State = model.JobStateCancelled
+	return ver, errors.Trace(otherwiseErr)
+}
+
 func convertAddTablePartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
@@ -340,6 +375,11 @@ func onRollbackReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int6
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if job.SchemaState == model.StatePublic {
+		// We started to destroy the old indexes, so we can no longer rollback!
+		job.State = model.JobStateRunning
+		return ver, nil
 	}
 	jobCtx.jobArgs = args
 
@@ -590,8 +630,10 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackTruncateTable(jobCtx, job)
 	case model.ActionModifyColumn:
 		ver, err = rollingbackModifyColumn(jobCtx, job)
-	case model.ActionDropForeignKey, model.ActionTruncateTablePartition:
+	case model.ActionDropForeignKey:
 		ver, err = cancelOnlyNotHandledJob(job, model.StatePublic)
+	case model.ActionTruncateTablePartition:
+		ver, err = rollingbackTruncateTablePartition(jobCtx, job)
 	case model.ActionRebaseAutoID, model.ActionShardRowID, model.ActionAddForeignKey,
 		model.ActionRenameTable, model.ActionRenameTables,
 		model.ActionModifyTableCharsetAndCollate,

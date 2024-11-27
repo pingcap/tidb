@@ -1422,6 +1422,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
+	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			executor_metrics.TotalTiFlashQuerySuccCounter.Inc()
@@ -2154,6 +2155,31 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	topsql.RegisterPlan(normalizedPlan, planDigest)
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+}
+
+// UpdatePlanCacheRuntimeInfo updates the runtime information of the plan in the plan cache.
+func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
+	if !variable.EnableInstancePlanCache.Load() {
+		return // only record for Instance Plan Cache
+	}
+	v := a.Ctx.GetSessionVars().PlanCacheValue
+	if v == nil {
+		return
+	}
+	pcv, ok := v.(*plannercore.PlanCacheValue)
+	if !ok {
+		return
+	}
+
+	execDetail := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	var procKeys, totKeys int64
+	if execDetail.ScanDetail != nil { // only support TiKV
+		procKeys = execDetail.ScanDetail.ProcessedKeys
+		totKeys = execDetail.ScanDetail.TotalKeys
+	}
+	costTime := a.Ctx.GetSessionVars().GetTotalCostDuration()
+	pcv.UpdateRuntimeInfo(procKeys, totKeys, int64(costTime))
+	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {
