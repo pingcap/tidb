@@ -333,14 +333,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(err)
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "drop partition: physical table ID(s)"))
-	case model.ActionReorganizePartition,
-		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		// Delete dropped partitions, as well as replaced global indexes.
 		args, err := model.GetFinishedTablePartitionArgs(job)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, idx := range args.OldIndexes {
+		for _, idx := range args.OldGlobalIndexes {
 			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, idx.TableID, []int64{idx.IndexID}, ea, "reorganize partition, replaced global indexes"); err != nil {
 				return errors.Trace(err)
 			}

@@ -427,7 +427,7 @@ type TablePartitionArgs struct {
 
 	// set on finished
 	OldPhysicalTblIDs []int64          `json:"old_physical_tbl_ids,omitempty"`
-	OldIndexes        []TableIDIndexID `json:"old_indexes,omitempty"`
+	OldGlobalIndexes  []TableIDIndexID `json:"old_global_indexes,omitempty"`
 
 	// runtime info
 	NewPartitionIDs []int64 `json:"-"`
@@ -445,7 +445,7 @@ func (a *TablePartitionArgs) getArgsV1(job *Job) []any {
 func (a *TablePartitionArgs) getFinishedArgsV1(job *Job) []any {
 	intest.Assert(job.Type != ActionAddTablePartition || job.State == JobStateRollbackDone,
 		"add table partition job should not call getFinishedArgsV1 if not rollback")
-	return []any{a.OldPhysicalTblIDs, a.OldIndexes}
+	return []any{a.OldPhysicalTblIDs, a.OldGlobalIndexes}
 }
 
 func (a *TablePartitionArgs) decodeV1(job *Job) error {
@@ -499,7 +499,7 @@ func GetFinishedTablePartitionArgs(job *Job) (*TablePartitionArgs, error) {
 		if err := job.decodeArgs(&oldPhysicalTblIDs, &oldIndexes); err != nil {
 			return nil, errors.Trace(err)
 		}
-		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs, OldIndexes: oldIndexes}, nil
+		return &TablePartitionArgs{OldPhysicalTblIDs: oldPhysicalTblIDs, OldGlobalIndexes: oldIndexes}, nil
 	}
 	return getOrDecodeArgsV2[*TablePartitionArgs](job)
 }

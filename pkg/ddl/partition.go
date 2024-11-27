@@ -2178,7 +2178,7 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	args.OldPhysicalTblIDs = physicalTableIDs
-	args.OldIndexes = deleteIndices
+	args.OldGlobalIndexes = deleteIndices
 	job.FillFinishedArgs(args)
 	return ver, nil
 }
@@ -3566,7 +3566,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		for _, indexInfo := range dropIndices {
 			removeIndexInfo(tblInfo, indexInfo)
 			if indexInfo.Global {
-				args.OldIndexes = append(args.OldIndexes, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
+				args.OldGlobalIndexes = append(args.OldGlobalIndexes, model.TableIDIndexID{TableID: tblInfo.ID, IndexID: indexInfo.ID})
 			}
 		}
 		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
@@ -3898,8 +3898,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					if err != nil {
 						return errors.Trace(err)
 					}
+					taskCtx.addedCount++
 				}
-				taskCtx.addedCount++
 			}
 			return nil
 		}
