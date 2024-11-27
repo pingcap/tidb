@@ -76,7 +76,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
-		args := []interface{}{lastVersion}
+		args := []any{lastVersion}
 
 		if len(tableAndPartitionIDs) > 0 {
 			skipMoveForwardStatsCache = true
