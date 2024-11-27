@@ -730,6 +730,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -746,7 +759,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
