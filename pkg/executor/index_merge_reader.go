@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -377,7 +376,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					pushedLimit:        pushedIndexLimit,
 				}
 				if worker.stats != nil && worker.idxID != 0 {
-					worker.stats.indexScanBasicStats = worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
+					worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
 				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
@@ -1802,8 +1801,8 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		if err != nil {
 			return nil, nil, err
 		}
-		if w.stats != nil && w.stats.indexScanBasicStats != nil {
-			w.stats.indexScanBasicStats.Record(time.Since(start), chk.NumRows())
+		if w.stats != nil && w.idxID != 0 {
+			w.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(w.idxID, false).Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -2008,13 +2007,12 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 
 // IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
-	indexScanBasicStats *execdetails.BasicRuntimeStats
-	IndexMergeProcess   time.Duration
-	FetchIdxTime        int64
-	WaitTime            int64
-	FetchRow            int64
-	TableTaskNum        int64
-	Concurrency         int
+	IndexMergeProcess time.Duration
+	FetchIdxTime      int64
+	WaitTime          int64
+	FetchRow          int64
+	TableTaskNum      int64
+	Concurrency       int
 }
 
 func (e *IndexMergeRuntimeStat) String() string {
