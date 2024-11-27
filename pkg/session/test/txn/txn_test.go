@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -416,6 +417,19 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
+}
+
+func TestCommitTSOrderCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	ts := oracle.GoTimeToTS(time.Now().Add(time.Minute))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockFutureCommitTS", fmt.Sprintf("return(%d)", ts)))
+	tk.MustExec("insert into t values(123)")
+	require.Panics(t, func() {
+		tk.Exec("select * from t")
+	})
 }
 
 func TestMemBufferSnapshotRead(t *testing.T) {
