@@ -12,9 +12,11 @@ go_test(
         "others_test.go",
     ],
     flaky = True,
-    shard_count = 35,
+    shard_count = 38,
     deps = [
+        "//pkg/domain",
         "//pkg/parser/auth",
+        "//pkg/planner/core",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_stretchr_testify//require",

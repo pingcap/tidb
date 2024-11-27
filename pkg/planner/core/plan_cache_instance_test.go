@@ -28,7 +28,7 @@ import (
 )
 
 func _put(pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
-	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage}
+	v := &PlanCacheValue{testKey: testKey, Memory: memUsage}
 	return pc.Put(fmt.Sprintf("%v-%v", testKey, statsHash), v, nil)
 }
 
