@@ -2116,3 +2116,38 @@ func TestShowGrantsSQLMode(t *testing.T) {
 		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
 	})
 }
+
+// group is the synonyms of role.
+func TestGroupPrivileges(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'linpin'@'%'`)
+	rootTk.MustExec("CREATE DATABASE michael")
+	rootTk.MustExec("USE michael")
+	rootTk.MustExec("CREATE TABLE t1 (a int)")
+	rootTk.MustExec("Create GROUP group1")
+	rootTk.MustExec("GRANT SELECT ON michael.* TO group1")
+	defer rootTk.MustExec("DROP DATABASE michael")
+
+	tk := testkit.NewTestKit(t, store)
+	activeRoles := make([]*auth.RoleIdentity, 0)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "linpin", Hostname: "%"}, nil, nil, nil))
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	require.False(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	// grant group to user, check privileges.
+	rootTk.MustExec(`grant group1 to 'linpin'@'%'`)
+	tk.MustExec("set role group1")
+	activeRoles = tk.Session().GetSessionVars().ActiveRoles
+	require.True(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	// set default group ...
+	tk.MustExec("set default group all to 'linpin'@'%'")
+
+	// revoke privilges from group, check privilges.
+	rootTk.MustExec("REVOKE SELECT ON michael.* FROM group1")
+	activeRoles = tk.Session().GetSessionVars().ActiveRoles
+	require.False(t, pc.RequestVerification(activeRoles, "michael", "", "", mysql.SelectPriv))
+
+	rootTk.MustExec("drop group group1")
+}

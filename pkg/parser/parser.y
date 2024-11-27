@@ -5350,7 +5350,7 @@ DropUserStmt:
 	}
 
 DropRoleStmt:
-	"DROP" "ROLE" RolenameList
+	"DROP" RoleOrGroup RolenameList
 	{
 		tmp := make([]*auth.UserIdentity, 0, 10)
 		roleList := $3.([]*auth.RoleIdentity)
@@ -5359,7 +5359,7 @@ DropRoleStmt:
 		}
 		$$ = &ast.DropUserStmt{IsDropRole: true, IfExists: false, UserList: tmp}
 	}
-|	"DROP" "ROLE" "IF" "EXISTS" RolenameList
+|	"DROP" RoleOrGroup "IF" "EXISTS" RolenameList
 	{
 		tmp := make([]*auth.UserIdentity, 0, 10)
 		roleList := $5.([]*auth.RoleIdentity)
@@ -5392,6 +5392,10 @@ DropStatsStmt:
 			IsGlobalStats: true,
 		}
 	}
+
+RoleOrGroup:
+	"ROLE"
+|	"GROUP"
 
 RestrictOrCascadeOpt:
 	{}
@@ -10751,7 +10755,7 @@ SetRoleStmt:
 	}
 
 SetDefaultRoleStmt:
-	"SET" "DEFAULT" "ROLE" SetDefaultRoleOpt "TO" UsernameList
+	"SET" "DEFAULT" RoleOrGroup SetDefaultRoleOpt "TO" UsernameList
 	{
 		tmp := $4.(*ast.SetRoleStmt)
 		$$ = &ast.SetDefaultRoleStmt{
@@ -13631,7 +13635,7 @@ CreateUserStmt:
 	}
 
 CreateRoleStmt:
-	"CREATE" "ROLE" IfNotExists RoleSpecList
+	"CREATE" RoleOrGroup IfNotExists RoleSpecList
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-role.html
 		$$ = &ast.CreateUserStmt{
