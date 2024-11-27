@@ -7,6 +7,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -28,8 +29,7 @@ const (
 //
 // export for using in tests.
 type LocalStorage struct {
-	base   string
-	baseFD *os.File
+	base string
 	// Whether ignoring ENOINT while deleting.
 	// Don't fail when deleting an unexist file is more like
 	// a normal ExternalStorage implementation does.
@@ -93,15 +93,12 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 			return errors.Trace(err)
 		}
 	}
-	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
-		return errors.Trace(err)
-	}
-	if err := l.baseFD.Sync(); err != nil {
-		// So the write can be observed by `Walk` immediately...
+	targetPath := filepath.Join(l.base, name)
+	if err := os.Rename(tmpPath, targetPath); err != nil {
 		return errors.Trace(err)
 	}
 
-	return nil
+	return syncPath(path.Dir(targetPath))
 }
 
 // ReadFile reads the file from the storage and returns the contents.
@@ -263,7 +260,6 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (l *LocalStorage) Close() {
-	_ = l.baseFD.Close()
 }
 
 func pathExists(_path string) (bool, error) {
@@ -292,12 +288,17 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 		}
 	}
 
+	return &LocalStorage{base: base}, nil
+}
+
+func syncPath(path string) error {
 	// Here the path targets to a directory and we will only call `Sync` over it.
 	// Disable the G304 warning which focus on relative path injection like "../../import_stuff".
 	//nolint: gosec
-	baseFD, err := os.Open(base)
+	file, err := os.Open(path)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	return &LocalStorage{base: base, baseFD: baseFD}, nil
+	defer file.Close()
+	return errors.Trace(file.Sync())
 }
