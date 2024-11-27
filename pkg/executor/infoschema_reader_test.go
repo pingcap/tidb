@@ -1070,7 +1070,7 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		{"select count(1) from (select table_name from information_schema.tables) t", true},
 		{"select * from information_schema.tables", false},
 		{"select table_name, table_catalog from information_schema.tables", true},
-		{"select table_name, table_catalog from information_schema.tables where table_catalog = 'normal'", false},
+		{"select table_name, table_catalog from information_schema.tables where table_catalog = 'normal'", true},
 		{"select table_name, table_rows from information_schema.tables", false},
 		{"select table_name, table_schema, tidb_table_id from information_schema.tables where tidb_table_id = 4611686018427387967", false},
 	} {

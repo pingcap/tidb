@@ -734,6 +734,7 @@ func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
 		switch str {
 		case "table_name":
 		case "table_schema":
+		case "table_catalog":
 		default:
 			return false
 		}
