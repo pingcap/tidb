@@ -277,7 +277,13 @@ func (s *statsReadWriter) ReloadExtendedStatistics() error {
 			}
 			tables = append(tables, t)
 		}
-		s.statsHandler.UpdateStatsCache(tables, nil)
+		s.statsHandler.UpdateStatsCache(statstypes.CacheUpdate{
+			Added:   tables,
+			Deleted: []int64{},
+			Options: statstypes.UpdateOptions{
+				SkipMoveForward: false,
+			},
+		})
 		return nil
 	}, util.FlagWrapTxn)
 }
