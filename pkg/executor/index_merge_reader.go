@@ -377,7 +377,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					pushedLimit:        pushedIndexLimit,
 				}
 				if worker.stats != nil && worker.idxID != 0 {
-					worker.indexScanBasicStats = worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
+					worker.stats.indexScanBasicStats = worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
 				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
@@ -1667,21 +1667,20 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 }
 
 type partialIndexWorker struct {
-	stats               *IndexMergeRuntimeStat
-	indexScanBasicStats *execdetails.BasicRuntimeStats
-	sc                  sessionctx.Context
-	idxID               int
-	batchSize           int
-	maxBatchSize        int
-	maxChunkSize        int
-	memTracker          *memory.Tracker
-	partitionTableMode  bool
-	prunedPartitions    []table.PhysicalTable
-	byItems             []*plannerutil.ByItems
-	scannedKeys         uint64
-	pushedLimit         *plannercore.PushedDownLimit
-	dagPB               *tipb.DAGRequest
-	plan                []base.PhysicalPlan
+	stats              *IndexMergeRuntimeStat
+	sc                 sessionctx.Context
+	idxID              int
+	batchSize          int
+	maxBatchSize       int
+	maxChunkSize       int
+	memTracker         *memory.Tracker
+	partitionTableMode bool
+	prunedPartitions   []table.PhysicalTable
+	byItems            []*plannerutil.ByItems
+	scannedKeys        uint64
+	pushedLimit        *plannercore.PushedDownLimit
+	dagPB              *tipb.DAGRequest
+	plan               []base.PhysicalPlan
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1803,8 +1802,8 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		if err != nil {
 			return nil, nil, err
 		}
-		if w.indexScanBasicStats != nil {
-			w.indexScanBasicStats.Record(time.Since(start), chk.NumRows())
+		if w.stats != nil && w.stats.indexScanBasicStats != nil {
+			w.stats.indexScanBasicStats.Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialIndexWorker", func(v failpoint.Value) {
@@ -2009,12 +2008,13 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 
 // IndexMergeRuntimeStat record the indexMerge runtime stat
 type IndexMergeRuntimeStat struct {
-	IndexMergeProcess time.Duration
-	FetchIdxTime      int64
-	WaitTime          int64
-	FetchRow          int64
-	TableTaskNum      int64
-	Concurrency       int
+	indexScanBasicStats *execdetails.BasicRuntimeStats
+	IndexMergeProcess   time.Duration
+	FetchIdxTime        int64
+	WaitTime            int64
+	FetchRow            int64
+	TableTaskNum        int64
+	Concurrency         int
 }
 
 func (e *IndexMergeRuntimeStat) String() string {

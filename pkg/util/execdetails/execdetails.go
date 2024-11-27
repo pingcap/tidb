@@ -1502,16 +1502,22 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 }
 
 // GetBasicRuntimeStats gets basicRuntimeStats for a executor
-// When basicRuntimeStats is nil, the behavior is decided by initNewExecutorStats argument:
-// 1. If true, it created a new basicRuntimeStats and increase its executorCount
+// When rootStat is nil, the behavior is decided by initNewExecutorStats argument:
+// 1. If true, it created a new rootStat and basicRuntimeStats, increase basicRuntimeStats' executorCount
 // 2. Else, it returns nil
 func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats bool) *BasicRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
 	if !ok {
-		stats = NewRootRuntimeStats()
-		e.rootStats[planID] = stats
+		if initNewExecutorStats {
+			stats = NewRootRuntimeStats()
+			e.rootStats[planID] = stats
+			stats.basic = &BasicRuntimeStats{}
+			stats.basic.executorCount.Add(1)
+			return stats.basic
+		}
+		return nil
 	}
 	if stats.basic == nil {
 		if initNewExecutorStats {
