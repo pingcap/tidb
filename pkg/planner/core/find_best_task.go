@@ -761,6 +761,19 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil {
+		if path.Index == nil || path.Index.VectorInfo == nil {
+			return false
+		}
+		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
+			return false
+		}
+
+		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+			return false
+		}
+		return true
+	}
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
@@ -807,19 +820,6 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 				break
 			}
 		}
-	}
-	if prop.VectorProp.VectorHelper != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return false
-		}
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return false
-		}
-
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return false
-		}
-		return true
 	}
 	return isMatchProp
 }
@@ -2266,6 +2266,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		return nil, err
 	}
 	needNot := false
+	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,
@@ -2680,7 +2681,6 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := PointGetPlan{
-		ctx:              ds.SCtx(),
 		AccessConditions: candidate.path.AccessConds,
 		schema:           ds.Schema().Clone(),
 		dbName:           ds.DBName.L,

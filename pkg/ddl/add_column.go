@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -1223,6 +1224,21 @@ func checkColumnDefaultValue(ctx exprctx.BuildContext, col *table.Column, value 
 			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
+		}
+	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetEvalCtx().TypeCtx())
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 		}
 	}
 	return hasDefaultValue, value, nil

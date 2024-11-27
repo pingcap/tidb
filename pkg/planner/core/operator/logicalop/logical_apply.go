@@ -32,11 +32,11 @@ import (
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
 type LogicalApply struct {
-	LogicalJoin
+	LogicalJoin `hash64-equals:"true"`
 
-	CorCols []*expression.CorrelatedColumn
+	CorCols []*expression.CorrelatedColumn `hash64-equals:"true"`
 	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
-	NoDecorrelate bool
+	NoDecorrelate bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalApply.

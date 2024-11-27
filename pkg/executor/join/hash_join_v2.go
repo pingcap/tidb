@@ -19,6 +19,7 @@ import (
 	"context"
 	"hash"
 	"math"
+	"math/bits"
 	"math/rand"
 	"runtime/trace"
 	"strconv"
@@ -311,32 +312,15 @@ func (hCtx *HashJoinCtxV2) resetHashTableContextForRestore() {
 
 // partitionNumber is always power of 2
 func genHashJoinPartitionNumber(partitionHint uint) uint {
-	prevRet := uint(16)
-	currentRet := uint(8)
-	for currentRet != 0 {
-		if currentRet < partitionHint {
-			return prevRet
-		}
-		prevRet = currentRet
-		currentRet = currentRet >> 1
+	partitionNumber := uint(1)
+	for partitionNumber < partitionHint && partitionNumber < 16 {
+		partitionNumber <<= 1
 	}
-	return 1
+	return partitionNumber
 }
 
 func getPartitionMaskOffset(partitionNumber uint) int {
-	getMSBPos := func(num uint64) int {
-		ret := 0
-		for num&1 != 1 {
-			num = num >> 1
-			ret++
-		}
-		if num != 1 {
-			// partitionNumber is always pow of 2
-			panic("should not reach here")
-		}
-		return ret
-	}
-	msbPos := getMSBPos(uint64(partitionNumber))
+	msbPos := bits.TrailingZeros64(uint64(partitionNumber))
 	// top MSB bits in hash value will be used to partition data
 	return 64 - msbPos
 }
@@ -520,11 +504,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 		}
 	}()
 
-	partitionNumber := b.HashJoinCtx.partitionNumber
-	hashJoinCtx := b.HashJoinCtx
-
-	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
-
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
 	for i := 0; i < chunkNum; i++ {
@@ -560,10 +539,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
 		}
 	}()
-	partitionNumber := b.HashJoinCtx.partitionNumber
-	hashJoinCtx := b.HashJoinCtx
-
-	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	hasErr := false
 	for chk := range srcChkCh {
@@ -1279,6 +1254,11 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
+	// init builder, todo maybe the builder can be reused during the whole life cycle of the executor
+	hashJoinCtx := e.HashJoinCtxV2
+	for _, worker := range e.BuildWorkers {
+		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	}
 	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	success := waitJobDone(wg, errCh)

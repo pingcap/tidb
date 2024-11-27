@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -590,8 +590,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateGlobalTaskHistory is a table about history global task.
@@ -611,8 +612,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
@@ -1187,11 +1189,25 @@ const (
 	// version 217
 	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
 	version217 = 217
+
+	// version 218
+	// enable fast_create_table on default
+	version218 = 218
+
+	// ...
+	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// ...
+
+	// next version should start with 239
+
+	// version 239
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version239 = 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version217
+var currentBootstrapVersion int64 = version239
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1364,6 +1380,8 @@ var (
 		upgradeToVer215,
 		upgradeToVer216,
 		upgradeToVer217,
+		upgradeToVer218,
+		upgradeToVer239,
 	}
 )
 
@@ -1427,47 +1445,31 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
-func acquireLock(s sessiontypes.Session) (func(), bool) {
-	dom := domain.GetDomain(s)
-	if dom == nil {
-		logutil.BgLogger().Warn("domain is nil")
-		return nil, false
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
-	cli := dom.GetEtcdClient()
-	if cli == nil {
-		logutil.BgLogger().Warn("etcd client is nil, force to acquire ddl owner lock")
+	if etcdCli == nil {
 		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
 		return func() {
 			// do nothing
-		}, true
+		}, nil
 	}
-	releaseFn, err := owner.AcquireDistributedLock(context.Background(), cli, bootstrapOwnerKey, 10)
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
 	if err != nil {
-		return nil, false
-	}
-	return releaseFn, true
-}
-
-func forceToLeader(ctx context.Context, s sessiontypes.Session) error {
-	dom := domain.GetDomain(s)
-	for !dom.DDL().OwnerManager().IsOwner() {
-		ownerID, err := dom.DDL().OwnerManager().GetOwnerID(ctx)
-		if err != nil && (errors.ErrorEqual(err, concurrency.ErrElectionNoLeader) || strings.Contains(err.Error(), "no owner")) {
-			logutil.BgLogger().Info("ddl owner not found", zap.Error(err))
-			time.Sleep(50 * time.Millisecond)
-			continue
-		} else if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err))
-			return err
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
 		}
-		err = owner.DeleteLeader(ctx, dom.EtcdClient(), ddl.DDLOwnerKey)
-		if err != nil {
-			logutil.BgLogger().Error("unexpected error", zap.Error(err), zap.String("ownerID", ownerID))
-			return err
-		}
-		time.Sleep(50 * time.Millisecond)
+		return nil, errors.Trace(err)
 	}
-	return nil
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
 }
 
 func checkDistTask(s sessiontypes.Session, ver int64) {
@@ -1526,22 +1528,11 @@ func upgrade(s sessiontypes.Session) {
 	}
 
 	var ver int64
-	releaseFn, ok := acquireLock(s)
-	if !ok {
-		logutil.BgLogger().Fatal("[upgrade] get ddl owner distributed lock failed", zap.Error(err))
-	}
 	ver, err = getBootstrapVersion(s)
 	terror.MustNil(err)
 	if ver >= currentBootstrapVersion {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		releaseFn()
 		return
-	}
-	defer releaseFn()
-
-	err = forceToLeader(context.Background(), s)
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] force to owner failed", zap.Error(err))
 	}
 
 	checkDistTask(s, ver)
@@ -1562,7 +1553,6 @@ func upgrade(s sessiontypes.Session) {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -3280,6 +3270,21 @@ func upgradeToVer217(s sessiontypes.Session, ver int64) {
 	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
 	// Otherwise do nothing.
 	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	// empty, just make lint happy.
+}
+
+func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	if ver >= version239 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

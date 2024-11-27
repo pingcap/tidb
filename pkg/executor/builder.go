@@ -222,6 +222,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildPauseDDLJobs(v)
 	case *plannercore.ResumeDDLJobs:
 		return b.buildResumeDDLJobs(v)
+	case *plannercore.AlterDDLJob:
+		return b.buildAlterDDLJob(v)
 	case *plannercore.ShowNextRowID:
 		return b.buildShowNextRowID(v)
 	case *plannercore.ShowDDL:
@@ -355,6 +357,15 @@ func (b *executorBuilder) buildResumeDDLJobs(v *plannercore.ResumeDDLJobs) exec.
 			jobIDs:       v.JobIDs,
 			execute:      ddl.ResumeJobs,
 		},
+	}
+	return e
+}
+
+func (b *executorBuilder) buildAlterDDLJob(v *plannercore.AlterDDLJob) exec.Executor {
+	e := &AlterDDLJobExec{
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		jobID:        v.JobID,
+		AlterOpts:    v.Options,
 	}
 	return e
 }
@@ -811,12 +822,15 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 		end:          v.Offset + v.Count,
 	}
 
-	childUsedSchemaLen := v.Children()[0].Schema().Len()
+	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
 	e.columnIdxsUsedByChild = make([]int, 0, len(childUsedSchema))
 	e.columnIdxsUsedByChild = append(e.columnIdxsUsedByChild, childUsedSchema...)
-	if len(e.columnIdxsUsedByChild) == childUsedSchemaLen {
+	if len(e.columnIdxsUsedByChild) == childSchemaLen {
 		e.columnIdxsUsedByChild = nil // indicates that all columns are used. LimitExec will improve performance for this condition.
+	} else {
+		// construct a project evaluator to do the inline projection
+		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
 }
@@ -974,6 +988,7 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 		hasRefCols:                v.NeedFillDefaultValue,
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
+		ignoreErr:                 v.IgnoreErr,
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -995,7 +1010,6 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 	insert := &InsertExec{
 		InsertValues: ivs,
 		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
-		IgnoreErr:    v.IgnoreErr,
 	}
 	return insert
 }
@@ -2241,7 +2255,6 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.ClusterTableProcesslist),
 			strings.ToLower(infoschema.TableTiKVRegionStatus),
 			strings.ToLower(infoschema.TableTiDBHotRegions),
-			strings.ToLower(infoschema.TableSessionVar),
 			strings.ToLower(infoschema.TableConstraints),
 			strings.ToLower(infoschema.TableTiFlashReplica),
 			strings.ToLower(infoschema.TableTiDBServersInfo),
@@ -2265,6 +2278,7 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
@@ -2702,6 +2716,7 @@ func (b *executorBuilder) buildDelete(v *plannercore.Delete) exec.Executor {
 		tblID2Table:    tblID2table,
 		IsMultiTable:   v.IsMultiTable,
 		tblColPosInfos: v.TblColPosInfos,
+		ignoreErr:      v.IgnoreErr,
 	}
 	deleteExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {
@@ -3060,13 +3075,23 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	}
 	exprCtx := b.ctx.GetExprCtx()
 	for _, task := range v.ColTasks {
+		// ColumnInfos2ColumnsAndNames will use the `colInfos` to find the unique id for the column,
+		// so we need to make sure all the columns pass into it.
 		columns, _, err := expression.ColumnInfos2ColumnsAndNames(
 			exprCtx,
 			pmodel.NewCIStr(task.AnalyzeInfo.DBName),
 			task.TblInfo.Name,
-			task.ColsInfo,
+			append(task.ColsInfo, task.SkipColsInfo...),
 			task.TblInfo,
 		)
+		columns = slices.DeleteFunc(columns, func(expr *expression.Column) bool {
+			for _, col := range task.SkipColsInfo {
+				if col.ID == expr.ID {
+					return true
+				}
+			}
+			return false
+		})
 		if err != nil {
 			b.err = err
 			return nil

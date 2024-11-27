@@ -201,6 +201,13 @@ func (s *mockStorage) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
 	return 0, nil
 }
 
+func (s *mockStorage) GetOption(k any) (any, bool) {
+	return nil, false
+}
+
+func (s *mockStorage) SetOption(k any, v any) {
+}
+
 func (s *mockStorage) GetCodec() tikv.Codec {
 	return nil
 }

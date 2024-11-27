@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -1022,9 +1023,37 @@ func TestDelayMetrics(t *testing.T) {
 	checkRecord(records, "t5", emptyTime)
 }
 
+type poolTestWrapper struct {
+	util.SessionPool
+	inuse atomic.Int64
+}
+
+func wrapPoolForTest(pool util.SessionPool) *poolTestWrapper {
+	return &poolTestWrapper{SessionPool: pool}
+}
+
+func (w *poolTestWrapper) Get() (pools.Resource, error) {
+	r, err := w.SessionPool.Get()
+	if err == nil {
+		w.inuse.Add(1)
+	}
+	return r, err
+}
+
+func (w *poolTestWrapper) Put(r pools.Resource) {
+	w.inuse.Add(-1)
+	w.SessionPool.Put(r)
+}
+
+func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
+	require.Zero(t, w.inuse.Load())
+}
+
 func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
 	dom.TTLJobManager().Stop()
@@ -1153,7 +1182,9 @@ func TestManagerJobAdapterSubmitJob(t *testing.T) {
 
 func TestManagerJobAdapterGetJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1248,7 +1279,9 @@ func TestManagerJobAdapterGetJob(t *testing.T) {
 
 func TestManagerJobAdapterNow(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1425,4 +1458,44 @@ func boostJobScheduleForTest(t *testing.T) func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval"))
 	}
+}
+
+func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	m1 := ttlworker.NewJobManager("test-ttl-job-manager-1", nil, store, nil, nil)
+	require.NoError(t, m1.InfoSchemaCache().Update(se))
+	require.NoError(t, m1.TableStatusCache().Update(ctx, se))
+
+	now := se.Now()
+	_, err = m1.LockJob(context.Background(), se, m1.InfoSchemaCache().Tables[testTable.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running"))
+
+	// lose heartbeat. Simulate the situation that m1 doesn't update the hearbeat for 8 hours.
+	now = now.Add(time.Hour * 8)
+
+	// stop the tidb_ttl_job_enable
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
+
+	// reschedule and try to get the job
+	m2 := ttlworker.NewJobManager("test-ttl-job-manager-2", nil, store, nil, nil)
+	require.NoError(t, m2.InfoSchemaCache().Update(se))
+	require.NoError(t, m2.TableStatusCache().Update(ctx, se))
+	m2.RescheduleJobs(se, now)
+
+	// the job should have been cancelled
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
 }

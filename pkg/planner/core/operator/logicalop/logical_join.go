@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
@@ -94,9 +93,9 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	JoinType      JoinType
+	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
 	CartesianJoin bool
 	StraightJoin  bool
@@ -108,12 +107,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -149,81 +148,6 @@ type LogicalJoin struct {
 func (p LogicalJoin) Init(ctx base.PlanContext, offset int) *LogicalJoin {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeJoin, &p, offset)
 	return &p
-}
-
-// ************************ start implementation of HashEquals interface ************************
-
-// Hash64 implements the HashEquals.<0th> interface.
-func (p *LogicalJoin) Hash64(h base2.Hasher) {
-	h.HashString(plancodec.TypeJoin)
-	h.HashInt(int(p.JoinType))
-	h.HashInt(len(p.EqualConditions))
-	for _, oneCond := range p.EqualConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.NAEQConditions))
-	for _, oneCond := range p.NAEQConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.LeftConditions))
-	for _, oneCond := range p.LeftConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.RightConditions))
-	for _, oneCond := range p.RightConditions {
-		oneCond.Hash64(h)
-	}
-	h.HashInt(len(p.OtherConditions))
-	for _, oneCond := range p.OtherConditions {
-		oneCond.Hash64(h)
-	}
-}
-
-// Equals implements the HashEquals.<1st> interface.
-func (p *LogicalJoin) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	var p2 *LogicalJoin
-	switch x := other.(type) {
-	case *LogicalJoin:
-		p2 = x
-	case LogicalJoin:
-		p2 = &x
-	default:
-		return false
-	}
-	ok := p.JoinType != p2.JoinType && len(p.EqualConditions) == len(p2.EqualConditions) && len(p.NAEQConditions) == len(p2.NAEQConditions) &&
-		len(p.LeftConditions) == len(p2.LeftConditions) && len(p.RightConditions) == len(p2.RightConditions) && len(p.OtherConditions) == len(p2.OtherConditions)
-	if !ok {
-		return false
-	}
-	for i, oneCond := range p.EqualConditions {
-		if !oneCond.Equals(p2.EqualConditions[i]) {
-			return false
-		}
-	}
-	for i, oneCond := range p.NAEQConditions {
-		if !oneCond.Equals(p2.NAEQConditions[i]) {
-			return false
-		}
-	}
-	for i, oneCond := range p.LeftConditions {
-		if !oneCond.Equals(p2.LeftConditions[i]) {
-			return false
-		}
-	}
-	for i, oneCond := range p.RightConditions {
-		if !oneCond.Equals(p2.RightConditions[i]) {
-			return false
-		}
-	}
-	for i, oneCond := range p.OtherConditions {
-		if !oneCond.Equals(p2.OtherConditions[i]) {
-			return false
-		}
-	}
-	return true
 }
 
 // *************************** start implementation of Plan interface ***************************
@@ -445,12 +369,13 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
+	topnEliminated := false
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		p.Children()[0] = p.pushDownTopNToChild(topN, 0, opt)
+		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0, opt)
 		p.Children()[1] = p.Children()[1].PushDownTopN(nil, opt)
 	case RightOuterJoin:
-		p.Children()[1] = p.pushDownTopNToChild(topN, 1, opt)
+		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1, opt)
 		p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
 	default:
 		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
@@ -458,6 +383,11 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
+		if topnEliminated && len(topN.ByItems) > 0 {
+			sort := LogicalSort{ByItems: topN.ByItems}.Init(p.SCtx(), p.QueryBlockOffset())
+			sort.SetChildren(p.Self())
+			return sort
+		}
 		return topN.AttachChild(p.Self(), opt)
 	}
 	return p.Self()
@@ -1154,22 +1084,61 @@ func (p *LogicalJoin) MergeSchema() {
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+// When it's outer join and there's unique key information. The TopN can be totally pushed down to the join.
+// We just need reserve the ORDER informaion
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool) {
 	if topN == nil {
-		return p.Children()[idx].PushDownTopN(nil, opt)
+		return p.Children()[idx].PushDownTopN(nil, opt), false
 	}
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !p.Children()[idx].Schema().Contains(col) {
-				return p.Children()[idx].PushDownTopN(nil, opt)
+				return p.Children()[idx].PushDownTopN(nil, opt), false
 			}
+		}
+	}
+	count, offset := topN.Count+topN.Offset, uint64(0)
+	selfEliminated := false
+	if p.JoinType == LeftOuterJoin {
+		innerChild := p.Children()[1]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[1].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		// If it's unique key(unique with not null), we can push the offset down safely whatever the join key is normal eq or nulleq.
+		// If the join key is nulleq, then we can only push the offset down when the inner side is unique key.
+		// Only when the join key is normal eq, we can push the offset down when the inner side is unique(could be null).
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+			selfEliminated = true
+		}
+	} else if p.JoinType == RightOuterJoin {
+		innerChild := p.Children()[0]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[0].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+			selfEliminated = true
 		}
 	}
 
 	newTopN := LogicalTopN{
-		Count:            topN.Count + topN.Offset,
+		Count:            count,
+		Offset:           offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
@@ -1177,7 +1146,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
 	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
-	return p.Children()[idx].PushDownTopN(newTopN, opt)
+	return p.Children()[idx].PushDownTopN(newTopN, opt), selfEliminated
 }
 
 // Add a new selection between parent plan and current plan with candidate predicates

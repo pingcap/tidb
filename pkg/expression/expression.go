@@ -167,11 +167,19 @@ const (
 	ConstStrict
 )
 
+// SafeToShareAcrossSession indicates whether the expression can be shared across different sessions.
+// In Instance Plan Cache, we'll share the same Plan/Expression across different sessions, and this interface
+// is used to check whether the expression is safe to share without cloning.
+type SafeToShareAcrossSession interface {
+	SafeToShareAcrossSession() bool
+}
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	VecExpr
 	CollationInfo
 	base.HashEquals
+	SafeToShareAcrossSession
 
 	Traverse(TraverseAction) Expression
 
@@ -437,7 +445,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 		isEQCondFromIn := IsEQCondFromIn(expr)
 		for i := range sel {
 			if isZero[i] == -1 {
-				if eType != types.ETInt && !isEQCondFromIn {
+				if eType != types.ETInt || !isEQCondFromIn {
 					continue
 				}
 				// In this case, we set this row to null and let it pass this filter.
@@ -449,6 +457,7 @@ func VecEvalBool(ctx EvalContext, vecEnabled bool, exprList CNFExprs, input *chu
 			}
 
 			if isZero[i] == 0 {
+				nulls[sel[i]] = false
 				continue
 			}
 			sel[j] = sel[i] // this row passes this filter
@@ -911,49 +920,57 @@ func SplitDNFItems(onExpr Expression) []Expression {
 
 // EvaluateExprWithNull sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
-func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func EvaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
 		ctx.SetSkipPlanCache(fmt.Sprintf("%v affects null check", expr.StringWithCtx(ctx.GetEvalCtx(), errors.RedactLogDisable)))
 	}
 	if ctx.IsInNullRejectCheck() {
-		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
-		return expr
+		res, _, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
+		return res, err
 	}
 	return evaluateExprWithNull(ctx, schema, expr)
 }
 
-func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) Expression {
+func evaluateExprWithNull(ctx BuildContext, schema *Schema, expr Expression) (Expression, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i] = evaluateExprWithNull(ctx, schema, arg)
+			res, err := EvaluateExprWithNull(ctx, schema, arg)
+			if err != nil {
+				return nil, err
+			}
+			args[i] = res
 		}
-		return NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		return NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
 	case *Column:
 		if !schema.Contains(x) {
-			return x
+			return x, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x)
+			return FoldConstant(ctx, x), nil
 		}
 	}
-	return expr
+	return expr, nil
 }
 
 // evaluateExprWithNullInNullRejectCheck sets columns in schema as null and calculate the final result of the scalar function.
 // If the Expression is a non-constant value, it means the result is unknown.
 // The returned bool values indicates whether the value is influenced by the Null Constant transformed from schema column
 // when the value is Null Constant.
-func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool) {
+func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, expr Expression) (Expression, bool, error) {
 	switch x := expr.(type) {
 	case *ScalarFunction:
 		args := make([]Expression, len(x.GetArgs()))
 		nullFromSets := make([]bool, len(x.GetArgs()))
 		for i, arg := range x.GetArgs() {
-			args[i], nullFromSets[i] = evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			res, nullFromSet, err := evaluateExprWithNullInNullRejectCheck(ctx, schema, arg)
+			if err != nil {
+				return nil, false, err
+			}
+			args[i], nullFromSets[i] = res, nullFromSet
 		}
 		allArgsNullFromSet := true
 		for i := range args {
@@ -990,22 +1007,25 @@ func evaluateExprWithNullInNullRejectCheck(ctx BuildContext, schema *Schema, exp
 			}
 		}
 
-		c := NewFunctionInternal(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		c, err := NewFunction(ctx, x.FuncName.L, x.RetType.Clone(), args...)
+		if err != nil {
+			return nil, false, err
+		}
 		cons, ok := c.(*Constant)
 		// If the return expr is Null Constant, and all the Null Constant arguments are affected by column schema,
 		// then we think the result Null Constant is also affected by the column schema
-		return c, ok && cons.Value.IsNull() && allArgsNullFromSet
+		return c, ok && cons.Value.IsNull() && allArgsNullFromSet, nil
 	case *Column:
 		if !schema.Contains(x) {
-			return x, false
+			return x, false, nil
 		}
-		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true
+		return &Constant{Value: types.Datum{}, RetType: types.NewFieldType(mysql.TypeNull)}, true, nil
 	case *Constant:
 		if x.DeferredExpr != nil {
-			return FoldConstant(ctx, x), false
+			return FoldConstant(ctx, x), false, nil
 		}
 	}
-	return expr, false
+	return expr, false, nil
 }
 
 // TableInfo2SchemaAndNames converts the TableInfo to the schema and name slice.
@@ -1051,7 +1071,7 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName pmodel.CIStr, tbl *model.
 		}
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
 	return schema, names, nil
 }
 
