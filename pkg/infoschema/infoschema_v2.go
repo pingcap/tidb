@@ -844,7 +844,7 @@ retry:
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
-	tblInfos, err := m.ListTables(dbInfo.ID)
+	tblInfos, err := m.ListTables(ctx, dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil, nil

@@ -821,6 +821,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 	}
 	e.rows = rows
 	return nil
@@ -1190,6 +1193,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
