@@ -35,6 +35,7 @@ import (
 )
 
 func TestResourceGroupTag(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

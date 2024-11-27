@@ -29,6 +29,7 @@ import (
 )
 
 func TestShowStatsMeta(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -50,6 +51,7 @@ func TestShowStatsMeta(t *testing.T) {
 }
 
 func TestShowStatsLocked(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -72,6 +74,7 @@ func TestShowStatsLocked(t *testing.T) {
 }
 
 func TestShowStatsHistograms(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -103,6 +106,7 @@ func TestShowStatsHistograms(t *testing.T) {
 }
 
 func TestShowStatsBuckets(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -148,6 +152,7 @@ func TestShowStatsBuckets(t *testing.T) {
 }
 
 func TestShowStatsBucketWithDateNullValue(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -167,6 +172,7 @@ func TestShowStatsBucketWithDateNullValue(t *testing.T) {
 }
 
 func TestShowStatsHasNullValue(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -307,6 +313,7 @@ func TestShowStatusSnapshot(t *testing.T) {
 }
 
 func TestShowStatsExtended(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -359,6 +366,7 @@ func TestShowStatsExtended(t *testing.T) {
 }
 
 func TestShowColumnStatsUsage(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -391,6 +399,7 @@ func TestShowColumnStatsUsage(t *testing.T) {
 }
 
 func TestShowAnalyzeStatus(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

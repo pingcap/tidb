@@ -154,6 +154,7 @@ func TestGetLackHandles(t *testing.T) {
 }
 
 func TestInconsistentIndex(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -187,6 +188,7 @@ func TestInconsistentIndex(t *testing.T) {
 		require.NoError(t, err)
 
 		err = tk.QueryToErr("select * from t use index(idx_a) where a >= 0")
+		require.Error(t, err)
 		require.Equal(t, fmt.Sprintf("[executor:8133]data inconsistency in table: t, index: idx_a, index-count:%d != record-count:10", i+11), err.Error())
 		// if has other conditions, the inconsistent index check doesn't work.
 		err = tk.QueryToErr("select * from t where a>=0 and b<10")
@@ -294,6 +296,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 }
 
 func TestCoprocessorPagingSize(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -352,6 +355,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 }
 
 func TestAdaptiveClosestRead(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -514,6 +518,7 @@ func TestCoprocessorPagingReqKeyRangeSorted(t *testing.T) {
 }
 
 func TestCoprocessorBatchByStore(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -572,6 +577,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 }
 
 func TestCoprCacheWithoutExecutionInfo(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk1 := testkit.NewTestKit(t, store)

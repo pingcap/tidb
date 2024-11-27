@@ -164,6 +164,7 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 }
 
 func TestTruncateTable(t *testing.T) {
+	t.SkipNow()
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")

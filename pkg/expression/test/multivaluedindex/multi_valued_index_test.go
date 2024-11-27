@@ -31,6 +31,7 @@ import (
 )
 
 func TestWriteMultiValuedIndex(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

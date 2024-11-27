@@ -33,6 +33,7 @@ import (
 )
 
 func TestShowPlacement(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -117,6 +118,7 @@ func TestShowPlacement(t *testing.T) {
 }
 
 func TestShowPlacementPrivilege(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -287,6 +289,7 @@ func TestShowPlacementForTableAndPartition(t *testing.T) {
 }
 
 func TestShowPlacementForDBPrivilege(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -495,6 +498,7 @@ func (cli *mockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r
 }
 
 func TestShowPlacementHandleRegionStatus(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

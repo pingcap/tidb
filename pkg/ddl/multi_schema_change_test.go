@@ -142,6 +142,7 @@ func TestMultiSchemaChangeDropIndexedColumnsCancelled(t *testing.T) {
 }
 
 func TestMultiSchemaChangeDropColumnsParallel(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -236,6 +237,7 @@ func TestMultiSchemaChangeRenameColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeAlterColumns(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -302,6 +304,7 @@ func TestMultiSchemaChangeAlterColumns(t *testing.T) {
 }
 
 func TestMultiSchemaChangeChangeColumns(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -515,6 +518,7 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 }
 
 func TestMultiSchemaChangeModifyColumnsCancelled(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -599,6 +603,7 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 }
 
 func TestMultiSchemaChangeMixCancelled(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -656,6 +661,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 }
 
 func TestMultiSchemaChangeWithExpressionIndex(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")

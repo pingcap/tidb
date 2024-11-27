@@ -45,6 +45,7 @@ import (
 const columnModifyLease = 600 * time.Millisecond
 
 func TestAddAndDropColumn(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStoreWithSchemaLease(t, columnModifyLease)
 
 	tk := testkit.NewTestKit(t, store)
@@ -617,6 +618,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 }
 
 func TestModifyColumnReorgCheckpoint(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, columnModifyLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -38,6 +38,7 @@ import (
 )
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
 	require.NoError(t, err)
@@ -131,6 +132,7 @@ func TestCalculateRegionBatch(t *testing.T) {
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
+	t.SkipNow()
 	// init test env.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

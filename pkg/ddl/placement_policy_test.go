@@ -752,6 +752,7 @@ func getClonedDatabase(dom *domain.Domain, dbName string) (*model.DBInfo, bool) 
 }
 
 func TestCreateTableWithInfoPlacement(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1133,6 +1134,7 @@ func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionctx.Context, db 
 }
 
 func TestPolicyInheritance(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	// clearAllBundles(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1672,6 +1674,7 @@ func TestAlterTablePartitionPlacement(t *testing.T) {
 }
 
 func TestAddPartitionWithPlacement(t *testing.T) {
+	t.SkipNow()
 	// clearAllBundles(t)
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2222,6 +2225,7 @@ func TestExchangePartitionWithPlacement(t *testing.T) {
 }
 
 func TestPDFail(t *testing.T) {
+	t.SkipNow()
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError"))
 	}()

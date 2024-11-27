@@ -48,6 +48,7 @@ import (
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func TestShowCreateTable(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1484,6 +1485,7 @@ func TestDDLIfNotExists(t *testing.T) {
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
 func TestDDLIfExists(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")

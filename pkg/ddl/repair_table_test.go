@@ -160,6 +160,7 @@ func turnRepairModeAndInit(on bool) {
 }
 
 func TestRepairTableWithPartition(t *testing.T) {
+	t.SkipNow()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable"))

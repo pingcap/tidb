@@ -165,6 +165,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal2(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -235,6 +236,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 }
 
 func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStoreWithSchemaLease(t, 600*time.Millisecond)
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)

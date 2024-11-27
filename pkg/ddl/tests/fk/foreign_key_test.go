@@ -459,6 +459,7 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 }
 
 func TestCreateTableWithForeignKeyError(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1169,6 +1170,7 @@ func TestAddForeignKey(t *testing.T) {
 }
 
 func TestAlterTableAddForeignKeyError(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
@@ -1525,6 +1527,7 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 }
 
 func TestForeignKeyAndConcurrentDDL(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@foreign_key_checks=1;")

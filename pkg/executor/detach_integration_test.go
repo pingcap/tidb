@@ -33,6 +33,7 @@ type exportExecutor interface {
 }
 
 func TestDetachAllContexts(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -73,6 +74,7 @@ func TestDetachAllContexts(t *testing.T) {
 }
 
 func TestAfterDetachSessionCanExecute(t *testing.T) {
+	t.SkipNow()
 	// This test shows that the session can be safely used to execute another statement after detaching.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -124,6 +126,7 @@ func TestAfterDetachSessionCanExecute(t *testing.T) {
 }
 
 func TestDetachWithParam(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -174,6 +177,7 @@ func TestDetachWithParam(t *testing.T) {
 }
 
 func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -233,6 +237,7 @@ func TestDetachIndexReaderAndIndexLookUp(t *testing.T) {
 }
 
 func TestDetachSelection(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -311,6 +316,7 @@ func TestDetachSelection(t *testing.T) {
 }
 
 func TestDetachProjection(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 

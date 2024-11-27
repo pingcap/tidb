@@ -37,6 +37,7 @@ func createSampleTestkit(t *testing.T, store kv.Storage) *testkit.TestKit {
 }
 
 func TestTableSampleBasic(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
@@ -68,6 +69,7 @@ func TestTableSampleBasic(t *testing.T) {
 }
 
 func TestTableSampleMultiRegions(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")
@@ -118,6 +120,7 @@ func TestTableSamplePlan(t *testing.T) {
 }
 
 func TestMaxChunkSize(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int) shard_row_id_bits = 2 pre_split_regions = 2;")

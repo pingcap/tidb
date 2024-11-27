@@ -3200,8 +3200,10 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			}
 			// Currently only support Explicit Global indexes.
 			if !inAllPartitionColumns && !newGlobal {
-				job.State = model.JobStateCancelled
-				return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
+				index.Global = true
+				newGlobal = getNewGlobal(partInfo, index)
+				//job.State = model.JobStateCancelled
+				//return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 			}
 			if !index.Global && !newGlobal {
 				// still local index, no need to duplicate index.

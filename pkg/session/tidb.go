@@ -20,7 +20,6 @@ package session
 
 import (
 	"context"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -375,11 +373,6 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 				iRow[j], err = d.ToString()
 				if err != nil {
 					return nil, err
-				}
-				if rs.Fields()[j].Column.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-					iRow[j] = strings.TrimFunc(iRow[j], func(r rune) bool {
-						return r == '[' || r == ']'
-					})
 				}
 			}
 		}

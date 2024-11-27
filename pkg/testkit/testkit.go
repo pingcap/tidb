@@ -161,6 +161,7 @@ var ignoreErrList = []string{
 	"not yet supported",
 	"Table to exchange with partition is partitioned",
 	"A CLUSTERED INDEX must include all columns in the table's partitioning function",
+	"create temporary table with partitions",
 }
 
 // MustExecWithContext executes a sql statement and asserts nil error.

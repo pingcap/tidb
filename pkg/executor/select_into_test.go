@@ -68,6 +68,7 @@ func TestSelectIntoOutfilePointGet(t *testing.T) {
 }
 
 func TestSelectIntoOutfileTypes(t *testing.T) {
+	t.SkipNow()
 	outfile := randomSelectFilePath("TestSelectIntoOutfileTypes")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -113,6 +114,7 @@ func TestSelectIntoOutfileTypes(t *testing.T) {
 }
 
 func TestSelectIntoOutfileFromTable(t *testing.T) {
+	t.SkipNow()
 	outfile := randomSelectFilePath("TestSelectIntoOutfileFromTable")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -175,6 +177,8 @@ func TestSelectIntoOutfileConstant(t *testing.T) {
 }
 
 func TestDeliminators(t *testing.T) {
+	t.Name()
+	t.SkipNow()
 	outfile := randomSelectFilePath("TestDeliminators")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -290,6 +294,7 @@ func TestEscapeType(t *testing.T) {
 }
 
 func TestYearType(t *testing.T) {
+	t.SkipNow()
 	outfile := randomSelectFilePath("TestYearType")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

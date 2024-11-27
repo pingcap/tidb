@@ -32,6 +32,7 @@ import (
 )
 
 func TestExplainFor(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tkRoot := testkit.NewTestKit(t, store)

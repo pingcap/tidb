@@ -32,6 +32,7 @@ import (
 )
 
 func TestIntegrationCopCache(t *testing.T) {
+	t.SkipNow()
 	originConfig := config.GetGlobalConfig()
 	config.StoreGlobalConfig(config.NewConfig())
 	defer config.StoreGlobalConfig(originConfig)

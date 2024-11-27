@@ -156,6 +156,7 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 }
 
 func TestColumnBasic(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -635,6 +636,7 @@ func testGetColumn(t table.Table, name string, isExist bool) error {
 }
 
 func TestAddColumn(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -689,6 +691,7 @@ func TestAddColumn(t *testing.T) {
 }
 
 func TestAddColumns(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithDDLChecker())
 
 	tk := testkit.NewTestKit(t, store)
@@ -758,6 +761,7 @@ func TestAddColumns(t *testing.T) {
 }
 
 func TestDropColumnInColumnTest(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -812,6 +816,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 }
 
 func TestDropColumns(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

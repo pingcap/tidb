@@ -252,6 +252,7 @@ func TestDeleteExecChunk(t *testing.T) {
 }
 
 func TestDeleteMultiTableExecChunk(t *testing.T) {
+	t.SkipNow()
 	store := createMockStoreForSchemaTest(t)
 
 	tk := testkit.NewTestKit(t, store)

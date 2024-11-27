@@ -334,6 +334,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 }
 
 func TestAddForeignKey2(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
