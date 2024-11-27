@@ -654,8 +654,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	if !loadNeeded || !analyzed {
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
-			fakeCol := statistics.EmptyColumnObject(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 		}

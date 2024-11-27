@@ -261,8 +261,8 @@ func (c *Column) StatsAvailable() bool {
 	return c.IsAnalyzed() || c.NDV > 0 || c.NullCount > 0
 }
 
-// EmptyColumnObject creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
-func EmptyColumnObject(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column {
+// EmptyColumn creates an empty column object. It may be used for pseudo estimation or to stop loading unexisting stats.
+func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column {
 	return &Column{
 		PhysicalID: tid,
 		Info:       colInfo,
