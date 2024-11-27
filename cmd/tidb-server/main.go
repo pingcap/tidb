@@ -437,7 +437,7 @@ func prometheusPushClient(addr string, interval time.Duration) {
 	job := "tidb"
 	pusher := push.New(addr, job)
 	pusher = pusher.Gatherer(prometheus.DefaultGatherer)
-	pusher = pusher.Grouping("instance", instanceName())
+	pusher = pusher.Grouping("instance", util.InstanceName())
 	for {
 		err := pusher.Push()
 		if err != nil {
@@ -445,15 +445,6 @@ func prometheusPushClient(addr string, interval time.Duration) {
 		}
 		time.Sleep(interval)
 	}
-}
-
-func instanceName() string {
-	cfg := config.GetGlobalConfig()
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return fmt.Sprintf("%s_%d", hostname, cfg.Port)
 }
 
 // parseDuration parses lease argument string.
