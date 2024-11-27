@@ -611,7 +611,7 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 			}
 			if resp.Canceled {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Cancelled).Inc()
-				logutil.Logger(logCtx).Info("watch canceled, no owner")
+				logutil.Logger(logCtx).Info("watch canceled, no owner", zap.Error(resp.Err()))
 				return errors.Errorf("watch canceled, key: %v", key)
 			}
 
