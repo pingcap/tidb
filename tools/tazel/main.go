@@ -63,8 +63,6 @@ func main() {
 					if cnt > 2 {
 						gotest[0].SetAttr("shard_count",
 							&build.LiteralExpr{Token: strconv.FormatUint(uint64(min(cnt, maxShardCount)), 10)})
-					} else {
-						gotest[0].DelAttr("shard_count")
 					}
 				}
 			}
