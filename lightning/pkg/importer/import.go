@@ -1939,6 +1939,10 @@ func (rc *Controller) DataCheck(ctx context.Context) error {
 		}
 	}
 
+	if err := rc.checkSoureDataSize(ctx); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err := rc.checkCheckpoints(ctx); err != nil {
 		return errors.Trace(err)
 	}

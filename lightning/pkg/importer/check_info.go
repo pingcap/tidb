@@ -159,3 +159,10 @@ func (rc *Controller) checkCDCPiTR(ctx context.Context) error {
 	}
 	return rc.doPreCheckOnItem(ctx, precheck.CheckTargetUsingCDCPITR)
 }
+
+func (rc *Controller) checkSoureDataSize(ctx context.Context) error {
+	if rc.cfg.Mydumper.MaxSourceDataSize == 0 {
+		return nil
+	}
+	return rc.doPreCheckOnItem(ctx, precheck.CheckSourceDataSize)
+}
