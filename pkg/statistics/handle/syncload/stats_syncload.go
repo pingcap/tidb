@@ -44,7 +44,7 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 3
+const RetryCount = 2
 
 // GetSyncLoadConcurrencyByCPU returns the concurrency of sync load by CPU.
 func GetSyncLoadConcurrencyByCPU() int {
@@ -105,7 +105,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 		localItem := item
 		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
 			timer := time.NewTimer(timeout)
-			defer timer.Stop()
+			finalTimer := time.NewTimer(timeout * (RetryCount + 1))
 			task := &statstypes.NeededItemTask{
 				Item:      localItem,
 				ToTimeout: time.Now().Local().Add(timeout),
@@ -115,7 +115,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 			case s.StatsLoad.NeededItemsCh <- task:
 				metrics.SyncLoadDedupCounter.Inc()
 				select {
-				case <-timer.C:
+				case <-finalTimer.C:
 					return nil, errors.New("sync load took too long to return")
 				case result, ok := <-task.ResultCh:
 					intest.Assert(ok, "task.ResultCh cannot be closed")
