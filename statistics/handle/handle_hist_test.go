@@ -395,3 +395,47 @@ SELECT * FROM EmployeeGenerator;
 		tk.MustQuery("show stats_histograms where table_name='employees3' and Column_name='PRIMARY' and Partition_name='global'").CheckContain("19958")
 	}
 }
+
+func TestSendLoadRequestsWaitTooLong(t *testing.T) {
+	originConfig := config.GetGlobalConfig()
+	newConfig := config.NewConfig()
+	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
+	newConfig.Performance.StatsLoadQueueSize = 10000
+	config.StoreGlobalConfig(newConfig)
+	defer config.StoreGlobalConfig(originConfig)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b,c))")
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+
+	oriLease := dom.StatsHandle().Lease()
+	dom.StatsHandle().SetLease(1)
+	defer func() {
+		dom.StatsHandle().SetLease(oriLease)
+	}()
+	tk.MustExec("analyze table t all columns")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
+	for _, col := range tableInfo.Columns {
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
+	}
+	stmtCtx := &stmtctx.StatementContext{}
+	timeout := time.Nanosecond * 100
+	require.NoError(t, h.SendLoadRequests(stmtCtx, neededColumns, timeout))
+	for _, resultCh := range stmtCtx.StatsLoad.ResultCh {
+		rs1 := <-resultCh
+		require.Error(t, rs1.Err)
+	}
+	stmtCtx1 := &stmtctx.StatementContext{}
+	require.NoError(t, h.SendLoadRequests(stmtCtx1, neededColumns, timeout))
+	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
+		rs1 := <-resultCh
+		require.Error(t, rs1.Err)
+	}
+}
