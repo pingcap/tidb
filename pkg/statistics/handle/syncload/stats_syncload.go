@@ -106,6 +106,10 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 		resultCh := globalStatsSyncLoadSingleFlight.DoChan(localItem.Key(), func() (any, error) {
 			timer := time.NewTimer(timeout)
 			finalTimer := time.NewTimer(timeout*RetryCount + time.Microsecond*10)
+			defer func() {
+				timer.Stop()
+				finalTimer.Stop()
+			}()
 			task := &statstypes.NeededItemTask{
 				Item:      localItem,
 				ToTimeout: time.Now().Local().Add(timeout),
