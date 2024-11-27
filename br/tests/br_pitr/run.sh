@@ -21,6 +21,7 @@ CUR=$(cd `dirname $0`; pwd)
 # const value
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+TASK_NAME="br_pitr"
 
 # start a new cluster
 echo "restart a services"
@@ -37,7 +38,7 @@ echo "prepare_delete_range_count: $prepare_delete_range_count"
 
 # start the log backup task
 echo "start log task"
-run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
+run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$PREFIX/log"
 
 # run snapshot backup
 echo "run snapshot backup"
@@ -53,6 +54,7 @@ incremental_delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from 
 echo "incremental_delete_range_count: $incremental_delete_range_count"
 
 # wait checkpoint advance
+<<<<<<< HEAD
 echo "wait checkpoint advance"
 sleep 10
 current_ts=$(echo $(($(date +%s%3N) << 18)))
@@ -86,6 +88,10 @@ while true; do
         exit 1
     fi
 done
+=======
+current_ts=$(python3 -c "import time; print(int(time.time() * 1000) << 18)")
+. "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance $TASK_NAME
+>>>>>>> 9cc4a200d0d (br: refactor test to use wait checkpoint method (#57612))
 
 # dump some info from upstream cluster
 # ...
