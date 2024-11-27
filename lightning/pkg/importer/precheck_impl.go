@@ -1462,8 +1462,12 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 
 	pdAddrs := i.pdAddrsGetter(ctx)
 	pdAddrsMap := make(map[string]struct{}, len(pdAddrs))
-	for _, addr := range pdAddrs {
-		pdAddrsMap[addr] = struct{}{}
+	for _, addrURL := range pdAddrs {
+		u, err2 := url.Parse(addrURL)
+		if err2 != nil {
+			return nil, errors.Trace(err2)
+		}
+		pdAddrsMap[u.Host] = struct{}{}
 	}
 
 	pdAddrsFromTiDB := make([]string, 0, len(pdAddrs))
@@ -1478,17 +1482,12 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		u, err2 := url.Parse(addr)
-		if err2 != nil {
-			return nil, errors.Trace(err2)
-		}
-		pdAddr := u.Host
 
 		// if intersection is not empty, we can say URLs from TiDB and PD are from the same cluster
-		if _, ok := pdAddrsMap[pdAddr]; ok {
+		if _, ok := pdAddrsMap[addr]; ok {
 			return theResult, nil
 		}
-		pdAddrsFromTiDB = append(pdAddrsFromTiDB, pdAddr)
+		pdAddrsFromTiDB = append(pdAddrsFromTiDB, addr)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, errors.Trace(err)
@@ -1503,6 +1502,6 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 	return theResult, nil
 }
 
-func (i *pdTiDBFromSameClusterCheckItem) GetCheckItemID() precheck.CheckItemID {
+func (*pdTiDBFromSameClusterCheckItem) GetCheckItemID() precheck.CheckItemID {
 	return precheck.CheckPDTiDBFromSameCluster
 }
