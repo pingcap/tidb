@@ -67,13 +67,7 @@ type RangeType struct {
 	*rtree.Range
 }
 
-func (r RangeType) IdentKey() []byte {
-	return r.StartKey
-}
-
-type ValueType interface {
-	IdentKey() []byte
-}
+type ValueType interface{}
 
 type CheckpointMessage[K KeyType, V ValueType] struct {
 	// start-key of the origin range

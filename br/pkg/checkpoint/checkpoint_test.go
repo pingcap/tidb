@@ -443,8 +443,8 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
-		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
-			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+		func(tableID int64, v checkpoint.RestoreValueType) {
+			recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
 		})
 	require.NoError(t, err)
 	require.Equal(t, 1, recordSet["1_{123}"])

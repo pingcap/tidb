@@ -30,34 +30,30 @@ import (
 type RestoreKeyType = int64
 type RestoreValueType struct {
 	// the file key of a range
-	RangeKey string
+	RangeKey string `json:"range-key,omitempty"`
 	// the file name, used for compacted restore
-	Name string
-}
-
-func (rv RestoreValueType) IdentKey() []byte {
-	return []byte(rv.RangeKey)
+	Name string `json:"name,omitempty"`
 }
 
 type CheckpointItem struct {
-	TableID RestoreKeyType
+	tableID RestoreKeyType
 	// used for table full backup restore
-	RangeKey string
+	rangeKey string
 	// used for table raw/txn/compacted SST restore
-	Name string
+	name string
 }
 
 func NewCheckpointRangeKeyItem(tableID RestoreKeyType, rangeKey string) *CheckpointItem {
 	return &CheckpointItem{
-		TableID:  tableID,
-		RangeKey: rangeKey,
+		tableID:  tableID,
+		rangeKey: rangeKey,
 	}
 }
 
 func NewCheckpointFileItem(tableID RestoreKeyType, fileName string) *CheckpointItem {
 	return &CheckpointItem{
-		TableID: tableID,
-		Name:    fileName,
+		tableID: tableID,
+		name:    fileName,
 	}
 }
 
@@ -103,10 +99,18 @@ func AppendRangesForRestore(
 	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
 	c *CheckpointItem,
 ) error {
+	var group RestoreValueType
+	if len(c.rangeKey) != 0 {
+		group.RangeKey = c.rangeKey
+	} else if len(c.name) != 0 {
+		group.Name = c.name
+	} else {
+		return errors.New("either rangekey or name should be used in checkpoint append")
+	}
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
-		GroupKey: c.TableID,
+		GroupKey: c.tableID,
 		Group: []RestoreValueType{
-			{RangeKey: c.RangeKey, Name: c.Name},
+			group,
 		},
 	})
 }
