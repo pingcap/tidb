@@ -652,6 +652,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
 	if !loadNeeded || !analyzed {
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
 		if loadNeeded && !analyzed {
 			fakeCol := &statistics.Column{
 				PhysicalID: statsTbl.PhysicalID,
