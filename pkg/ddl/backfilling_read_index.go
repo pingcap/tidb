@@ -214,6 +214,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	if err != nil {
 		return nil, err
 	}
+	r.bc.SetIngestTS(sm.TS)
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))

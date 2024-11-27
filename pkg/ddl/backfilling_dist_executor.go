@@ -59,7 +59,9 @@ type BackfillSubTaskMeta struct {
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
-	TS             uint64   `json:"ts,omitempty"`
+	// TS is used to make sure subtasks are idempotent.
+	// Used by by both local sort and global sort.
+	TS uint64 `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.

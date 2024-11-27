@@ -15,7 +15,10 @@
 package ingest
 
 import (
+	"context"
+
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -51,11 +54,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	ts := uint64(0)
-	if c := bc.checkpointMgr; c != nil {
-		ts = c.GetTS()
-	}
-	cfg := generateLocalEngineConfig(ts)
+	cfg := generateLocalEngineConfig(bc.ingestTS.Load())
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
@@ -132,6 +131,9 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 				if err != nil {
 					return errors.Trace(err)
 				}
+				failpoint.Inject("mockCollectRemoteDuplicateRowsFailed", func(_ failpoint.Value) {
+					failpoint.Return(context.DeadlineExceeded)
+				})
 			}
 		}
 	}

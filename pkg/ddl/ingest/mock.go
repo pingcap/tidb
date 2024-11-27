@@ -138,14 +138,8 @@ func (*MockBackendCtx) Flush(context.Context, FlushMode) (flushed, imported bool
 	return false, false, nil
 }
 
-// AttachCheckpointManager attaches a checkpoint manager to the backend context.
-func (m *MockBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
-	m.checkpointMgr = mgr
-}
-
-// GetCheckpointManager returns the checkpoint manager attached to the backend context.
-func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
-	return m.checkpointMgr
+// SetIngestTS sets the ingest TS that will be used by local backend import.
+func (*MockBackendCtx) SetIngestTS(_ uint64) {
 }
 
 // GetLocalBackend returns the local backend.

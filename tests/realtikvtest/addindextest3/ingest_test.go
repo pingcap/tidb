@@ -468,6 +468,19 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	ingest.ForceSyncFlagForTest = false
 }
 
+func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = on;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1), (2), (3);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockCollectRemoteDuplicateRowsFailed", "1*return")
+	tk.MustExec("alter table t add unique index idx(a);")
+}
+
 func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

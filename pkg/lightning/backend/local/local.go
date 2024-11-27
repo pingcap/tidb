@@ -1759,6 +1759,16 @@ func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err e
 	return local.pdCli.GetTS(ctx)
 }
 
+// SetIngestTS sets engine TS of a given engine uuid.
+func (local *Backend) SetIngestTS(engineUUID uuid.UUID, ts uint64) {
+	localEngine := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
+	if localEngine == nil {
+		return
+	}
+	defer localEngine.unlock()
+	localEngine.TS = ts
+}
+
 // GetTiKVCodec implements StoreHelper interface.
 func (local *Backend) GetTiKVCodec() tikvclient.Codec {
 	return local.tikvCodec

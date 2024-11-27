@@ -61,8 +61,7 @@ type BackendCtx interface {
 
 	FlushController
 
-	AttachCheckpointManager(*CheckpointManager)
-	GetCheckpointManager() *CheckpointManager
+	SetIngestTS(ts uint64)
 
 	// GetLocalBackend exposes local.Backend. It's only used in global sort based
 	// ingest.
@@ -103,6 +102,7 @@ type litBackendCtx struct {
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
 	initTS          uint64
+	ingestTS        atomic.Uint64
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
@@ -156,6 +156,15 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 		MinCommitTS: bc.initTS,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
+}
+
+// SetIngestTS sets the ingest TS that will be used by local backend import.
+// For standalone local sort, the ingest TS is initialized from checkpoint and
+// updated when the watermark is advanced.
+// For DXF local sort, the ingest TS is initialized to a fixed value
+// from subtasks meta to guarentee it is idempotent.
+func (bc *litBackendCtx) SetIngestTS(ts uint64) {
+	bc.ingestTS.Store(ts)
 }
 
 // Flush implements FlushController.
@@ -218,22 +227,6 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 		}
 	}
 
-	var newTS uint64
-	if mgr := bc.GetCheckpointManager(); mgr != nil {
-		// for local disk case, we need to refresh TS because duplicate detection
-		// requires each ingest to have a unique TS.
-		//
-		// TODO(lance6716): there's still a chance that data is imported but because of
-		// checkpoint is low-watermark, the data will still be imported again with
-		// another TS after failover. Need to refine the checkpoint mechanism.
-		newTS, err = mgr.refreshTSAndUpdateCP()
-		if err == nil {
-			for _, ei := range bc.engines {
-				ei.openedEngine.SetTS(newTS)
-			}
-		}
-	}
-
 	return true, true, err
 }
 
@@ -246,6 +239,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
+	bc.backend.SetIngestTS(ei.uuid, bc.ingestTS.Load())
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
@@ -255,17 +249,8 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 		return err
 	}
 
-	resetFn := bc.backend.ResetEngineSkipAllocTS
-	mgr := bc.GetCheckpointManager()
-	if mgr == nil {
-		// disttask case, no need to refresh TS.
-		//
-		// TODO(lance6716): for disttask local sort case, we need to use a fixed TS. But
-		// it doesn't have checkpoint, so we need to find a way to save TS.
-		resetFn = bc.backend.ResetEngine
-	}
-
-	err := resetFn(ctx, ei.uuid)
+	// TS will be set before local backend import. We don't need to alloc a new one when reset.
+	err := bc.backend.ResetEngineSkipAllocTS(ctx, ei.uuid)
 	failpoint.Inject("mockResetEngineFailed", func() {
 		err = fmt.Errorf("mock reset engine failed")
 	})
@@ -305,16 +290,6 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	shouldFlush = shouldImport ||
 		time.Since(bc.timeOfLastFlush.Load()) >= interval
 	return shouldFlush, shouldImport
-}
-
-// AttachCheckpointManager attaches a checkpoint manager to the backend context.
-func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
-	bc.checkpointMgr = mgr
-}
-
-// GetCheckpointManager returns the checkpoint manager attached to the backend context.
-func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
-	return bc.checkpointMgr
 }
 
 // GetLocalBackend returns the local backend.

@@ -825,6 +825,9 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		rs.Next = nextKey
 		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
 		w.cpMgr.AdvanceWatermark(flushed, imported)
+		// for local disk case, we need to refresh TS because duplicate detection
+		// requires each ingest to have a unique TS.
+		w.backendCtx.SetIngestTS(w.cpMgr.GetTS())
 	}
 	send(rs)
 }

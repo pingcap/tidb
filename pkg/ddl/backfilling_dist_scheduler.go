@@ -93,14 +93,20 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 	logger.Info("on next subtasks batch")
+	pdCli := sch.d.store.(kv.StorageWithPD).GetPDClient()
+	p, l, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ingestTS := oracle.ComposeTS(p, l)
 
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
+			return generatePartitionPlan(tblInfo, ingestTS)
 		}
-		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
+		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), ingestTS)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
 	case proto.BackfillStepWriteAndIngest:
@@ -120,6 +126,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
+				ingestTS,
 				logger)
 		}
 		return nil, nil
@@ -212,7 +219,7 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
+func generatePartitionPlan(tblInfo *model.TableInfo, ingestTS uint64) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -223,6 +230,7 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 	for _, physicalID := range physicalIDs {
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
+			TS:              ingestTS,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -247,6 +255,7 @@ func generateNonPartitionPlan(
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int,
+	ingestTS uint64,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
 	if err != nil {
@@ -305,6 +314,7 @@ func generateNonPartitionPlan(
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
 				RowEnd:   batch[len(batch)-1].EndKey(),
+				TS:       ingestTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -352,6 +362,7 @@ func generateGlobalSortIngestPlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
+	ingestTS uint64,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	var (
@@ -400,7 +411,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, ingestTS, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -416,21 +427,16 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	eleID int64,
 	cloudStorageURI string,
 	instanceCnt int64,
+	ingestTS uint64,
 	logger *zap.Logger,
 ) (metaArr [][]byte, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	pdCli := store.GetPDClient()
-	p, l, err := pdCli.GetTS(ctx)
-	if err != nil {
-		return nil, err
-	}
-	ts := oracle.ComposeTS(p, l)
 	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
 		i := val.(int)
-		ts = uint64(i)
+		ingestTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
@@ -478,7 +484,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			StatFiles:      statFiles,
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
-			TS:             ts,
+			TS:             ingestTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}

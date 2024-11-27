@@ -230,17 +230,22 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 		}
 	})
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.afterFlush()
 
 	if imported {
 		s.afterImport()
+		err := s.updateCheckpoint()
+		if err != nil {
+			s.logger.Warn("advance watermark update checkpoint failed", zap.Error(err))
+		}
+		return
 	}
 }
 
 // afterFlush should be called after all engine is flushed.
 func (s *CheckpointManager) afterFlush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for {
 		cp := s.checkpoints[s.minTaskIDFinished]
 		if cp == nil || !cp.lastBatchRead || cp.writtenKeys < cp.totalKeys {
@@ -255,6 +260,15 @@ func (s *CheckpointManager) afterFlush() {
 }
 
 func (s *CheckpointManager) afterImport() {
+	p, l, err := s.pdCli.GetTS(s.ctx)
+	if err != nil {
+		s.logger.Warn("advance watermark get ts failed", zap.Error(err))
+	}
+	newTS := oracle.ComposeTS(p, l)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.importedKeyLowWatermark.Cmp(s.flushedKeyLowWatermark) > 0 {
 		s.logger.Warn("lower watermark of flushed key is less than imported key",
 			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
@@ -264,6 +278,9 @@ func (s *CheckpointManager) afterImport() {
 	}
 	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 	s.importedKeyCnt = s.flushedKeyCnt
+	if s.ts < newTS {
+		s.ts = newTS
+	}
 	s.dirty = true
 }
 
@@ -494,16 +511,4 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		return s.ctx.Err()
 	}
 	return nil
-}
-
-func (s *CheckpointManager) refreshTSAndUpdateCP() (uint64, error) {
-	p, l, err := s.pdCli.GetTS(s.ctx)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	newTS := oracle.ComposeTS(p, l)
-	s.mu.Lock()
-	s.ts = newTS
-	s.mu.Unlock()
-	return newTS, s.updateCheckpoint()
 }

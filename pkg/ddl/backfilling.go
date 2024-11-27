@@ -731,7 +731,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Error(err))
 	} else {
 		defer cpMgr.Close()
-		bcCtx.AttachCheckpointManager(cpMgr)
+		bcCtx.SetIngestTS(cpMgr.GetTS())
 	}
 
 	reorgCtx := dc.getReorgCtx(job.ID)
