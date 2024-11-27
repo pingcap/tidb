@@ -1436,6 +1436,21 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
 
+// pdTiDBFromSameClusterCheckItem checks whether PD and TiDB are from the same
+// cluster. The implementation is
+//
+//   - try to get PD leader's client URLs from PD configuration, by pdAddrsGetter.
+//   - From TiDB configuration, read all PD node information by SQL. For each PD
+//     node in the TiDB's cluster, read etcd member client URLs and return the first
+//     one. This is done by query INFORMATION_SCHEMA.CLUSTER_INFO table and the
+//     executor memtableRetriever.dataForTiDBClusterInfo.
+//
+// In happy path, we get PD leader's addresses from etcd, there must be an
+// intersection with addresses from TiDB if they are in the same cluster, and
+// vice versa. If we can't reach PD leader, we will use the PD address set in
+// lightning's task configuration, or in TiDB's configuration. Then it may have
+// false alert if PD has multiple endpoints and above configuration uses one of
+// them, while etcd information uses another one.
 type pdTiDBFromSameClusterCheckItem struct {
 	db            *sql.DB
 	pdAddrsGetter func(context.Context) []string
@@ -1483,7 +1498,8 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 			return nil, errors.Trace(err)
 		}
 
-		// if intersection is not empty, we can say URLs from TiDB and PD are from the same cluster
+		// if intersection is not empty, we can say URLs from TiDB and PD are from the
+		// same cluster. See comments above pdTiDBFromSameClusterCheckItem struct.
 		if _, ok := pdAddrsMap[addr]; ok {
 			return theResult, nil
 		}
