@@ -78,7 +78,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 35,
+=======
+    shard_count = 38,
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
     deps = [
         "//pkg/config",
         "//pkg/parser/ast",

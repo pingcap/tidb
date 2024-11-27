@@ -299,7 +299,28 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		if !ok || col.IsFullLoad() {
 			wrapper.col = nil
 		} else {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 			wrapper.col = col
+=======
+			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
+			// so we have to get the column info from the domain.
+			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
+		}
+		if skipTypes != nil {
+			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
+			if skip {
+				return nil
+			}
+		}
+
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
+		if loadNeeded && !analyzed {
+			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
+			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			return nil
+>>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723)):pkg/statistics/handle/syncload/stats_syncload.go
 		}
 	}
 	t := time.Now()
