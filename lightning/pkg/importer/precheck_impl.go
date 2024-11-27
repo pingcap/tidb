@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -1436,21 +1437,18 @@ func hasDefault(col *model.ColumnInfo) bool {
 		col.IsGenerated() || mysql.HasAutoIncrementFlag(col.GetFlag())
 }
 
-// pdTiDBFromSameClusterCheckItem checks whether PD and TiDB are from the same
-// cluster. The implementation is
+// pdTiDBFromSameClusterCheckItem provides two sources of PD addresses and use
+// util.CheckIfSameCluster to check if they are from the same cluster.
 //
-//   - try to get PD leader's client URLs from PD configuration, by pdAddrsGetter.
-//   - From TiDB configuration, read all PD node information by SQL. For each PD
-//     node in the TiDB's cluster, read etcd member client URLs and return the first
-//     one. This is done by query INFORMATION_SCHEMA.CLUSTER_INFO table and the
-//     executor memtableRetriever.dataForTiDBClusterInfo.
+// The first source stands for PD leader's all etcd client URL addresses in most
+// time, the second source stands for all PD nodes' first etcd client URL
+// addresses.
 //
-// In happy path, we get PD leader's addresses from etcd, there must be an
-// intersection with addresses from TiDB if they are in the same cluster, and
-// vice versa. If we can't reach PD leader, we will use the PD address set in
-// lightning's task configuration, or in TiDB's configuration. Then it may have
-// false alert if PD has multiple endpoints and above configuration uses one of
-// them, while etcd information uses another one.
+// If we can't reach PD leader, the first source will be replaced by the PD
+// address set in lightning's task configuration, or in TiDB's configuration.
+// Then it may have false alert if PD has multiple endpoints and above
+// configuration uses one of them, while etcd information uses another one, and
+// there are no common addresses passed to util.CheckIfSameCluster.
 type pdTiDBFromSameClusterCheckItem struct {
 	db            *sql.DB
 	pdAddrsGetter func(context.Context) []string
@@ -1475,38 +1473,26 @@ func (i *pdTiDBFromSameClusterCheckItem) Check(ctx context.Context) (*precheck.C
 		Message:  "PD and TiDB in configuration are from the same cluster",
 	}
 
-	pdAddrs := i.pdAddrsGetter(ctx)
-	pdAddrsMap := make(map[string]struct{}, len(pdAddrs))
-	for _, addrURL := range pdAddrs {
-		u, err2 := url.Parse(addrURL)
-		if err2 != nil {
-			return nil, errors.Trace(err2)
+	pdLeaderAddrsGetter := func(ctx context.Context) ([]string, error) {
+		addrs := i.pdAddrsGetter(ctx)
+		for idx, addrURL := range addrs {
+			u, err2 := url.Parse(addrURL)
+			if err2 != nil {
+				return nil, errors.Trace(err2)
+			}
+			addrs[idx] = u.Host
 		}
-		pdAddrsMap[u.Host] = struct{}{}
+		return addrs, nil
 	}
 
-	pdAddrsFromTiDB := make([]string, 0, len(pdAddrs))
-	rows, err := i.db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'")
+	sameCluster, pdAddrs, pdAddrsFromTiDB, err := util.CheckIfSameCluster(
+		ctx, pdLeaderAddrsGetter, util.GetPDsAddrWithoutScheme(i.db),
+	)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var addr string
-		err = rows.Scan(&addr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// if intersection is not empty, we can say URLs from TiDB and PD are from the
-		// same cluster. See comments above pdTiDBFromSameClusterCheckItem struct.
-		if _, ok := pdAddrsMap[addr]; ok {
-			return theResult, nil
-		}
-		pdAddrsFromTiDB = append(pdAddrsFromTiDB, addr)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, errors.Trace(err)
+	if sameCluster {
+		return theResult, nil
 	}
 
 	theResult.Passed = false
