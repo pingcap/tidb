@@ -41,7 +41,7 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 3
+const RetryCount = 2
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
@@ -97,10 +97,22 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 				ResultCh:    make(chan stmtctx.StatsLoadResult, 1),
 			}
 			select {
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 			case h.StatsLoad.NeededItemsCh <- task:
 				result, ok := <-task.ResultCh
 				intest.Assert(ok, "task.ResultCh cannot be closed")
 				return result, nil
+=======
+			case s.StatsLoad.NeededItemsCh <- task:
+				metrics.SyncLoadDedupCounter.Inc()
+				select {
+				case <-timer.C:
+					return nil, errors.New("sync load took too long to return")
+				case result, ok := <-task.ResultCh:
+					intest.Assert(ok, "task.ResultCh cannot be closed")
+					return result, nil
+				}
+>>>>>>> d0de86be941 (statistics: rightly deal with timout when to send sync load (#57712)):pkg/statistics/handle/syncload/stats_syncload.go
 			case <-timer.C:
 				return nil, errors.New("sync load stats channel is full and timeout sending task to channel")
 			}
