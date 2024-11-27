@@ -453,7 +453,7 @@ func TestRootRuntimeStats(t *testing.T) {
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
 	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
-	basic2 := stmtStats.GetBasicRuntimeStats(pid, true)
+	basic2 := stmtStats.GetBasicRuntimeStats(pid, false)
 	basic1.RecordOpen(time.Millisecond * 10)
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
