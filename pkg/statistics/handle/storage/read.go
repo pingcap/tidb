@@ -658,7 +658,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.SetCol(col.ID, fakeCol)
-			statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Added:   []*statistics.Table{statsTbl},
+				Deleted: []int64{},
+				Options: statstypes.UpdateOptions{
+					SkipMoveForward: false,
+				},
+			})
 		}
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
