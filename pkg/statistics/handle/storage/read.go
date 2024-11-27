@@ -655,12 +655,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		// If this column is not analyzed yet and we don't have it in memory.
 		// We create a fake one for the pseudo estimation.
 		if loadNeeded && !analyzed {
-			fakeCol := &statistics.Column{
-				PhysicalID: statsTbl.PhysicalID,
-				Info:       colInfo,
-				Histogram:  *statistics.NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-			}
+			fakeCol := statistics.EmptyColumnObject(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.SetCol(col.ID, fakeCol)
 			statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 		}
