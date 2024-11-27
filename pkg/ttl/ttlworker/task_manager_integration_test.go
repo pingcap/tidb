@@ -371,7 +371,7 @@ func TestShrinkScanWorkerTimeout(t *testing.T) {
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	for id := 0; id < 4; id++ {
-		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", testTable.Meta().ID, id)
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)
 		tk.MustExec(sql)
 	}
 
@@ -413,6 +413,14 @@ func TestShrinkScanWorkerTimeout(t *testing.T) {
 	require.Len(t, m.GetRunningTasks(), 0)
 	// now, the task should be finished
 	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("0"))
+	// the first task will be finished with "timeout to cancel scan task"
+	// other tasks will finish with table not found because we didn't mock the table in this test.
+	tk.MustQuery("SELECT scan_id, json_extract(state, '$.scan_task_err') from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
+		"0 \"timeout to cancel scan task\"",
+		"1 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+		"2 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+		"3 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
+	))
 
 	require.NoError(t, m.ResizeDelWorkers(0))
 	close(blockCancelCh)
