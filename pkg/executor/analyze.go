@@ -42,6 +42,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -165,6 +166,18 @@ TASKLOOP:
 		err = e.handleGlobalStats(statsHandle, globalStatsMap)
 		if err != nil {
 			return err
+		}
+	}
+
+	if intest.InTest {
+		for {
+			stop := true
+			failpoint.Inject("mockStuckAnalyze", func() {
+				stop = false
+			})
+			if stop {
+				break
+			}
 		}
 	}
 

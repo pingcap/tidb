@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	ast "github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	chunk "github.com/pingcap/tidb/pkg/util/chunk"
 	sqlexec "github.com/pingcap/tidb/pkg/util/sqlexec"
 	gomock "go.uber.org/mock/gomock"
@@ -48,7 +49,7 @@ func (m *MockRestrictedSQLExecutor) ISGOMOCK() struct{} {
 }
 
 // ExecRestrictedSQL mocks base method.
-func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(arg0 context.Context, arg1 []func(*sqlexec.ExecOption), arg2 string, arg3 ...any) ([]chunk.Row, []*ast.ResultField, error) {
+func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(arg0 context.Context, arg1 []func(*sqlexec.ExecOption), arg2 string, arg3 ...any) ([]chunk.Row, []*resolve.ResultField, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1, arg2}
 	for _, a := range arg3 {
@@ -56,7 +57,7 @@ func (m *MockRestrictedSQLExecutor) ExecRestrictedSQL(arg0 context.Context, arg1
 	}
 	ret := m.ctrl.Call(m, "ExecRestrictedSQL", varargs...)
 	ret0, _ := ret[0].([]chunk.Row)
-	ret1, _ := ret[1].([]*ast.ResultField)
+	ret1, _ := ret[1].([]*resolve.ResultField)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
 }
@@ -69,7 +70,7 @@ func (mr *MockRestrictedSQLExecutorMockRecorder) ExecRestrictedSQL(arg0, arg1, a
 }
 
 // ExecRestrictedStmt mocks base method.
-func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(arg0 context.Context, arg1 ast.StmtNode, arg2 ...func(*sqlexec.ExecOption)) ([]chunk.Row, []*ast.ResultField, error) {
+func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(arg0 context.Context, arg1 ast.StmtNode, arg2 ...func(*sqlexec.ExecOption)) ([]chunk.Row, []*resolve.ResultField, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1}
 	for _, a := range arg2 {
@@ -77,7 +78,7 @@ func (m *MockRestrictedSQLExecutor) ExecRestrictedStmt(arg0 context.Context, arg
 	}
 	ret := m.ctrl.Call(m, "ExecRestrictedStmt", varargs...)
 	ret0, _ := ret[0].([]chunk.Row)
-	ret1, _ := ret[1].([]*ast.ResultField)
+	ret1, _ := ret[1].([]*resolve.ResultField)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
 }

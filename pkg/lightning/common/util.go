@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -141,6 +142,11 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// The actual number of alive connections is controlled by the region concurrency
+	// The setting is required to avoid frequent connection creation and close
+	if db != nil {
+		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	}
 	return db, nil
 }

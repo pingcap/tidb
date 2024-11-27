@@ -20,7 +20,7 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )

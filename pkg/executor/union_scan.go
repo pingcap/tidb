@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -191,6 +191,9 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
+	if us.addedRowsIter != nil {
+		us.addedRowsIter.Close()
+	}
 	return exec.Close(us.Children(0))
 }
 

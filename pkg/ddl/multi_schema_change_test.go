@@ -15,6 +15,7 @@
 package ddl_test
 
 import (
+	"context"
 	"strconv"
 	"testing"
 
@@ -22,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -640,9 +641,9 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.Equal(t, 3, len(rows))
 			assert.Equal(t, "test", rows[1][1])
 			assert.Equal(t, "t", rows[1][2])
-			assert.Equal(t, "add index /* subjob */ /* txn-merge */", rows[1][3])
+			assert.Equal(t, "add index /* subjob */", rows[1][3])
 			assert.Equal(t, "delete only", rows[1][4])
-			assert.Equal(t, "running", rows[1][len(rows[1])-1])
+			assert.Equal(t, "running", rows[1][len(rows[1])-2])
 			assert.True(t, len(rows[1][8].(string)) > 0)
 			assert.True(t, len(rows[1][9].(string)) > 0)
 			assert.True(t, len(rows[1][10].(string)) > 0)
@@ -809,7 +810,7 @@ func (c *cancelOnceHook) OnJobUpdated(job *model.Job) {
 		return
 	}
 	c.triggered = true
-	errs, err := ddl.CancelJobs(c.s, []int64{job.ID})
+	errs, err := ddl.CancelJobs(context.Background(), c.s, []int64{job.ID})
 	if len(errs) > 0 && errs[0] != nil {
 		c.cancelErr = errs[0]
 		return

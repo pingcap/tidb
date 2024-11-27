@@ -21,8 +21,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -70,7 +70,7 @@ func (a *MaxMinEliminator) checkColCanUseIndex(plan base.LogicalPlan, col *expre
 	case *logicalop.LogicalSelection:
 		conditions = append(conditions, p.Conditions...)
 		return a.checkColCanUseIndex(p.Children()[0], col, conditions)
-	case *DataSource:
+	case *logicalop.DataSource:
 		// Check whether there is an AccessPath can use index for col.
 		for _, path := range p.PossibleAccessPaths {
 			if path.IsIntHandlePath {
@@ -117,7 +117,7 @@ func (a *MaxMinEliminator) cloneSubPlans(plan base.LogicalPlan) base.LogicalPlan
 		sel := logicalop.LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
 		sel.SetChildren(a.cloneSubPlans(p.Children()[0]))
 		return sel
-	case *DataSource:
+	case *logicalop.DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p

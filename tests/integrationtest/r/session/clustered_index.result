@@ -300,29 +300,29 @@ create table t6(id varchar(10) primary key nonclustered, v int);
 create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
 create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
 show index from t1;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t3;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t4;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t5;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t6;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t7;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t8;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 set @@tidb_enable_clustered_index = 'off';
 drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
 create table t1(id int primary key, v int);
@@ -334,29 +334,29 @@ create table t6(id varchar(10) primary key nonclustered, v int);
 create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
 create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
 show index from t1;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t3;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t4;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t5;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t6;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t7;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t8;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 set @@tidb_enable_clustered_index = 'on';
 drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
 create table t1(id int primary key, v int);
@@ -368,29 +368,29 @@ create table t6(id varchar(10) primary key nonclustered, v int);
 create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
 create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
 show index from t1;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t3;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t4;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t5;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t6;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t7;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t8;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 set @@tidb_enable_clustered_index = 'int_only';
 drop table if exists t1, t2, t3, t4, t5, t6, t7, t8;
 create table t1(id int primary key, v int);
@@ -402,29 +402,29 @@ create table t6(id varchar(10) primary key nonclustered, v int);
 create table t7(id varchar(10), v int, primary key (id) /*T![clustered_index] CLUSTERED */);
 create table t8(id varchar(10), v int, primary key (id) /*T![clustered_index] NONCLUSTERED */);
 show index from t1;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t1	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t2;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t2	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t3;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t3	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t4;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t4	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t5;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t5	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t6;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t6	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 show index from t7;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t7	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	YES	NO
 show index from t8;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
-t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
+t8	0	PRIMARY	1	id	A	0	NULL	NULL		BTREE			YES	NULL	NO	NO
 set @@tidb_enable_clustered_index = 'on';
 drop table if exists t;
 create table t (col_1 varchar(255), col_2 tinyint, primary key idx_1 (col_1(1)));

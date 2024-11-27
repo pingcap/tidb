@@ -18,6 +18,7 @@ go_test(
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/session",
         "//pkg/sessionctx",

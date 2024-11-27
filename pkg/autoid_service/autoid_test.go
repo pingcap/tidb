@@ -38,9 +38,9 @@ type autoIDResp struct {
 	*testing.T
 }
 
-func (resp autoIDResp) check(min, max int64) {
+func (resp autoIDResp) check(minv, maxv int64) {
 	require.NoError(resp.T, resp.error)
-	require.Equal(resp.T, resp.AutoIDResponse, &autoid.AutoIDResponse{Min: min, Max: max})
+	require.Equal(resp.T, resp.AutoIDResponse, &autoid.AutoIDResponse{Min: minv, Max: maxv})
 }
 
 func (resp autoIDResp) checkErrmsg() {
@@ -102,12 +102,12 @@ type dest struct {
 	tblID int64
 }
 
-func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, min, max int64) {
+func checkCurrValue(t *testing.T, cli autoid.AutoIDAllocClient, to dest, minv, maxv int64) {
 	req := &autoid.AutoIDRequest{DbID: to.dbID, TblID: to.tblID, N: 0, KeyspaceID: uint32(tikv.NullspaceID)}
 	ctx := context.Background()
 	resp, err := cli.AllocAutoID(ctx, req)
 	require.NoError(t, err)
-	require.Equal(t, resp, &autoid.AutoIDResponse{Min: min, Max: max})
+	require.Equal(t, resp, &autoid.AutoIDResponse{Min: minv, Max: maxv})
 }
 
 func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n uint64, more ...int64) autoIDResp {

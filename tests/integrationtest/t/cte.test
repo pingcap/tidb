@@ -185,49 +185,41 @@ create table tpk(c1 int primary key);
 insert into tpk values(1), (2), (3);
 
 --echo // Expect a Sort operator on CTE.
-explain with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with cte1 as (select c1 from t1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Sort should not exist, because tpk.c1 is pk. Not the best plan for now(#25674).
-explain with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with cte1 as (select c1 from tpk) select /*+ MERGE_JOIN(dt1, dt2) */ * from tpk dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Sort should not exist, because we have order by in CTE definition. Not the best plan for now(#25674).
-explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Expect a Sort operator on CTE. Because it's recursive.
-explain with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with recursive cte1 as (select c1 from t1 union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Expect a Sort operator on CTE. Because it's recursive.
-explain with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with recursive cte1 as (select c1 from tpk union select c1 +1 c1 from cte1 where c1 < 3) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Got order by in CTE definition
 --echo // Expect Sort operator in CTE definition.
-explain with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with cte1 as (select c1 from t1 order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // Sort should not exist, because tpk is ordered. Not the best plan for now(#25674).
-explain with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 with cte1 as (select c1 from tpk order by c1) select /*+ MERGE_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = dt1.c1 order by 1, 2;
 
 --echo // HashJoin. No need to sort
-explain with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 with cte1 as (select c1 from t1) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 
-explain with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
+explain format='brief' with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 with cte1 as (select c1 from tpk) select /*+ HASH_JOIN(dt1, dt2) */ * from t1 dt1 inner join cte1 dt2 on dt2.c1 = 1 order by 1, 2;
 
---echo // Use same CTE.
-drop table if exists tpk1, tpk;
-create table tpk(c1 int primary key);
-insert into tpk values(1), (2), (3);
-create table tpk1(c1 int primary key);
-insert into tpk1 values(1), (2), (3);
-explain with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
-with cte1 as (select c1 from tpk) select /*+ merge_join(dt1, dt2) */ * from tpk1 dt1 inner join cte1 dt2 inner join cte1 dt3 on dt1.c1 = dt2.c1 and dt2.c1 = dt3.c1;
 #case 34
 --echo // Test CTE as inner side of Apply
 drop table if exists t1, t2;
@@ -679,4 +671,71 @@ SELECT col_4
         SELECT col_4
           FROM product_detail
 ) a;
+
+# Tests for PR #55732
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(5,5);
+insert into t2 value(1,1);
+with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1;
+# This UPDATE should update t2.b to 2
+update t2 set b=2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+# This DELETE should delete all rows in t2
+delete from t2 where a in (with recursive cte1 as (select 1 as a union all select cte1.a+1 from t1 join cte1 on t1.a > cte1.a) select * from cte1);
+select * from t2;
+
+# Issue #55666
+drop table if exists table_abc1;
+drop table if exists table_abc2;
+drop table if exists table_abc3;
+drop table if exists table_abc4;
+
+CREATE TABLE `table_abc1` (
+  `column_abc1` varchar(10) DEFAULT NULL,
+  `column_abc2` varchar(10) DEFAULT NULL,
+  `column_abc3` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc3` (
+  `column_abc5` varchar(10) DEFAULT NULL,
+  `column_abc6` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE `table_abc4` (
+  `column_abc3` varchar(10) DEFAULT NULL,
+  `column_abc7` varchar(10) DEFAULT NULL,
+  `column_abc5` varchar(10) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+INSERT INTO `table_abc1` VALUES ('KTL157','KTL157','KTL157');
+INSERT INTO `table_abc3` VALUES ('1000','20240819');
+INSERT INTO `table_abc4` VALUES ('KTL157','test','1000');
+
+DELETE FROM table_abc3 t_abc3
+WHERE t_abc3.column_abc5 IN (
+    SELECT a.column_abc5
+    FROM (
+        WITH tree_cte1 AS (
+            WITH RECURSIVE tree_cte AS (
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, 0 AS lv
+                FROM table_abc1 t
+                WHERE t.column_abc1 IN ('KTL157', 'KTL159')
+                UNION ALL
+                SELECT t.column_abc1, t.column_abc2, t.column_abc3, tcte.lv + 1
+                FROM table_abc1 t
+                JOIN tree_cte tcte ON t.column_abc1 = tcte.column_abc2
+                WHERE tcte.lv <= 1
+            )
+            SELECT * FROM tree_cte
+        )
+        SELECT  e.column_abc5
+        FROM (
+            SELECT DISTINCT * FROM tree_cte1
+        ) aa
+        LEFT JOIN table_abc4 e ON e.column_abc3 = aa.column_abc3
+    ) a
+);
+
 

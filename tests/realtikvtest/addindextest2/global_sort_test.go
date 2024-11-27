@@ -26,10 +26,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -85,7 +84,10 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -117,18 +119,18 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	tk.MustExec("admin check table t;")
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 }
 
@@ -183,7 +185,6 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		{"ingest_dist_gs_backfill", "1", "1", cloudStorageURI},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
 			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
@@ -241,9 +242,9 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
-	jobType, rowCnt := rows[0][3].(string), rows[0][7].(string)
-	require.True(t, strings.Contains(jobType, "ingest"))
-	require.False(t, strings.Contains(jobType, "cloud"))
+	jobType, rowCnt := rows[0][12].(string), rows[0][7].(string)
+	require.True(t, strings.Contains(jobType, "ingest"), jobType)
+	require.False(t, strings.Contains(jobType, "cloud"), jobType)
 	require.Equal(t, rowCnt, "3")
 }
 

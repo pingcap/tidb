@@ -515,3 +515,67 @@ NULL	NULL	NULL
 4	NULL	NULL
 4	1	NULL
 DROP TABLE t1;
+
+SELECT
+(SELECT 100.00
+FROM
+(SELECT '2024-09-15' AS DATE ) newTb
+WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 1 MONTH)) AS 'PROFIT'
+FROM
+(SELECT '2024-09-15' AS DATE) T0
+GROUP BY T0.DATE WITH ROLLUP;
+PROFIT
+NULL
+NULL
+
+EXPLAIN SELECT
+(SELECT 100.00
+FROM
+(SELECT '2024-09-15' AS DATE ) newTb
+WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 1 MONTH)) AS 'PROFIT'
+FROM
+(SELECT '2024-09-15' AS DATE) T0
+GROUP BY T0.DATE WITH ROLLUP;
+id	estRows	task	access object	operator info
+Projection_18	1.00	root		Column#6
+└─Apply_20	1.00	root		CARTESIAN left outer join
+  ├─HashAgg_21(Build)	1.00	root		group by:Column#3, gid, funcs:firstrow(Column#1)->Column#1
+  │ └─Expand_24	1.00	root		level-projection:[Column#1, <nil>->Column#3, 0->gid],[Column#1, Column#3, 1->gid]; schema: [Column#1,Column#3,gid]
+  │   └─Projection_26	1.00	root		2024-09-15->Column#1, 2024-09-15->Column#3
+  │     └─TableDual_27	1.00	root		rows:1
+  └─Projection_30(Probe)	0.80	root		100.00->Column#6
+    └─Selection_31	0.80	root		eq(Column#1, "2024-10-15")
+      └─TableDual_32	1.00	root		rows:1
+drop table if exists tr;
+create table tr(a date);
+insert into tr values('2024-09-15');
+
+SELECT
+(SELECT 100.00
+FROM  (SELECT '2024-09-15' AS DATE ) newTb
+WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 0 MONTH)
+) AS 'PROFIT'
+FROM  (select tr.a as DATE from tr) T0
+GROUP BY T0.DATE WITH ROLLUP;
+PROFIT
+100.00
+100.00
+
+EXPLAIN SELECT
+(SELECT 100.00
+FROM  (SELECT '2024-09-15' AS DATE ) newTb
+WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 0 MONTH)
+) AS 'PROFIT'
+FROM  (select tr.a as DATE from tr) T0
+GROUP BY T0.DATE WITH ROLLUP;
+id	estRows	task	access object	operator info
+Projection_18	8000.00	root		Column#7
+└─Apply_20	8000.00	root		CARTESIAN left outer join
+  ├─HashAgg_21(Build)	8000.00	root		group by:Column#4, gid, funcs:firstrow(executor__expand.tr.a)->executor__expand.tr.a
+  │ └─Expand_25	10000.00	root		level-projection:[executor__expand.tr.a, <nil>->Column#4, 0->gid],[executor__expand.tr.a, Column#4, 1->gid]; schema: [executor__expand.tr.a,Column#4,gid]
+  │   └─Projection_27	10000.00	root		executor__expand.tr.a, executor__expand.tr.a->Column#4
+  │     └─TableReader_29	10000.00	root		data:TableFullScan_28
+  │       └─TableFullScan_28	10000.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
+  └─Projection_30(Probe)	6400.00	root		100.00->Column#7
+    └─Selection_31	6400.00	root		eq(executor__expand.tr.a, 2024-09-15 00:00:00.000000)
+      └─TableDual_32	8000.00	root		rows:1

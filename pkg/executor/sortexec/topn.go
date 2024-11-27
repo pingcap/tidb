@@ -109,11 +109,12 @@ func (e *TopNExec) Open(ctx context.Context) error {
 			exec.RetTypes(e),
 			workers,
 			e.Concurrency,
+			&e.Ctx().GetSessionVars().SQLKiller,
 		)
 		e.spillAction = &topNSpillAction{spillHelper: e.spillHelper}
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	} else {
-		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0)
+		e.spillHelper = newTopNSpillerHelper(e, nil, nil, nil, nil, nil, nil, 0, nil)
 	}
 
 	return exec.Open(ctx, e.Children(0))

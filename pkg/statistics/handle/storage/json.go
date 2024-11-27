@@ -21,7 +21,7 @@ import (
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -203,7 +203,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				tbl.StatsVer = int(statsVer)
 			}
 			tbl.SetIdx(idx.ID, idx)
-			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
+			tbl.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, true)
 		}
 	}
 
@@ -255,7 +255,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *u
 				tbl.StatsVer = int(statsVer)
 			}
 			tbl.SetCol(col.ID, col)
-			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, true)
+			tbl.ColAndIdxExistenceMap.InsertCol(colInfo.ID, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)

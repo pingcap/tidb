@@ -4,23 +4,23 @@ create table t(a varchar(10), b int, c int);
 show columns from t where true;
 Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
-b	int(11)	YES		NULL	
-c	int(11)	YES		NULL	
+b	int	YES		NULL	
+c	int	YES		NULL	
 show columns from t where field = 'b';
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b');
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and true;
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 show columns from t where field in (select 'b') and false;
 Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
 Field	Type	Null	Key	Default	Extra
-b	int(11)	YES		NULL	
+b	int	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
@@ -312,16 +312,16 @@ drop table if exists t;
 create table t(a int);
 explain format='verbose' select /*+ stream_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-StreamAgg_14	1.00	168985.35	root		funcs:count(Column#4)->Column#3
-└─TableReader_15	1.00	168935.45	root		data:StreamAgg_8
-  └─StreamAgg_8	1.00	2534000.00	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_13	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+StreamAgg_14	1.00	304652.01	root		funcs:count(Column#4)->Column#3
+└─TableReader_15	1.00	304602.11	root		data:StreamAgg_8
+  └─StreamAgg_8	1.00	4569000.00	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_13	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='verbose' select /*+ hash_agg() */ count(*) from t;
 id	estRows	estCost	task	access object	operator info
-HashAgg_9	1.00	150603.19	root		funcs:count(Column#4)->Column#3
-└─TableReader_10	1.00	149075.93	root		data:HashAgg_5
-  └─HashAgg_5	1.00	2236107.30	cop[tikv]		funcs:count(1)->Column#4
-    └─TableFullScan_8	10000.00	2035000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashAgg_9	1.00	286269.86	root		funcs:count(Column#4)->Column#3
+└─TableReader_10	1.00	284742.60	root		data:HashAgg_5
+  └─HashAgg_5	1.00	4271107.30	cop[tikv]		funcs:count(1)->Column#4
+    └─TableFullScan_8	10000.00	4070000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, pt, vt;
 create table t(a int, b int);
 insert into t values(1, 1);
@@ -3393,10 +3393,12 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_11	33.33	65346.12	root		
-├─IndexRangeScan_8(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
-└─Selection_10(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
-  └─TableRowIDScan_9	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp_8	33.33	65346.12	root		
+├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
+└─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
+  └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo
+Level	Code	Message
+Note	1105	[idx1,idx2] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 drop table if exists t30094;
 create table t30094(a varchar(10));
 explain format = 'brief' select * from t30094 where cast(a as float) and cast(a as char);
@@ -4266,22 +4268,6 @@ pad char(60) NOT NULL DEFAULT '',
 PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
 KEY k (k)
 );
-set @@tidb_opt_fix_control = '46177:off';
-explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
-id	estRows	task	access object	operator info
-Projection	10.00	root		Column#6->Column#7
-└─Window	10.00	root		row_number()->Column#6 over(order by planner__core__integration.sbtest.k rows between current row and current row)
-  └─IndexReader	10.00	root		index:Selection
-    └─Selection	10.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 10)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-explain format='brief' select /*+ stream_agg() */ count(1) from sbtest where id<1 group by k;
-id	estRows	task	access object	operator info
-StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(Column#6)->Column#5
-└─IndexReader	1.00	root		index:StreamAgg
-  └─StreamAgg	1.00	cop[tikv]		group by:planner__core__integration.sbtest.k, funcs:count(1)->Column#6
-    └─Selection	1.00	cop[tikv]		lt(planner__core__integration.sbtest.id, 1)
-      └─IndexFullScan	10000.00	cop[tikv]	table:sbtest, index:k(k)	keep order:true, stats:pseudo
-set @@tidb_opt_fix_control = '46177:on';
 explain format='brief'  select row_number() over(order by a.k) from (select * from sbtest where id<10) a;
 id	estRows	task	access object	operator info
 Projection	10.00	root		Column#6->Column#7
@@ -4295,7 +4281,6 @@ StreamAgg	1.00	root		group by:planner__core__integration.sbtest.k, funcs:count(1
 └─Sort	1.00	root		planner__core__integration.sbtest.k
   └─TableReader	1.00	root		data:TableRangeScan
     └─TableRangeScan	1.00	cop[tikv]	table:sbtest	range:[0,1), keep order:false, stats:pseudo
-set @@tidb_opt_fix_control = default;
 create table sys.t (id int);
 insert into sys.t values (1),(2);
 set tidb_isolation_read_engines='tiflash';

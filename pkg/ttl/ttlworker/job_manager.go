@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -180,14 +181,14 @@ func (m *JobManager) jobLoop() error {
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
 	gcTicker := time.Tick(ttlGCInterval)
 
-	scheduleJobTicker := time.Tick(jobManagerLoopTickerInterval)
-	jobCheckTicker := time.Tick(jobManagerLoopTickerInterval)
+	scheduleJobTicker := time.Tick(getCheckJobInterval())
+	jobCheckTicker := time.Tick(getCheckJobInterval())
 	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
-	timerTicker := time.Tick(time.Second)
+	timerTicker := time.Tick(getJobManagerLoopSyncTimerInterval())
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
 	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
-	taskCheckTicker := time.Tick(time.Second * 5)
+	taskCheckTicker := time.Tick(getTaskManagerLoopCheckTaskInterval())
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
 	cmdWatcher := m.cmdCli.WatchCommand(m.ctx)
@@ -296,7 +297,13 @@ func (m *JobManager) onTimerTick(se session.Session, rt *ttlTimerRuntime, syncer
 	rt.Resume()
 	lastSyncTime, lastSyncVer := syncer.GetLastSyncInfo()
 	sinceLastSync := now.Sub(lastSyncTime)
-	if sinceLastSync < 5*time.Second {
+	minSyncDuration := 5 * time.Second
+	if intest.InTest {
+		// in test, we can set the minSyncDuration to 1ms to boost the test speed
+		minSyncDuration = time.Millisecond
+	}
+
+	if sinceLastSync < minSyncDuration {
 		// limit timer sync frequency by every 5 seconds
 		return
 	}
@@ -418,7 +425,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 
 	go func() {
 		defer cancel()
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(getCheckJobTriggeredInterval())
 		defer ticker.Stop()
 	loop:
 		for {
@@ -558,8 +565,12 @@ j:
 			if err != nil {
 				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 			}
+			err = job.finish(se, se.Now(), summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
+			}
 			m.removeJob(job)
-			job.finish(se, se.Now(), summary)
 		}
 		cancel()
 	}
@@ -571,6 +582,18 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		terror.Log(err)
 	} else {
 		now = now.In(tz)
+	}
+
+	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
+	// never be cancelled.
+	jobTables := m.readyForLockHBTimeoutJobTables(now)
+	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
+	// when the heart beat is not sent
+	for _, table := range jobTables {
+		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
+		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+		}
 	}
 
 	cancelJobs := false
@@ -591,10 +614,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+				}
+				err = job.finish(se, now, summary)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+					continue
 				}
 				m.removeJob(job)
-				job.finish(se, now, summary)
 			}
 		}
 		return
@@ -611,20 +638,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
 		if err != nil {
-			logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+			logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+			continue
 		}
 		m.removeJob(job)
-		job.finish(se, now, summary)
-	}
-
-	jobTables := m.readyForLockHBTimeoutJobTables(now)
-	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
-	// when the heart beat is not sent
-	for _, table := range jobTables {
-		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
-			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
-		}
 	}
 }
 
@@ -703,9 +724,15 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 	if tableStatus.CurrentJobOwnerID != "" {
 		// see whether it's heart beat time is expired
 		hbTime := tableStatus.CurrentJobOwnerHBTime
-		// a more concrete value is `2 * max(updateTTLTableStatusCacheInterval, jobManagerLoopTickerInterval)`, but the
-		// `updateTTLTableStatusCacheInterval` is greater than `jobManagerLoopTickerInterval` in most cases.
-		if hbTime.Add(2 * getUpdateTTLTableStatusCacheInterval()).Before(now) {
+		// jobManagerLoopTickerInterval is used to do heartbeat periodically.
+		// Use twice the time to detect the heartbeat timeout.
+		hbTimeout := jobManagerLoopTickerInterval * 2
+		if interval := getUpdateTTLTableStatusCacheInterval() * 2; interval > hbTimeout {
+			// tableStatus is get from the cache which may contain stale data.
+			// So if cache update interval > heartbeat interval, use the cache update interval instead.
+			hbTimeout = interval
+		}
+		if hbTime.Add(hbTimeout).Before(now) {
 			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
 			return true
 		}
@@ -779,7 +806,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrapf(err, "execute sql: %s", sql)
 		}
 
-		ranges, err := table.SplitScanRanges(ctx, m.store, splitScanCount)
+		ranges, err := table.SplitScanRanges(ctx, m.store, getScanSplitCnt(se.GetStore()))
 		if err != nil {
 			return errors.Wrap(err, "split scan ranges")
 		}
@@ -882,11 +909,14 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
 			summary, err := summarizeErr(errors.New("job is timeout"))
 			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+				logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+			}
+			err = job.finish(se, now, summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
 			}
 			m.removeJob(job)
-			job.finish(se, now, summary)
-			continue
 		}
 
 		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
@@ -1075,7 +1105,7 @@ GROUP BY
 	}
 
 	noRecordTables := make([]string, 0)
-	ch := is.ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			interval, err := tblInfo.TTLInfo.GetJobInterval()
@@ -1292,6 +1322,7 @@ func (a *managerJobAdapter) Now() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	defer se.Close()
 
 	tz, err := se.GlobalTimeZone(context.TODO())
 	if err != nil {

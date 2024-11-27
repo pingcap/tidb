@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -93,10 +93,15 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx(a);")
 	tk.MustExec("admin check index t1 idx;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled", "1*return(true)"))
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError", func(errP *error) {
+		if counter.Add(1) == 1 {
+			*errP = context.Canceled
+		}
+	})
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskContextCanceled"))
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectPanicForTableScan", "return()"))
 	tk.MustExecToErr("alter table t1 add index idx2(a);")
@@ -285,4 +290,18 @@ func TestAddUKErrorMessage(t *testing.T) {
 	tk.MustExec("split table t between (1) and (100001) regions 10;")
 	err := tk.ExecToErr("alter table t add unique index uk(b);")
 	require.ErrorContains(t, err, "Duplicate entry '1' for key 't.uk'")
+}
+
+func TestAddIndexDistLockAcquireFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
+	tk.MustExec("alter table t add index idx(b);")
 }

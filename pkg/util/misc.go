@@ -40,9 +40,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -139,8 +140,8 @@ func HasCancelled(ctx context.Context) (cancel bool) {
 }
 
 const (
-	// syntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
-	syntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
+	// SyntaxErrorPrefix is the common prefix for SQL syntax error in TiDB.
+	SyntaxErrorPrefix = "You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use"
 )
 
 // SyntaxError converts parser error to TiDB's syntax error.
@@ -158,7 +159,7 @@ func SyntaxError(err error) error {
 		}
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 // SyntaxWarn converts parser warn to TiDB's syntax warn.
@@ -174,16 +175,16 @@ func SyntaxWarn(err error) error {
 		return err
 	}
 
-	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.FastGenByArgs(SyntaxErrorPrefix, err.Error())
 }
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = model.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = model.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = model.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -448,7 +449,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

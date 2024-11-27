@@ -13,7 +13,7 @@ go_test(
         "//pkg/ddl/ingest",
         "//pkg/disttask/framework/storage",
         "//pkg/errno",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

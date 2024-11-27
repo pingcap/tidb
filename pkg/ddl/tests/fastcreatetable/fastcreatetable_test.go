@@ -15,11 +15,12 @@
 package fastcreatetable
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -38,7 +39,7 @@ func TestSwitchFastCreateTable(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
-	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table OFF"))
+	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table ON"))
 
 	tk.MustExec("create database db1;")
 	tk.MustExec("create database db2;")
@@ -96,6 +97,7 @@ func TestDDL(t *testing.T) {
 
 func TestMergedJob(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
 	var wg util.WaitGroupWrapper
 
 	tk := testkit.NewTestKit(t, store)
@@ -114,7 +116,7 @@ func TestMergedJob(t *testing.T) {
 		tk1.MustExec("create table t(a int)")
 	})
 	require.Eventually(t, func() bool {
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		return len(gotJobs) == 1
 	}, 10*time.Second, 100*time.Millisecond)
@@ -136,7 +138,7 @@ func TestMergedJob(t *testing.T) {
 		tk1.MustExecToErr("create table t1(a int)")
 	})
 	require.Eventually(t, func() bool {
-		gotJobs, err := ddl.GetAllDDLJobs(tk.Session())
+		gotJobs, err := ddl.GetAllDDLJobs(ctx, tk.Session())
 		require.NoError(t, err)
 		return len(gotJobs) == 2 && gotJobs[1].Type == model.ActionCreateTables
 	}, 10*time.Second, 100*time.Millisecond)

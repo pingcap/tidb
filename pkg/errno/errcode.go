@@ -1084,6 +1084,8 @@ const (
 	ErrBRJobNotFound                       = 8174
 	ErrMemoryExceedForQuery                = 8175
 	ErrMemoryExceedForInstance             = 8176
+	ErrDeleteNotFoundColumn                = 8177
+	ErrKeyTooLarge                         = 8178
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1142,6 +1144,8 @@ const (
 
 	ErrGlobalIndexNotExplicitlySet = 8264
 
+	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1167,4 +1171,5 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
+	ErrTiFlashBackfillIndex      = 9014
 )

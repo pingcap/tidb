@@ -858,10 +858,6 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
@@ -880,6 +876,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+		<-h.DDLEventCh()
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t")
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -901,6 +898,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+		<-h.DDLEventCh()
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index idx")
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -919,6 +917,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
+		<-h.DDLEventCh()
 		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index")
 		require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
