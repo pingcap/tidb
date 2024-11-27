@@ -36,6 +36,7 @@ type baseSemiJoin struct {
 	isLeftSideBuild bool
 
 	// isMatchedRows marks whether the left side row is matched
+	// It's used only when right side is build side.
 	isMatchedRows []bool
 
 	isNulls []bool
@@ -57,9 +58,11 @@ func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
 }
 
 func (b *baseSemiJoin) resetProbeState() {
-	b.isMatchedRows = b.isMatchedRows[:0]
-	for i := 0; i < b.chunkRows; i++ {
-		b.isMatchedRows = append(b.isMatchedRows, false)
+	if !b.isLeftSideBuild {
+		b.isMatchedRows = b.isMatchedRows[:0]
+		for i := 0; i < b.chunkRows; i++ {
+			b.isMatchedRows = append(b.isMatchedRows, false)
+		}
 	}
 
 	if b.ctx.hasOtherCondition() {

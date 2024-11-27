@@ -693,6 +693,22 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	}
 }
 
+func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
+	totalRowCount := base.ctx.hashTableContext.hashTable.totalRowCount()
+	concurrency := base.ctx.Concurrency
+	workID := uint64(base.workID)
+	avgRowPerWorker := totalRowCount / uint64(concurrency)
+	startIndex := workID * avgRowPerWorker
+	endIndex := (workID + 1) * avgRowPerWorker
+	if workID == uint64(concurrency-1) {
+		endIndex = totalRowCount
+	}
+	if endIndex > totalRowCount {
+		endIndex = totalRowCount
+	}
+	return base.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
+}
+
 // NewJoinProbe create a join probe used for hash join v2
 func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{

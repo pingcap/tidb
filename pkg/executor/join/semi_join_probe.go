@@ -134,13 +134,6 @@ func (s *semiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlki
 		return false, joinResult
 	}
 
-	isInCompleteChunk := joinedChk.IsInCompleteChunk()
-	// in case that virtual rows is not maintained correctly
-	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
-	// always set in complete chunk during probe
-	joinedChk.SetInCompleteChunk(true)
-	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
-
 	hasOtherCondition := s.ctx.hasOtherCondition()
 	if s.isLeftSideBuild {
 		if hasOtherCondition {
@@ -209,10 +202,12 @@ func (s *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 	for s.currentProbeRow < s.chunkRows {
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
-			if !meta.isCurrentRowUsedWithAtomic(candidateRow) && isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
-				meta.setUsedFlag(candidateRow)
-			} else {
-				s.probeCollision++
+			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+				if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
+					meta.setUsedFlag(candidateRow)
+				} else {
+					s.probeCollision++
+				}
 			}
 			s.matchedRowsHeaders[s.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, s.matchedRowsHashValue[s.currentProbeRow])
 		} else {
@@ -261,18 +256,31 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
 		for remainCap > 0 && (s.offset < s.chunkRows) {
-			rowNumToAppend := int(math.Min(float64(remainCap), float64(s.chunkRows-s.offset)))
+			rowNumToTryAppend := int(math.Min(float64(remainCap), float64(s.chunkRows-s.offset)))
+			start := s.offset
+			end := s.offset + rowNumToTryAppend
 
 			for index, usedColIdx := range s.lUsed {
 				dstCol := chk.Column(index)
 				srcCol := s.currentChunk.Column(usedColIdx)
-				chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, s.isMatchedRows, s.offset, s.offset+rowNumToAppend, func(i int) int {
-					return i
+				chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, s.isMatchedRows, start, end, func(i int) int {
+					return s.usedRows[i]
 				})
 			}
 
-			s.offset += rowNumToAppend
-			remainCap -= rowNumToAppend
+			appendedRowNum := 0
+			if len(s.lUsed) == 0 {
+				// For calculating virtual row num
+				for i := start; i < end; i++ {
+					if s.isMatchedRows[i] {
+						appendedRowNum++
+					}
+				}
+			}
+
+			s.offset += rowNumToTryAppend
+			chk.SetNumVirtualRows(chk.NumRows() + appendedRowNum)
+			remainCap = chk.RequiredRows() - chk.NumRows()
 		}
 	}
 	return
@@ -317,16 +325,22 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 	if s.currentProbeRow < s.chunkRows && matched {
 		s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
 	}
-	generateResultChk(chk, s.currentChunk, s.lUsed, s.offsets)
+	s.generateResultChkForRightBuildNoOtherCondition(chk)
 	return
 }
 
-func generateResultChk(resultChk *chunk.Chunk, probeChk *chunk.Chunk, lUsed []int, offsets []int) {
-	for index, colIndex := range lUsed {
-		srcCol := probeChk.Column(colIndex)
+func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk *chunk.Chunk) {
+	for index, colIndex := range s.lUsed {
+		srcCol := s.currentChunk.Column(colIndex)
 		dstCol := resultChk.Column(index)
-		for _, offset := range offsets {
-			dstCol.AppendCellNTimes(srcCol, offset, 1)
-		}
+		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, nil, 0, len(s.offsets), func(i int) int {
+			return s.offsets[i]
+		})
+	}
+
+	if len(s.lUsed) == 0 {
+		resultChk.SetNumVirtualRows(resultChk.NumRows() + len(s.offsets))
+	} else {
+		resultChk.SetNumVirtualRows(resultChk.NumRows())
 	}
 }

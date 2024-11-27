@@ -416,3 +416,15 @@ func TestSemiSpill(t *testing.T) {
 		}
 	}
 }
+
+func TestSemiJoinProbeBasic(t *testing.T) {
+	testLeftOuterSemiOrSemiJoinProbeBasic(t, false)
+}
+
+func TestSemiJoinProbeAllJoinKeys(t *testing.T) {
+	testLeftOuterSemiJoinProbeAllJoinKeys(t, false)
+}
+
+func TestSemiJoinProbeWithSel(t *testing.T) {
+	testLeftOuterSemiJoinProbeWithSel(t, false)
+}
