@@ -194,6 +194,6 @@ func TestAdminWorkloadRepo(t *testing.T) {
 	}, time.Minute, time.Second)
 
 	// disable the worker and it will fail
-	tk.MustExec("set @@global.tidb_workload_repository_dest='ble'")
+	tk.MustExec("set @@global.tidb_workload_repository_dest=''")
 	tk.MustExecToErr("admin create workload snapshot")
 }
