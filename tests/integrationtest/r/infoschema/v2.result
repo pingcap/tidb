@@ -36,3 +36,10 @@ show databases like 'infoschema%';
 Database (infoschema%)
 infoschema__v2
 set @@global.tidb_schema_cache_size = default;
+use infoschema__v2;
+select TABLE_SCHEMA, TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TIDB_TABLE_ID = 4611686018427387967;
+TABLE_SCHEMA	TABLE_NAME	TIDB_TABLE_ID
+INFORMATION_SCHEMA	CLUSTER_STATEMENTS_SUMMARY_HISTORY	4611686018427387967
+select TABLE_SCHEMA from information_schema.tables where TIDB_TABLE_ID = 4611686018427387967;
+TABLE_SCHEMA
+INFORMATION_SCHEMA
