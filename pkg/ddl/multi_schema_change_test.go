@@ -851,3 +851,23 @@ func assertMultiSchema(t *testing.T, job *model.Job, subJobLen int) {
 	assert.NotNil(t, job.MultiSchemaInfo, job)
 	assert.Len(t, job.MultiSchemaInfo.SubJobs, subJobLen, job)
 }
+
+func TestSchemaVersionAndFinishTS(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	ddl.MockDMLExecutionStateBeforeMultiSchemaChangeFinish = func() {
+		tk2.MustExec("alter table t1 add column b int")
+	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMultiSchemaChangeFinish", "return(true)"))
+
+	tk.MustExec("alter table t2 add column b int, add column c int")
+}

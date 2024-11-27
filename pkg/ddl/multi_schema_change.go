@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -25,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
+
+var MockDMLExecutionStateBeforeMultiSchemaChangeFinish func()
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	metaMut := jobCtx.metaMut
@@ -140,6 +143,13 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
 	}
+
+	failpoint.Inject("mockDMLExecutionStateBeforeMultiSchemaChangeFinish", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeMultiSchemaChangeFinish != nil {
+			MockDMLExecutionStateBeforeMultiSchemaChangeFinish()
+		}
+	})
+
 	return finishMultiSchemaJob(job, metaMut)
 }
 
