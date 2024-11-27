@@ -479,7 +479,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
 	)
 
 	rc := &Controller{
@@ -1907,6 +1907,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				}
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
+				}
+				if err := rc.checkPDTiDBFromSameCluster(ctx); err != nil {
+					return common.ErrCheckPDTiDBFromSameCluster.Wrap(err).GenWithStackByArgs()
 				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.

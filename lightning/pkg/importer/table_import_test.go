@@ -1195,7 +1195,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			store:               mockStore,
@@ -1332,7 +1332,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			taskMgr:             mockTaskMetaMgr{},
@@ -1425,7 +1425,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			checkTemplate:       template,
