@@ -728,7 +728,7 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 }
 
 func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
-	for str, _ := range predicates {
+	for str := range predicates {
 		switch str {
 		case "table_name":
 		case "table_schema":
