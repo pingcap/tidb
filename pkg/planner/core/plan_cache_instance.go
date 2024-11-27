@@ -130,6 +130,17 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 	return
 }
 
+// All returns all cached values.
+// All returned values are read-only, don't modify them.
+func (pc *instancePlanCache) All() (values []any) {
+	values = make([]any, 0, pc.Size())
+	pc.foreach(func(_, this *instancePCNode) bool {
+		values = append(values, this.value)
+		return false
+	})
+	return
+}
+
 // Evict evicts some values. There should be a background thread to perform the eviction.
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values

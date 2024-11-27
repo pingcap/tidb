@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -210,6 +211,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -3897,6 +3900,40 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		pcv := v.(*plannercore.PlanCacheValue)
+
+		row := make([]types.Datum, 0, 16)
+		row = append(row, types.NewStringDatum(pcv.SQLDigest))
+		row = append(row, types.NewStringDatum(pcv.SQLText))
+		row = append(row, types.NewStringDatum(pcv.StmtType))
+		row = append(row, types.NewStringDatum(pcv.ParseUser))
+		row = append(row, types.NewStringDatum(pcv.PlanDigest))
+		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
+		row = append(row, types.NewStringDatum(pcv.Binding))
+		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
+		row = append(row, types.NewStringDatum(pcv.ParseValues))
+		row = append(row, types.NewIntDatum(pcv.Memory))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.Executions)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.ProcessedKeys)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.TotalKeys)))
+		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.SumLatency)))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
+		unixTime := atomic.LoadInt64(&pcv.LastUsedTimeInUnix)
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(time.Unix(unixTime, 0)), mysql.TypeTimestamp, types.DefaultFsp)))
+
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }
