@@ -79,7 +79,6 @@ type ProgressUnit string
 
 type StoreBasedErr struct {
 	storeID uint64
-	message string
 	err     error
 }
 
@@ -1193,10 +1192,9 @@ func (bc *Client) fineGrainedBackup(
 				}
 
 				storeID := storeErr.storeID
-				message := storeErr.message
 				maxDisconnect[storeID]++
-				if maxDisconnect[storeID] > 3 {
-					return errors.Annotatef(err, "Store ID %d: %s", storeID, message)
+				if maxDisconnect[storeID] > backupRetryTimes {
+					return errors.Annotatef(err, "Failed to connect to store %d more than %d times", storeID, backupRetryTimes)
 				}
 			case resp, ok := <-respCh:
 				if !ok {
@@ -1306,7 +1304,6 @@ func (bc *Client) handleFineGrained(
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
 			return 20000, &StoreBasedErr{
 				storeID: storeID,
-				message: "failed to connect to store",
 				err:     err,
 			}
 		}
@@ -1349,7 +1346,6 @@ func (bc *Client) handleFineGrained(
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
 			return 20000, &StoreBasedErr{
 				storeID: storeID,
-				message: "failed to connect to store",
 				err:     err,
 			}
 		}
