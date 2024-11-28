@@ -178,7 +178,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)
 		}
-		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
+		id, ndv, nullCount, version := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
@@ -234,20 +234,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			if colInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, totColSize)
-			hist.Correlation = row.GetFloat64(9)
-			col := &statistics.Column{
-				Histogram:  *hist,
-				PhysicalID: table.PhysicalID,
-				Info:       colInfo,
-				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       row.GetInt64(10),
-				StatsVer:   statsVer,
-			}
-			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
-			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-			lastAnalyzePos.Copy(&col.LastAnalyzePos)
-			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
