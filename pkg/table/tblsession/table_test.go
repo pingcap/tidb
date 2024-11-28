@@ -92,7 +92,7 @@ func TestSessionMutateContextFields(t *testing.T) {
 	require.Same(t, &sctx.GetSessionVars().StmtCtx.ReservedRowIDAlloc, reserved)
 	// statistics support
 	txnCtx := sctx.GetSessionVars().TxnCtx
-	txnCtx.TableDeltaMap = make(map[int64]variable.TableDelta)
+	txnCtx.TableDeltaMap = nil
 	sctx.GetSessionVars().TxnCtx = nil
 	statisticsSupport, ok := ctx.GetStatisticsSupport()
 	require.False(t, ok)
@@ -101,12 +101,12 @@ func TestSessionMutateContextFields(t *testing.T) {
 	statisticsSupport, ok = ctx.GetStatisticsSupport()
 	require.True(t, ok)
 	require.NotNil(t, statisticsSupport)
-	require.Equal(t, 0, len(txnCtx.TableDeltaMap))
+	require.Equal(t, 0, txnCtx.TableDeltaMap.Len())
 	statisticsSupport.UpdatePhysicalTableDelta(
 		12, 1, 2, variable.DeltaColsMap(map[int64]int64{3: 4, 5: 6}),
 	)
-	require.Equal(t, 1, len(txnCtx.TableDeltaMap))
-	deltaMap := txnCtx.TableDeltaMap[12]
+	require.Equal(t, 1, txnCtx.TableDeltaMap.Len())
+	deltaMap := txnCtx.TableDeltaMap.Get(12)
 	require.Equal(t, int64(12), deltaMap.TableID)
 	require.Equal(t, int64(1), deltaMap.Delta)
 	require.Equal(t, int64(2), deltaMap.Count)
