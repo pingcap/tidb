@@ -94,15 +94,12 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			args = append(args, tableStringIDs)
 		}
 		query += "order by version"
-		// Only update stats cache for all tables if no table IDs are specified.
-		if len(tableAndPartitionIDs) == 0 {
-			query += " limit 10000"
-		}
 		rows, _, err = util.ExecRows(sctx, query, args...)
 		return err
 	}); err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("update stats cache", zap.Int("rows", len(rows)))
 
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
