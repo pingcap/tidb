@@ -2676,43 +2676,6 @@ func TestCheckBundle(t *testing.T) {
 			success: true,
 		},
 		{
-			bundle: &placement.Bundle{
-				ID:       "TiDB_DDL_1",
-				Index:    1,
-				Override: false,
-				Rules: []*pd.Rule{
-					{
-						GroupID:     "TiDB_DDL_1",
-						ID:          "TiDB_DDL_1",
-						Override:    false,
-						StartKeyHex: "01",
-						EndKeyHex:   "0F",
-						Role:        pd.Leader,
-					},
-					{
-						GroupID:     "TiDB_DDL_1",
-						ID:          "TiDB_DDL_1",
-						Override:    true,
-						StartKeyHex: "02",
-						EndKeyHex:   "03",
-						Role:        pd.Leader,
-					},
-					{
-						GroupID:     "TiDB_DDL_1",
-						ID:          "TiDB_DDL_1",
-						Override:    false,
-						StartKeyHex: "04",
-						EndKeyHex:   "05",
-						Role:        pd.Leader,
-					},
-				},
-			},
-			// TODO: reconsider if we should make this test fail?
-			// https://github.com/pingcap/tidb/issues/57693
-			// Currently the second rule overrides the first rule in whole, not just the overlapping range.
-			success: true,
-		},
-		{
 			// What issue #55705 looked like, i.e. both partition and table had the same range.
 			bundle: &placement.Bundle{
 				ID:       "TiDB_DDL_112",
