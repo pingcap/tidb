@@ -166,7 +166,11 @@ func buildHist(
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
-	ceilValuesPerBucket := max(math.Ceil(valuesPerBucket), 2)
+	minNumBuckets := int64(100)
+	if numBuckets != 254 {
+		minNumBuckets = numBuckets
+	}
+	maxValuesPerBucket := max(float64(count)/float64(minNumBuckets)+sampleFactor, 2)
 
 	bucketIdx := 0
 	var lastCount int64
@@ -221,7 +225,7 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= ceilValuesPerBucket) ||
+		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= maxValuesPerBucket) ||
 			currentCount <= valuesPerBucket {
 			// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
@@ -231,6 +235,16 @@ func buildHist(
 			bucketIdx++
 			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+		}
+		// If we're running out of buckets - we need to increase the skewed value (origNDVFactor) and valuesPerBucket
+		remainingCount := float64(count) - totalCount
+		remainingBuckets := float64(numBuckets) - float64(bucketIdx)
+		if remainingCount/valuesPerBucket > remainingBuckets {
+			origNdvFactor++
+			maxValuesPerBucket++
+			if remainingCount/valuesPerBucket > remainingBuckets {
+				valuesPerBucket++
+			}
 		}
 	}
 	return corrXYSum, nil
