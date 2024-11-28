@@ -102,13 +102,8 @@ func (m *mockPlacementManager) GetAllRuleBundles(_ context.Context) ([]*placemen
 }
 
 type keyRange struct {
-	groupID  string
-	start    string
-	end      string
-	id       string
-	string   int
-	override bool
-	isLeader bool
+	start string
+	end   string
 }
 
 // CheckBundle check that the rules don't overlap without explicit Override
