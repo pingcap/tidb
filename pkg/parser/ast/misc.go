@@ -452,8 +452,8 @@ type TrafficStmt struct {
 // TrafficOption is traffic option.
 type TrafficOption struct {
 	OptionType TrafficOptionType
+	FloatValue ValueExpr
 	StrValue   string
-	FloatValue float64
 	BoolValue  bool
 }
 
@@ -463,7 +463,7 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 	switch n.OpType {
 	case TrafficOpCapture:
 		ctx.WriteKeyWord("CAPTURE ")
-		for _, option := range n.Options {
+		for i, option := range n.Options {
 			switch option.OptionType {
 			case TrafficOptionOutput:
 				ctx.WriteKeyWord("OUTPUT ")
@@ -482,10 +482,13 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WritePlain("= ")
 				ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", option.BoolValue)))
 			}
+			if i < len(n.Options)-1 {
+				ctx.WritePlain(" ")
+			}
 		}
 	case TrafficOpReplay:
 		ctx.WriteKeyWord("REPLAY ")
-		for _, option := range n.Options {
+		for i, option := range n.Options {
 			switch option.OptionType {
 			case TrafficOptionInput:
 				ctx.WriteKeyWord("INPUT ")
@@ -502,7 +505,10 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 			case TrafficOptionSpeed:
 				ctx.WriteKeyWord("SPEED ")
 				ctx.WritePlain("= ")
-				ctx.WritePlainf("%f", option.FloatValue)
+				ctx.WritePlainf("%v", option.FloatValue.GetValue())
+			}
+			if i < len(n.Options)-1 {
+				ctx.WritePlain(" ")
 			}
 		}
 	case TrafficOpShow:

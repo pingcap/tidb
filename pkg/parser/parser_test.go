@@ -7373,6 +7373,52 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, v.Analyze)
 }
 
+func TestTrafficStmt(t *testing.T) {
+	table := []testCase{
+		{"traffic capture output='/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC CAPTURE OUTPUT = '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture output '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC CAPTURE OUTPUT = '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture duration='1s' encryption_method='aes' output='/tmp'", true, "TRAFFIC CAPTURE DURATION = '1s' ENCRYPTION_METHOD = 'aes' OUTPUT = '/tmp'"},
+		{"traffic capture duration='1m'", true, "TRAFFIC CAPTURE DURATION = '1m'"},
+		{"traffic capture duration='1'", false, ""},
+		{"traffic capture duration=1s", false, ""},
+		{"traffic capture compress='true'", false, ""},
+		{"traffic capture input='/tmp'", false, ""},
+		{"traffic capture", false, ""},
+		{"traffic replay input='/tmp' user='root' password='123456' speed=1.0", true, "TRAFFIC REPLAY INPUT = '/tmp' USERNAME = 'root' PASSWORD = '123456' SPEED = 1.0"},
+		{"traffic replay input '/tmp' user 'root' password '123456' speed 1.0", true, "TRAFFIC REPLAY INPUT = '/tmp' USERNAME = 'root' PASSWORD = '123456' SPEED = 1.0"},
+		{"traffic replay user='root' input='/tmp'", true, "TRAFFIC REPLAY USERNAME = 'root' INPUT = '/tmp'"},
+		{"traffic replay speed=1", true, "TRAFFIC REPLAY SPEED = 1"},
+		{"traffic replay speed=0.5", true, "TRAFFIC REPLAY SPEED = 0.5"},
+		{"traffic replay speed=-1", false, ""},
+		{"traffic replay", false, ""},
+		{"traffic show", true, "TRAFFIC SHOW"},
+		{"traffic show input='/tmp'", false, ""},
+		{"traffic cancel", true, "TRAFFIC CANCEL"},
+		{"traffic cancel input='/tmp'", false, ""},
+		{"traffic test", false, ""},
+		{"traffic", false, ""},
+	}
+
+	p := parser.New()
+	var sb strings.Builder
+	for _, tbl := range table {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		require.Len(t, stmts, 1)
+		v, ok := stmts[0].(*ast.TrafficStmt)
+		require.True(t, ok)
+		sb.Reset()
+		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
+		err = v.Restore(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tbl.restore, sb.String())
+	}
+}
+
 func TestGBKEncoding(t *testing.T) {
 	p := parser.New()
 	gbkEncoding, _ := charset.Lookup("gbk")
