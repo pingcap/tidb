@@ -49,12 +49,18 @@ type baseSemiJoin struct {
 }
 
 func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
-	return &baseSemiJoin{
+	ret := &baseSemiJoin{
 		baseJoinProbe:   base,
 		isLeftSideBuild: isLeftSideBuild,
-		isMatchedRows:   make([]bool, 0),
-		isNulls:         make([]bool, 0),
+
+		isNulls: make([]bool, 0),
 	}
+
+	if isLeftSideBuild {
+		ret.isMatchedRows = make([]bool, 0)
+	}
+
+	return ret
 }
 
 func (b *baseSemiJoin) resetProbeState() {

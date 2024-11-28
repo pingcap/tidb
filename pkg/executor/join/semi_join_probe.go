@@ -170,11 +170,6 @@ func (s *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 		return err
 	}
 
-	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		// To avoid `Previous chunk is not probed yet` error
-		s.currentProbeRow = s.chunkRows
-	}
-
 	meta := s.ctx.hashTableMeta
 	if joinedChk.NumRows() > 0 {
 		s.selected, err = expression.VectorizedFilter(s.ctx.SessCtx.GetExprCtx().GetEvalCtx(), s.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, s.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), s.selected)
@@ -187,6 +182,11 @@ func (s *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&s.rowIndexInfos[index].buildRowStart)))
 			}
 		}
+	}
+
+	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
+		// To avoid `Previous chunk is not probed yet` error
+		s.currentProbeRow = s.chunkRows
 	}
 
 	return
