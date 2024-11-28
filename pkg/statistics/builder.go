@@ -225,7 +225,7 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= maxValuesPerBucket) ||
+		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= maxValuesPerBucket && valuesPerBucket <= maxValuesPerBucket) ||
 			currentCount <= valuesPerBucket {
 			// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
 			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
@@ -241,10 +241,7 @@ func buildHist(
 		remainingBuckets := float64(numBuckets) - float64(bucketIdx)
 		if remainingCount/valuesPerBucket > remainingBuckets {
 			origNdvFactor++
-			maxValuesPerBucket++
-			if remainingCount/valuesPerBucket > remainingBuckets {
-				valuesPerBucket++
-			}
+			valuesPerBucket++
 		}
 	}
 	return corrXYSum, nil
