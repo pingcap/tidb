@@ -1837,19 +1837,26 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 		if event.Kv != nil {
 			val := event.Kv.Value
 			if len(val) > 0 {
-				err := json.Unmarshal(val, &msg)
-				if err == nil {
+				var tmp PrivilegeEvent
+				err := json.Unmarshal(val, &tmp)
+				if err != nil {
+					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
 					break
 				}
-				logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
-			} else {
-				// In case old version triggers the event, the event value is empty,
-				// Then we fall back to the old way: reload all the users.
-				if len(msg.UserList) == 0 {
+				if tmp.All {
 					msg.All = true
+					break
 				}
+				// duplicated users in list is ok.
+				msg.UserList = append(msg.UserList, tmp.UserList...)
 			}
 		}
+	}
+
+	// In case old version triggers the event, the event value is empty,
+	// Then we fall back to the old way: reload all the users.
+	if len(msg.UserList) == 0 {
+		msg.All = true
 	}
 	return msg
 }
