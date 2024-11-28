@@ -166,11 +166,6 @@ type Table struct {
 	StatsFileIndexes []*backuppb.StatsFileIndex
 }
 
-// NoChecksum checks whether the table has a calculated checksum.
-func (tbl *Table) NoChecksum() bool {
-	return tbl.Crc64Xor == 0 && tbl.TotalKvs == 0 && tbl.TotalBytes == 0
-}
-
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
 	storage    storage.ExternalStorage
@@ -235,12 +230,36 @@ func (reader *MetaReader) readDataFiles(ctx context.Context, output func(*backup
 }
 
 // ArchiveSize return the size of Archive data
-func (*MetaReader) ArchiveSize(_ context.Context, files []*backuppb.File) uint64 {
+func ArchiveSize(files []*backuppb.File) uint64 {
 	total := uint64(0)
 	for _, file := range files {
 		total += file.Size_
 	}
 	return total
+}
+
+type ChecksumStats struct {
+	Crc64Xor   uint64
+	TotalKvs   uint64
+	TotalBytes uint64
+}
+
+func (stats ChecksumStats) ChecksumExists() bool {
+	if stats.Crc64Xor == 0 && stats.TotalKvs == 0 && stats.TotalBytes == 0 {
+		return false
+	}
+	return true
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+	var stats ChecksumStats
+	for _, file := range files {
+		stats.Crc64Xor ^= file.Crc64Xor
+		stats.TotalKvs += file.TotalKvs
+		stats.TotalBytes += file.TotalBytes
+	}
+	return stats
 }
 
 // ReadDDLs reads the ddls from the backupmeta.

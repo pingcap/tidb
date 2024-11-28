@@ -257,8 +257,9 @@ func reorgTypeFlagsWithSQLMode(mode mysql.SQLMode) types.Flags {
 
 func reorgErrLevelsWithSQLMode(mode mysql.SQLMode) errctx.LevelMap {
 	return errctx.LevelMap{
-		errctx.ErrGroupTruncate: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
-		errctx.ErrGroupBadNull:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupTruncate:  errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupBadNull:   errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
+		errctx.ErrGroupNoDefault: errctx.ResolveErrLevel(false, !mode.HasStrictMode()),
 		errctx.ErrGroupDividedByZero: errctx.ResolveErrLevel(
 			!mode.HasErrorForDivisionByZeroMode(),
 			!mode.HasStrictMode(),
@@ -766,22 +767,19 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 	return kv.IntHandle(row.GetInt64(0)), false, nil
 }
 
-// ExistsTableRow checks if there is at least one row in the specified table.
+// existsTableRow checks if there is at least one row in the specified table.
 // In case of an error during the operation, it returns false along with the error.
-func ExistsTableRow(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (bool, error) {
-	handleCols := buildHandleCols(tbl)
-	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, false)
+func existsTableRow(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable, startTS uint64) (bool, error) {
+	found := false
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), startTS, nil, nil,
+		func(_ kv.Handle, _ kv.Key, _ []byte) (bool, error) {
+			found = true
+			return false, nil
+		})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer terror.Call(result.Close)
-
-	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
-	err = result.Next(ctx.ddlJobCtx, chk)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return chk.NumRows() != 0, nil
+	return found, nil
 }
 
 func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {
@@ -931,8 +929,8 @@ func getReorgInfo(ctx *ReorgContext, jobCtx *jobContext, rh *reorgHandler, job *
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
 
-		failpoint.Inject("errorUpdateReorgHandle", func() (*reorgInfo, error) {
-			return &info, errors.New("occur an error when update reorg handle")
+		failpoint.Inject("errorUpdateReorgHandle", func() {
+			failpoint.Return(&info, errors.New("occur an error when update reorg handle"))
 		})
 		err = rh.InitDDLReorgHandle(job, start, end, pid, elements[0])
 		if err != nil {

@@ -52,7 +52,7 @@ func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 		os.IsNotExist(err) {
 		return nil
 	}
-	return err
+	return errors.Annotatef(err, "failed to delete file %v", name)
 }
 
 // DeleteFiles deletes the files.
