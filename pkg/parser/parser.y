@@ -809,7 +809,7 @@ import (
 	tokudbZlib            "TOKUDB_ZLIB"
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
-	traffic	              "TRAFFIC"
+	traffic               "TRAFFIC"
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
@@ -15790,7 +15790,7 @@ PlanReplayerDumpOpt:
  * TRAFFIC SHOW
  * TRAFFIC CANCEL
  *******************************************************************/
- TrafficStmt:
+TrafficStmt:
 	"TRAFFIC" "CAPTURE" TrafficCaptureOptList
 	{
 		x := &ast.TrafficStmt{
@@ -15839,26 +15839,26 @@ TrafficCaptureOptList:
 TrafficCaptureOpt:
 	"OUTPUT" EqOpt stringLit
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionOutput, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionOutput, StrValue: $3}
 	}
-	"DURATION" EqOpt stringLit
+|	"DURATION" EqOpt stringLit
 	{
-		_, err := duration.ParseDuration($3)
+		_, err := time.ParseDuration($3)
 		if err != nil {
 			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
 			return 1
 		}
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionDuration, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionDuration, StrValue: $3}
 	}
-	"ENCRYPTION_METHOD" EqOpt stringLit
+|	"ENCRYPTION_METHOD" EqOpt stringLit
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionEncryptionMethod, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionEncryptionMethod, StrValue: $3}
 	}
-	"COMPRESS" EqOpt Boolean
+|	"COMPRESS" EqOpt Boolean
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionCompress, BoolValue: $3.(bool) }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionCompress, BoolValue: $3.(bool)}
 	}
-	
+
 TrafficReplayOptList:
 	TrafficReplayOpt
 	{
@@ -15872,19 +15872,19 @@ TrafficReplayOptList:
 TrafficReplayOpt:
 	"INPUT" EqOpt stringLit
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionInput, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionInput, StrValue: $3}
 	}
-	"USER" EqOpt stringLit
+|	"USER" EqOpt stringLit
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionUsername, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionUsername, StrValue: $3}
 	}
-	"PASSWORD" EqOpt stringLit
+|	"PASSWORD" EqOpt stringLit
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionPassword, StrValue: $3 }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionPassword, StrValue: $3}
 	}
-	"SPEED" EqOpt floatLit
+|	"SPEED" EqOpt NumLiteral
 	{
-		$$ = &ast.TrafficOption{ OptType: TrafficOptionSpeed, FloatValue: $3.(float64) }
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionSpeed, FloatValue: ast.NewValueExpr($3, "", "")}
 	}
 
 /* Stored PROCEDURE parameter declaration list */
