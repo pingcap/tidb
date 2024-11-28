@@ -2792,7 +2792,7 @@ func TestUserAbort(t *testing.T) {
 	require.ErrorContains(t, res.Warnings[0], "aborted")
 	require.Empty(t, effs)
 }
-  
+
 func TestUnsupportedVersion(t *testing.T) {
 	s := tmp(t)
 	m := mig(mVersion(backuppb.MigrationVersion(65535)))
