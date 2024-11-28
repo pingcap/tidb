@@ -901,6 +901,8 @@ func TestAddIndexSkipReorgCheck(t *testing.T) {
 	tk.MustExec("alter table t add index idx3(a);")
 	require.False(t, skipTableReorg)
 	require.False(t, skipTempIdxReorg)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("admin check table t;")
 }
 
 func TestAddIndexInsertAfterReorgSkipCheck(t *testing.T) {
