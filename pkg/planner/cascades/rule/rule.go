@@ -61,7 +61,7 @@ func NewBaseRule(tp ruleType, pattern *pattern.Pattern) *BaseRule {
 }
 
 // ID returns the basic ordinal this rule enum type.
-func (r *BaseRule) ID() uint {
+func (*BaseRule) ID() uint {
 	// impl it in your own rule.
 	return 0
 }
