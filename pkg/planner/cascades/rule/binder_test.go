@@ -15,13 +15,13 @@
 package rule
 
 import (
-	"bufio"
 	"bytes"
 	"testing"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/stretchr/testify/require"
@@ -80,8 +80,8 @@ func TestBinderFail(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	b := bytes.Buffer{}
-	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	buf := util.NewBufStrWriter(&b)
+	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
 	require.Equal(t, b.String(), "GE:DataSource_1{}\n")
@@ -97,8 +97,8 @@ func TestBinderFail(t *testing.T) {
 	pa.SetChildren(p2)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
-	buf = bufio.NewWriter(&b)
-	binder.w = buf
+	buf = util.NewBufStrWriter(&b)
+	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
 	require.Equal(t, b.String(), "")
@@ -109,8 +109,8 @@ func TestBinderFail(t *testing.T) {
 	rootGE = mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
-	buf = bufio.NewWriter(&b)
-	binder.w = buf
+	buf = util.NewBufStrWriter(&b)
+	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
 	require.Equal(t, b.String(), "GE:Limit_4{inputs:1}\n")
@@ -219,8 +219,8 @@ func TestBinderMultiNext(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	buf := util.NewBufStrWriter(&b)
+	binder.bsw = buf
 
 	require.True(t, binder.Next())
 	//           G1
@@ -312,8 +312,8 @@ func TestBinderAny(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	buf := util.NewBufStrWriter(&b)
+	binder.bsw = buf
 
 	require.True(t, binder.Next())
 	//           G1
@@ -393,8 +393,8 @@ func TestBinderMultiAny(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := bufio.NewWriter(&b)
-	binder.w = buf
+	buf := util.NewBufStrWriter(&b)
+	binder.bsw = buf
 
 	require.True(t, binder.Next())
 	//           G1

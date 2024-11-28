@@ -16,11 +16,10 @@ package rule
 
 import (
 	"container/list"
-	"fmt"
-	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 )
 
 // Document
@@ -147,7 +146,7 @@ type Binder struct {
 	holder *GroupExprHolder
 
 	// w is only for test stack print usage.
-	w io.Writer
+	bsw util.IBufStrWriter
 }
 
 // NewBinder creates a new Binder.
@@ -217,8 +216,8 @@ func (b *Binder) Next() bool {
 			b.stackInfo[continueGroup] = continueGroupElement.Next()
 		}
 		ok = b.dfsMatch(b.p, b.holder)
-		if b.w != nil {
-			b.printStackInfo(b.w)
+		if b.bsw != nil {
+			b.printStackInfo(b.bsw)
 		}
 		if ok || len(b.stackInfo) == 0 {
 			break
@@ -299,15 +298,15 @@ func (b *Binder) traceIn(p *pattern.Pattern, g *memo.Group) {
 	}
 }
 
-func (b *Binder) printStackInfo(w io.Writer) {
+func (b *Binder) printStackInfo(w util.IBufStrWriter) {
 	for i, one := range b.stackInfo {
 		if i != 0 {
-			fmt.Fprintf(w, " -> ")
+			w.WriteString(" -> ")
 		}
 		one.Value.(*memo.GroupExpression).String(w)
 	}
 	if len(b.stackInfo) != 0 {
-		fmt.Fprintf(w, "\n")
+		w.WriteString("\n")
 	}
 }
 

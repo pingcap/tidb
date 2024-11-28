@@ -17,7 +17,7 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	"io"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -75,9 +75,12 @@ func (g *Group) Equals(other any) bool {
 // ******************************************* end of HashEqual methods *******************************************
 
 // Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(hash64u uint64) bool {
-	_, ok := g.hash2GroupExpr[hash64u]
-	return ok
+func (g *Group) Exists(hash64u uint64, e *GroupExpression) bool {
+	one, ok := g.hash2GroupExpr[hash64u]
+	if !ok {
+		return false
+	}
+	return one.Value.(*GroupExpression).Equals(e)
 }
 
 // Insert adds a GroupExpression to the Group.
@@ -87,10 +90,10 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
 	hash64 := e.Sum64()
-	if g.Exists(hash64) {
+	if g.Exists(hash64, e) {
 		return false
 	}
-	operand := pattern.GetOperand(e.logicalPlan)
+	operand := pattern.GetOperand(e.LogicalPlan)
 	var newEquiv *list.Element
 	mark, ok := g.Operand2FirstExpr[operand]
 	if ok {
@@ -126,8 +129,8 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 }
 
 // String implements fmt.Stringer interface.
-func (g *Group) String(w io.Writer) {
-	fmt.Fprintf(w, "inputs:%s", strconv.Itoa(int(g.groupID)))
+func (g *Group) String(w util.IBufStrWriter) {
+	w.WriteString(fmt.Sprintf("inputs:%s", strconv.Itoa(int(g.groupID))))
 }
 
 // NewGroup creates a new Group with given logical prop.
