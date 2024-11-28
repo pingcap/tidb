@@ -63,6 +63,12 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
 func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
+	if _, ok := s.(StrongConsisency); !ok {
+		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
+			"Please avoid concurrently accessing it if possible.",
+			zap.String("type", fmt.Sprintf("%T", s)))
+	}
+
 	txnID := uuid.New()
 	cx := VerifyWriteContext{
 		Context: ctx,
@@ -108,8 +114,10 @@ func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect stri
 	dirName := path.Dir(pfx)
 
 	return cx.Storage.WalkDir(cx, &WalkOption{
-		SubDir:    dirName,
-		ObjPrefix: fileName,
+		SubDir:           dirName,
+		ObjPrefix:        fileName,
+		// We'd better read a deleted intention...
+		IncludeTombstone: true,
 	}, func(path string, size int64) error {
 		if path != expect {
 			return fmt.Errorf("there is conflict file %s", path)

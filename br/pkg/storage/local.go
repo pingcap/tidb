@@ -7,7 +7,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
@@ -98,7 +97,7 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 		return errors.Trace(err)
 	}
 
-	return syncPath(path.Dir(targetPath))
+	return nil
 }
 
 // ReadFile reads the file from the storage and returns the contents.
@@ -124,10 +123,17 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		opt = &WalkOption{}
 	}
 	base := filepath.Join(l.base, opt.SubDir)
-	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
+	return filepath.WalkDir(base, func(path string, f os.DirEntry, err error) error {
 		if os.IsNotExist(err) {
-			// if path not exists, we should return nil to continue.
-			return nil
+			if !opt.IncludeTombstone {
+				return nil
+			}
+			// We should return to the caller relative path.
+			path, _ = filepath.Rel(l.base, path)
+			if !strings.HasPrefix(path, opt.ObjPrefix) {
+				return nil
+			}
+			return fn(path, TombstoneSize)
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -143,27 +149,23 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			}
 			return nil
 		}
+
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
 		// so use Rel to convert to relative path to l.base
 		path, _ = filepath.Rel(l.base, path)
-
 		if !strings.HasPrefix(path, opt.ObjPrefix) {
 			return nil
 		}
 
-		size := f.Size()
-		// if not a regular file, we need to use os.stat to get the real file size
-		if !f.Mode().IsRegular() {
-			stat, err := os.Stat(filepath.Join(l.base, path))
-			if err != nil {
-				// error may happen because of file deleted after walk started, or other errors
-				// like #49423. We just return 0 size and let the caller handle it in later
-				// logic.
-				log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
-				return fn(path, 0)
-			}
-			size = stat.Size()
+		stat, err := os.Stat(filepath.Join(l.base, path))
+		if err != nil {
+			// error may happen because of file deleted after walk started, or other errors
+			// like #49423. We just return 0 size and let the caller handle it in later
+			// logic.
+			log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
+			return fn(path, 0)
 		}
+		size := stat.Size()
 		return fn(path, size)
 	})
 }
@@ -289,16 +291,4 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 	}
 
 	return &LocalStorage{base: base}, nil
-}
-
-func syncPath(path string) error {
-	// Here the path targets to a directory and we will only call `Sync` over it.
-	// Disable the G304 warning which focus on relative path injection like "../../import_stuff".
-	//nolint: gosec
-	file, err := os.Open(path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer file.Close()
-	return errors.Trace(file.Sync())
 }
