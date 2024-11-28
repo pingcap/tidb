@@ -130,7 +130,6 @@ func CheckBundle(bundle *placement.Bundle) error {
 	if len(keys) == 0 {
 		return nil
 	}
-	// Sort on Start, id, end
 	// Could use pd's placement.sortRules() instead.
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].start == keys[j].start {
