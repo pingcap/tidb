@@ -96,7 +96,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		query += "order by version"
 		// Only update stats cache for all tables if no table IDs are specified.
 		if len(tableAndPartitionIDs) == 0 {
-			query += " limit 5000"
+			query += " limit 10000"
 		}
 		rows, _, err = util.ExecRows(sctx, query, args...)
 		return err
