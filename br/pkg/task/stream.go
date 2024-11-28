@@ -1490,7 +1490,8 @@ func restoreStream(
 	failpoint.Inject("post-restore-kv-pending", func(val failpoint.Value) {
 		if val.(bool) {
 			// not ideal to use sleep but not sure what's the better way right now
-			time.Sleep(5 * time.Second)
+			log.Info("sleep after restoring kv")
+			time.Sleep(2 * time.Second)
 		}
 	})
 

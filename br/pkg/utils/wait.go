@@ -22,6 +22,11 @@ import (
 )
 
 func WaitUntil(ctx context.Context, condition func() bool, checkInterval, maxTimeout time.Duration) error {
+	// do a quick check before starting the ticker
+	if condition() {
+		return nil
+	}
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, maxTimeout)
 	defer cancel()
 
