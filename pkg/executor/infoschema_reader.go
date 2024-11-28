@@ -235,7 +235,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx)
+			err = e.setDataFromPlanCache(ctx, sctx, false)
+		case infoschema.ClusterTableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx, true)
 		case infoschema.TableRoutines:
 			err = e.setDataForRoutines(ctx, sctx)
 		case infoschema.TableColumnPrivileges:
@@ -4037,7 +4039,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
@@ -4067,6 +4069,11 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 		rows = append(rows, row)
 	}
 
+	if cluster {
+		if rows, err = infoschema.AppendHostInfoToRows(sctx, rows); err != nil {
+			return err
+		}
+	}
 	e.rows = rows
 	return nil
 }
