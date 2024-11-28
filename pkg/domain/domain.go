@@ -1842,13 +1842,14 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 					break
 				}
 				logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
+			} else {
+				// In case old version triggers the event, the event value is empty,
+				// Then we fall back to the old way: reload all the users.
+				if len(msg.UserList) == 0 {
+					msg.All = true
+				}
 			}
 		}
-	}
-	// In case something is wrong, for example, old version tidb mixed with newer, the unmarshal would fail.
-	// Then we fallback to the old way: reload all the users.
-	if len(msg.UserList) == 0 {
-		msg.All = true
 	}
 	return msg
 }
