@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"strings"
@@ -1129,11 +1128,13 @@ func checkIfTableReorgWorkCanSkip(
 		return false
 	}
 	txn, err := sessCtx.Txn(false)
-	intest.Assert(err == nil)
-	var startTS uint64 = math.MaxUint64
-	if txn != nil && txn.Valid() {
-		startTS = txn.StartTS()
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
+		return false
 	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
@@ -1192,11 +1193,13 @@ func checkIfTempIndexReorgWorkCanSkip(
 		return false
 	}
 	txn, err := sessCtx.Txn(false)
-	intest.Assert(err == nil)
-	var startTS uint64 = math.MaxUint64
-	if txn != nil && txn.Valid() {
-		startTS = txn.StartTS()
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if temp index is empty failed", zap.Error(err))
+		return false
 	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
