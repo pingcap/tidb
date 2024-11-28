@@ -177,11 +177,30 @@ type TransactionContext struct {
 	TxnCtxNeedToRestore
 }
 
+// TableDeltaMap is concurrency safe.
 type TableDeltaMap struct {
 	sync.Mutex
 	data map[int64]TableDelta
 }
 
+// Len is used by tests.
+func (tdm *TableDeltaMap) Len() int {
+	if tdm == nil {
+		return 0
+	}
+	tdm.Lock()
+	defer tdm.Unlock()
+	return len(tdm.data)
+}
+
+// Get is used by tests.
+func (tdm *TableDeltaMap) Get(id int64) TableDelta {
+	tdm.Lock()
+	defer tdm.Unlock()
+	return tdm.data[id]
+}
+
+// Clone clones this TableDeltaMap, returns a new one.
 func (tdm *TableDeltaMap) Clone() *TableDeltaMap {
 	if tdm == nil {
 		return nil
@@ -198,6 +217,8 @@ func (tdm *TableDeltaMap) Clone() *TableDeltaMap {
 	}
 }
 
+// Visit visits the data of the TableDeltaMap.
+// If fn return false, exit the visit loop in advance.
 func (tdm *TableDeltaMap) Visit(fn func(int64, TableDelta) bool) {
 	if tdm == nil {
 		return
