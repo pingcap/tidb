@@ -773,7 +773,7 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 func existsTableRow(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable) (bool, error) {
 	found := false
 	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), math.MaxUint64, nil, nil,
-		func(_ kv.Handle, rowKey kv.Key, _ []byte) (bool, error) {
+		func(_ kv.Handle, _ kv.Key, _ []byte) (bool, error) {
 			found = true
 			return false, nil
 		})
