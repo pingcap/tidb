@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -770,9 +769,9 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 
 // existsTableRow checks if there is at least one row in the specified table.
 // In case of an error during the operation, it returns false along with the error.
-func existsTableRow(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable) (bool, error) {
+func existsTableRow(ctx *ReorgContext, store kv.Storage, tbl table.PhysicalTable, startTS uint64) (bool, error) {
 	found := false
-	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), math.MaxUint64, nil, nil,
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), startTS, nil, nil,
 		func(_ kv.Handle, _ kv.Key, _ []byte) (bool, error) {
 			found = true
 			return false, nil
