@@ -84,7 +84,7 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 	meta := b.ctx.hashTableMeta
 	for b.matchedRowsHeaders[b.currentProbeRow] != 0 && *joinedChkRemainCap > 0 && b.matchedRowsForCurrentProbeRow < maxMatchedRowNum {
 		candidateRow := tagHelper.toUnsafePointer(b.matchedRowsHeaders[b.currentProbeRow])
-		if isRightSideBuild {
+		if isRightSideBuild || !meta.isCurrentRowUsedWithAtomic(candidateRow) {
 			if isKeyMatched(meta.keyMode, b.serializedKeys[b.currentProbeRow], candidateRow, meta) {
 				b.appendBuildRowToCachedBuildRowsV1(b.currentProbeRow, candidateRow, joinedChk, 0, true)
 				b.matchedRowsForCurrentProbeRow++
@@ -92,17 +92,8 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 			} else {
 				b.probeCollision++
 			}
-		} else {
-			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
-				if isKeyMatched(meta.keyMode, b.serializedKeys[b.currentProbeRow], candidateRow, meta) {
-					b.appendBuildRowToCachedBuildRowsV1(b.currentProbeRow, candidateRow, joinedChk, 0, true)
-					b.matchedRowsForCurrentProbeRow++
-					*joinedChkRemainCap--
-				} else {
-					b.probeCollision++
-				}
-			}
 		}
+
 		b.matchedRowsHeaders[b.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, b.matchedRowsHashValue[b.currentProbeRow])
 	}
 
