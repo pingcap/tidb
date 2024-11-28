@@ -52,12 +52,7 @@ func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
 	ret := &baseSemiJoin{
 		baseJoinProbe:   base,
 		isLeftSideBuild: isLeftSideBuild,
-
-		isNulls: make([]bool, 0),
-	}
-
-	if isLeftSideBuild {
-		ret.isMatchedRows = make([]bool, 0)
+		isNulls:         make([]bool, 0),
 	}
 
 	return ret
