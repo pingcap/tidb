@@ -452,6 +452,7 @@ func (op *LogicalLimit) Equals(other any) bool {
 // Hash64 implements the Hash64Equals interface.
 func (op *LogicalMaxOneRow) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeMaxOneRow)
+	op.BaseLogicalPlan.Hash64(h)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalMaxOneRow pointer.
@@ -466,7 +467,9 @@ func (op *LogicalMaxOneRow) Equals(other any) bool {
 	if op2 == nil {
 		return false
 	}
-	_ = op2
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
 	return true
 }
 

@@ -278,13 +278,20 @@ func TestLogicalSchemaProducerHash64Equals(t *testing.T) {
 }
 
 func TestLogicalMaxOneRowHash64Equals(t *testing.T) {
-	m1 := &logicalop.LogicalMaxOneRow{}
-	m2 := &logicalop.LogicalMaxOneRow{}
+	ctx := mock.NewContext()
+	m1 := logicalop.LogicalMaxOneRow{}.Init(ctx, 1)
+	m2 := logicalop.LogicalMaxOneRow{}.Init(ctx, 1)
 	// since logical max one row doesn't have any elements, they are always indicate
 	// that they are equal.
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()
 	m1.Hash64(hasher1)
+	m2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, m1.Equals(m2))
+
+	m2.SetID(m1.ID())
+	hasher2.Reset()
 	m2.Hash64(hasher2)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, m1.Equals(m2))
