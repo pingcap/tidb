@@ -267,18 +267,23 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 				})
 			}
 
-			appendedRowNum := 0
 			if len(s.lUsed) == 0 {
 				// For calculating virtual row num
+				virtualRowNum := chk.GetNumVirtualRows()
 				for i := start; i < end; i++ {
 					if s.isMatchedRows[i] {
-						appendedRowNum++
+						virtualRowNum++
 					}
 				}
+
+				// When `len(s.lUsed) == 0`, column number in chk is 0
+				// We need to manually calculate virtual row number.
+				chk.SetNumVirtualRows(virtualRowNum)
+			} else {
+				chk.SetNumVirtualRows(chk.NumRows())
 			}
 
 			s.offset += rowNumToTryAppend
-			chk.SetNumVirtualRows(chk.NumRows() + appendedRowNum)
 			remainCap = chk.RequiredRows() - chk.NumRows()
 		}
 	}
