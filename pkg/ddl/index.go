@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1156,7 +1157,8 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 ) bool {
-	hasRecord, err := ExistsTableRow(ctx, store, math.MaxUint64, tbl)
+	hasRecord, err := existsTableRow(ctx, store, tbl)
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
@@ -1231,6 +1233,7 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 			foundKey = true
 			return false, nil
 		})
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
 		return false
