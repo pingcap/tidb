@@ -273,9 +273,6 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
-column:1 ndv:6 totColSize:0
-column:2 ndv:6 totColSize:6
-column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -369,16 +366,10 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	if isConcurrency {
-		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
-	} else {
-		require.Equal(t, uint8(0x33), table0.GetCol(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), table0.GetCol(2).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), table0.GetCol(3).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
-	}
+	require.Equal(t, 0, table0.ColNum())
+	require.Equal(t, 2, table0.IdxNum())
+	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())
