@@ -1859,6 +1859,11 @@ func (c *strToDateFunctionClass) getRetTp(ctx BuildContext, arg Expression) (tp 
 		return
 	}
 
+	if c.funcName == ast.ToDate {
+		tp = mysql.TypeDatetime
+		return
+	}
+
 	isDuration, isDate := types.GetFormatType(format)
 	if isDuration && !isDate {
 		tp = mysql.TypeDuration
@@ -1916,15 +1921,40 @@ func (b *builtinStrToDateDateSig) Clone() builtinFunc {
 	return newSig
 }
 
+func ConvertFormatFromOracelToMysql(format string) string {
+	var newFormat string
+
+	switch strings.ToUpper(format) {
+	case "YYYY-MM-DD":
+		newFormat = "%Y-%m-%d"
+	case "YYYY/MM/DD":
+		newFormat = "%Y/%m/%d"
+	case "YYYYMMDD":
+		newFormat = "%Y%m%d"
+	case "YYYY-MM-DD HH24:MI:SS":
+		newFormat = "%Y-%m-%d %H:%i:%s"
+	default:
+		newFormat = format
+	}
+
+	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
+
+	return newFormat
+}
+
 func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	date, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+
 	format, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+
+	format = ConvertFormatFromOracelToMysql(format)
+
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
@@ -1958,6 +1988,9 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+
+	format = ConvertFormatFromOracelToMysql(format)
+
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
@@ -1994,6 +2027,9 @@ func (b *builtinStrToDateDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
+
+	format = ConvertFormatFromOracelToMysql(format)
+
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)

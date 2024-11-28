@@ -157,6 +157,7 @@ const (
 	SecToTime        = "sec_to_time"
 	Second           = "second"
 	StrToDate        = "str_to_date"
+	ToDate           = "to_date"
 	SubDate          = "subdate"
 	SubTime          = "subtime"
 	Sysdate          = "sysdate"
