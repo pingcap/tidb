@@ -112,8 +112,8 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 
 // ListSchemas lists related schemas from predicate.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel.CIStr {
-	extractedSchemas := e.listExtractedSchemas(is)
-	if len(extractedSchemas) == 0 {
+	extractedSchemas, unspecified := e.listExtractedSchemas(is)
+	if unspecified {
 		ret := is.AllSchemaNames()
 		slices.SortFunc(ret, func(a, b pmodel.CIStr) int {
 			return strings.Compare(a.L, b.L)
@@ -123,11 +123,13 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel
 	return extractedSchemas
 }
 
-func (e *InfoSchemaBaseExtractor) listExtractedSchemas(is infoschema.InfoSchema) []pmodel.CIStr {
+func (e *InfoSchemaBaseExtractor) listExtractedSchemas(
+	is infoschema.InfoSchema,
+) (schemas []pmodel.CIStr, unspecified bool) {
 	ec := e.extractableColumns
-	schemas := e.getSchemaObjectNames(ec.schema)
+	schemas = e.getSchemaObjectNames(ec.schema)
 	if len(schemas) == 0 {
-		return nil
+		return nil, true
 	}
 	ret := schemas[:0]
 	for _, s := range schemas {
@@ -135,7 +137,7 @@ func (e *InfoSchemaBaseExtractor) listExtractedSchemas(is infoschema.InfoSchema)
 			ret = append(ret, n.Name)
 		}
 	}
-	return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr)
+	return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr), false
 }
 
 // ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
@@ -157,7 +159,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByID(is, tableIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas := e.listExtractedSchemas(is)
+			schemas, _ := e.listExtractedSchemas(is)
 			return findSchemasForTables(is, schemas, tableSlice)
 		}
 	}
@@ -168,7 +170,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas := e.listExtractedSchemas(is)
+			schemas, _ := e.listExtractedSchemas(is)
 			return findSchemasForTables(is, schemas, tableSlice)
 		}
 	}
