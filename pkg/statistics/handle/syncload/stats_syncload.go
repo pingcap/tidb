@@ -325,23 +325,6 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	tblInfo := tbl.Meta()
 	isPkIsHandle := tblInfo.PKIsHandle
-	if !statsTbl.ColAndIdxExistenceMap.Checked() {
-		statsTbl = statsTbl.Copy()
-		for _, col := range statsTbl.HistColl.GetColSlice() {
-			if tblInfo.FindColumnByID(col.ID) == nil {
-				statsTbl.HistColl.DelCol(col.ID)
-				statsTbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
-			}
-		}
-		for _, idx := range statsTbl.HistColl.GetIdxSlice() {
-			if tblInfo.FindIndexByID(idx.ID) == nil {
-				statsTbl.HistColl.DelIdx(idx.ID)
-				statsTbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
-			}
-		}
-		statsTbl.ColAndIdxExistenceMap.SetChecked()
-		s.statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
-	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := statsTbl.IndexIsLoadNeeded(item.ID)
@@ -377,7 +360,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
-			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -402,7 +385,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -578,7 +561,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
@@ -586,6 +569,22 @@ func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statis
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
+	}
+	if !tbl.ColAndIdxExistenceMap.Checked() {
+		tbl = tbl.Copy()
+		for _, col := range tbl.HistColl.GetColSlice() {
+			if tblInfo.FindColumnByID(col.ID) == nil {
+				tbl.HistColl.DelCol(col.ID)
+				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+			}
+		}
+		for _, idx := range tbl.HistColl.GetIdxSlice() {
+			if tblInfo.FindIndexByID(idx.ID) == nil {
+				tbl.HistColl.DelIdx(idx.ID)
+				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+			}
+		}
+		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)
