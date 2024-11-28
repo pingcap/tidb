@@ -22,13 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBinderSuccess(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -55,13 +55,13 @@ func TestBinderSuccess(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	require.True(t, binder.Next())
-	require.True(t, binder.holder.Cur.GetLogicalPlan() == join)
-	require.True(t, binder.holder.Subs[0].Cur.GetLogicalPlan() == t1)
-	require.True(t, binder.holder.Subs[1].Cur.GetLogicalPlan() == t2)
+	require.True(t, binder.holder.(*memo.GroupExpression).LogicalPlan == join)
+	require.True(t, binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan == t1)
+	require.True(t, binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan == t2)
 }
 
 func TestBinderFail(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -117,7 +117,7 @@ func TestBinderFail(t *testing.T) {
 }
 
 func TestBinderTopNode(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -132,11 +132,11 @@ func TestBinderTopNode(t *testing.T) {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
 }
 
 func TestBinderOneNode(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 
 	mm := memo.NewMemo(ctx)
@@ -147,11 +147,11 @@ func TestBinderOneNode(t *testing.T) {
 	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
 }
 
 func TestBinderSubTreeMatch(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -177,9 +177,9 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	require.True(t, binder.Next())
-	require.True(t, binder.holder.Cur.GetLogicalPlan() == join3)
-	require.True(t, binder.holder.Subs[0].Cur.GetLogicalPlan() == join1)
-	require.True(t, binder.holder.Subs[1].Cur.GetLogicalPlan() == join2)
+	require.True(t, binder.holder.(*memo.GroupExpression).LogicalPlan == join3)
+	require.True(t, binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan == join1)
+	require.True(t, binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan == join2)
 	require.False(t, binder.Next())
 
 	pa2 := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
@@ -191,7 +191,7 @@ func TestBinderSubTreeMatch(t *testing.T) {
 }
 
 func TestBinderMultiNext(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
@@ -227,44 +227,44 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t1", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t2", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴               ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t1", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t4", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//        ▴        ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t3", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t2", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t3", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t4", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	buf.Flush()
 	// every time when next call done, the save stack info should be next iteration starting point.
@@ -284,7 +284,7 @@ func TestBinderMultiNext(t *testing.T) {
 }
 
 func TestBinderAny(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
@@ -320,22 +320,22 @@ func TestBinderAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t1", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t2", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
 	//           G1
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴       ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t3", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t2", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())
 
@@ -364,7 +364,7 @@ func TestBinderAny(t *testing.T) {
 }
 
 func TestBinderMultiAny(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
@@ -401,11 +401,11 @@ func TestBinderMultiAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
-	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
-	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t1", binder.holder.Children()[0].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan))
+	require.Equal(t, "t2", binder.holder.Children()[1].(*memo.GroupExpression).LogicalPlan.(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())
 

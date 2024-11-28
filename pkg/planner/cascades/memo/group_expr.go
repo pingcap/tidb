@@ -41,11 +41,6 @@ type GroupExpression struct {
 	hash64 uint64
 }
 
-// GetLogicalPlan returns the logical plan of the GroupExpression.
-func (e *GroupExpression) GetLogicalPlan() base.LogicalPlan {
-	return e.LogicalPlan
-}
-
 // GetGroup returns the Group that this GroupExpression belongs to.
 func (e *GroupExpression) GetGroup() *Group {
 	return e.group
@@ -53,8 +48,8 @@ func (e *GroupExpression) GetGroup() *Group {
 
 // String implements the fmt.Stringer interface.
 func (e *GroupExpression) String(w util.IBufStrWriter) {
-	e.GetLogicalPlan().ExplainID()
-	w.WriteString("GE:" + e.GetLogicalPlan().ExplainID().String() + "{")
+	e.LogicalPlan.ExplainID()
+	w.WriteString("GE:" + e.LogicalPlan.ExplainID().String() + "{")
 	for i, input := range e.Inputs {
 		if i != 0 {
 			w.WriteString(", ")
