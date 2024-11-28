@@ -331,7 +331,7 @@ func TestInitStatsVer2(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	initStatsVer2(t, false)
+	initStatsVer2(t)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
@@ -343,10 +343,10 @@ func TestInitStatsVer2Concurrency(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	initStatsVer2(t, true)
+	initStatsVer2(t)
 }
 
-func initStatsVer2(t *testing.T, isConcurrency bool) {
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
