@@ -229,7 +229,6 @@ func TestOptimisticUpdateLazyCheck(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1)")
 
 	tk.MustExec("set session tidb_constraint_check_in_place=off")
-	tk.MustExec("begin optimistic")
 
 	getExplainResult := func(res *testkit.Result) string {
 		resBuff := bytes.NewBufferString("")
@@ -242,5 +241,4 @@ func TestOptimisticUpdateLazyCheck(t *testing.T) {
 	res := tk.MustQuery("explain analyze update t set id = id + 10000")
 	explainResult := getExplainResult(res)
 	require.NotRegexp(t, "Update.* Get:{num_rpc:.*, total_time:.*}.*", explainResult)
-	tk.MustExec("rollback")
 }

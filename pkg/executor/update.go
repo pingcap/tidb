@@ -632,7 +632,7 @@ func optimizeDupKeyCheckForUpdate(vars *variable.SessionVars, txn kv.Transaction
 		return table.DupKeyCheckLazy
 	}
 
-	if !vars.ConstraintCheckInPlace {
+	if !vars.ConstraintCheckInPlace && !vars.InTxn() {
 		// If `tidb_constraint_check_in_place` is OFF, we can just check duplicated key lazily without keys in storage.
 		return table.DupKeyCheckLazy
 	}
