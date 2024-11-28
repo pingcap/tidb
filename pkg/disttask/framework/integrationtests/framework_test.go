@@ -239,7 +239,7 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	var counter atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterOnFinishedCalled",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCallOnSubtaskFinished",
 		func(e *taskexecutor.BaseTaskExecutor) {
 			if counter.Add(1) == 1 {
 				e.CancelRunningSubtask()

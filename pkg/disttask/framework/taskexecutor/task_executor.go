@@ -370,22 +370,17 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	failpoint.InjectCall("changeRunSubtaskError", &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
-	failpoint.Inject("mockTiDBShutdown", func() {
-		if MockTiDBDown(e.id, e.GetTaskBase()) {
-			failpoint.Return()
-		}
-	})
-
-	failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
+	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())
 
 	if subtaskErr != nil {
 		return e.markSubTaskCanceledOrFailed(ctx, subtask, subtaskErr)
 	} else {
+		failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
 		if err := stepExecutor.OnFinished(ctx, subtask); err != nil {
 			logger.Info("OnFinished failed", zap.Error(err))
 			return errors.Trace(err)
 		}
-		failpoint.InjectCall("afterOnFinishedCalled", e)
+		failpoint.InjectCall("afterCallOnSubtaskFinished", e)
 		err := e.finishSubtask(ctx, subtask)
 		failpoint.InjectCall("syncAfterSubtaskFinish")
 		return err

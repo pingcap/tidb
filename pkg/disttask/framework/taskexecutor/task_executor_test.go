@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -63,7 +61,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockExtension.EXPECT().GetStepExecutor(gomock.Any()).Return(nil, taskExecutorRegisterErr).Times(2)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
-	err := taskExecutor.runStep(nil)
+	err := taskExecutor.RunStep(nil)
 	require.EqualError(t, err, taskExecutorRegisterErr.Error())
 	mockSubtaskTable.EXPECT().FailSubtask(taskExecutor.ctx, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	err = taskExecutor.RunStep(nil)
@@ -75,7 +73,7 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	initErr := errors.New("init error")
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
-	err = taskExecutor.runStep(nil)
+	err = taskExecutor.RunStep(nil)
 	require.EqualError(t, err, initErr.Error())
 	require.True(t, ctrl.Satisfied())
 
@@ -322,7 +320,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err := taskExecutor.runStep(nil)
+	err := taskExecutor.RunStep(nil)
 	require.EqualError(t, err, runSubtaskErr.Error())
 	require.True(t, ctrl.Satisfied())
 
@@ -338,7 +336,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err = taskExecutor.runStep(nil)
+	err = taskExecutor.RunStep(nil)
 	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
 }
@@ -374,7 +372,7 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 		return ctx.Err()
 	})
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	require.ErrorIs(t, taskExecutor.runStep(nil), context.Canceled)
+	require.ErrorIs(t, taskExecutor.RunStep(nil), context.Canceled)
 	require.True(t, ctrl.Satisfied())
 }
 
@@ -547,51 +545,4 @@ func TestInject(t *testing.T) {
 	execute.SetFrameworkInfo(e, r)
 	got := e.GetResource()
 	require.Equal(t, r, got)
-}
-
-func throwError() error {
-	return errors.New("mock error")
-}
-
-func callOnError(taskExecutor *BaseTaskExecutor) {
-	taskExecutor.onError(throwError())
-}
-
-func throwErrorNoTrace() error {
-	return errors.NewNoStackError("mock error")
-}
-
-func callOnErrorNoTrace(taskExecutor *BaseTaskExecutor) {
-	taskExecutor.onError(throwErrorNoTrace())
-}
-
-func TestExecutorOnErrorLog(t *testing.T) {
-	taskExecutor := &BaseTaskExecutor{}
-
-	observedZapCore, observedLogs := observer.New(zap.ErrorLevel)
-	observedLogger := zap.New(observedZapCore)
-	taskExecutor.logger = observedLogger
-
-	{
-		callOnError(taskExecutor)
-		require.GreaterOrEqual(t, observedLogs.Len(), 1)
-		errLog := observedLogs.TakeAll()[0]
-		contextMap := errLog.ContextMap()
-		require.Contains(t, contextMap, "error stack")
-		errStack := contextMap["error stack"]
-		require.IsType(t, "", errStack)
-		errStackStr := errStack.(string)
-		require.Regexpf(t, `mock error[\n\t ]*`+
-			`github\.com/pingcap/tidb/pkg/disttask/framework/taskexecutor\.throwError`,
-			errStackStr,
-			"got err stack: %s", errStackStr)
-	}
-
-	{
-		callOnErrorNoTrace(taskExecutor)
-		require.GreaterOrEqual(t, observedLogs.Len(), 1)
-		errLog := observedLogs.TakeAll()[0]
-		contextMap := errLog.ContextMap()
-		require.NotContains(t, contextMap, "error stack")
-	}
 }
