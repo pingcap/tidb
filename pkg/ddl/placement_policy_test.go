@@ -983,7 +983,7 @@ func testGetPolicyDependency(storage kv.Storage, name string) []int64 {
 			return err
 		}
 		for _, db := range dbs {
-			tbls, err := t.ListTables(db.ID)
+			tbls, err := t.ListTables(context.Background(), db.ID)
 			if err != nil {
 				return err
 			}

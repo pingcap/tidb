@@ -53,7 +53,7 @@ func TestIndexUsageReporter(t *testing.T) {
 
 	// For PointGet and BatchPointGet
 	planID := 3
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
+	runtimeStatsColl.GetBasicRuntimeStats(planID, true).Record(time.Second, 2024)
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {
@@ -88,7 +88,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		RealtimeCount: 100,
 	})
 	planID = 4
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
+	runtimeStatsColl.GetBasicRuntimeStats(planID, true).Record(time.Second, 2024)
 	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {

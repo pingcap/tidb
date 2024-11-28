@@ -1194,15 +1194,19 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			path := &util.AccessPath{Index: index}
 			if index.VectorInfo != nil {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
 				if !tblInfo.TiFlashReplica.Available {
 					continue
 				}
+				path := genTiFlashPath(tblInfo)
 				path.StoreType = kv.TiFlash
+				path.Index = index
+				publicPaths = append(publicPaths, path)
+				continue
 			}
+			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
 		}
 	}

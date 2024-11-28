@@ -35,7 +35,7 @@ const ttlJobTimeout = 6 * time.Hour
 
 const taskManagerLoopTickerInterval = time.Minute
 const ttlTaskHeartBeatTickerInterval = time.Minute
-const ttlGCInterval = time.Hour
+const ttlGCInterval = 10 * time.Minute
 
 func getCheckJobInterval() time.Duration {
 	failpoint.Inject("check-job-interval", func(val failpoint.Value) time.Duration {
