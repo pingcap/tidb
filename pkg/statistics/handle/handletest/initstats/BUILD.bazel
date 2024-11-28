@@ -12,7 +12,11 @@ go_test(
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
+<<<<<<< HEAD
         "//pkg/statistics/handle/util",
+=======
+        "//pkg/statistics/handle/types",
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

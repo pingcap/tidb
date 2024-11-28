@@ -15,13 +15,21 @@
 package initstats
 
 import (
+<<<<<<< HEAD
+=======
+	"context"
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+=======
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -33,7 +41,11 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 		conf.Performance.LiteInitStats = false
 		conf.Performance.ConcurrentlyInitStats = true
 	})
+<<<<<<< HEAD
 	handle.IsFullCacheFunc = func(cache util.StatsCache, total uint64) bool {
+=======
+	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 		return true
 	}
 	testConcurrentlyInitStats(t)
@@ -46,7 +58,11 @@ func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
 		conf.Performance.LiteInitStats = false
 		conf.Performance.ConcurrentlyInitStats = true
 	})
+<<<<<<< HEAD
 	handle.IsFullCacheFunc = func(cache util.StatsCache, total uint64) bool {
+=======
+	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 		return false
 	}
 	testConcurrentlyInitStats(t)
@@ -56,18 +72,27 @@ func testConcurrentlyInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+<<<<<<< HEAD
+=======
+	tk.MustExec("set global tidb_analyze_column_options='ALL'")
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(c))")
 	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	tk.MustExec("analyze table t1")
 	for i := 2; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("create table t%v (a int, b int, c int, primary key(c))", i))
 		tk.MustExec(fmt.Sprintf("insert into t%v select * from t1", i))
+<<<<<<< HEAD
 		tk.MustExec(fmt.Sprintf("analyze table t%v", i))
+=======
+		tk.MustExec(fmt.Sprintf("analyze table t%v all columns", i))
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	}
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
+<<<<<<< HEAD
 	require.NoError(t, h.InitStats(is))
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
@@ -75,6 +100,15 @@ func testConcurrentlyInitStats(t *testing.T) {
 		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
 		require.True(t, ok)
 		for _, col := range stats.Columns {
+=======
+	require.NoError(t, h.InitStats(context.Background(), is))
+	for i := 1; i < 10; i++ {
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.True(t, ok)
+		for _, col := range stats.GetColSlice() {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 			require.True(t, col.IsAllEvicted())
 			require.False(t, col.IsFullLoad())
 		}
@@ -89,11 +123,19 @@ func testConcurrentlyInitStats(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
 	}
 	for i := 1; i < 10; i++ {
+<<<<<<< HEAD
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
 		require.True(t, ok)
 		for _, col := range stats.Columns {
+=======
+		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		require.NoError(t, err)
+		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
+		require.True(t, ok)
+		for _, col := range stats.GetColSlice() {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 			require.True(t, col.IsFullLoad())
 			require.False(t, col.IsAllEvicted())
 		}

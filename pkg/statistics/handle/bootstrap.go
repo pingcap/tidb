@@ -383,7 +383,11 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 	return nil
 }
 
+<<<<<<< HEAD
 func (*Handle) initStatsTopN4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
+=======
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	if IsFullCacheFunc(cache, totalMemory) {
 		return
 	}
@@ -478,10 +482,20 @@ func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Tas
 	return nil
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsTopNConcurrency(cache util.StatsCache, totalMemory uint64) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+=======
+func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+	if IsFullCacheFunc(cache, totalMemory) {
+		return nil
+	}
+	var maxTid = maxTidRecord.tid.Load()
+	tid := int64(0)
+	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 		if IsFullCacheFunc(cache, totalMemory) {
 			return nil
 		}
@@ -644,7 +658,11 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 	}
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsBuckets(cache util.StatsCache, totalMemory uint64) error {
+=======
+func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
@@ -726,13 +744,21 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 	return nil
 }
 
+<<<<<<< HEAD
 func (h *Handle) initStatsBucketsConcurrency(cache util.StatsCache, totalMemory uint64) error {
+=======
+func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
+<<<<<<< HEAD
 	ls := initstats.NewRangeWorker(func(task initstats.Task) error {
+=======
+	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 		if IsFullCacheFunc(cache, totalMemory) {
 			return nil
 		}
@@ -834,9 +860,15 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 }
 
 // IsFullCacheFunc is whether the cache is full or not. but we can only change it when to test
+<<<<<<< HEAD
 var IsFullCacheFunc func(cache util.StatsCache, total uint64) bool = isFullCache
 
 func isFullCache(cache util.StatsCache, total uint64) bool {
+=======
+var IsFullCacheFunc func(cache statstypes.StatsCache, total uint64) bool = isFullCache
+
+func isFullCache(cache statstypes.StatsCache, total uint64) bool {
+>>>>>>> b449b3b2572 (statistics: add more tests for init stats (#57664))
 	memQuota := variable.StatsCacheMemQuota.Load()
 	return (uint64(cache.MemConsumed()) >= total/4) || (cache.MemConsumed() >= memQuota && memQuota != 0)
 }
