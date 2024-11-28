@@ -17,11 +17,11 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 )
 

@@ -15,9 +15,8 @@
 package rule
 
 import (
-	"io"
-
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
@@ -29,7 +28,7 @@ type Rule interface {
 	ID() uint
 
 	// String implements the fmt.Stringer interface, used for rule tracing process.
-	String(writer io.StringWriter)
+	String(writer util.IBufStrWriter)
 
 	// Pattern return the initialized pattern of a specific rule when it created.
 	Pattern() *pattern.Pattern
@@ -68,8 +67,7 @@ func (r *BaseRule) ID() uint {
 }
 
 // String implements Rule interface
-func (r *BaseRule) String(writer io.StringWriter) {
-	// nolint:errcheck
+func (r *BaseRule) String(writer util.IBufStrWriter) {
 	writer.WriteString(r.tp.String())
 }
 

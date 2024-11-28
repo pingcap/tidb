@@ -145,7 +145,7 @@ type Binder struct {
 	// expr is the current matched expression dynamically decided during the binder process.
 	holder *GroupExprHolder
 
-	// w is only for test stack print usage.
+	// bsw is only for test stack print usage.
 	bsw util.IBufStrWriter
 }
 
