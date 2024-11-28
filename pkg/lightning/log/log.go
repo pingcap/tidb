@@ -280,6 +280,26 @@ func (task *Task) End(level zapcore.Level, err error, extraFields ...zap.Field) 
 	return elapsed
 }
 
+// End2 is similar to End except we don't check cancel, and we print full error.
+func (task *Task) End2(level zapcore.Level, err error, extraFields ...zap.Field) time.Duration {
+	elapsed := time.Since(task.since)
+	var verb string
+	errField := zap.Skip()
+	switch {
+	case err == nil:
+		level = task.level
+		verb = " completed"
+	default:
+		verb = " failed"
+		extraFields = nil
+		errField = zap.Error(err)
+	}
+	if ce := task.WithOptions(zap.AddCallerSkip(1)).Check(level, task.name+verb); ce != nil {
+		ce.Write(append(extraFields, zap.Duration("takeTime", elapsed), errField)...)
+	}
+	return elapsed
+}
+
 type ctxKeyType struct{}
 
 var ctxKey ctxKeyType
