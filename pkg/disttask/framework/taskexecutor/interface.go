@@ -115,7 +115,7 @@ type Extension interface {
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
 	// GetStepExecutor returns the subtask executor for the subtask.
-	// Note, the error returned is fatal, framework won't retry.
+	// Note, the error returned is fatal, framework will fail the task directly.
 	GetStepExecutor(task *proto.Task) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,
