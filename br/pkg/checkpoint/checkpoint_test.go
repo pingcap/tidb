@@ -402,13 +402,13 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
-		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
-			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+		func(tableID int64, v checkpoint.RestoreValueType) {
+			recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
 		})
 	require.NoError(t, err)
-	require.LessOrEqual(t, 1, recordSet["1_{123}"])
-	require.LessOrEqual(t, 1, recordSet["2_{456}"])
-	require.LessOrEqual(t, 1, recordSet["3_{789}"])
+	require.LessOrEqual(t, 1, recordSet["1_123"])
+	require.LessOrEqual(t, 1, recordSet["2_456"])
+	require.LessOrEqual(t, 1, recordSet["3_789"])
 	items, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
@@ -447,8 +447,8 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 			recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
 		})
 	require.NoError(t, err)
-	require.Equal(t, 1, recordSet["1_{123}"])
-	require.Equal(t, 1, recordSet["2_{456}"])
+	require.Equal(t, 1, recordSet["1_123"])
+	require.Equal(t, 1, recordSet["2_456"])
 	items, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor())
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
