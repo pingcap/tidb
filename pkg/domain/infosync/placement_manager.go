@@ -122,51 +122,24 @@ func CheckBundle(bundle *placement.Bundle) error {
 			// TODO: also check cross IDs
 			continue
 		}
-		keys = append(keys, keyRange{
-			groupID:  rule.GroupID,
-			id:       rule.ID,
-			start:    rule.StartKeyHex,
-			end:      rule.EndKeyHex,
-			override: rule.Override,
-			isLeader: rule.Role == pd.Leader,
-		})
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	// Skip overridden rules, but only within the bundle, not across groups
-	applyKeys := keys[:0]
-	j := 0
-	for i := 1; i < len(keys); i++ {
-		if keys[i].override {
-			j = i // skip all previous rules in the same group
-			// TODO: Should we only override the matching key range?
-		}
-	}
-	applyKeys = append(applyKeys, keys[j:]...)
-	if len(applyKeys) == 0 {
-		return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, no rule left`)
-	}
-
-	// Additionally check for range overlapping leaders.
-	keys = keys[:0]
-	for i := 0; i < len(applyKeys); i++ {
-		if applyKeys[i].isLeader {
-			keys = append(keys, applyKeys[i])
+		if rule.Role == pd.Leader {
+			if rule.Override {
+				keys = keys[:0]
+			}
+			keys = append(keys, keyRange{
+				start: rule.StartKeyHex,
+				end:   rule.EndKeyHex,
+			})
 		}
 	}
 	if len(keys) == 0 {
 		return nil
 	}
-
 	// Sort on Start, id, end
 	// Could use pd's placement.sortRules() instead.
 	sort.Slice(keys, func(i, j int) bool {
 		if keys[i].start == keys[j].start {
-			if keys[i].id == keys[j].id {
-				return keys[i].end < keys[j].end
-			}
-			return keys[i].id < keys[j].id
+			return keys[i].end < keys[j].end
 		}
 		return keys[i].start < keys[j].start
 	})
