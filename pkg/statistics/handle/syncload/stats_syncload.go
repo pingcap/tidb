@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -314,47 +313,48 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 
 	item := task.Item.TableItemID
-	tbl, ok := s.statsHandle.Get(item.TableID)
+	statsTbl, ok := s.statsHandle.Get(item.TableID)
 
 	if !ok {
 		return nil
 	}
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	tblInfo, ok := s.statsHandle.TableInfoByID(is, item.TableID)
+	tbl, ok := s.statsHandle.TableInfoByID(is, item.TableID)
 	if !ok {
 		return nil
 	}
-	isPkIsHandle := tblInfo.Meta().PKIsHandle
-	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.Copy()
-		for _, col := range tbl.HistColl.GetColSlice() {
-			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+	tblInfo := tbl.Meta()
+	isPkIsHandle := tblInfo.PKIsHandle
+	if !statsTbl.ColAndIdxExistenceMap.Checked() {
+		statsTbl = statsTbl.Copy()
+		for _, col := range statsTbl.HistColl.GetColSlice() {
+			if tblInfo.FindColumnByID(col.ID) == nil {
+				statsTbl.HistColl.DelCol(col.ID)
+				statsTbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
 			}
 		}
-		for _, idx := range tbl.HistColl.GetIdxSlice() {
-			if tblInfo.Meta().FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+		for _, idx := range statsTbl.HistColl.GetIdxSlice() {
+			if tblInfo.FindIndexByID(idx.ID) == nil {
+				statsTbl.HistColl.DelIdx(idx.ID)
+				statsTbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
 			}
 		}
-		tbl.ColAndIdxExistenceMap.SetChecked()
-		s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		statsTbl.ColAndIdxExistenceMap.SetChecked()
+		s.statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
-		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
+		index, loadNeeded := statsTbl.IndexIsLoadNeeded(item.ID)
 		if !loadNeeded {
 			return nil
 		}
 		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tblInfo.Meta().FindIndexByID(item.ID)
+			wrapper.idxInfo = tblInfo.FindIndexByID(item.ID)
 		}
 	} else {
-		col, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
+		col, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(item.ID, task.Item.FullLoad)
 		if !loadNeeded {
 			return nil
 		}
@@ -363,7 +363,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		} else {
 			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
 			// so we have to get the column info from the domain.
-			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
+			wrapper.colInfo = tblInfo.GetColumnByID(item.ID)
 		}
 		if skipTypes != nil {
 			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
@@ -377,7 +377,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
 			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
-			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 			return nil
 		}
 	}
@@ -402,7 +402,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	}
 	metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
 	if needUpdate {
-		s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
+		s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
 	}
 	return nil
 }
@@ -578,7 +578,7 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 }
 
 // updateCachedItem updates the column/index hist to global statsCache.
-func (s *statsSyncLoad) updateCachedItem(tblInfo table.Table, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
+func (s *statsSyncLoad) updateCachedItem(item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
 	s.StatsLoad.Lock()
 	defer s.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
