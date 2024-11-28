@@ -23,8 +23,10 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/intest",
+        "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
