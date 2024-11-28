@@ -15,7 +15,6 @@
 package join
 
 import (
-	"math"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -256,7 +255,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
 		for remainCap > 0 && (s.offset < s.chunkRows) {
-			rowNumToTryAppend := int(math.Min(float64(remainCap), float64(s.chunkRows-s.offset)))
+			rowNumToTryAppend := min(remainCap, s.chunkRows-s.offset)
 			start := s.offset
 			end := s.offset + rowNumToTryAppend
 
