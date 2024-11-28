@@ -108,17 +108,16 @@ type keyRange struct {
 
 // CheckBundle check that the rules don't overlap without explicit Override
 // Exported for testing reasons.
-// Tries to match prepareRulesForApply + checkApplyRules from pd.
+// Tries to be a simpler version of PDs
+// prepareRulesForApply + checkApplyRules.
 // And additionally checks for key overlaps.
 func CheckBundle(bundle *placement.Bundle) error {
 	keys := make([]keyRange, 0, len(bundle.Rules))
 	for _, rule := range bundle.Rules {
-		if rule.GroupID != bundle.ID {
-			// TODO: also check cross IDs
-			continue
-		}
 		if rule.Role == pd.Leader {
 			if rule.Override {
+				// PD would override the previous rules,
+				// not only the overlapping key ranges.
 				keys = keys[:0]
 			}
 			keys = append(keys, keyRange{
