@@ -21,11 +21,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+// IBufStrWriter is interface facilitate quick writing string regardless of error handling and written len.
 type IBufStrWriter interface {
 	WriteString(s string)
 	Flush()
 }
 
+// BufStrWriter is a basic wrapper bufio.Writer while override its WriteSWtring func.
 type BufStrWriter struct {
 	bio *bufio.Writer
 }
@@ -37,11 +39,13 @@ func NewBufStrWriter(w io.Writer) IBufStrWriter {
 	}
 }
 
+// WriteString implements IBufStrWriter
 func (sw *BufStrWriter) WriteString(s string) {
 	_, err := sw.bio.WriteString(s)
 	intest.Assert(err == nil, "buffer-io WriteString should be no error in test")
 }
 
+// Flush implements IBufStrWriter
 func (sw *BufStrWriter) Flush() {
 	err := sw.bio.Flush()
 	intest.Assert(err == nil, "buffer-io Flush should be no error in test")
