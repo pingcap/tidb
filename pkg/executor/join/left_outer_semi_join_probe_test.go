@@ -405,14 +405,14 @@ func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLefterOuter bool) {
 	if !isLefterOuter {
 		rightAsBuildSide = append(rightAsBuildSide, false)
 	}
-	
+
 	simpleFilter := createSimpleFilter(t)
-	
+
 	hasFilter := []bool{false}
 	if isLefterOuter {
 		hasFilter = append(hasFilter, true)
 	}
-	
+
 	partitionNumber := 4
 	rightUsed := []int{}
 
