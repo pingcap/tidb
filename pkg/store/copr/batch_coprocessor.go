@@ -1115,6 +1115,13 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 
+	if req.MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
+		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
+	}
+
 	var tasks []*batchCopTask
 	var err error
 	if req.PartitionIDAndRanges != nil {

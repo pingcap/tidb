@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -208,7 +207,7 @@ func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job,
 	droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
 	if len(addedIDs) > 0 {
 		// to use AffectedOpts we need both new and old to have the same length
-		maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+		maxParts := max(len(droppedIDs), len(addedIDs))
 		// Also initialize them to 0!
 		oldIDs := make([]int64, maxParts)
 		copy(oldIDs, droppedIDs)
@@ -222,7 +221,7 @@ func SetSchemaDiffForReorganizePartition(diff *model.SchemaDiff, job *model.Job,
 func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) {
 	diff.TableID = job.TableID
 	diff.OldTableID = job.TableID
-	if job.SchemaState == model.StateDeleteReorganization {
+	if job.SchemaState == model.StateNone {
 		args := jobCtx.jobArgs.(*model.TablePartitionArgs)
 		partInfo := args.PartInfo
 		// Final part, new table id is assigned
@@ -231,7 +230,7 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, job
 		droppedIDs, addedIDs := args.OldPhysicalTblIDs, args.NewPartitionIDs
 		if len(addedIDs) > 0 {
 			// to use AffectedOpts we need both new and old to have the same length
-			maxParts := mathutil.Max[int](len(droppedIDs), len(addedIDs))
+			maxParts := max(len(droppedIDs), len(addedIDs))
 			// Also initialize them to 0!
 			oldIDs := make([]int64, maxParts)
 			copy(oldIDs, droppedIDs)

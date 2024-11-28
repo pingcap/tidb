@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -113,16 +112,12 @@ func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD.
+	currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate flashback timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
+		return errors.Errorf("fail to validate flashback timestamp: %v", err)
 	}
+	currentTS := currentVer.Ver
+
 	oracleFlashbackTS := oracle.GetTimeFromTS(flashBackTS)
 	if oracleFlashbackTS.After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
@@ -806,7 +801,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sess)
+			err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, noSubJob, w.sess)
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
@@ -831,11 +826,11 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 				return ver, errors.Trace(err)
 			}
 		}
-
-		err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, w.sess)
+		err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(jobCtx, job)

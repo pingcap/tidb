@@ -188,14 +188,12 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 	m.SubJobs = append(m.SubJobs, &model.SubJob{
 		Type:        jobW.Type,
 		JobArgs:     jobW.JobArgs,
-		Args:        jobW.Args,
 		RawArgs:     jobW.RawArgs,
 		SchemaState: jobW.SchemaState,
 		SnapshotVer: jobW.SnapshotVer,
 		Revertible:  true,
 		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
-		UseCloud:    false,
 	})
 	return nil
 }
@@ -263,6 +261,8 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 			Name: fkInfo.Name,
 			Cols: fkInfo.Cols,
 		})
+	case model.ActionDropForeignKey:
+		// there is nothing to verify for `DROP FOREIGN KEY`
 	default:
 		return dbterror.ErrRunMultiSchemaChanges.FastGenByArgs(job.Type.String())
 	}
@@ -335,9 +335,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 		if subJob.Type == model.ActionAddIndex {
 			mergeCnt++
 			if mergedSubJob == nil {
-				clonedSubJob := *subJob
-				mergedSubJob = &clonedSubJob
-				mergedSubJob.Args = nil
+				mergedSubJob = subJob.Clone()
 				mergedSubJob.RawArgs = nil
 			}
 		}

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
@@ -81,11 +82,12 @@ type jobContext struct {
 	*schemaVersionManager
 	// ctx is the context of job scheduler. When worker is running the job, it should
 	// use stepCtx instead.
-	ctx             context.Context
-	infoCache       *infoschema.InfoCache
-	autoidCli       *autoid.ClientDiscover
-	store           kv.Storage
-	schemaVerSyncer schemaver.Syncer
+	ctx               context.Context
+	infoCache         *infoschema.InfoCache
+	autoidCli         *autoid.ClientDiscover
+	store             kv.Storage
+	schemaVerSyncer   schemaver.Syncer
+	eventPublishStore notifier.Store
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -372,7 +374,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 		if job.IsCancelled() {
 			// it may be too large that it can not be added to the history queue, so
 			// delete its arguments
-			job.Args = nil
+			job.ClearDecodedArgs()
 		}
 	}
 	if err != nil {
@@ -861,11 +863,22 @@ func (w *worker) runOneJobStep(
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
+						case model.JobStateRunning:
+							if latestJob.IsAlterable() {
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+							}
 						}
 					}
 				}
 			})
 		}
+	}
+	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
+	// the unmarshalled job will have a nil value for the ReorgMeta field.
+	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 
 	prevState := job.State
@@ -881,7 +894,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifySchemaCharsetAndCollate:
 		ver, err = onModifySchemaCharsetAndCollate(jobCtx, job)
 	case model.ActionDropSchema:
-		ver, err = onDropSchema(jobCtx, job)
+		ver, err = w.onDropSchema(jobCtx, job)
 	case model.ActionRecoverSchema:
 		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:

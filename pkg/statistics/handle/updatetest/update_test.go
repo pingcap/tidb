@@ -447,8 +447,9 @@ func TestAutoUpdate(t *testing.T) {
 		tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
-		t.Skip("FIXME: Handle adding index DDL event correctly")
-		h.HandleAutoAnalyze()
+		require.Eventually(t, func() bool {
+			return h.HandleAutoAnalyze()
+		}, 10*time.Second, 100*time.Millisecond)
 		require.NoError(t, h.Update(context.Background(), is))
 		testKit.MustExec("explain select * from t where a > 'a'")
 		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
@@ -1283,6 +1284,8 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
 	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
-	require.True(t, h.HandleAutoAnalyze())
+	require.Eventually(t, func() bool {
+		return h.HandleAutoAnalyze()
+	}, 3*time.Second, time.Millisecond*100)
 	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 }

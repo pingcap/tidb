@@ -52,6 +52,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				m[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				m[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
@@ -72,6 +73,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				return m
 			}(),
@@ -83,6 +85,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				m[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				m[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				return m
 			}(),
@@ -94,6 +97,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
@@ -105,6 +109,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),
@@ -116,6 +121,7 @@ func TestLitExprContext(t *testing.T) {
 				m := stmtctx.DefaultStmtErrLevels
 				m[errctx.ErrGroupTruncate] = errctx.LevelError
 				m[errctx.ErrGroupBadNull] = errctx.LevelError
+				m[errctx.ErrGroupNoDefault] = errctx.LevelError
 				m[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				return m
 			}(),

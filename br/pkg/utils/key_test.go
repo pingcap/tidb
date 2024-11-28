@@ -5,6 +5,7 @@ package utils
 import (
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -162,7 +163,7 @@ func TestClampKeyRanges(t *testing.T) {
 	run := func(t *testing.T, c Case) {
 		require.ElementsMatch(
 			t,
-			IntersectAll(CloneSlice(c.ranges), CloneSlice(c.clampIn)),
+			IntersectAll(slices.Clone(c.ranges), slices.Clone(c.clampIn)),
 			c.result)
 		require.ElementsMatch(
 			t,

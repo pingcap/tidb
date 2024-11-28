@@ -763,7 +763,7 @@ func TestDecimal(t *testing.T) {
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)
 	}
-	for i := 0; i < len(decs)-1; i++ {
+	for i := range len(decs) - 1 {
 		cmpRes := bytes.Compare(decs[i], decs[i+1])
 		require.LessOrEqual(t, cmpRes, 0)
 	}
@@ -953,7 +953,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 	rowCount := 3
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, rowCount)
 	for colIdx, tp := range tps {
-		for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+		for rowIdx := range rowCount {
 			got := chk.GetRow(rowIdx).GetDatum(colIdx, tp)
 			expect := datums[colIdx]
 			if got.IsNull() {
@@ -1063,7 +1063,7 @@ func datumsForTest() ([]types.Datum, []*types.FieldType) {
 
 func chunkForTest(t *testing.T, tz *time.Location, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
 	decoder := NewDecoder(chunk.New(tps, 32, 32), tz)
-	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
+	for range rowCount {
 		encoded, err := EncodeValue(tz, nil, datums...)
 		require.NoError(t, err)
 		decoder.buf = make([]byte, 0, len(encoded))
@@ -1148,7 +1148,7 @@ func TestHashChunkRow(t *testing.T) {
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, 1)
 
 	colIdx := make([]int, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		colIdx[i] = i
 	}
 	h := crc32.NewIEEE()
@@ -1236,7 +1236,7 @@ func TestHashChunkColumns(t *testing.T) {
 	chk := chunkForTest(t, typeCtx.Location(), datums, tps, 4)
 
 	colIdx := make([]int, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		colIdx[i] = i
 	}
 	hasNull := []bool{false, false, false}
@@ -1244,12 +1244,12 @@ func TestHashChunkColumns(t *testing.T) {
 	rowHash := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 	sel := make([]bool, len(datums))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		sel[i] = true
 	}
 
 	// Test hash value of the first 12 `Null` columns
-	for i := 0; i < 12; i++ {
+	for i := range 12 {
 		require.True(t, chk.GetRow(0).IsNull(i))
 		err1 := HashChunkSelected(typeCtx, vecHash, chk, tps[i], i, buf, hasNull, sel, false)
 		err2 := HashChunkRow(typeCtx, rowHash[0], chk.GetRow(0), tps[i:i+1], colIdx[i:i+1], buf)
@@ -1297,23 +1297,26 @@ func TestHashChunkColumns(t *testing.T) {
 
 func TestDatumHashEquals(t *testing.T) {
 	now := time.Now()
+	newDatumPtr := func(d types.Datum) *types.Datum {
+		return &d
+	}
 	tests := []struct {
-		d1 types.Datum
-		d2 types.Datum
+		d1 *types.Datum
+		d2 *types.Datum
 	}{
-		{types.NewIntDatum(1), types.NewIntDatum(1)},
-		{types.NewUintDatum(1), types.NewUintDatum(1)},
-		{types.NewFloat64Datum(1.1), types.NewFloat64Datum(1.1)},
-		{types.NewStringDatum("abc"), types.NewStringDatum("abc")},
-		{types.NewBytesDatum([]byte("abc")), types.NewBytesDatum([]byte("abc"))},
-		{types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1}), types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})},
-		{types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a"), types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a")},
-		{types.NewBinaryLiteralDatum([]byte{0x01}), types.NewBinaryLiteralDatum([]byte{0x01})},
-		{types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1)), types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1))},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))},
-		{types.NewDurationDatum(types.Duration{Duration: time.Second}), types.NewDurationDatum(types.Duration{Duration: time.Second})},
-		{types.NewJSONDatum(types.CreateBinaryJSON("a")), types.NewJSONDatum(types.CreateBinaryJSON("a"))},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6))},
+		{newDatumPtr(types.NewIntDatum(1)), newDatumPtr(types.NewIntDatum(1))},
+		{newDatumPtr(types.NewUintDatum(1)), newDatumPtr(types.NewUintDatum(1))},
+		{newDatumPtr(types.NewFloat64Datum(1.1)), newDatumPtr(types.NewFloat64Datum(1.1))},
+		{newDatumPtr(types.NewStringDatum("abc")), newDatumPtr(types.NewStringDatum("abc"))},
+		{newDatumPtr(types.NewBytesDatum([]byte("abc"))), newDatumPtr(types.NewBytesDatum([]byte("abc")))},
+		{newDatumPtr(types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})), newDatumPtr(types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1}))},
+		{newDatumPtr(types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a")), newDatumPtr(types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a"))},
+		{newDatumPtr(types.NewBinaryLiteralDatum([]byte{0x01})), newDatumPtr(types.NewBinaryLiteralDatum([]byte{0x01}))},
+		{newDatumPtr(types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1))), newDatumPtr(types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1)))},
+		{newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))), newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)))},
+		{newDatumPtr(types.NewDurationDatum(types.Duration{Duration: time.Second})), newDatumPtr(types.NewDurationDatum(types.Duration{Duration: time.Second}))},
+		{newDatumPtr(types.NewJSONDatum(types.CreateBinaryJSON("a"))), newDatumPtr(types.NewJSONDatum(types.CreateBinaryJSON("a")))},
+		{newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))), newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)))},
 	}
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()

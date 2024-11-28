@@ -166,8 +166,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForTiDBHotRegions(ctx, sctx)
 		case infoschema.TableConstraints:
 			err = e.setDataFromTableConstraints(ctx, sctx)
-		case infoschema.TableSessionVar:
-			e.rows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 		case infoschema.TableTiDBServersInfo:
 			err = e.setDataForServersInfo(sctx)
 		case infoschema.TableTiFlashReplica:
@@ -212,6 +210,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -242,11 +242,26 @@ func getAutoIncrementID(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
+	if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		if ok, v2 := infoschema.IsV2(raw.InfoSchema); ok {
+			isCached := v2.TableIsCached(tblInfo.ID)
+			if !isCached {
+				// Loading table info from kv storage invalidates the cached auto_increment id.
+				return 0
+			}
+		}
+	}
 	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
+	alloc := tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	if alloc == nil || alloc.Base() == 0 {
+		// It may not be loaded yet.
+		// To show global next autoID, one should use `show table x next_row_id`.
+		return 0
+	}
+	return alloc.Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -714,6 +729,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -730,7 +758,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -921,10 +949,7 @@ type hugeMemTableRetriever struct {
 
 // retrieve implements the infoschemaRetriever interface
 func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	if e.extractor.SkipRequest {
-		e.retrieved = true
-	}
-	if e.retrieved {
+	if e.extractor.SkipRequest || e.retrieved {
 		return nil, nil
 	}
 
@@ -1605,13 +1630,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor < len(e.runningJobs) {
 		num := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i], checker)
-			req.AppendString(12, e.runningJobs[i].Query)
-			if e.runningJobs[i].MultiSchemaInfo != nil {
-				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
-					req.AppendString(12, e.runningJobs[i].Query)
-				}
-			}
+			e.appendJobToChunk(req, e.runningJobs[i], checker, false)
 		}
 		e.cursor += num
 		count += num
@@ -1625,13 +1644,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job, checker)
-			req.AppendString(12, job.Query)
-			if job.MultiSchemaInfo != nil {
-				for range job.MultiSchemaInfo.SubJobs {
-					req.AppendString(12, job.Query)
-				}
-			}
+			e.appendJobToChunk(req, job, checker, false)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -1952,7 +1965,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			for _, tableID := range extractorTableIDs {
 				regionsInfo, err := e.getRegionsInfoForTable(ctx, tikvHelper, is, tableID)
 				if err != nil {
-					if errors.ErrorEqual(err, infoschema.ErrTableExists) {
+					if errors.ErrorEqual(err, infoschema.ErrTableNotExists) {
 						continue
 					}
 					return err
@@ -1972,6 +1985,10 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 			return err
 		}
 	}
+	if allRegionsInfo == nil {
+		return nil
+	}
+
 	tableInfos := tikvHelper.GetRegionsTableInfo(allRegionsInfo, is, nil)
 	for i := range allRegionsInfo.Regions {
 		regionTableList := tableInfos[allRegionsInfo.Regions[i].ID]
@@ -1996,7 +2013,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
-		return nil, infoschema.ErrTableExists.GenWithStackByArgs(tableID)
+		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
 	pt := tbl.Meta().GetPartitionInfo()
@@ -2884,7 +2901,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		for _, info := range infoList {
 			// If you have the PROCESS privilege, you can see all running transactions.
 			// Otherwise, you can see only your own transactions.
-			if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			if !hasProcessPriv && loginUser != nil && info.ProcessInfo.Username != loginUser.Username {
 				continue
 			}
 			e.txnInfo = append(e.txnInfo, info)
@@ -3895,6 +3912,40 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	rows := make([][]types.Datum, 0, len(values))
+	for _, v := range values {
+		pcv := v.(*plannercore.PlanCacheValue)
+
+		row := make([]types.Datum, 0, 16)
+		row = append(row, types.NewStringDatum(pcv.SQLDigest))
+		row = append(row, types.NewStringDatum(pcv.SQLText))
+		row = append(row, types.NewStringDatum(pcv.StmtType))
+		row = append(row, types.NewStringDatum(pcv.ParseUser))
+		row = append(row, types.NewStringDatum(pcv.PlanDigest))
+		row = append(row, types.NewStringDatum(pcv.BinaryPlan))
+		row = append(row, types.NewStringDatum(pcv.Binding))
+		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
+		row = append(row, types.NewStringDatum(pcv.ParseValues))
+		row = append(row, types.NewIntDatum(pcv.Memory))
+		exec, procKeys, totKeys, sumLat, lastTime := pcv.RuntimeInfo()
+		row = append(row, types.NewIntDatum(exec))
+		row = append(row, types.NewIntDatum(procKeys))
+		row = append(row, types.NewIntDatum(totKeys))
+		row = append(row, types.NewIntDatum(sumLat))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
+		row = append(row, types.NewTimeDatum(
+			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
+
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }

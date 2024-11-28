@@ -58,11 +58,17 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	ukStrs := make([]string, 0, len(s.Keys))
+	strs := make([]string, 0, len(s.Keys))
 	for _, key := range s.Keys {
+		strs = append(strs, key.String())
+	}
+	ukStrs := make([]string, 0, len(s.Keys))
+	for _, key := range s.UniqueKeys {
 		ukStrs = append(ukStrs, key.String())
 	}
-	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
+	return "Column: [" + strings.Join(colStrs, ",") +
+		"] Key: [" + strings.Join(strs, ",") +
+		"] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
@@ -79,7 +85,14 @@ func (s *Schema) Clone() *Schema {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
-	schema.SetUniqueKeys(keys)
+	schema.SetKeys(keys)
+	if s.UniqueKeys != nil {
+		uniqueKeys := make([]KeyInfo, 0, len(s.UniqueKeys))
+		for _, key := range s.UniqueKeys {
+			uniqueKeys = append(uniqueKeys, key.Clone())
+		}
+		schema.SetUniqueKeys(uniqueKeys)
+	}
 	return schema
 }
 
@@ -128,22 +141,34 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUniqueKey checks if this column is a unique key.
-func (s *Schema) IsUniqueKey(col *Column) bool {
-	for _, key := range s.Keys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
-		}
+// IsUnique checks if the column is unique key.
+// Pass strong=true to check strong contraint: unique && notnull.
+// Pass strong=false to check weak contraint: unique && nullable.
+func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
+	slicesToBeIterated := s.UniqueKeys
+	if strong {
+		slicesToBeIterated = s.Keys
 	}
-	return false
-}
-
-// IsUnique checks if this column is a unique key which may contain duplicate nulls .
-func (s *Schema) IsUnique(col *Column) bool {
-	for _, key := range s.UniqueKeys {
-		if len(key) == 1 && key[0].EqualColumn(col) {
-			return true
+	for _, key := range slicesToBeIterated {
+		if len(key) > len(cols) {
+			continue
 		}
+		allFound := true
+	nextKeyCol:
+
+		for _, keyCols := range key {
+			for _, col := range cols {
+				if keyCols.EqualColumn(col) {
+					continue nextKeyCol
+				}
+			}
+			allFound = false
+			break
+		}
+		if !allFound {
+			continue
+		}
+		return true
 	}
 	return false
 }
@@ -183,9 +208,14 @@ func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
 }
 
-// SetUniqueKeys will set the value of Schema.Keys.
-func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+// SetKeys will set the value of Schema.Keys.
+func (s *Schema) SetKeys(keys []KeyInfo) {
 	s.Keys = keys
+}
+
+// SetUniqueKeys will set the value of Schema.UniqueKeys.
+func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
+	s.UniqueKeys = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.

@@ -20,13 +20,14 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // SchemaChangeEvent stands for a schema change event. DDL will generate one
-// event or multiple events (only for multi-schema change DDL). The caller should
-// check the GetType of SchemaChange and call the corresponding getter function
-// to retrieve the needed information.
+// event or multiple events (only for multi-schema change DDL or merged DDL).
+// The caller should check the GetType of SchemaChange and call the corresponding
+// getter function to retrieve the needed information.
 type SchemaChangeEvent struct {
 	inner *jsonSchemaChangeEvent
 }
@@ -41,9 +42,6 @@ func (s *SchemaChangeEvent) String() string {
 	_, _ = fmt.Fprintf(&sb, "(Event Type: %s", s.inner.Tp)
 	if s.inner.TableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", s.inner.TableInfo.ID, s.inner.TableInfo.Name)
-	}
-	for _, tableInfo := range s.inner.TableInfos {
-		_, _ = fmt.Fprintf(&sb, ", Table ID: %d, Table Name: %s", tableInfo.ID, tableInfo.Name)
 	}
 	if s.inner.OldTableInfo != nil {
 		_, _ = fmt.Fprintf(&sb, ", Old Table ID: %d, Old Table Name: %s", s.inner.OldTableInfo.ID, s.inner.OldTableInfo.Name)
@@ -86,25 +84,24 @@ func (s *SchemaChangeEvent) GetType() model.ActionType {
 	return s.inner.Tp
 }
 
-// NewCreateTablesEvent creates a SchemaChangeEvent whose type is
-// ActionCreateTables.
-// The type of the ActionCreateTable should also be included in ActionCreateTables.
-func NewCreateTablesEvent(
-	newTableInfos []*model.TableInfo,
+// NewCreateTableEvent creates a SchemaChangeEvent whose type is
+// ActionCreateTable.
+func NewCreateTableEvent(
+	newTableInfo *model.TableInfo,
 ) *SchemaChangeEvent {
 	return &SchemaChangeEvent{
 		inner: &jsonSchemaChangeEvent{
-			Tp:         model.ActionCreateTables,
-			TableInfos: newTableInfos,
+			Tp:        model.ActionCreateTable,
+			TableInfo: newTableInfo,
 		},
 	}
 }
 
-// GetCreateTablesInfo returns the table info of the SchemaChangeEvent whose type
+// GetCreateTableInfo returns the table info of the SchemaChangeEvent whose type
 // is ActionCreateTable.
-func (s *SchemaChangeEvent) GetCreateTablesInfo() []*model.TableInfo {
-	intest.Assert(s.inner.Tp == model.ActionCreateTables)
-	return s.inner.TableInfos
+func (s *SchemaChangeEvent) GetCreateTableInfo() *model.TableInfo {
+	intest.Assert(s.inner.Tp == model.ActionCreateTable)
+	return s.inner.TableInfo
 }
 
 // NewTruncateTableEvent creates a SchemaChangeEvent whose type is
@@ -430,16 +427,79 @@ func NewFlashbackClusterEvent() *SchemaChangeEvent {
 	}
 }
 
+// NewDropSchemaEvent creates a schema change event whose type is ActionDropSchema.
+func NewDropSchemaEvent(dbInfo *model.DBInfo, tables []*model.TableInfo) *SchemaChangeEvent {
+	miniTables := make([]*MiniTableInfoForSchemaEvent, len(tables))
+	for i, table := range tables {
+		miniTables[i] = &MiniTableInfoForSchemaEvent{
+			ID:   table.ID,
+			Name: table.Name,
+		}
+		if table.Partition != nil {
+			partLen := len(table.Partition.Definitions)
+			miniTables[i].Partitions = make([]*MiniPartitionInfoForSchemaEvent, partLen)
+			for j, part := range table.Partition.Definitions {
+				miniTables[i].Partitions[j] = &MiniPartitionInfoForSchemaEvent{
+					ID:   part.ID,
+					Name: part.Name,
+				}
+			}
+		}
+	}
+	return &SchemaChangeEvent{
+		inner: &jsonSchemaChangeEvent{
+			Tp: model.ActionDropSchema,
+			MiniDBInfo: &MiniDBInfoForSchemaEvent{
+				ID:     dbInfo.ID,
+				Name:   dbInfo.Name,
+				Tables: miniTables,
+			},
+		},
+	}
+}
+
+// GetDropSchemaInfo returns the database info and tables of the SchemaChangeEvent whose type is ActionDropSchema.
+func (s *SchemaChangeEvent) GetDropSchemaInfo() (miniDBInfo *MiniDBInfoForSchemaEvent) {
+	intest.Assert(s.inner.Tp == model.ActionDropSchema)
+	return s.inner.MiniDBInfo
+}
+
+// MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
+type MiniDBInfoForSchemaEvent struct {
+	ID     int64                          `json:"id"`
+	Name   pmodel.CIStr                   `json:"name"`
+	Tables []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
+}
+
+// MiniTableInfoForSchemaEvent is a mini version of TableInfo for DropSchemaEvent only.
+// Note: Usually we encourage to use TableInfo instead of this mini version, but for
+// DropSchemaEvent, it's more efficient to use this mini version.
+// So please do not use this mini version in other places.
+type MiniTableInfoForSchemaEvent struct {
+	ID         int64                              `json:"id"`
+	Name       pmodel.CIStr                       `json:"name"`
+	Partitions []*MiniPartitionInfoForSchemaEvent `json:"partitions,omitempty"`
+}
+
+// MiniPartitionInfoForSchemaEvent is a mini version of PartitionInfo for DropSchemaEvent only.
+// Note: Usually we encourage to use PartitionInfo instead of this mini version, but for
+// DropSchemaEvent, it's more efficient to use this mini version.
+// So please do not use this mini version in other places.
+type MiniPartitionInfoForSchemaEvent struct {
+	ID   int64        `json:"id"`
+	Name pmodel.CIStr `json:"name"`
+}
+
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,
 // we want to hide the details to subscribers, so SchemaChangeEvent contain this struct.
 type jsonSchemaChangeEvent struct {
-	TableInfo       *model.TableInfo     `json:"table_info,omitempty"`
-	TableInfos      []*model.TableInfo   `json:"table_infos,omitempty"`
-	OldTableInfo    *model.TableInfo     `json:"old_table_info,omitempty"`
-	AddedPartInfo   *model.PartitionInfo `json:"added_partition_info,omitempty"`
-	DroppedPartInfo *model.PartitionInfo `json:"dropped_partition_info,omitempty"`
-	Columns         []*model.ColumnInfo  `json:"columns,omitempty"`
-	Indexes         []*model.IndexInfo   `json:"indexes,omitempty"`
+	MiniDBInfo      *MiniDBInfoForSchemaEvent `json:"mini_db_info,omitempty"`
+	TableInfo       *model.TableInfo          `json:"table_info,omitempty"`
+	OldTableInfo    *model.TableInfo          `json:"old_table_info,omitempty"`
+	AddedPartInfo   *model.PartitionInfo      `json:"added_partition_info,omitempty"`
+	DroppedPartInfo *model.PartitionInfo      `json:"dropped_partition_info,omitempty"`
+	Columns         []*model.ColumnInfo       `json:"columns,omitempty"`
+	Indexes         []*model.IndexInfo        `json:"indexes,omitempty"`
 	// OldTableID4Partition is used to store the table ID when a table transitions from being partitioned to non-partitioned,
 	// or vice versa.
 	OldTableID4Partition int64 `json:"old_table_id_for_partition,omitempty"`

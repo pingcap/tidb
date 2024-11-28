@@ -149,6 +149,15 @@ func TestBasic(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, schema)
 
+	b, err := json.Marshal(tblInfo)
+	require.NoError(t, err)
+	tblUnmarshal := &model.TableInfo{}
+	err = json.Unmarshal(b, tblUnmarshal)
+	require.NoError(t, err)
+	schema2, ok := infoschema.SchemaByTable(is, tblUnmarshal)
+	require.True(t, ok)
+	require.Equal(t, schema, schema2)
+
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
 	schema, ok = infoschema.SchemaByTable(is, noexistTblInfo)
 	require.False(t, ok)
@@ -331,42 +340,38 @@ func TestInfoTables(t *testing.T) {
 	is := builder.Build(math.MaxUint64)
 
 	infoTables := []string{
-		"SCHEMATA",
-		"TABLES",
-		"COLUMNS",
-		"STATISTICS",
 		"CHARACTER_SETS",
 		"COLLATIONS",
-		"FILES",
-		"PROFILING",
-		"PARTITIONS",
-		"KEY_COLUMN_USAGE",
-		"REFERENTIAL_CONSTRAINTS",
-		"SESSION_VARIABLES",
-		"PLUGINS",
-		"TABLE_CONSTRAINTS",
-		"TRIGGERS",
-		"USER_PRIVILEGES",
-		"ENGINES",
-		"VIEWS",
-		"ROUTINES",
-		"SCHEMA_PRIVILEGES",
-		"COLUMN_PRIVILEGES",
-		"TABLE_PRIVILEGES",
-		"PARAMETERS",
-		"EVENTS",
-		"GLOBAL_STATUS",
-		"GLOBAL_VARIABLES",
-		"SESSION_STATUS",
-		"OPTIMIZER_TRACE",
-		"TABLESPACES",
 		"COLLATION_CHARACTER_SET_APPLICABILITY",
-		"PROCESSLIST",
-		"TIDB_TRX",
+		"COLUMNS",
+		"COLUMN_PRIVILEGES",
 		"DEADLOCKS",
+		"ENGINES",
+		"EVENTS",
+		"FILES",
+		"KEY_COLUMN_USAGE",
+		"OPTIMIZER_TRACE",
+		"PARAMETERS",
+		"PARTITIONS",
 		"PLACEMENT_POLICIES",
-		"TRX_SUMMARY",
+		"PLUGINS",
+		"PROCESSLIST",
+		"PROFILING",
+		"REFERENTIAL_CONSTRAINTS",
 		"RESOURCE_GROUPS",
+		"ROUTINES",
+		"SCHEMATA",
+		"SCHEMA_PRIVILEGES",
+		"STATISTICS",
+		"TABLES",
+		"TABLESPACES",
+		"TABLE_CONSTRAINTS",
+		"TABLE_PRIVILEGES",
+		"TIDB_TRX",
+		"TRIGGERS",
+		"TRX_SUMMARY",
+		"USER_PRIVILEGES",
+		"VIEWS",
 	}
 	for _, tbl := range infoTables {
 		tb, err1 := is.TableByName(context.Background(), util.InformationSchemaName, pmodel.NewCIStr(tbl))

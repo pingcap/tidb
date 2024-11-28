@@ -46,8 +46,13 @@
       "select * from t0 left outer join t11 on a0=a1 where '5' not in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where '1' in (t0.b0, t11.b1)",
       "select * from t0 left outer join t11 on a0=a1 where t0.b0 in ('5', t11.b1) -- some = in the in list is not null filtering",
-      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering",
-      "select * from t1 left outer join t2 on a1=a2 where not (b2 is NOT NULL AND c2 = 5) -- NOT case "
+      "select * from t0 left outer join t11 on a0=a1 where '5' in (t0.b0, t11.b1) -- some = in the in list is not null filtering"
+    ]
+  },
+  {
+    "name": "TestOuter2InnerIssue55886",
+    "cases": [
+      "with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from  cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end)"
     ]
   }
 ]
