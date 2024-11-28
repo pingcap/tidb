@@ -230,18 +230,32 @@ func (s *semiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sqlkill
 	return
 }
 
-func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+func (s *semiJoinProbe) produceResult(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
 	err = s.concatenateProbeAndBuildRows(joinedChk, sqlKiller, true)
 	if err != nil {
 		return err
 	}
 
-	defer func() {
-		if s.unFinishedProbeRowIdxQueue.IsEmpty() && s.offset == s.chunkRows {
-			// To avoid `Previous chunk is not probed yet` error
-			s.currentProbeRow = s.chunkRows
+	if joinedChk.NumRows() > 0 {
+		s.selected = s.selected[:0]
+		s.selected, err = expression.VectorizedFilter(s.ctx.SessCtx.GetExprCtx().GetEvalCtx(), s.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, s.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), s.selected)
+		if err != nil {
+			return err
 		}
-	}()
+
+		s.setIsMatchedRows()
+	}
+	return nil
+}
+
+func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
+	if !s.unFinishedProbeRowIdxQueue.IsEmpty() {
+		err = s.produceResult(joinedChk, sqlKiller)
+		if err != nil {
+			return err
+		}
+		s.currentProbeRow = 0
+	}
 
 	if joinedChk.NumRows() > 0 {
 		s.selected = s.selected[:0]
@@ -254,10 +268,10 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		for remainCap > 0 && (s.offset < s.chunkRows) {
-			rowNumToTryAppend := min(remainCap, s.chunkRows-s.offset)
-			start := s.offset
-			end := s.offset + rowNumToTryAppend
+		for remainCap > 0 && (s.currentProbeRow < s.chunkRows) {
+			rowNumToTryAppend := min(remainCap, s.chunkRows-s.currentProbeRow)
+			start := s.currentProbeRow
+			end := s.currentProbeRow + rowNumToTryAppend
 
 			for index, usedColIdx := range s.lUsed {
 				dstCol := chk.Column(index)
@@ -283,7 +297,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 				chk.SetNumVirtualRows(chk.NumRows())
 			}
 
-			s.offset += rowNumToTryAppend
+			s.currentProbeRow += rowNumToTryAppend
 			remainCap = chk.RequiredRows() - chk.NumRows()
 		}
 	}
