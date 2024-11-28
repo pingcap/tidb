@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -350,8 +351,9 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.Equal(t, summaryData, timer.SummaryData)
 	adapter.AssertExpectations(t)
 
+	tz := timeutil.SystemLocation()
 	// job not exists but table ttl not enabled
-	watermark := time.Unix(3600*123, 0)
+	watermark := time.Unix(3600*123, 0).In(tz)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark)))
 	timer = triggerTestTimer(t, store, timer.ID)
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
@@ -373,7 +375,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.Equal(t, oldSummary, timer.SummaryData)
 
 	// job not exists but timer disabled
-	watermark = time.Unix(3600*456, 0)
+	watermark = time.Unix(3600*456, 0).In(tz)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark), timerapi.WithSetEnable(false)))
 	timer = triggerTestTimer(t, store, timer.ID)
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
@@ -394,7 +396,7 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(true)))
 
 	// job not exists but event start too early
-	watermark = time.Unix(3600*789, 0)
+	watermark = time.Unix(3600*789, 0).In(tz)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark)))
 	timer = triggerTestTimer(t, store, timer.ID)
 	adapter.On("Now").Return(timer.EventStart.Add(11*time.Minute), nil).Once()
@@ -584,7 +586,7 @@ func TestGetTTLSchedulePolicy(t *testing.T) {
 		JobInterval: "",
 	})
 	require.Equal(t, timerapi.SchedEventInterval, tp)
-	require.Equal(t, model.DefaultJobIntervalStr, expr)
+	require.Equal(t, model.OldDefaultTTLJobInterval, expr)
 	_, err = timerapi.CreateSchedEventPolicy(tp, expr)
 	require.NoError(t, err)
 }

@@ -33,6 +33,108 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLogicalSelectionHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalSelection{Conditions: []expression.Expression{col1}}.Init(ctx, 1)
+	p2 := logicalop.LogicalSelection{Conditions: []expression.Expression{col1}}.Init(ctx, 1)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	// change conditions
+	p2.Conditions = []expression.Expression{}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Conditions = nil
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Conditions = []expression.Expression{col2}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+}
+
+func TestLogicalProjectionHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		ID:      2,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	// test schema producer.
+	ctx := mock.NewContext()
+	p1 := logicalop.LogicalProjection{Exprs: []expression.Expression{col2}}.Init(ctx, 1)
+	p1.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	p2 := logicalop.LogicalProjection{Exprs: []expression.Expression{col2}}.Init(ctx, 1)
+	p2.LogicalSchemaProducer.SetSchema(&expression.Schema{Columns: []*expression.Column{col1}})
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	p1.Hash64(hasher1)
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+
+	// change Exprs
+	p2.Exprs = []expression.Expression{}
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Exprs = nil
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	// change CalculateNoDelay
+	p2.Exprs = []expression.Expression{col2}
+	p2.CalculateNoDelay = true
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	// change Proj4Expand
+	p2.CalculateNoDelay = false
+	p2.Proj4Expand = true
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, p1.Equals(p2))
+
+	p2.Proj4Expand = false
+	hasher2.Reset()
+	p2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, p1.Equals(p2))
+}
+
 func TestLogicalUnionAllHash64Equals(t *testing.T) {
 	col1 := &expression.Column{
 		ID:      1,
