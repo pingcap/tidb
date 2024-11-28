@@ -244,15 +244,19 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
-			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
-			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 			if statsVer != statistics.Version0 {
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
+				// We will also set int primary key's loaded status to evicted.
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			} else if col.NDV > 0 || col.NullCount > 0 {
+				// If NDV > 0 or NullCount > 0, we should set the stats loaded status to loaded. See comments in Column.StatsAvailable.
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
+			// Otherwise the column's stats is not initialized.
 		}
 	}
 	if table != nil {

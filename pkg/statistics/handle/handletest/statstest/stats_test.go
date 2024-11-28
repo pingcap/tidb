@@ -273,6 +273,9 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -351,10 +354,13 @@ func initStatsVer2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a), index idxab(a, b))")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
-	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+	tk.MustExec("insert into t values(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4), (4, 4, 4, 4), (4, 4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	tk.MustExec("alter table t add column e int default 1")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -366,7 +372,12 @@ func initStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	require.Equal(t, 0, table0.ColNum())
+	require.Equal(t, 5, table0.ColNum())
+	require.True(t, table0.GetCol(1).IsAllEvicted())
+	require.True(t, table0.GetCol(2).IsAllEvicted())
+	require.True(t, table0.GetCol(3).IsAllEvicted())
+	require.True(t, !table0.GetCol(4).IsStatsInitialized())
+	require.True(t, table0.GetCol(5).IsStatsInitialized())
 	require.Equal(t, 2, table0.IdxNum())
 	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
