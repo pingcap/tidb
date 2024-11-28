@@ -159,8 +159,8 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByID(is, tableIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas, _ := e.listExtractedSchemas(is)
-			return findSchemasForTables(is, schemas, tableSlice)
+			schemas, unspecified := e.listExtractedSchemas(is)
+			return findSchemasForTables(is, schemas, unspecified, tableSlice)
 		}
 	}
 	if ec.partitionID != "" {
@@ -170,8 +170,8 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas, _ := e.listExtractedSchemas(is)
-			return findSchemasForTables(is, schemas, tableSlice)
+			schemas, unspecified := e.listExtractedSchemas(is)
+			return findSchemasForTables(is, schemas, unspecified, tableSlice)
 		}
 	}
 	if len(tableNames) > 0 {
@@ -735,6 +735,7 @@ func listTablesForEachSchema(
 func findSchemasForTables(
 	is infoschema.InfoSchema,
 	extractedSchemas []pmodel.CIStr,
+	unspecified bool,
 	tableSlice []*model.TableInfo,
 ) ([]pmodel.CIStr, []*model.TableInfo, error) {
 	schemaSlice := make([]pmodel.CIStr, 0, len(tableSlice))
@@ -743,19 +744,20 @@ func findSchemasForTables(
 		if !ok {
 			continue
 		}
-		if len(extractedSchemas) > 0 {
-			found := false
-			for _, s := range extractedSchemas {
-				if s.L == dbInfo.Name.L {
-					schemaSlice = append(schemaSlice, s)
-					found = true
-				}
-			}
-			if !found {
-				tableSlice[i] = nil
-			}
-		} else {
+		if len(extractedSchemas) == 0 && unspecified {
 			schemaSlice = append(schemaSlice, dbInfo.Name)
+			continue
+		}
+
+		found := false
+		for _, s := range extractedSchemas {
+			if s.L == dbInfo.Name.L {
+				schemaSlice = append(schemaSlice, s)
+				found = true
+			}
+		}
+		if !found {
+			tableSlice[i] = nil
 		}
 	}
 	// Remove nil elements in tableSlice.
