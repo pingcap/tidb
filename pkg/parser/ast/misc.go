@@ -61,6 +61,7 @@ var (
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
+	_ StmtNode = &TrafficStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -412,6 +413,113 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Stmt = node.(StmtNode)
+	return v.Leave(n)
+}
+
+// TrafficOpType is traffic operation type.
+type TrafficOpType int
+
+const (
+	TrafficOpCapture TrafficOpType = iota
+	TrafficOpReplay
+	TrafficOpShow
+	TrafficOpCancel
+)
+
+// TrafficOptionType is traffic option type.
+type TrafficOptionType int
+
+const (
+	// capture options
+	TrafficOptionOutput TrafficOptionType = iota
+	TrafficOptionDuration
+	TrafficOptionEncryptionMethod
+	TrafficOptionCompress
+	// replay options
+	TrafficOptionInput
+	TrafficOptionUsername
+	TrafficOptionPassword
+	TrafficOptionSpeed
+)
+
+// TrafficStmt is traffic operation statement.
+type TrafficStmt struct {
+	stmtNode
+	OpType  TrafficOpType
+	Options []*TrafficOption
+}
+
+// TrafficOption is traffic option.
+type TrafficOption struct {
+	OptionType TrafficOptionType
+	StrValue   string
+	FloatValue float64
+	BoolValue  bool
+}
+
+// Restore implements Node interface.
+func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TRAFFIC ")
+	switch n.OpType {
+	case TrafficOpCapture:
+		ctx.WriteKeyWord("CAPTURE ")
+		for _, option := range n.Options {
+			switch option.OptionType {
+			case TrafficOptionOutput:
+				ctx.WriteKeyWord("OUTPUT ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionDuration:
+				ctx.WriteKeyWord("DURATION ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionEncryptionMethod:
+				ctx.WriteKeyWord("ENCRYPTION_METHOD ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionCompress:
+				ctx.WriteKeyWord("COMPRESS ")
+				ctx.WritePlain("= ")
+				ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", option.BoolValue)))
+			}
+		}
+	case TrafficOpReplay:
+		ctx.WriteKeyWord("REPLAY ")
+		for _, option := range n.Options {
+			switch option.OptionType {
+			case TrafficOptionInput:
+				ctx.WriteKeyWord("INPUT ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionUsername:
+				ctx.WriteKeyWord("USERNAME ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionPassword:
+				ctx.WriteKeyWord("PASSWORD ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionSpeed:
+				ctx.WriteKeyWord("SPEED ")
+				ctx.WritePlain("= ")
+				ctx.WritePlainf("%f", option.FloatValue)
+			}
+		}
+	case TrafficOpShow:
+		ctx.WriteKeyWord("SHOW")
+	case TrafficOpCancel:
+		ctx.WriteKeyWord("CANCEL")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TrafficStmt)
 	return v.Leave(n)
 }
 
