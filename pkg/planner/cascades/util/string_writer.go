@@ -39,10 +39,10 @@ func NewBufStrWriter(w io.Writer) IBufStrWriter {
 
 func (sw *BufStrWriter) WriteString(s string) {
 	_, err := sw.bio.WriteString(s)
-	intest.Assert(err == nil, "WriteString should be no error in test")
+	intest.Assert(err == nil, "buffer-io WriteString should be no error in test")
 }
 
 func (sw *BufStrWriter) Flush() {
 	err := sw.bio.Flush()
-	intest.Assert(err == nil, "buffer-io flush should be no error in test")
+	intest.Assert(err == nil, "buffer-io Flush should be no error in test")
 }
