@@ -707,6 +707,7 @@ import (
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
+	compress              "COMPRESS"
 	constraints           "CONSTRAINTS"
 	cooldown              "COOLDOWN"
 	copyKwd               "COPY"
@@ -733,6 +734,7 @@ import (
 	groupConcat           "GROUP_CONCAT"
 	high                  "HIGH"
 	inplace               "INPLACE"
+	input                 "INPUT"
 	instant               "INSTANT"
 	internal              "INTERNAL"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
@@ -754,6 +756,7 @@ import (
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
+	output                "OUTPUT"
 	placement             "PLACEMENT"
 	planCache             "PLAN_CACHE"
 	plan                  "PLAN"
@@ -764,6 +767,7 @@ import (
 	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
 	recent                "RECENT"
+	replay                "REPLAY"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
 	ru                    "RU"
@@ -772,6 +776,7 @@ import (
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	similar               "SIMILAR"
+	speed                 "SPEED"
 	staleness             "STALENESS"
 	startTime             "START_TIME"
 	startTS               "START_TS"
@@ -804,6 +809,7 @@ import (
 	tokudbZlib            "TOKUDB_ZLIB"
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
+	traffic	              "TRAFFIC"
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
@@ -1065,6 +1071,7 @@ import (
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
+	TrafficStmt                "Traffic capture/replay/cancel/show statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -1372,6 +1379,10 @@ import (
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
+	TrafficCaptureOpt                      "Traffic capture option"
+	TrafficCaptureOptList                  "Traffic capture option list"
+	TrafficReplayOpt                       "Traffic replay option"
+	TrafficReplayOptList                   "Traffic replay option list"
 	LockType                               "Table locks type"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
@@ -7167,6 +7178,7 @@ NotKeywordToken:
 |	"BIT_XOR"
 |	"BRIEF"
 |	"CAST"
+|	"COMPRESS"
 |	"COPY"
 |	"CURTIME"
 |	"CURDATE"
@@ -7182,13 +7194,16 @@ NotKeywordToken:
 |	"GROUP_CONCAT"
 |	"HNSW"
 |	"INPLACE"
+|	"INPUT"
 |	"INSTANT"
 |	"INTERNAL"
 |	"LOG"
 |	"MIN"
 |	"MAX"
 |	"NOW"
+|	"OUTPUT"
 |	"RECENT"
+|	"REPLAY"
 |	"REPLAYER"
 |	"RUNNING"
 |	"PLACEMENT"
@@ -7197,6 +7212,7 @@ NotKeywordToken:
 |	"POSITION"
 |	"PREDICATE"
 |	"S3"
+|	"SPEED"
 |	"STRICT"
 |	"SUBDATE"
 |	"SUBSTRING"
@@ -7223,6 +7239,7 @@ NotKeywordToken:
 |	"TOKUDB_ZLIB"
 |	"TOKUDB_ZSTD"
 |	"TOP"
+|	"TRAFFIC"
 |	"TRIM"
 |	"NEXT_ROW_ID"
 |	"EXPR_PUSHDOWN_BLACKLIST"
@@ -12300,6 +12317,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
 |	CancelImportStmt
+|	TrafficStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -15760,6 +15778,113 @@ PlanReplayerDumpOpt:
 |	"WITH" "STATS" AsOfClause
 	{
 		$$ = $3.(*ast.AsOfClause)
+	}
+
+/********************************************************************
+ *
+ * Traffic Statement
+ *
+ * Examples:
+ * TRAFFIC CAPTURE OUTPUT="/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
+ * TRAFFIC REPLAY USER="u1" PASSWORD="123456" INPUT="/tmp/traffic" SPEED=1.0
+ * TRAFFIC SHOW
+ * TRAFFIC CANCEL
+ *******************************************************************/
+ TrafficStmt:
+	"TRAFFIC" "CAPTURE" TrafficCaptureOptList
+	{
+		x := &ast.TrafficStmt{
+			OpType: ast.TrafficOpCapture,
+		}
+		if $3 != nil {
+			x.Options = $3.([]*ast.TrafficOption)
+		}
+
+		$$ = x
+	}
+|	"TRAFFIC" "REPLAY" TrafficReplayOptList
+	{
+		x := &ast.TrafficStmt{
+			OpType: ast.TrafficOpReplay,
+		}
+		if $3 != nil {
+			x.Options = $3.([]*ast.TrafficOption)
+		}
+
+		$$ = x
+	}
+|	"TRAFFIC" "SHOW"
+	{
+		$$ = &ast.TrafficStmt{
+			OpType: ast.TrafficOpShow,
+		}
+	}
+|	"TRAFFIC" "CANCEL"
+	{
+		$$ = &ast.TrafficStmt{
+			OpType: ast.TrafficOpCancel,
+		}
+	}
+
+TrafficCaptureOptList:
+	TrafficCaptureOpt
+	{
+		$$ = []*ast.TrafficOption{$1.(*ast.TrafficOption)}
+	}
+|	TrafficCaptureOptList TrafficCaptureOpt
+	{
+		$$ = append($1.([]*ast.TrafficOption), $2.(*ast.TrafficOption))
+	}
+
+TrafficCaptureOpt:
+	"OUTPUT" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionOutput, StrValue: $3 }
+	}
+	"DURATION" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionDuration, StrValue: $3 }
+	}
+	"ENCRYPTION_METHOD" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionEncryptionMethod, StrValue: $3 }
+	}
+	"COMPRESS" EqOpt Boolean
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionCompress, BoolValue: $3.(bool) }
+	}
+	
+TrafficReplayOptList:
+	TrafficReplayOpt
+	{
+		$$ = []*ast.TrafficOption{$1.(*ast.TrafficOption)}
+	}
+|	TrafficReplayOptList TrafficReplayOpt
+	{
+		$$ = append($1.([]*ast.TrafficOption), $2.(*ast.TrafficOption))
+	}
+
+TrafficReplayOpt:
+	"INPUT" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionInput, StrValue: $3 }
+	}
+	"USER" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionUsername, StrValue: $3 }
+	}
+	"PASSWORD" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionPassword, StrValue: $3 }
+	}
+	"SPEED" EqOpt floatLit
+	{
+		$$ = &ast.TrafficOption{ OptType: TrafficOptionSpeed, FloatValue: $3.(float64) }
 	}
 
 /* Stored PROCEDURE parameter declaration list */
