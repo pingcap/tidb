@@ -910,28 +910,24 @@ func TestAddIndexInsertAfterReorgSkipCheck(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int);")
-	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		tk2.MustExec("insert into t values (1);")
 	})
-	require.NoError(t, err)
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
 	tk.MustExec("admin check table t;")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip")
+	err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip")
 	require.NoError(t, err)
 
 	tk.MustExec("truncate table t;")
-	err = failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip", func() {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		tk2.MustExec("insert into t values (2);")
 	})
-	require.NoError(t, err)
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
 	tk.MustExec("admin check table t;")
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip")
-	require.NoError(t, err)
 }
