@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"runtime/trace"
 
 	"github.com/pingcap/errors"
@@ -293,7 +294,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
+	dupKeyCheck := optimizeDupKeyCheckForUpdate(e.Ctx().GetSessionVars(), txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
@@ -601,7 +602,7 @@ func (e *UpdateExec) HasFKCascades() bool {
 // If the DupKeyCheckMode of the current statement can be optimized, it will return `DupKeyCheckLazy` to avoid the
 // redundant requests to TiKV, otherwise, `DupKeyCheckInPlace` will be returned.
 // The second argument `ignoreNeedsCheckInPlace` is true if `IGNORE` keyword is used in the update statement.
-func optimizeDupKeyCheckForUpdate(txn kv.Transaction, ignoreNeedsCheckInPlace bool) table.DupKeyCheckMode {
+func optimizeDupKeyCheckForUpdate(vars *variable.SessionVars, txn kv.Transaction, ignoreNeedsCheckInPlace bool) table.DupKeyCheckMode {
 	if txn.IsPipelined() {
 		// It means `@@tidb_dml_type='bulk'` which indicates to insert rows in "bulk" mode.
 		// At this time, `DupKeyCheckLazy` should be used to improve the performance.
@@ -628,6 +629,11 @@ func optimizeDupKeyCheckForUpdate(txn kv.Transaction, ignoreNeedsCheckInPlace bo
 		// `tidb_constraint_check_in_place` is `OFF`.
 		// That is because `tidb_constraint_check_in_place` is only designed for insert cases, see comments in issue:
 		// https://github.com/pingcap/tidb/issues/54492#issuecomment-2229941881
+		return table.DupKeyCheckLazy
+	}
+
+	if !vars.ConstraintCheckInPlace {
+		// If `tidb_constraint_check_in_place` is OFF, we can just check duplicated key lazily without keys in storage.
 		return table.DupKeyCheckLazy
 	}
 
