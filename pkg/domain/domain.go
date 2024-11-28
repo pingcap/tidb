@@ -359,9 +359,10 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 
 	// add failpoint to simulate long-running schema loading scenario
 	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
-		if val.(bool) && neededSchemaVersion-currentSchemaVersion >= (LoadSchemaDiffVersionGapThreshold+64) {
+		if val.(bool) {
 			// not ideal to use sleep, but not sure if there is a better way
-			time.Sleep(10 * time.Second)
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
 		}
 	})
 
@@ -1524,8 +1525,7 @@ func (do *Domain) GetSchemaLease() time.Duration {
 
 // IsLeaseExpired returns whether lease has expired
 func (do *Domain) IsLeaseExpired() bool {
-	startReloadTime := time.Now()
-	return time.Since(startReloadTime) > do.schemaLease
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.
