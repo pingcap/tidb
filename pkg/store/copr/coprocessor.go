@@ -859,7 +859,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
-	if (it.concurrency + it.smallTaskConcurrency) <= 1 {
+	if len(it.tasks) == 1 && len(it.tasks[0].batchTaskList) == 0 {
 		it.liteWorker = &liteCopIteratorWorker{
 			ctx:    ctx, // the ctx contains some info(such as rpc interceptor), this ctx is used for handle cop task later.
 			worker: newCopIteratorWorker(it, nil),
