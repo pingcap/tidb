@@ -1509,24 +1509,18 @@ func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
-	if !ok {
-		if initNewExecutorStats {
-			stats = NewRootRuntimeStats()
-			e.rootStats[planID] = stats
-			stats.basic = &BasicRuntimeStats{}
-			stats.basic.executorCount.Add(1)
-			return stats.basic
-		}
+	if !ok && initNewExecutorStats {
+		stats = NewRootRuntimeStats()
+		e.rootStats[planID] = stats
+	}
+	if stats == nil {
 		return nil
 	}
-	if stats.basic == nil {
-		if initNewExecutorStats {
-			stats.basic = &BasicRuntimeStats{}
-			stats.basic.executorCount.Add(1)
-			return stats.basic
-		}
-		return nil
-	} else if initNewExecutorStats {
+
+	if stats.basic == nil && initNewExecutorStats {
+		stats.basic = &BasicRuntimeStats{}
+		stats.basic.executorCount.Add(1)
+	} else if stats.basic != nil && initNewExecutorStats {
 		stats.basic.executorCount.Add(1)
 	}
 	return stats.basic
