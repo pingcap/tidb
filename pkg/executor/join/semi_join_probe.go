@@ -25,9 +25,6 @@ import (
 type semiJoinProbe struct {
 	baseSemiJoin
 
-	// Used for right side build with other condition
-	offset int
-
 	// Used for right side build without other condition
 	offsets []int
 }
@@ -35,7 +32,6 @@ type semiJoinProbe struct {
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
 	ret := &semiJoinProbe{
 		baseSemiJoin: *newBaseSemiJoin(base, isLeftSideBuild),
-		offset:       0,
 	}
 	return ret
 }
@@ -45,11 +41,6 @@ func (s *semiJoinProbe) InitForScanRowTable() {
 		panic("should not reach here")
 	}
 	s.rowIter = commonInitForScanRowTable(&s.baseJoinProbe)
-}
-
-func (s *semiJoinProbe) resetProbeState() {
-	s.offset = 0
-	s.baseSemiJoin.resetProbeState()
 }
 
 func (s *semiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -313,24 +304,19 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 	}
 
 	s.offsets = s.offsets[:0]
-	matched := false
 
 	for remainCap > 0 && s.currentProbeRow < s.chunkRows {
 		if s.matchedRowsHeaders[s.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(s.matchedRowsHeaders[s.currentProbeRow])
 			if isKeyMatched(meta.keyMode, s.serializedKeys[s.currentProbeRow], candidateRow, meta) {
 				s.matchedRowsHeaders[s.currentProbeRow] = 0
-				matched = true
+				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
 				remainCap--
 			} else {
 				s.probeCollision++
 				s.matchedRowsHeaders[s.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, s.matchedRowsHashValue[s.currentProbeRow])
 			}
 		} else {
-			if matched {
-				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
-				matched = false
-			}
 			s.currentProbeRow++
 		}
 	}
@@ -340,9 +326,6 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 		return err
 	}
 
-	if s.currentProbeRow < s.chunkRows && matched {
-		s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
-	}
 	s.generateResultChkForRightBuildNoOtherCondition(chk)
 	return
 }
