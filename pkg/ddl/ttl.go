@@ -30,9 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
-// DefaultTTLJobInterval is the default value for ttl job interval.
-const DefaultTTLJobInterval = "1h"
-
 func onTTLInfoRemove(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, job.SchemaID)
 	if err != nil {
@@ -195,7 +192,7 @@ func getTTLInfoInOptions(options []*ast.TableOption) (ttlInfo *model.TTLInfo, tt
 				IntervalExprStr:  intervalExpr,
 				IntervalTimeUnit: int(op.TimeUnitValue.Unit),
 				Enable:           true,
-				JobInterval:      DefaultTTLJobInterval,
+				JobInterval:      model.DefaultTTLJobInterval,
 			}
 		case ast.TableOptionTTLEnable:
 			ttlEnable = &op.BoolValue

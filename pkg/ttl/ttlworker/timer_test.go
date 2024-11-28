@@ -584,7 +584,7 @@ func TestGetTTLSchedulePolicy(t *testing.T) {
 		JobInterval: "",
 	})
 	require.Equal(t, timerapi.SchedEventInterval, tp)
-	require.Equal(t, model.DefaultJobIntervalStr, expr)
+	require.Equal(t, model.OldDefaultTTLJobInterval, expr)
 	_, err = timerapi.CreateSchedEventPolicy(tp, expr)
 	require.NoError(t, err)
 }
