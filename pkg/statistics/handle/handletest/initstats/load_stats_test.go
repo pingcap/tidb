@@ -57,13 +57,14 @@ func testConcurrentlyInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_analyze_column_options='ALL'")
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(c))")
 	tk.MustExec("insert into t1 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
 	tk.MustExec("analyze table t1")
 	for i := 2; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("create table t%v (a int, b int, c int, primary key(c))", i))
 		tk.MustExec(fmt.Sprintf("insert into t%v select * from t1", i))
-		tk.MustExec(fmt.Sprintf("analyze table t%v", i))
+		tk.MustExec(fmt.Sprintf("analyze table t%v all columns", i))
 	}
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
