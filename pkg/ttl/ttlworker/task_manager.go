@@ -160,6 +160,8 @@ func (m *taskManager) resizeScanWorkers(count int) error {
 			jobID = curTask.JobID
 			scanID = curTask.ScanID
 			scanErr = errors.New("timeout to cancel scan task")
+
+			result = curTask.result(scanErr)
 		}
 
 		task := findTaskWithID(m.runningTasks, jobID, scanID)
