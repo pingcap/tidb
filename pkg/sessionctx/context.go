@@ -67,6 +67,9 @@ type InstancePlanCache interface {
 	Get(key string, paramTypes any) (value any, ok bool)
 	// Put puts the key and value into the cache.
 	Put(key string, value, paramTypes any) (succ bool)
+	// All returns all cached values.
+	// Returned values are read-only, don't modify them.
+	All() (values []any)
 	// Evict evicts some cached values.
 	Evict(evictAll bool) (detailInfo string, numEvicted int)
 	// Size returns the number of cached values.

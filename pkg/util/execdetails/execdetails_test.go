@@ -175,7 +175,7 @@ func TestString(t *testing.T) {
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, XXX_unrecognized: nil}
+		NumIterations: &NumIterations}
 }
 
 func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, dmfileScannedRows, dmfileSkippedRows, totalDmfileRsCheckMs, totalDmfileReadTimeMs, totalBuildSnapshotMs, localRegions, remoteRegions, totalLearnerReadMs, disaggReadCacheHitBytes, disaggReadCacheMissBytes, minTSOWaitTime, pipelineBreakerWaitTime, pipelineQueueTime uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
@@ -197,7 +197,7 @@ func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, Nu
 		PipelineBreakerWaitNs: &pipelineQueueTime,
 	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary, XXX_unrecognized: nil}
+		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
@@ -452,10 +452,12 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 func TestRootRuntimeStats(t *testing.T) {
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
-	basic1 := stmtStats.GetBasicRuntimeStats(pid)
-	basic2 := stmtStats.GetBasicRuntimeStats(pid)
+	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
+	basic2 := stmtStats.GetBasicRuntimeStats(pid, true)
+	basic1.RecordOpen(time.Millisecond * 10)
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
+	basic2.RecordClose(time.Millisecond * 100)
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
 	commitDetail := &util.CommitDetails{
@@ -472,7 +474,7 @@ func TestRootRuntimeStats(t *testing.T) {
 		Commit: commitDetail,
 	})
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:3s, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	expect := "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 }
 

@@ -265,7 +265,7 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 
 	sql := "select * from t"
 	group1 := "rg1"
-	checker := manager.DeriveChecker(group1, sql, "", "", time.Now())
+	checker := manager.DeriveChecker(group1, sql, "test", "test", time.Now())
 	manager.AddWatch(&runaway.QuarantineRecord{
 		ID:                1,
 		ResourceGroupName: group1,

@@ -260,8 +260,17 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 			return true
 		}
 	}
+
+	toLower := false
+	if e.extractLowerString != nil {
+		toLower = e.extractLowerString[colName]
+	}
+
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
+		if toLower {
+			return !predVals.Exist(strings.ToLower(val))
+		}
 		fn, ok := e.pushedDownFuncs[colName]
 		if ok {
 			return !predVals.Exist(fn(val))
@@ -696,6 +705,9 @@ func listTablesForEachSchema(
 	for _, s := range schemas {
 		tables, err := is.SchemaTableInfos(ctx, s)
 		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if ctx.Err() != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		tables = filterSchemaObjectByRegexp(e, ec.table, tables, extractStrTableInfo)
