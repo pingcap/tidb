@@ -17,7 +17,9 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -870,4 +872,34 @@ func TestSchemaVersionAndFinishTS(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMultiSchemaChangeFinish", "return(true)"))
 
 	tk.MustExec("alter table t2 add column b int, add column c int")
+}
+
+func TestSchemaVersionAndFinishTS2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t1(a int, index(a))")
+	tk1.MustExec("create table t2(a int)")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use test")
+
+	tk1.MustExec("begin;")
+	tk2.MustExec("alter table t1 add column b int")
+	tk1.MustExec("select * from t1")
+	wg := sync.WaitGroup{}
+	go func() {
+		wg.Add(1)
+		defer wg.Done()
+		tk2.MustExec("alter table t1 alter index a invisible;")
+		//tk2.MustExec("alter table t1 add column c int") -- no
+	}()
+	tk3.MustExec("alter table t2 add column b int")
+	time.Sleep(2 * time.Second)
+	tk1.MustExec("commit;")
+	wg.Wait()
 }
