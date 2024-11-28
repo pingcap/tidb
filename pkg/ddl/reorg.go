@@ -770,19 +770,16 @@ func GetTableMaxHandle(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl 
 // ExistsTableRow checks if there is at least one row in the specified table.
 // In case of an error during the operation, it returns false along with the error.
 func ExistsTableRow(ctx *ReorgContext, store kv.Storage, startTS uint64, tbl table.PhysicalTable) (bool, error) {
-	handleCols := buildHandleCols(tbl)
-	result, err := buildOneRowTableScan(ctx, store, startTS, tbl, handleCols, 1, false)
+	found := false
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, tbl.RecordPrefix(), startTS, nil, nil,
+		func(_ kv.Handle, rowKey kv.Key, _ []byte) (bool, error) {
+			found = true
+			return false, nil
+		})
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	defer terror.Call(result.Close)
-
-	chk := chunk.New(getColumnsTypes(handleCols), 1, 1)
-	err = result.Next(ctx.ddlJobCtx, chk)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return chk.NumRows() != 0, nil
+	return found, nil
 }
 
 func buildHandleCols(tbl table.PhysicalTable) []*model.ColumnInfo {

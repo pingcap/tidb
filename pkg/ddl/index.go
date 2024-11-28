@@ -1156,7 +1156,7 @@ func checkIfPhysicalTableIsEmpty(
 	store kv.Storage,
 	tbl table.PhysicalTable,
 ) bool {
-	hasRecord, err := ExistsTableRow(ctx, store, math.MaxInt64, tbl)
+	hasRecord, err := ExistsTableRow(ctx, store, math.MaxUint64, tbl)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
@@ -1337,6 +1337,7 @@ func doReorgWorkForCreateIndex(
 				return false, ver, errors.Trace(err)
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTableReorgCanSkip")
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -1374,6 +1375,7 @@ func doReorgWorkForCreateIndex(
 				return false, ver, err
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTempIndexReorgCanSkip")
 			logutil.DDLLogger().Info("temp index is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
