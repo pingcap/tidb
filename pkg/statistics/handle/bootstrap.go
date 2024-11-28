@@ -247,8 +247,17 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
+func initStatsHistogramsSQLGen(isPaging bool) string {
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	orderSuffix := " order by table_id"
+	if !isPaging {
+		return selectPrefix + orderSuffix
+	}
+	return selectPrefix + " where table_id >= %? and table_id < %?" + orderSuffix
+}
+
 func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache) error {
-	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
+	sql := initStatsHistogramsSQLGen(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -271,7 +280,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
-	sql := "select  /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
+	sql := initStatsHistogramsSQLGen(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -305,10 +314,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	}()
 
 	sctx := se.(sessionctx.Context)
-	// Why do we need to add `is_index=1` in the SQL?
-	// because it is aligned to the `initStatsTopN` function, which only loads the topn of the index too.
-	// the other will be loaded by sync load.
-	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? order by table_id"
+	sql := initStatsHistogramsSQLGen(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -387,8 +393,17 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
+func initStatsTopNSQLGen(isPaging bool) string {
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl) */ HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
+	orderSuffix := " order by table_id"
+	if !isPaging {
+		return selectPrefix + orderSuffix
+	}
+	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
+}
+
 func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) error {
-	sql := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl)*/  HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 order by table_id"
+	sql := initStatsTopNSQLGen(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -421,7 +436,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1 and table_id >= %? and table_id < %? and is_index=1 order by table_id"
+	sql := initStatsTopNSQLGen(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -605,6 +620,15 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 }
 
+func initStatsBucketsSQLGen(isPaging bool) string {
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
+	orderSuffix := " order by table_id"
+	if !isPaging {
+		return selectPrefix + orderSuffix
+	}
+	return selectPrefix + " and table_id >= %? and table_id < %?" + orderSuffix
+}
+
 func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
 	if isFullCache(cache, totalMemory) {
 		return nil
@@ -615,7 +639,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 			return errors.Trace(err)
 		}
 	} else {
-		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1 order by table_id, is_index, hist_id, bucket_id"
+		sql := initStatsBucketsSQLGen(false)
 		rc, err := util.Exec(h.initStatsCtx, sql)
 		if err != nil {
 			return errors.Trace(err)
@@ -654,7 +678,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %? and is_index=1 order by table_id, is_index, hist_id, bucket_id"
+	sql := initStatsBucketsSQLGen(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
