@@ -325,6 +325,23 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		return nil
 	}
 	isPkIsHandle := tblInfo.Meta().PKIsHandle
+	if !tbl.ColAndIdxExistenceMap.Checked() {
+		tbl = tbl.Copy()
+		for _, col := range tbl.HistColl.GetColSlice() {
+			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
+				tbl.HistColl.DelCol(col.ID)
+				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+			}
+		}
+		for _, idx := range tbl.HistColl.GetIdxSlice() {
+			if tblInfo.Meta().FindIndexByID(idx.ID) == nil {
+				tbl.HistColl.DelIdx(idx.ID)
+				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+			}
+		}
+		tbl.ColAndIdxExistenceMap.SetChecked()
+		s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	}
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
@@ -410,7 +427,8 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	}
 	if hg == nil {
 		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
+		)
 		return nil, errGetHistMeta
 	}
 	if item.IsIndex {
@@ -568,22 +586,6 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo table.Table, item model.TableIt
 	tbl, ok := s.statsHandle.Get(item.TableID)
 	if !ok {
 		return false
-	}
-	if !tbl.ColAndIdxExistenceMap.Checked() {
-		tbl = tbl.Copy()
-		for _, col := range tbl.HistColl.GetColSlice() {
-			if tblInfo.Meta().FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
-			}
-		}
-		for _, idx := range tbl.HistColl.GetIdxSlice() {
-			if tblInfo.Meta().FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
-			}
-		}
-		tbl.ColAndIdxExistenceMap.SetChecked()
 	}
 	if !item.IsIndex && colHist != nil {
 		c := tbl.GetCol(item.ID)

@@ -819,13 +819,15 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to force to load the stats.
 	col, ok := t.columns[id]
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	if !ok {
+		if t.ColAndIdxExistenceMap.Checked() {
+			return nil, true, hasAnalyzed
+		}
+		// If the existence map haven't been checked, we set to need load first.
 		return nil, true, true
 	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
 	// The real check condition: !ok && !hashAnalyzed.
