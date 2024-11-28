@@ -833,13 +833,14 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	if !ok {
 		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
 		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
 		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
 		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
 	}
 
 	// If it's not analyzed yet.
-	// The real check condition: !ok && !hashAnalyzed.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
 	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false
