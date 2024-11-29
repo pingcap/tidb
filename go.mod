@@ -141,7 +141,7 @@ require (
 	golang.org/x/time v0.7.0
 	golang.org/x/tools v0.27.0
 	google.golang.org/api v0.169.0
-	google.golang.org/grpc v1.63.2
+	google.golang.org/grpc v1.64.1
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
@@ -150,6 +150,8 @@ require (
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+require github.com/joechenrh/arrow-go/v18 v18.0.0-20241129015824-a71d1f023500
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect
@@ -163,7 +165,6 @@ require (
 	github.com/google/flatbuffers v24.3.25+incompatible // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/joechenrh/arrow-go/v18 v18.0.0-20241129015824-a71d1f023500 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/minio/asm2plan9s v0.0.0-20200509001527-cdd76441f9d8 // indirect
