@@ -53,9 +53,6 @@ var (
 	// ErrNonIdempotentSubtask means the subtask is left in running state and is not idempotent,
 	// so cannot be run again.
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
-
-	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
-	MockTiDBDown func(execID string, task *proto.TaskBase) bool
 )
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
@@ -374,7 +371,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		}()
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
-	failpoint.InjectCall("changeRunSubtaskError", &subtaskErr)
+	failpoint.InjectCall("changeRunSubtaskError", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
 	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())

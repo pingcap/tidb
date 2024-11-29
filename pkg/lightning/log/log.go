@@ -285,16 +285,15 @@ func (task *Task) End2(level zapcore.Level, err error, extraFields ...zap.Field)
 	elapsed := time.Since(task.since)
 	var verb string
 	errField := zap.Skip()
-	switch {
-	case err == nil:
-		level = task.level
-		verb = " completed"
-	default:
+	adjustedLevel := task.level
+	verb = " completed"
+	if err != nil {
+		adjustedLevel = level
 		verb = " failed"
 		extraFields = nil
 		errField = zap.Error(err)
 	}
-	if ce := task.WithOptions(zap.AddCallerSkip(1)).Check(level, task.name+verb); ce != nil {
+	if ce := task.WithOptions(zap.AddCallerSkip(1)).Check(adjustedLevel, task.name+verb); ce != nil {
 		ce.Write(append(extraFields, zap.Duration("takeTime", elapsed), errField)...)
 	}
 	return elapsed

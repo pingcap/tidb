@@ -241,8 +241,9 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	t.Run("meet cancel on run subtask", func(t *testing.T) {
 		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
-			func(errP *error) {
+			func(e taskexecutor.TaskExecutor, errP *error) {
 				if counter.Add(1) == 1 {
+					e.CancelRunningSubtask()
 					*errP = taskexecutor.ErrCancelSubtask
 				}
 			},
@@ -254,7 +255,7 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	t.Run("meet some error on run subtask", func(t *testing.T) {
 		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
-			func(errP *error) {
+			func(_ taskexecutor.TaskExecutor, errP *error) {
 				if counter.Add(1) == 1 {
 					*errP = errors.New("MockExecutorRunErr")
 				}
