@@ -79,14 +79,14 @@ func (r *Queue[T]) Clear() {
 	r.size = 0
 }
 
-func (r *Queue[T]) ResizeAndClear(size int) {
-	if cap(r.elements) >= size {
-		r.elements = r.elements[:size]
-	} else {
-		r.elements = make([]T, size)
-	}
-
+func (r *Queue[T]) ClearAndExpandIfNeed(size int) {
 	r.Clear()
+
+	if cap(r.elements) < size {
+		r.elements = make([]T, size)
+	} else if len(r.elements) < size {
+		r.elements = r.elements[:size]
+	}
 }
 
 // Cap returns the capacity of the queue.
