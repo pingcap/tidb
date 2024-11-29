@@ -55,19 +55,19 @@ func TestLogicalSortHash64Equals(t *testing.T) {
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, s1.Equals(s2))
 
-	s2.ByItems = []*util.ByItems{{col1, true}}
+	s2.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
 	hasher2.Reset()
 	s2.Hash64(hasher2)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, s1.Equals(s2))
 
-	s1.ByItems = []*util.ByItems{{col1, false}}
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: false}}
 	hasher1.Reset()
 	s1.Hash64(hasher1)
 	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 	require.False(t, s1.Equals(s2))
 
-	s1.ByItems = []*util.ByItems{{col1, true}}
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
 	hasher1.Reset()
 	s1.Hash64(hasher1)
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
