@@ -30,19 +30,13 @@ on:
       - "!br/docs/**"
       - "!br/tests/**"
       - "!br/docker/**"
-env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
-permissions:
-  contents: read  #  to fetch code (actions/checkout)
-
 jobs:
   compile:
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     name: Compile for ${{ matrix.os }}
 
     runs-on: ${{ matrix.os }}
@@ -51,10 +45,10 @@ jobs:
         os: [macos-latest,  ubuntu-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@v2.1.0
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
@@ -62,14 +56,13 @@ jobs:
         run: make build_tools
 
   compile-freebsd:
-    if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     name: Compile for FreeBSD job
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2.1.0
+      - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version-file: 'go.mod'
 
