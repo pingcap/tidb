@@ -193,7 +193,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
-			id := txnLeastID + rand.Intn(maxID-txnLeastID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
@@ -202,7 +202,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 				execStmt:   "execute st using @id",
 			}
 		default: // update sbtest set c=? where id=?
-			id := txnLeastID + rand.Intn(maxID-txnLeastID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
@@ -226,7 +226,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 	genDelete := func() *testStmt {
-		id := txnLeastID + rand.Intn(maxID-txnLeastID)
+		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
 		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
