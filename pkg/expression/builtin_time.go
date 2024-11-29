@@ -1967,12 +1967,10 @@ func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (type
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-
 	format, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
@@ -2052,7 +2050,6 @@ func (b *builtinStrToDateDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
