@@ -2266,6 +2266,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		return nil, err
 	}
 	needNot := false
+	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,
