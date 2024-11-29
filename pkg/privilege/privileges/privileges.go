@@ -15,6 +15,7 @@
 package privileges
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -103,6 +106,7 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 		return false
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
@@ -315,6 +319,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 
 // GetEncodedPassword implements the Manager interface.
 func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -334,6 +339,7 @@ func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, 
 		return mysql.AuthNativePassword, nil
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -364,6 +370,8 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
+
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -393,11 +401,16 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 }
 
 // MatchUserResourceGroupName implements the Manager interface.
-func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.matchResoureGroup(resourceGroupName)
-	if record != nil {
-		return record.User, true
+func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (u string, success bool) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	sql := "SELECT user FROM mysql.user WHERE json_extract(user_attributes, '$.resource_group') = %? LIMIT 1"
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, resourceGroupName)
+	if err != nil {
+		logutil.BgLogger().Error("execute sql error", zap.String("sql", sql), zap.Error(err))
+		return "", false
+	}
+	if len(rows) > 0 {
+		return rows[0].GetString(0), true
 	}
 	return "", false
 }
@@ -921,7 +934,6 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		return nil, err
 	}
 	mysqlPrivilege := p.Handle.Get()
-
 	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
@@ -935,11 +947,10 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	if SkipWithGrant {
 		return true, ""
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := p.user
 	h := p.host
 	for _, r := range roleList {
-		ok := mysqlPrivilege.FindRole(u, h, r)
+		ok := findRole(p.Handle, u, h, r)
 		if !ok {
 			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
@@ -954,8 +965,7 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	if SkipWithGrant {
 		return false
 	}
-	mysqlPrivilege := p.Handle.Get()
-	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
+	ok := findRole(p.Handle, user.Username, user.Hostname, role)
 	if !ok {
 		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
 		return false
@@ -968,6 +978,7 @@ func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity
 	if SkipWithGrant {
 		return make([]*auth.RoleIdentity, 0, 10)
 	}
+	terror.Log(p.Handle.ensureActiveUser(user))
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
