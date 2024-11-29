@@ -76,7 +76,7 @@ func (g *Group) Equals(other any) bool {
 
 // Exists checks whether a Group expression existed in a Group.
 func (g *Group) Exists(e *GroupExpression) bool {
-	one, ok := g.hash2GroupExpr[e.Sum64()]
+	one, ok := g.hash2GroupExpr[e.GetHash64()]
 	if !ok {
 		return false
 	}
@@ -89,7 +89,6 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		return false
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
-	hash64 := e.Sum64()
 	if g.Exists(e) {
 		return false
 	}
@@ -104,7 +103,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		newEquiv = g.logicalExpressions.PushBack(e)
 		g.Operand2FirstExpr[operand] = newEquiv
 	}
-	g.hash2GroupExpr[hash64] = newEquiv
+	g.hash2GroupExpr[e.GetHash64()] = newEquiv
 	e.group = g
 	return true
 }
