@@ -348,7 +348,7 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 }
 
 // fix issue 53966
-func TestLoadNullStatsFile1(t *testing.T) {
+func TestLoadNullStatsFile(t *testing.T) {
 	// Setting up the mock store
 	store := testkit.CreateMockStore(t)
 
