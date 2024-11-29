@@ -110,9 +110,10 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 	return e
 }
 
-// ListSchemas lists related schemas from predicate.
+// ListSchemas lists all schemas from predicate. If no schema is specified, it lists
+// all schemas in the storage.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel.CIStr {
-	extractedSchemas, unspecified := e.listExtractedSchemas(is)
+	extractedSchemas, unspecified := e.listPredicateSchemas(is)
 	if unspecified {
 		ret := is.AllSchemaNames()
 		slices.SortFunc(ret, func(a, b pmodel.CIStr) int {
@@ -123,7 +124,9 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel
 	return extractedSchemas
 }
 
-func (e *InfoSchemaBaseExtractor) listExtractedSchemas(
+// listPredicateSchemas lists all schemas specified in predicates.
+// If no schema is specified in predicates, return `unspecified` as true.
+func (e *InfoSchemaBaseExtractor) listPredicateSchemas(
 	is infoschema.InfoSchema,
 ) (schemas []pmodel.CIStr, unspecified bool) {
 	ec := e.extractableColumns
@@ -159,8 +162,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByID(is, tableIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas, unspecified := e.listExtractedSchemas(is)
-			return findSchemasForTables(is, schemas, unspecified, tableSlice)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if ec.partitionID != "" {
@@ -170,8 +172,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			schemas, unspecified := e.listExtractedSchemas(is)
-			return findSchemasForTables(is, schemas, unspecified, tableSlice)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if len(tableNames) > 0 {
@@ -733,27 +734,28 @@ func listTablesForEachSchema(
 // returns a schema slice and a table slice that has the same length.
 // Note that input arg "tableSlice" will be changed in place.
 func findSchemasForTables(
+	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
-	extractedSchemas []pmodel.CIStr,
-	unspecified bool,
 	tableSlice []*model.TableInfo,
 ) ([]pmodel.CIStr, []*model.TableInfo, error) {
+	schemas, unspecified := e.listPredicateSchemas(is)
 	schemaSlice := make([]pmodel.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		dbInfoName, ok := is.SchemaNameByTableID(tbl.DBID)
 		if !ok {
 			continue
 		}
-		if len(extractedSchemas) == 0 && unspecified {
+		if unspecified { // all schemas should be included.
 			schemaSlice = append(schemaSlice, dbInfoName)
 			continue
 		}
 
 		found := false
-		for _, s := range extractedSchemas {
+		for _, s := range schemas {
 			if s.L == dbInfoName.L {
 				schemaSlice = append(schemaSlice, s)
 				found = true
+				break
 			}
 		}
 		if !found {
