@@ -1237,6 +1237,7 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		oldValue := strings.ToLower(valStr)
 		// It's checked in getFuncCallDefaultValue.
 		if !strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.DateFormat, ast.Now)) &&
+			!strings.Contains(oldValue, fmt.Sprintf("%s(%s(),", ast.ToChar, ast.Now)) &&
 			!strings.Contains(oldValue, ast.StrToDate) {
 			return nil, errors.Trace(dbterror.ErrBinlogUnsafeSystemFunction)
 		}

@@ -191,9 +191,10 @@ const (
 	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions
-	ASCII           = "ascii"
-	Bin             = "bin"
-	Concat          = "concat"
+	ASCII  = "ascii"
+	Bin    = "bin"
+	Concat = "concat"
+
 	ConcatWS        = "concat_ws"
 	Convert         = "convert"
 	Elt             = "elt"
@@ -325,6 +326,8 @@ const (
 	Uncompress               = "uncompress"
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
+
+	ToChar = "to_char"
 
 	// json functions
 	JSONType          = "json_type"

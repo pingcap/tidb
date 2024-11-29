@@ -296,7 +296,7 @@ const (
 var convertActionMap = map[funcProp][]string{
 	funcPropNone: {
 		/* args != strings */
-		ast.Bin, ast.CharFunc, ast.DateFormat, ast.Oct, ast.Space,
+		ast.Bin, ast.CharFunc, ast.DateFormat, ast.ToChar, ast.Oct, ast.Space,
 		/* only 1 string arg, no implicit conversion */
 		ast.CharLength, ast.CharacterLength, ast.FromBase64, ast.Lcase, ast.Left, ast.LoadFile,
 		ast.Lower, ast.LTrim, ast.Mid, ast.Ord, ast.Quote, ast.Repeat, ast.Reverse, ast.Right,

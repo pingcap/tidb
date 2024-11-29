@@ -658,7 +658,7 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		col.DefaultIsExpr = true
 		return str, false, nil
-	case ast.DateFormat: // DATE_FORMAT()
+	case ast.ToChar, ast.DateFormat: // DATE_FORMAT() and TO_CHAR()
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
