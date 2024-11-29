@@ -523,7 +523,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
-			tables, err = m.ListTables(di.ID)
+			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
 				return err
 			}

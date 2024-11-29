@@ -496,7 +496,7 @@ type Update struct {
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"must-nil"`
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
 
 	// tblID2Table stores related tables' info of this Update statement.
 	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`

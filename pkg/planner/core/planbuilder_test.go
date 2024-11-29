@@ -17,12 +17,14 @@ package core
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"unsafe"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -892,7 +894,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	plan, ok := p.(*AlterDDLJob)
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(1))
-	require.Equal(t, len(plan.Options), 1)
+	require.Len(t, plan.Options, 1)
 	require.Equal(t, plan.Options[0].Name, AlterDDLJobThread)
 	cons, ok := plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
@@ -905,7 +907,7 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	plan, ok = p.(*AlterDDLJob)
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(2))
-	require.Equal(t, len(plan.Options), 1)
+	require.Len(t, plan.Options, 1)
 	require.Equal(t, plan.Options[0].Name, AlterDDLJobBatchSize)
 	cons, ok = plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
@@ -918,20 +920,33 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	plan, ok = p.(*AlterDDLJob)
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(3))
-	require.Equal(t, len(plan.Options), 1)
+	require.Len(t, plan.Options, 1)
 	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
 	cons, ok = plan.Options[0].Value.(*expression.Constant)
 	require.True(t, ok)
 	require.Equal(t, cons.Value.GetString(), "10MiB")
 
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 max_write_speed = 1024", "", "")
 	require.NoError(t, err)
 	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
 	require.NoError(t, err)
 	plan, ok = p.(*AlterDDLJob)
 	require.True(t, ok)
 	require.Equal(t, plan.JobID, int64(4))
-	require.Equal(t, len(plan.Options), 3)
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, AlterDDLJobMaxWriteSpeed, plan.Options[0].Name)
+	cons, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	require.EqualValues(t, 1024, cons.Value.GetInt64())
+
+	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 5 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
+	require.NoError(t, err)
+	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok = p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(5))
+	require.Len(t, plan.Options, 3)
 	sort.Slice(plan.Options, func(i, j int) bool {
 		return plan.Options[i].Name < plan.Options[j].Name
 	})
@@ -952,4 +967,34 @@ func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.Build(ctx, resolve.NewNodeW(stmt))
 	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
+}
+
+func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
+	parser := parser.New()
+	sctx := MockContext()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+	// random speed value
+	n := rand.Intn(units.PiB + 1)
+	stmt, err := parser.ParseOneStmt(fmt.Sprintf("admin alter ddl jobs 1 max_write_speed = %d ", n), "", "")
+	require.NoError(t, err)
+	p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+	require.NoError(t, err)
+	plan, ok := p.(*AlterDDLJob)
+	require.True(t, ok)
+	require.Equal(t, plan.JobID, int64(1))
+	require.Len(t, plan.Options, 1)
+	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
+	_, ok = plan.Options[0].Value.(*expression.Constant)
+	require.True(t, ok)
+	maxWriteSpeed, err := GetMaxWriteSpeedFromExpression(plan.Options[0])
+	require.NoError(t, err)
+	require.Equal(t, int64(n), maxWriteSpeed)
+	// parse speed string error
+	opt := &AlterDDLJobOpt{
+		Name:  "test",
+		Value: expression.NewStrConst("MiB"),
+	}
+	_, err = GetMaxWriteSpeedFromExpression(opt)
+	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
 }

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -170,11 +172,17 @@ func NewAddIndexIngestPipeline(
 	if err != nil {
 		return nil, err
 	}
-	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
+	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+	rm := reorgMeta
+	if rm.IsDistReorg {
+		// Currently, only the batch size of local ingest mode can be adjusted
+		rm = nil
+	}
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr, reorgMeta.BatchSize)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr,
+		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
@@ -221,7 +229,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	if err != nil {
 		return nil, err
 	}
-	srcChkPool := createChunkPool(copCtx, concurrency, reorgMeta.BatchSize)
+	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
@@ -239,7 +247,8 @@ func NewWriteIndexToExternalStoragePipeline(
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
-	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil, reorgMeta.BatchSize)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, nil,
+		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
@@ -264,14 +273,13 @@ func NewWriteIndexToExternalStoragePipeline(
 	), nil
 }
 
-func createChunkPool(copCtx copr.CopContext, hintConc, hintBatchSize int) chan *chunk.Chunk {
-	poolSize := ingest.CopReadChunkPoolSize(hintConc)
-	batchSize := ingest.CopReadBatchSize(hintBatchSize)
-	srcChkPool := make(chan *chunk.Chunk, poolSize)
-	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, batchSize)
+func createChunkPool(copCtx copr.CopContext, reorgMeta *model.DDLReorgMeta) *sync.Pool {
+	return &sync.Pool{
+		New: func() any {
+			return chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes,
+				reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+		},
 	}
-	return srcChkPool
 }
 
 // TableScanTask contains the start key and the end key of a region.
@@ -478,10 +486,11 @@ func NewTableScanOperator(
 	ctx *OperatorCtx,
 	sessPool opSessPool,
 	copCtx copr.CopContext,
-	srcChkPool chan *chunk.Chunk,
+	srcChkPool *sync.Pool,
 	concurrency int,
 	cpMgr *ingest.CheckpointManager,
 	hintBatchSize int,
+	reorgMeta *model.DDLReorgMeta,
 ) *TableScanOperator {
 	totalCount := new(atomic.Int64)
 	pool := workerpool.NewWorkerPool(
@@ -498,6 +507,7 @@ func NewTableScanOperator(
 				cpMgr:         cpMgr,
 				hintBatchSize: hintBatchSize,
 				totalCount:    totalCount,
+				reorgMeta:     reorgMeta,
 			}
 		})
 	return &TableScanOperator{
@@ -518,9 +528,10 @@ type tableScanWorker struct {
 	copCtx     copr.CopContext
 	sessPool   opSessPool
 	se         *session.Session
-	srcChkPool chan *chunk.Chunk
+	srcChkPool *sync.Pool
 
 	cpMgr         *ingest.CheckpointManager
+	reorgMeta     *model.DDLReorgMeta
 	hintBatchSize int
 	totalCount    *atomic.Int64
 }
@@ -588,17 +599,21 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
-	chk := <-w.srcChkPool
-	newCap := ingest.CopReadBatchSize(w.hintBatchSize)
-	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
+	targetCap := ingest.CopReadBatchSize(w.hintBatchSize)
+	if w.reorgMeta != nil {
+		targetCap = ingest.CopReadBatchSize(w.reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+	}
+	chk := w.srcChkPool.Get().(*chunk.Chunk)
+	if chk.Capacity() != targetCap {
+		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, targetCap)
+		logutil.Logger(w.ctx).Info("adjust ddl job config success", zap.Int("current batch size", chk.Capacity()))
 	}
 	chk.Reset()
 	return chk
 }
 
 func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
-	w.srcChkPool <- chk
+	w.srcChkPool.Put(chk)
 }
 
 // WriteExternalStoreOperator writes index records to external storage.
@@ -618,7 +633,7 @@ func NewWriteExternalStoreOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	store storage.ExternalStorage,
-	srcChunkPool chan *chunk.Chunk,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnCloseFunc,
 	memoryQuota uint64,
@@ -704,7 +719,7 @@ func NewIndexIngestOperator(
 	tbl table.PhysicalTable,
 	indexes []table.Index,
 	engines []ingest.Engine,
-	srcChunkPool chan *chunk.Chunk,
+	srcChunkPool *sync.Pool,
 	concurrency int,
 	reorgMeta *model.DDLReorgMeta,
 	cpMgr *ingest.CheckpointManager,
@@ -765,7 +780,7 @@ type indexIngestExternalWorker struct {
 func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer func() {
 		if ck.Chunk != nil {
-			w.srcChunkPool <- ck.Chunk
+			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
@@ -787,7 +802,7 @@ type indexIngestLocalWorker struct {
 func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
 	defer func() {
 		if ck.Chunk != nil {
-			w.srcChunkPool <- ck.Chunk
+			w.srcChunkPool.Put(ck.Chunk)
 		}
 	}()
 	rs, err := w.indexIngestBaseWorker.HandleTask(ck)
@@ -827,7 +842,7 @@ type indexIngestBaseWorker struct {
 	restore  func(sessionctx.Context)
 
 	writers      []ingest.Writer
-	srcChunkPool chan *chunk.Chunk
+	srcChunkPool *sync.Pool
 	// only available in global sort
 	totalCount *atomic.Int64
 }

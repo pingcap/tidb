@@ -546,6 +546,7 @@ func GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) 
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
+// an "empty" bundle means delete bundle if a bundle with such ID exists.
 func PutRuleBundles(ctx context.Context, bundles []*placement.Bundle) error {
 	failpoint.Inject("putRuleBundlesError", func(isServiceError failpoint.Value) {
 		var err error
