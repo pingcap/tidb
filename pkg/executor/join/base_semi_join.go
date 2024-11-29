@@ -68,10 +68,11 @@ func (b *baseSemiJoin) resetProbeState() {
 
 	if b.ctx.hasOtherCondition() {
 		if b.unFinishedProbeRowIdxQueue == nil {
-			b.unFinishedProbeRowIdxQueue = queue.NewQueue[int](chunk.InitialCapacity)
+			b.unFinishedProbeRowIdxQueue = queue.NewQueue[int](b.chunkRows)
 		} else {
-			b.unFinishedProbeRowIdxQueue.Clear()
+			b.unFinishedProbeRowIdxQueue.ResizeAndClear(b.chunkRows)
 		}
+
 		for i := 0; i < b.chunkRows; i++ {
 			if b.matchedRowsHeaders[i] != 0 {
 				b.unFinishedProbeRowIdxQueue.Push(i)
