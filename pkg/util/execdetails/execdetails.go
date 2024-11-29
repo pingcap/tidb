@@ -1303,6 +1303,8 @@ func (waitSummary *TiFlashWaitSummary) CanBeIgnored() bool {
 
 // BasicRuntimeStats is the basic runtime stats.
 type BasicRuntimeStats struct {
+	// the count of executors with the same id
+	executorCount atomic.Int32
 	// executor's Next() called times.
 	loop atomic.Int32
 	// executor consume time, including open, next, and close time.
@@ -1323,6 +1325,7 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
 	result := &BasicRuntimeStats{}
+	result.executorCount.Store(e.executorCount.Load())
 	result.loop.Store(e.loop.Load())
 	result.consume.Store(e.consume.Load())
 	result.open.Store(e.open.Load())
@@ -1419,17 +1422,21 @@ func (e *BasicRuntimeStats) String() string {
 		return ""
 	}
 	var str strings.Builder
+	timePrefix := ""
+	if e.executorCount.Load() > 1 {
+		timePrefix = "total_"
+	}
 	totalTime := e.consume.Load()
 	openTime := e.open.Load()
 	closeTime := e.close.Load()
-	str.WriteString("time:")
+	str.WriteString(fmt.Sprintf("%stime:", timePrefix))
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
 	if openTime >= int64(time.Millisecond) {
-		str.WriteString(", open:")
+		str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(openTime)))
 	}
 	if closeTime >= int64(time.Millisecond) {
-		str.WriteString(", close:")
+		str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
 		str.WriteString(FormatDuration(time.Duration(closeTime)))
 	}
 	str.WriteString(", loops:")
@@ -1494,17 +1501,27 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 	}
 }
 
-// GetBasicRuntimeStats gets basicRuntimeStats for a executor.
-func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int) *BasicRuntimeStats {
+// GetBasicRuntimeStats gets basicRuntimeStats for a executor
+// When rootStat/rootStat's basicRuntimeStats is nil, the behavior is decided by initNewExecutorStats argument:
+// 1. If true, it created a new one, and increase basicRuntimeStats' executorCount
+// 2. Else, it returns nil
+func (e *RuntimeStatsColl) GetBasicRuntimeStats(planID int, initNewExecutorStats bool) *BasicRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	stats, ok := e.rootStats[planID]
-	if !ok {
+	if !ok && initNewExecutorStats {
 		stats = NewRootRuntimeStats()
 		e.rootStats[planID] = stats
 	}
-	if stats.basic == nil {
+	if stats == nil {
+		return nil
+	}
+
+	if stats.basic == nil && initNewExecutorStats {
 		stats.basic = &BasicRuntimeStats{}
+		stats.basic.executorCount.Add(1)
+	} else if stats.basic != nil && initNewExecutorStats {
+		stats.basic.executorCount.Add(1)
 	}
 	return stats.basic
 }

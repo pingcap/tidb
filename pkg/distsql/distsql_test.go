@@ -105,7 +105,7 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 
 func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats := execdetails.NewRuntimeStatsColl(nil)
-	basic := stmtStats.GetBasicRuntimeStats(1)
+	basic := stmtStats.GetBasicRuntimeStats(1, true)
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
 		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},

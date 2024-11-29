@@ -211,7 +211,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx)
+			err = e.setDataFromPlanCache(ctx, sctx, false)
+		case infoschema.ClusterTableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx, true)
 		}
 		if err != nil {
 			return nil, err
@@ -834,6 +836,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 	}
 	e.rows = rows
 	return nil
@@ -1200,6 +1205,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
@@ -3916,7 +3925,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
@@ -3944,6 +3953,12 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
 
 		rows = append(rows, row)
+	}
+
+	if cluster {
+		if rows, err = infoschema.AppendHostInfoToRows(sctx, rows); err != nil {
+			return err
+		}
 	}
 
 	e.rows = rows
