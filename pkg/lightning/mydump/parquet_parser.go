@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/xitongsys/parquet-go/source"
 
-	"github.com/apache/arrow-go/v18/parquet"
-	"github.com/apache/arrow-go/v18/parquet/file"
-	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/joechenrh/arrow-go/v18/parquet"
+	"github.com/joechenrh/arrow-go/v18/parquet/file"
+	"github.com/joechenrh/arrow-go/v18/parquet/schema"
 )
 
 const (
