@@ -96,6 +96,7 @@ const (
 	// We need to be more patient.
 	backupFineGrainedMaxBackoff = 3600000
 	backupRetryTimes            = 5
+	disconnectRetryTimeout      = 20000
 	// RangeUnit represents the progress updated counter when a range finished.
 	RangeUnit ProgressUnit = "range"
 	// RegionUnit represents the progress updated counter when a region finished.
@@ -1227,7 +1228,7 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, &StoreBasedErr{
+			return disconnectRetryTimeout, &StoreBasedErr{
 				storeID: storeID,
 				err:     err,
 			}
@@ -1269,7 +1270,7 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, &StoreBasedErr{
+			return disconnectRetryTimeout, &StoreBasedErr{
 				storeID: storeID,
 				err:     err,
 			}
