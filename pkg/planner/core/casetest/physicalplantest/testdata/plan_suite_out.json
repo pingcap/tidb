@@ -3766,7 +3766,7 @@
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "HashJoin_14 10000.00 root  CARTESIAN inner join, left side:TableReader_17",
           "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#12",
           "│ └─Limit_22 1.00 root  offset:0, count:1",
           "│   └─HashAgg_23 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
@@ -3779,7 +3779,7 @@
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
+          "HashJoin_14 10000.00 root  CARTESIAN inner join, left side:TableReader_17",
           "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#15",
           "│ └─Limit_22 1.00 root  offset:0, count:1",
           "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",

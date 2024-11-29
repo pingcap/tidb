@@ -55,7 +55,7 @@
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
           " Projection                 root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply                    root semi join, equal:eq(?, ?)",
+          " └─Apply                    root semi join, left side:Projection, equal:eq(?, ?)",
           "   ├─Projection             root cast(test.t1.a, decimal(10,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
           "   │ └─TableReader          root ",
           "   │   └─Selection          cop  gt(test.t1.b, ?)",
@@ -79,7 +79,7 @@
       {
         "SQL": "SELECT /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " MergeJoin           root inner join, left key:test.t1.a, right key:test.t2.a",
+          " MergeJoin           root inner join, left side:TableReader, left key:test.t1.a, right key:test.t2.a",
           " ├─TableReader       root ",
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:true",
@@ -90,7 +90,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin           root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          " IndexJoin           root inner join, inner:TableReader, left side:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader       root ",
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
@@ -101,7 +101,7 @@
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashJoin            root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " HashJoin            root inner join, left side:TableReader, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader       root ",
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
@@ -112,7 +112,7 @@
       {
         "SQL": "SELECT /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " HashJoin            root inner join, equal:eq(test.t1.a, test.t2.a)",
+          " HashJoin            root inner join, left side:TableReader, equal:eq(test.t1.a, test.t2.a)",
           " ├─TableReader       root ",
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
@@ -123,7 +123,7 @@
       {
         "SQL": "SELECT /*+ TIDB_INLJ(t1, t2) */ * from t1, t2 where t1.a = t2.a and t1.c>1;",
         "Plan": [
-          " IndexJoin           root inner join, inner:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          " IndexJoin           root inner join, inner:TableReader, left side:TableReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           " ├─TableReader       root ",
           " │ └─Selection       cop  gt(test.t1.c, ?)",
           " │   └─TableFullScan cop  table:t1, range:[?,?], keep order:false",
@@ -419,8 +419,8 @@
           " TableReader           root         ",
           " └─ExchangeSender      cop[tiflash] ",
           "   └─Projection        cop[tiflash] test.t1.a",
-          "     └─Selection       cop[tiflash] gt(test.t1.b, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          "     └─Selection       cop[tiflash] gt(test.t1.a, ?)",
+          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
@@ -428,8 +428,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), gt(test.t1.c, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.c, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
