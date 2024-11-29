@@ -127,6 +127,8 @@ select timestamp '2024-01-01 14:01:01+01;01';
 Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+01;01'
 select timestamp '2024-01-01 14:01:01+01-01';
 Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+01-01'
+select timestamp '2024-01-01 14:01:01+0101';
+Error 1525 (HY000): Incorrect datetime value: '2024-01-01 14:01:01+0101'
 select timestamp '2024-1-1 0';
 timestamp '2024-1-1 0'
 2024-01-01 00:00:00

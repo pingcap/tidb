@@ -106,6 +106,8 @@ select timestamp '2024-01-01 14:01:01+1:01';
 select timestamp '2024-01-01 14:01:01+01;01';
 -- error 1525
 select timestamp '2024-01-01 14:01:01+01-01';
+-- error 1525
+select timestamp '2024-01-01 14:01:01+0101';
 
 select timestamp '2024-1-1 0';
 select timestamp '2024-1-1 1';
