@@ -33,9 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"go.uber.org/zap"
 )
 
 var (
@@ -96,7 +94,6 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	defer func() {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
-	logutil.BgLogger().Info("dump stats delta to kv", zap.Int("delta map size", len(deltaMap)))
 
 	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
