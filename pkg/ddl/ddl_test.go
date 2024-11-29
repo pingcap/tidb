@@ -45,6 +45,7 @@ type DDLForTest interface {
 	RemoveReorgCtx(id int64)
 }
 
+<<<<<<< HEAD
 // SetInterceptor implements DDL.SetInterceptor interface.
 func (d *ddl) SetInterceptor(i Interceptor) {
 	d.mu.Lock()
@@ -58,6 +59,8 @@ func (rc *reorgCtx) IsReorgCanceled() bool {
 	return rc.isReorgCanceled()
 }
 
+=======
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 // NewReorgCtx exports for testing.
 func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	return d.newReorgCtx(jobID, rowCount)

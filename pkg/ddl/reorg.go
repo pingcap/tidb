@@ -62,7 +62,6 @@ type reorgCtx struct {
 	doneCh chan reorgFnResult
 	// rowCount is used to simulate a job's row count.
 	rowCount int64
-	jobState model.JobState
 
 	mu struct {
 		sync.Mutex
@@ -97,6 +96,7 @@ const defaultWaitReorgTimeout = 10 * time.Second
 // ReorgWaitTimeout is the timeout that wait ddl in write reorganization stage.
 var ReorgWaitTimeout = 5 * time.Second
 
+<<<<<<< HEAD
 func (rc *reorgCtx) notifyJobState(state model.JobState) {
 	atomic.StoreInt32((*int32)(&rc.jobState), int32(state))
 }
@@ -111,6 +111,8 @@ func (rc *reorgCtx) isReorgPaused() bool {
 		int32(model.JobStatePausing) == atomic.LoadInt32((*int32)(&rc.jobState))
 }
 
+=======
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 func (rc *reorgCtx) setRowCount(count int64) {
 	atomic.StoreInt64(&rc.rowCount, count)
 }
@@ -427,6 +429,7 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	return rows[0].GetInt64(0)
 }
 
+<<<<<<< HEAD
 func (dc *ddlCtx) isReorgCancelled(jobID int64) bool {
 	return dc.getReorgCtx(jobID).isReorgCanceled()
 }
@@ -436,10 +439,15 @@ func (dc *ddlCtx) isReorgPaused(jobID int64) bool {
 
 func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if isChanClosed(dc.ctx.Done()) {
+=======
+func (dc *ddlCtx) isReorgRunnable(ctx context.Context, isDistReorg bool) error {
+	if dc.ctx.Err() != nil {
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 		// Worker is closed. So it can't do the reorganization.
 		return dbterror.ErrInvalidWorker.GenWithStack("worker is closed")
 	}
 
+<<<<<<< HEAD
 	if dc.isReorgCancelled(jobID) {
 		// Job is cancelled. So it can't be done.
 		return dbterror.ErrCancelledDDLJob
@@ -448,6 +456,10 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	if dc.isReorgPaused(jobID) {
 		logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
+=======
+	if ctx.Err() != nil {
+		return context.Cause(ctx)
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 	}
 
 	// If isDistReorg is true, we needn't check if it is owner.

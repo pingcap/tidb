@@ -2009,7 +2009,11 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
+<<<<<<< HEAD
 			err := w.executeDistGlobalTask(reorgInfo)
+=======
+			err := w.executeDistTask(ctx, t, reorgInfo)
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 			if err != nil {
 				return err
 			}
@@ -2082,6 +2086,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+<<<<<<< HEAD
 // MockDMLExecutionOnTaskFinished is used to mock DML execution when tasks finished.
 var MockDMLExecutionOnTaskFinished func()
 
@@ -2092,6 +2097,9 @@ var MockDMLExecutionOnDDLPaused func()
 var TestSyncChan = make(chan struct{})
 
 func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
+=======
+func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -2142,8 +2150,13 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
+<<<<<<< HEAD
 			err = handle.WaitGlobalTask(ctx, task.ID)
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+=======
+			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2167,11 +2180,17 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
+<<<<<<< HEAD
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+=======
+			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
+			failpoint.InjectCall("pauseAfterDistTaskFinished")
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2192,7 +2211,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if err = w.isReorgRunnable(stepCtx, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
 						if err = handle.PauseTask(w.ctx, taskKey); err != nil {
 							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))

@@ -278,7 +278,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// we will never cancel the job once there is panic in bf.BackfillData.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
-		err := d.isReorgRunnable(jobID, false)
+		err := d.isReorgRunnable(d.ctx, false)
 		if err != nil {
 			result.err = err
 			return result
@@ -588,11 +588,73 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.
 	return decodeColMap, nil
 }
 
+<<<<<<< HEAD
 func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
 	tz := *timeutil.SystemLocation()
 	if sctx.GetSessionVars().TimeZone == nil {
 		sctx.GetSessionVars().TimeZone = &tz
+=======
+const backfillTaskChanSize = 128
+
+func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+	defer cancel()
+
+	idxCnt := len(reorgInfo.elements)
+	indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	uniques := make([]bool, 0, idxCnt)
+	hasUnique := false
+	for _, e := range reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("tableID", t.Meta().ID),
+				zap.Int64("indexID", e.ID))
+			return errors.Errorf("index info not found: %d", e.ID)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+		uniques = append(uniques, indexInfo.Unique)
+		hasUnique = hasUnique || indexInfo.Unique
+	}
+
+	//nolint: forcetypeassert
+	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+	bcCtx, err := ingest.LitBackCtxMgr.Register(
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer ingest.LitBackCtxMgr.Unregister(job.ID)
+
+	cpMgr, err := ingest.NewCheckpointManager(
+		ctx,
+		sessPool,
+		reorgInfo.PhysicalTableID,
+		job.ID,
+		indexIDs,
+		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
+		dc.store.(kv.StorageWithPD).GetPDClient(),
+	)
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err))
+>>>>>>> 575310677da (ddl: check context done in isReorgRunnable function (#57813))
 	} else {
 		*sctx.GetSessionVars().TimeZone = tz
 	}
@@ -636,7 +698,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 ) error {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
-	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
 		return errors.Trace(err)
 	}
 
