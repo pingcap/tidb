@@ -842,7 +842,7 @@ ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
 explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 id	estRows	task	access object	operator info
-HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
+HashJoin	1.22	root		inner join, left side:TableReader, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
 ├─TableReader(Build)	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(issue42135.tx1.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:tx1	keep order:false
@@ -862,7 +862,7 @@ ID	a	b	ltype	ID	rid	a	b	c	d	ltype
 1	1	1	501	1	1	1	1	1	1	501
 explain format='brief' select * from tx1 inner join tx2 on tx1.ID=tx2.ID and tx1.ltype=tx2.ltype where tx2.rid='1';
 id	estRows	task	access object	operator info
-HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
+HashJoin	1.22	root		inner join, left side:TableReader, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) eq(issue42135.tx1.ltype, issue42135.tx2.ltype)]
 ├─TableReader(Build)	1.00	root		data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(issue42135.tx1.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:tx1	keep order:false

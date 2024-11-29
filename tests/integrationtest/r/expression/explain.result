@@ -4,7 +4,7 @@ create table t1(id bigint primary key, a int, b int);
 create table t2(id bigint primary key, a int, b int);
 explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t1.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	33233333.33	root		CARTESIAN left outer join, left cond:[eq(expression__explain.t1.a, 1)]
+HashJoin	33233333.33	root		CARTESIAN left outer join, left side:TableReader, left cond:[eq(expression__explain.t1.a, 1)]
 ├─TableReader(Build)	3323.33	root		data:Selection
 │ └─Selection	3323.33	cop[tikv]		gt(1, expression__explain.t2.a)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -12,7 +12,7 @@ HashJoin	33233333.33	root		CARTESIAN left outer join, left cond:[eq(expression__
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a where t1.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	33233.33	root		CARTESIAN left outer join
+HashJoin	33233.33	root		CARTESIAN left outer join, left side:TableReader
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(expression__explain.t1.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -21,7 +21,7 @@ HashJoin	33233.33	root		CARTESIAN left outer join
     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t1.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)], left cond:[gt(expression__explain.t1.a, 1)]
+HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)], left cond:[gt(expression__explain.t1.a, 1)]
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1), not(isnull(expression__explain.t2.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -29,7 +29,7 @@ HashJoin	10000.00	root		left outer join, equal:[eq(expression__explain.t1.a, exp
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where t1.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	4166.67	root		left outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
+HashJoin	4166.67	root		left outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1), not(isnull(expression__explain.t2.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -38,7 +38,7 @@ HashJoin	4166.67	root		left outer join, equal:[eq(expression__explain.t1.a, expr
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a where t2.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	33333.33	root		CARTESIAN right outer join
+HashJoin	33333.33	root		CARTESIAN right outer join, left side:TableReader
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(expression__explain.t2.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -47,7 +47,7 @@ HashJoin	33333.33	root		CARTESIAN right outer join
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a where t2.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	4166.67	root		right outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
+HashJoin	4166.67	root		right outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -56,7 +56,7 @@ HashJoin	4166.67	root		right outer join, equal:[eq(expression__explain.t1.a, exp
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t2.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		right outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)], right cond:gt(expression__explain.t2.a, 1)
+HashJoin	10000.00	root		right outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)], right cond:gt(expression__explain.t2.a, 1)
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t1.a, 1), not(isnull(expression__explain.t1.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -64,7 +64,7 @@ HashJoin	10000.00	root		right outer join, equal:[eq(expression__explain.t1.a, ex
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t2.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	33333333.33	root		CARTESIAN right outer join, right cond:eq(expression__explain.t2.a, 1)
+HashJoin	33333333.33	root		CARTESIAN right outer join, left side:TableReader, right cond:eq(expression__explain.t2.a, 1)
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t1.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -72,7 +72,7 @@ HashJoin	33333333.33	root		CARTESIAN right outer join, right cond:eq(expression_
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a and t2.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
+HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t2.a, 1), not(isnull(expression__explain.t2.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -80,7 +80,7 @@ HashJoin	10000.00	root		left outer join, equal:[eq(expression__explain.t1.a, exp
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a > t2.a and t2.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	100000.00	root		CARTESIAN left outer join, other cond:gt(expression__explain.t1.a, expression__explain.t2.a)
+HashJoin	100000.00	root		CARTESIAN left outer join, left side:TableReader, other cond:gt(expression__explain.t1.a, expression__explain.t2.a)
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(expression__explain.t2.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -88,7 +88,7 @@ HashJoin	100000.00	root		CARTESIAN left outer join, other cond:gt(expression__ex
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a > t2.a and t1.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	100000.00	root		CARTESIAN right outer join, other cond:gt(expression__explain.t1.a, expression__explain.t2.a)
+HashJoin	100000.00	root		CARTESIAN right outer join, left side:TableReader, other cond:gt(expression__explain.t1.a, expression__explain.t2.a)
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(expression__explain.t1.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -96,7 +96,7 @@ HashJoin	100000.00	root		CARTESIAN right outer join, other cond:gt(expression__e
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on t1.a = t2.a and t1.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		right outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
+HashJoin	10000.00	root		right outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
 ├─TableReader(Build)	3333.33	root		data:Selection
 │ └─Selection	3333.33	cop[tikv]		gt(expression__explain.t1.a, 1), not(isnull(expression__explain.t1.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -104,14 +104,14 @@ HashJoin	10000.00	root		right outer join, equal:[eq(expression__explain.t1.a, ex
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = t1.b and t1.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	100000000.00	root		CARTESIAN left outer join, left cond:[eq(expression__explain.t1.a, expression__explain.t1.b) gt(expression__explain.t1.a, 1)]
+HashJoin	100000000.00	root		CARTESIAN left outer join, left side:TableReader, left cond:[eq(expression__explain.t1.a, expression__explain.t1.b) gt(expression__explain.t1.a, 1)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t2.a = t2.b and t2.a > 1;
 id	estRows	task	access object	operator info
-HashJoin	8888888.89	root		CARTESIAN left outer join
+HashJoin	8888888.89	root		CARTESIAN left outer join, left side:TableReader
 ├─TableReader(Build)	888.89	root		data:Selection
 │ └─Selection	888.89	cop[tikv]		eq(expression__explain.t2.a, expression__explain.t2.b), gt(expression__explain.t2.a, 1), gt(expression__explain.t2.b, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -131,7 +131,7 @@ id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 and t1.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	100000.00	root		CARTESIAN left outer join
+HashJoin	100000.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(expression__explain.t1.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -139,45 +139,45 @@ HashJoin	100000.00	root		CARTESIAN left outer join
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on false;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer join
+HashJoin	10000.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableDual(Build)	0.00	root		rows:0
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 right join t2 on false;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN right outer join
+HashJoin	10000.00	root		CARTESIAN right outer join, left side:TableDual
 ├─TableDual(Build)	0.00	root		rows:0
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = 1 and t1.a = 2;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer join
+HashJoin	10000.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableDual(Build)	0.00	root		rows:0
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a =1 where t1.a = 2;
 id	estRows	task	access object	operator info
-HashJoin	10.00	root		CARTESIAN left outer join
+HashJoin	10.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableDual(Build)	0.00	root		rows:0
 └─TableReader(Probe)	10.00	root		data:Selection
   └─Selection	10.00	cop[tikv]		eq(expression__explain.t1.a, 2)
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t2.a = 1 and t2.a = 2;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer join
+HashJoin	10000.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableDual(Build)	0.00	root		rows:0
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on t1.a = 1 or (t1.a = 2 and t1.a = 3);
 id	estRows	task	access object	operator info
-HashJoin	100000000.00	root		CARTESIAN left outer join, left cond:[or(eq(expression__explain.t1.a, 1), 0)]
+HashJoin	100000000.00	root		CARTESIAN left outer join, left side:TableReader, left cond:[or(eq(expression__explain.t1.a, 1), 0)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 left join t2 on true where t1.a = 1 or (t1.a = 2 and t1.a = 3);
 id	estRows	task	access object	operator info
-HashJoin	100000.00	root		CARTESIAN left outer join
+HashJoin	100000.00	root		CARTESIAN left outer join, left side:TableReader
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		or(eq(expression__explain.t1.a, 1), 0)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -187,7 +187,7 @@ explain format = 'brief' select * from t1 where t1.b > 1 or t1.b in (select b fr
 id	estRows	task	access object	operator info
 Projection	8000.00	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b
 └─Selection	8000.00	root		or(gt(expression__explain.t1.b, 1), Column#7)
-  └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(expression__explain.t1.b, expression__explain.t2.b)
+  └─HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(expression__explain.t1.b, expression__explain.t2.b)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -195,7 +195,7 @@ Projection	8000.00	root		expression__explain.t1.id, expression__explain.t1.a, ex
 explain format = 'brief' select * from t1 left join t2 on t1.a = t2.a where ifnull(t2.b, t1.a) = 1;
 id	estRows	task	access object	operator info
 Selection	9990.00	root		eq(ifnull(expression__explain.t2.b, expression__explain.t1.a), 1)
-└─HashJoin	12487.50	root		left outer join, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
+└─HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(expression__explain.t1.a, expression__explain.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(expression__explain.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

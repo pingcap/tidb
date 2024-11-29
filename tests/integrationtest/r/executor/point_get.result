@@ -552,7 +552,7 @@ a	b
 111	1
 explain format = 'brief' select * from t1 join t2 on t1.a = t2.b where t1.a = 1;
 id	estRows	task	access object	operator info
-HashJoin	1.00	root		CARTESIAN inner join
+HashJoin	1.00	root		CARTESIAN inner join, left side:TableReader
 ├─Point_Get(Build)	1.00	root	table:t2, index:b(b)	
 └─TableReader(Probe)	1.00	root		data:TableRangeScan
   └─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1,1], keep order:false

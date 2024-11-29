@@ -7,7 +7,7 @@ insert into t2 (id1,id2)values(1,1);
 insert into t2 (id1,id2)values(2,2),(3,3);
 explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1' and t2.id2 > '1';
 id	estRows	task	access object	operator info
-HashJoin	11111111.11	root		CARTESIAN inner join
+HashJoin	11111111.11	root		CARTESIAN inner join, left side:IndexReader
 ├─IndexReader(Build)	3333.33	root		index:IndexRangeScan
 │ └─IndexRangeScan	3333.33	cop[tikv]	table:t2, index:id2(id2)	range:("1",+inf], keep order:false, stats:pseudo
 └─IndexReader(Probe)	3333.33	root		index:IndexRangeScan
@@ -77,7 +77,7 @@ select @@last_sql_use_alloc;
 0
 explain format='brief' select t1.id1 from t1,t2 where t1.id2 > '1'and t1.id1 = t2.id1;
 id	estRows	task	access object	operator info
-MergeJoin	4166.67	root		inner join, left key:executor__chunk_reuse.t1.id1, right key:executor__chunk_reuse.t2.id1
+MergeJoin	4166.67	root		inner join, left side:TableReader, left key:executor__chunk_reuse.t1.id1, right key:executor__chunk_reuse.t2.id1
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	3333.33	root		data:Selection
@@ -127,7 +127,7 @@ select @@last_sql_use_alloc;
 0
 explain format='brief' select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
 id	estRows	task	access object	operator info
-HashJoin	1.00	root		CARTESIAN inner join
+HashJoin	1.00	root		CARTESIAN inner join, left side:Point_Get
 ├─Point_Get(Build)	1.00	root	table:t2	handle:1
 └─Point_Get(Probe)	1.00	root	table:t1	handle:1
 select t1.id1 from t1,t2 where t1.id1 = 1 and t2.id1 = 1;
@@ -174,7 +174,7 @@ select @@last_sql_use_alloc;
 0
 explain format='brief' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
 id	estRows	task	access object	operator info
-HashJoin	100.00	root		CARTESIAN inner join
+HashJoin	100.00	root		CARTESIAN inner join, left side:IndexLookUp
 ├─IndexLookUp(Build)	10.00	root		
 │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:id2(id2)	range:["2","2"], keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

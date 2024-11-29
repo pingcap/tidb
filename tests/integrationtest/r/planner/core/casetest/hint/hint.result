@@ -365,9 +365,9 @@ create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select
 create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
 explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#10)]
+HashJoin	9990.00	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#10)]
 ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#10
-│ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│ └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │   │ └─TableReader	9990.00	root		data:Selection
 │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -381,11 +381,11 @@ HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;
 id	estRows	task	access object	operator info
-MergeJoin	9990.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#10
+MergeJoin	9990.00	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#10
 ├─Sort(Build)	7992.00	root		Column#10
 │ └─StreamAgg	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#10
 │   └─Sort	12487.50	root		planner__core__casetest__hint__hint.t2.a
-│     └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│     └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │       ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │       │ └─TableReader	9990.00	root		data:Selection
 │       │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -400,11 +400,11 @@ MergeJoin	9990.00	root		inner join, left key:planner__core__casetest__hint__hint
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#17
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
 │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#16
-│   │ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│   │ └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │   │   │ └─TableReader	9990.00	root		data:Selection
 │   │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -413,7 +413,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │     └─TableReader	9990.00	root		data:Selection
 │   │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -425,12 +425,12 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#17
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
 │   ├─StreamAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#16
 │   │ └─Sort	12487.50	root		planner__core__casetest__hint__hint.t2.a
-│   │   └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│   │   └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │   │     │ └─TableReader	9990.00	root		data:Selection
 │   │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -439,7 +439,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │       └─TableReader	9990.00	root		data:Selection
 │   │         └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -453,13 +453,13 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │   │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
-│   │   │ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│   │   │ └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   │   ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │   │   │   │ └─TableReader	9990.00	root		data:Selection
 │   │   │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -468,14 +468,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │     └─TableReader	9990.00	root		data:Selection
 │   │   │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -487,14 +487,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │   │   ├─StreamAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
 │   │   │ └─Sort	12487.50	root		planner__core__casetest__hint__hint.t2.a
-│   │   │   └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
+│   │   │   └─MergeJoin	12487.50	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t2.b
 │   │   │     │ └─TableReader	9990.00	root		data:Selection
 │   │   │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
@@ -503,7 +503,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │       └─TableReader	9990.00	root		data:Selection
 │   │   │         └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │           └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │     │ └─TableReader	9990.00	root		data:Selection
 │   │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -512,7 +512,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │       └─TableReader	9980.01	root		data:Selection
 │   │         └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -524,18 +524,18 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#17
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
 │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#16
-│   │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│   │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -549,20 +549,20 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v1;
 id	estRows	task	access object	operator info
-MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#17
+MergeJoin	9980.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#17
 ├─Sort(Build)	7984.01	root		Column#17
 │ └─StreamAgg	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#17
 │   └─Sort	12475.01	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
+│     └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#16)]
 │       ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#16
-│       │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│       │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │       │   ├─TableReader(Build)	9990.00	root		data:Selection
 │       │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │       │   └─TableReader(Probe)	9990.00	root		data:Selection
 │       │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │       │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│       └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│       └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │         ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │         │ └─TableReader	9990.00	root		data:Selection
 │         │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -577,20 +577,20 @@ MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │   │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
-│   │   │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│   │   │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   │   ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │     │ └─TableReader	9990.00	root		data:Selection
 │   │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -599,7 +599,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │       └─TableReader	9980.01	root		data:Selection
 │   │         └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -611,21 +611,21 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │   ├─StreamAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
 │   │ └─Sort	12475.01	root		planner__core__casetest__hint__hint.t.a
-│   │   └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│   │   └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │   │     ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
-│   │     │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│   │     │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │     │   ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │     │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   │     └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │     └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │       ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │       │ └─TableReader	9990.00	root		data:Selection
 │   │       │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -634,7 +634,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │         └─TableReader	9980.01	root		data:Selection
 │   │           └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │             └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -648,27 +648,27 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#24)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │   │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
-│   │   │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│   │   │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   │   ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -682,29 +682,29 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v2), merge_join(t@qb_v2_1) */ * from v2;
 id	estRows	task	access object	operator info
-MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#24
+MergeJoin	9980.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#24
 ├─Sort(Build)	7984.01	root		Column#24
 │ └─StreamAgg	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#24
 │   └─Sort	12475.01	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
+│     └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#23)]
 │       ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#23
-│       │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
+│       │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
 │       │   ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#22
-│       │   │ └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
+│       │   │ └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │       │   │   ├─TableReader(Build)	9990.00	root		data:Selection
 │       │   │   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │   │   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │       │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │       │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.b))
 │       │   │       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│       │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│       │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │       │     ├─TableReader(Build)	9990.00	root		data:Selection
 │       │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │       │     └─TableReader(Probe)	9980.01	root		data:Selection
 │       │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │       │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│       └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│       └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │         ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │         │ └─TableReader	9990.00	root		data:Selection
 │         │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -732,10 +732,10 @@ create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.
 create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3;
 explain format = 'brief' select /*+ qb_name(qb_v, v@sel_1 .@sel_2), qb_name(qb_v, v@sel_1 .@sel_1), merge_join(t1@qb_v) */ * from v;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -754,12 +754,12 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_2), qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -771,7 +771,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -785,14 +785,14 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │   │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -804,14 +804,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -825,12 +825,12 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -840,7 +840,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -854,14 +854,14 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -871,14 +871,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -892,14 +892,14 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format = 'brief' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -909,14 +909,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -930,14 +930,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -947,14 +947,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -968,10 +968,10 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v2_2 is unused, please check whether the table list in the qb_name hint qb_v2_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -988,11 +988,11 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─StreamAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
 │ └─Sort	15593.77	root		planner__core__casetest__hint__hint.t2.a
-│   └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│     ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│     ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │     │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ │ └─TableReader	9990.00	root		data:Selection
 │     │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1011,12 +1011,12 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1026,7 +1026,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1040,13 +1040,13 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format = 'brief' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─StreamAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
 │   │ └─Sort	15593.77	root		planner__core__casetest__hint__hint.t2.a
-│   │   └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │     ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │     ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │     │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │     │ │ └─TableReader	9990.00	root		data:Selection
 │   │     │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1058,7 +1058,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │     └─TableReader(Probe)	9990.00	root		data:Selection
 │   │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1072,10 +1072,10 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1092,11 +1092,11 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2), qb_name(qb_v_1, v@sel_2 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─StreamAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
 │ └─Sort	15593.77	root		planner__core__casetest__hint__hint.t2.a
-│   └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│     ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│     ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │     │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ │ └─TableReader	9990.00	root		data:Selection
 │     │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1115,12 +1115,12 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1132,7 +1132,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1144,13 +1144,13 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_2 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─StreamAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
 │   │ └─Sort	15593.77	root		planner__core__casetest__hint__hint.t2.a
-│   │   └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │     ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │     ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │     │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │     │ │ └─TableReader	9990.00	root		data:Selection
 │   │     │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1162,7 +1162,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │     └─TableReader(Probe)	9990.00	root		data:Selection
 │   │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1176,14 +1176,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v1_2, v2. v1@sel_2 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1), merge_join(t1@qb_v1_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1193,7 +1193,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │     │ └─TableReader	9990.00	root		data:Selection
 │   │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1202,7 +1202,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │       └─TableReader	9980.01	root		data:Selection
 │   │         └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │           └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1216,19 +1216,19 @@ Level	Code	Message
 Warning	1815	Only one query block name is allowed in a view hint, otherwise the hint will be invalid
 explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─MergeJoin	15593.77	root		inner join, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
+│   │   │ └─MergeJoin	15593.77	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
 │   │   │   ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t3.a
 │   │   │   │ └─TableReader	9990.00	root		data:Selection
 │   │   │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │   │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 │   │   │   └─Sort(Probe)	12475.01	root		planner__core__casetest__hint__hint.t2.a
-│   │   │     └─MergeJoin	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   │     └─MergeJoin	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │       ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │       │ └─TableReader	9990.00	root		data:Selection
 │   │   │       │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1237,14 +1237,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │         └─TableReader	9980.01	root		data:Selection
 │   │   │           └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.a)), not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │   │             └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1256,19 +1256,19 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(@qb_v_2 t1, t3) */ * from v2;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─MergeJoin	15593.77	root		inner join, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
+│   │   │ └─MergeJoin	15593.77	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
 │   │   │   ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t3.a
 │   │   │   │ └─TableReader	9990.00	root		data:Selection
 │   │   │   │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │   │     └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 │   │   │   └─Sort(Probe)	12475.01	root		planner__core__casetest__hint__hint.t2.a
-│   │   │     └─MergeJoin	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │   │     └─MergeJoin	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │       ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │       │ └─TableReader	9990.00	root		data:Selection
 │   │   │       │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1277,14 +1277,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │         └─TableReader	9980.01	root		data:Selection
 │   │   │           └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t2.a)), not(isnull(planner__core__casetest__hint__hint.t2.b))
 │   │   │             └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1296,10 +1296,10 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v .@sel_2), merge_join(t1@qb_v_2) */ * from v;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1316,11 +1316,11 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_1, v@sel_1), merge_join(t@qb_v_1) */ * from v;
 id	estRows	task	access object	operator info
-MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#13
+MergeJoin	9980.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#13
 ├─Sort(Build)	7984.01	root		Column#13
 │ └─HashAgg	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│   └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│     ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│     ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │     │ ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1336,12 +1336,12 @@ MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_2, v1 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│   │ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1353,7 +1353,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │     ├─TableReader(Build)	9990.00	root		data:Selection
 │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1365,12 +1365,12 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v_1, v1 .v@sel_2), merge_join(t@qb_v_1) */ * from v1;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#20)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#20
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#19)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#19
-│   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1380,7 +1380,7 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1394,10 +1394,10 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from v;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-│ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   ├─MergeJoin(Build)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
+│ └─HashJoin	15593.77	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   ├─MergeJoin(Build)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │   │ │ └─TableReader	9990.00	root		data:Selection
 │   │ │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1414,12 +1414,12 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel_1) */ * from v;
 id	estRows	task	access object	operator info
-MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#13
+MergeJoin	9980.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#13
 ├─Sort(Build)	7984.01	root		Column#13
 │ └─StreamAgg	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
 │   └─Sort	15593.77	root		planner__core__casetest__hint__hint.t2.a
-│     └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│       ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│     └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│       ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │       │ ├─TableReader(Build)	9990.00	root		data:Selection
 │       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1435,16 +1435,16 @@ MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;
 id	estRows	task	access object	operator info
-MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#27
+MergeJoin	9980.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.a, right key:Column#27
 ├─Sort(Build)	7984.01	root		Column#27
 │ └─StreamAgg	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
 │   └─Sort	12475.01	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│     └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │       ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│       │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│       │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │       │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│       │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│       │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│       │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│       │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │       │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │       │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1454,14 +1454,14 @@ MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint
 │       │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │       │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │       │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│       │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│       │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │       │     ├─TableReader(Build)	9990.00	root		data:Selection
 │       │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │       │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │       │     └─TableReader(Probe)	9980.01	root		data:Selection
 │       │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │       │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│       └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│       └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │         ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │         │ └─TableReader	9990.00	root		data:Selection
 │         │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1476,14 +1476,14 @@ MergeJoin	9980.01	root		inner join, left key:planner__core__casetest__hint__hint
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
+HashJoin	9980.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#27)]
 ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#27
-│ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
+│ └─HashJoin	12475.01	root		inner join, left side:MergeJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
 │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
+│   │ └─HashJoin	12475.01	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
 │   │   ├─HashAgg(Build)	7984.01	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-│   │   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
-│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   │ └─HashJoin	15593.77	root		inner join, left side:HashJoin, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
+│   │   │   ├─HashJoin(Build)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	9990.00	root		data:Selection
 │   │   │   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │   │   │ │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1493,14 +1493,14 @@ HashJoin	9980.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint
 │   │   │   └─TableReader(Probe)	9990.00	root		data:Selection
 │   │   │     └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t3.a))
 │   │   │       └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-│   │   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
+│   │   └─HashJoin(Probe)	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t1.b)]
 │   │     ├─TableReader(Build)	9990.00	root		data:Selection
 │   │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
 │   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 │   │     └─TableReader(Probe)	9980.01	root		data:Selection
 │   │       └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.a)), not(isnull(planner__core__casetest__hint__hint.t.b))
 │   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-│   └─MergeJoin(Probe)	12475.01	root		inner join, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
+│   └─MergeJoin(Probe)	12475.01	root		inner join, left side:Sort, left key:planner__core__casetest__hint__hint.t.b, right key:planner__core__casetest__hint__hint.t1.b
 │     ├─Sort(Build)	9990.00	root		planner__core__casetest__hint__hint.t1.b
 │     │ └─TableReader	9990.00	root		data:Selection
 │     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -1524,7 +1524,7 @@ select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10
 ), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
 select * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
+HashJoin_42	6944.44	root		CARTESIAN inner join, left side:IndexLookUp_47
 ├─IndexLookUp_51(Build)	83.33	root		
 │ ├─IndexRangeScan_48(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection_50(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
@@ -1542,7 +1542,7 @@ select a from v4 where a < 10
 ), d2 as (select a from v4 where b < 10)
 select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
+HashJoin_42	6944.44	root		CARTESIAN inner join, left side:IndexLookUp_47
 ├─TableReader_54(Build)	83.33	root		data:Selection_53
 │ └─Selection_53	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.b, 10)
 │   └─TableFullScan_52	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
@@ -1559,7 +1559,7 @@ select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10
 ), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
 select * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
+HashJoin_42	6944.44	root		CARTESIAN inner join, left side:TableReader_46
 ├─IndexLookUp_58(Build)	83.33	root		
 │ ├─IndexRangeScan_55(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection_57(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
@@ -1650,7 +1650,7 @@ desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = 
 id	estRows	task	access object	operator info
 Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
 └─Projection	12487.50	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c
-  └─IndexJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.b, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b)
+  └─IndexJoin	12487.50	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.b, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	12487.50	root		
@@ -1661,7 +1661,7 @@ desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ * from t t1, t t2 where t1
 id	estRows	task	access object	operator info
 Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
 └─Projection	12487.50	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c
-  └─IndexHashJoin	12487.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.b, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b)
+  └─IndexHashJoin	12487.50	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.b, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─IndexLookUp(Probe)	12487.50	root		
@@ -1670,10 +1670,10 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
       └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_MERGE_JOIN(t2)*/ t1.a, t2.a from t t1, t t2 ,t t3 where t1.a = t2.a and t3.a=t2.a;
 id	estRows	task	access object	operator info
-MergeJoin	15625.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
+MergeJoin	15625.00	root		inner join, left side:MergeJoin, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
-└─MergeJoin(Probe)	12500.00	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
+└─MergeJoin(Probe)	12500.00	root		inner join, left side:TableReader, left key:planner__core__casetest__hint__hint.t.a, right key:planner__core__casetest__hint__hint.t.a
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -1684,7 +1684,7 @@ desc format = 'brief' select * from t t1, (select /*+ HASH_AGG() */ b, max(a) fr
 id	estRows	task	access object	operator info
 Sort	9990.00	root		planner__core__casetest__hint__hint.t.b
 └─Projection	9990.00	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.b, Column#7
-  └─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
+  └─HashJoin	9990.00	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
     ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#14)->Column#7, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
     │ └─IndexReader	7992.00	root		index:HashAgg
     │   └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#14
@@ -1694,7 +1694,7 @@ Sort	9990.00	root		planner__core__casetest__hint__hint.t.b
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_HASH_JOIN(t2) */ distinct t2.a from t t1 join t t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexHashJoin	12500.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.a, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.a)
+IndexHashJoin	12500.00	root		inner join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__hint__hint.t.a, inner key:planner__core__casetest__hint__hint.t.a, equal cond:eq(planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.a)
 ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
 │ └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:b(b)	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableRangeScan
@@ -1703,7 +1703,7 @@ desc format = 'brief' select /*+ INL_JOIN(t2) */ * from t t1, t t2 where t1.a = 
 id	estRows	task	access object	operator info
 Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
 └─Projection	12487.50	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c
-  └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.a)]
+  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.c))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

@@ -14,7 +14,7 @@ analyze table t all columns;
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root		globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexJoin	1.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -28,7 +28,7 @@ id	c	id	c
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root		globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexJoin	1.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -43,7 +43,7 @@ id
 explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root	NULL	globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexJoin	1.00	root	NULL	inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexJoin	1.00	root	NULL	inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root	NULL	data:Selection
   │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -55,7 +55,7 @@ select * from p partition(p1) inner join t on p.id = t.id;
 id	c	id	c
 explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
-IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
 ├─TableReader(Build)	1.00	root	NULL	data:Selection
 │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -79,7 +79,7 @@ analyze table t all columns;
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root		globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.p.d, globalindex__index_join.p.e, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexHashJoin	1.00	root		inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexHashJoin	1.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -93,7 +93,7 @@ id	c	d	e	id	c
 explain format='brief' select * from p inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root		globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.p.d, globalindex__index_join.p.e, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexHashJoin	1.00	root		inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexHashJoin	1.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -108,7 +108,7 @@ id
 explain format='brief' select * from p partition(p1) inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
 Projection	1.00	root	NULL	globalindex__index_join.p.id, globalindex__index_join.p.c, globalindex__index_join.p.d, globalindex__index_join.p.e, globalindex__index_join.t.id, globalindex__index_join.t.c
-└─IndexHashJoin	1.00	root	NULL	inner join, inner:IndexLookUp, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+└─IndexHashJoin	1.00	root	NULL	inner join, inner:IndexLookUp, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
   ├─TableReader(Build)	1.00	root	NULL	data:Selection
   │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
   │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
@@ -120,7 +120,7 @@ select * from p partition(p1) inner join t on p.id = t.id;
 id	c	d	e	id	c
 explain format='brief' select p.id from p partition(p1) inner join t on p.id = t.id;
 id	estRows	task	access object	operator info
-IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
+IndexJoin	1.00	root	NULL	inner join, inner:IndexReader, left side:TableReader, outer key:globalindex__index_join.t.id, inner key:globalindex__index_join.p.id, equal cond:eq(globalindex__index_join.t.id, globalindex__index_join.p.id)
 ├─TableReader(Build)	1.00	root	NULL	data:Selection
 │ └─Selection	1.00	cop[tikv]	NULL	not(isnull(globalindex__index_join.t.id))
 │   └─TableFullScan	1.00	cop[tikv]	table:t	keep order:false
