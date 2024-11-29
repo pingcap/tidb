@@ -744,18 +744,18 @@ func findSchemasForTables(
 	schemas, unspecified := e.listPredicateSchemas(is)
 	schemaSlice := make([]pmodel.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
-		dbInfoName, ok := is.SchemaNameByTableID(tbl.DBID)
+		dbInfo, ok := is.SchemaByID(tbl.DBID)
 		if !ok {
 			continue
 		}
 		if unspecified { // all schemas should be included.
-			schemaSlice = append(schemaSlice, dbInfoName)
+			schemaSlice = append(schemaSlice, dbInfo.Name)
 			continue
 		}
 
 		found := false
 		for _, s := range schemas {
-			if s.L == dbInfoName.L {
+			if s.L == dbInfo.Name.L {
 				schemaSlice = append(schemaSlice, s)
 				found = true
 				break
