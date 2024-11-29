@@ -340,3 +340,10 @@ func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk
 		resultChk.SetNumVirtualRows(resultChk.NumRows())
 	}
 }
+
+func (j *semiJoinProbe) IsCurrentChunkProbeDone() bool {
+	if j.ctx.hasOtherCondition() && !j.unFinishedProbeRowIdxQueue.IsEmpty() {
+		return false
+	}
+	return j.baseJoinProbe.IsCurrentChunkProbeDone()
+}
