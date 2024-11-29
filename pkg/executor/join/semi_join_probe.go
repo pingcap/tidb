@@ -248,16 +248,6 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 		s.currentProbeRow = 0
 	}
 
-	if joinedChk.NumRows() > 0 {
-		s.selected = s.selected[:0]
-		s.selected, err = expression.VectorizedFilter(s.ctx.SessCtx.GetExprCtx().GetEvalCtx(), s.ctx.SessCtx.GetSessionVars().EnableVectorizedExpression, s.ctx.OtherCondition, chunk.NewIterator4Chunk(joinedChk), s.selected)
-		if err != nil {
-			return err
-		}
-
-		s.setIsMatchedRows()
-	}
-
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
 		for remainCap > 0 && (s.currentProbeRow < s.chunkRows) {
 			rowNumToTryAppend := min(remainCap, s.chunkRows-s.currentProbeRow)
