@@ -227,15 +227,16 @@ func buildHist(
 			}
 		} else {
 			skewedValue := bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat > origNdvFactor
-			if (!skewedValue && valuesPerBucket <= maxValuesPerBucket && currentCount <= maxValuesPerBucket) || currentCount <= valuesPerBucket {
-				// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
-				hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
-			} else {
+			// Try to get the last value in the bucket as a skewed value.
+			if (skewedValue && valuesPerBucket <= maxValuesPerBucket) || currentCount >= maxValuesPerBucket {
 				lastCount = hg.Buckets[bucketIdx].Count
 				// The bucket is full, store the item in the next bucket.
 				bucketIdx++
 				// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 				hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			} else {
+				// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
+				hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 			}
 		}
 		// If we're running out of buckets - we need to increase the skewed value (origNDVFactor) and valuesPerBucket
