@@ -141,7 +141,7 @@ type Binder struct {
 	holder base.LogicalPlan
 
 	// bsw is only for test stack print usage.
-	bsw util.IBufStrWriter
+	bsw util.StrBufferWriter
 }
 
 // NewBinder creates a new Binder.
@@ -290,7 +290,7 @@ func (b *Binder) traceIn(p *pattern.Pattern, g *memo.Group) {
 	}
 }
 
-func (b *Binder) printStackInfo(w util.IBufStrWriter) {
+func (b *Binder) printStackInfo(w util.StrBufferWriter) {
 	for i, one := range b.stackInfo {
 		if i != 0 {
 			w.WriteString(" -> ")

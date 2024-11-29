@@ -47,7 +47,7 @@ func (e *GroupExpression) GetGroup() *Group {
 }
 
 // String implements the fmt.Stringer interface.
-func (e *GroupExpression) String(w util.StrBuffer) {
+func (e *GroupExpression) String(w util.StrBufferWriter) {
 	e.LogicalPlan.ExplainID()
 	w.WriteString("GE:" + e.LogicalPlan.ExplainID().String() + "{")
 	for i, input := range e.Inputs {

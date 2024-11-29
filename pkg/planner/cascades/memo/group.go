@@ -128,7 +128,7 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 }
 
 // String implements fmt.Stringer interface.
-func (g *Group) String(w util.StrBuffer) {
+func (g *Group) String(w util.StrBufferWriter) {
 	w.WriteString(fmt.Sprintf("inputs:%s", strconv.Itoa(int(g.groupID))))
 }
 
