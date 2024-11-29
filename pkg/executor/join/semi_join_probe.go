@@ -302,6 +302,7 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 				s.matchedRowsHeaders[s.currentProbeRow] = 0
 				s.offsets = append(s.offsets, s.usedRows[s.currentProbeRow])
 				remainCap--
+				s.currentProbeRow++
 			} else {
 				s.probeCollision++
 				s.matchedRowsHeaders[s.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, s.matchedRowsHashValue[s.currentProbeRow])
@@ -321,6 +322,10 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 }
 
 func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk *chunk.Chunk) {
+	if len(s.offsets) == 0 {
+		return
+	}
+
 	for index, colIndex := range s.lUsed {
 		srcCol := s.currentChunk.Column(colIndex)
 		dstCol := resultChk.Column(index)
