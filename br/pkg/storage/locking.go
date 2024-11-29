@@ -114,8 +114,8 @@ func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect stri
 	dirName := path.Dir(pfx)
 
 	return cx.Storage.WalkDir(cx, &WalkOption{
-		SubDir:           dirName,
-		ObjPrefix:        fileName,
+		SubDir:    dirName,
+		ObjPrefix: fileName,
 		// We'd better read a deleted intention...
 		IncludeTombstone: true,
 	}, func(path string, size int64) error {
