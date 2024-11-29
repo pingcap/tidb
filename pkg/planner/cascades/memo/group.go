@@ -75,8 +75,8 @@ func (g *Group) Equals(other any) bool {
 // ******************************************* end of HashEqual methods *******************************************
 
 // Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(hash64u uint64, e *GroupExpression) bool {
-	one, ok := g.hash2GroupExpr[hash64u]
+func (g *Group) Exists(e *GroupExpression) bool {
+	one, ok := g.hash2GroupExpr[e.Sum64()]
 	if !ok {
 		return false
 	}
@@ -90,7 +90,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
 	hash64 := e.Sum64()
-	if g.Exists(hash64, e) {
+	if g.Exists(e) {
 		return false
 	}
 	operand := pattern.GetOperand(e.LogicalPlan)
@@ -129,7 +129,7 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 }
 
 // String implements fmt.Stringer interface.
-func (g *Group) String(w util.IBufStrWriter) {
+func (g *Group) String(w util.StrBuffer) {
 	w.WriteString(fmt.Sprintf("inputs:%s", strconv.Itoa(int(g.groupID))))
 }
 
