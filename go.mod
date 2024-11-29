@@ -137,7 +137,7 @@ require (
 	golang.org/x/sys v0.27.0
 	golang.org/x/term v0.26.0
 	golang.org/x/text v0.20.0
-	golang.org/x/time v0.7.0
+	golang.org/x/time v0.8.0
 	golang.org/x/tools v0.27.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
