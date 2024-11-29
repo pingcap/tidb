@@ -1196,40 +1196,13 @@ func (tr *TableImporter) postProcess(
 	return true, nil
 }
 
+// TODO(joechenrh): remove this function
 func getChunkCompressedSizeForParquet(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	store storage.ExternalStorage,
 ) (int64, error) {
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
-		ZStdDecodeConcurrency: 1,
-	})
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
-	if err != nil {
-		_ = reader.Close()
-		return 0, errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer parser.Close()
-	err = parser.Reader.ReadFooter()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	rowGroups := parser.Reader.Footer.GetRowGroups()
-	var maxRowGroupSize int64
-	for _, rowGroup := range rowGroups {
-		var rowGroupSize int64
-		columnChunks := rowGroup.GetColumns()
-		for _, columnChunk := range columnChunks {
-			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
-			rowGroupSize += columnChunkSize
-		}
-		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
-	}
-	return maxRowGroupSize, nil
+	return 100, nil
 }
 
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
