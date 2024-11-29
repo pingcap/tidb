@@ -83,6 +83,9 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
 	}
+	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
+		return nil
+	}
 	do := domain.GetDomain(e.Ctx)
 	h := do.StatsHandle()
 	if h == nil {
