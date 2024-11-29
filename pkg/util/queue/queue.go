@@ -82,10 +82,8 @@ func (r *Queue[T]) Clear() {
 func (r *Queue[T]) ClearAndExpandIfNeed(size int) {
 	r.Clear()
 
-	if cap(r.elements) < size {
+	if len(r.elements) < size {
 		r.elements = make([]T, size)
-	} else if len(r.elements) < size {
-		r.elements = r.elements[:size]
 	}
 }
 
