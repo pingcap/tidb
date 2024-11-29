@@ -376,6 +376,11 @@ func onRollbackReorganizePartition(jobCtx *jobContext, job *model.Job) (ver int6
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if job.SchemaState == model.StatePublic {
+		// We started to destroy the old indexes, so we can no longer rollback!
+		job.State = model.JobStateRunning
+		return ver, nil
+	}
 	jobCtx.jobArgs = args
 
 	return rollbackReorganizePartitionWithErr(jobCtx, job, dbterror.ErrCancelledDDLJob)

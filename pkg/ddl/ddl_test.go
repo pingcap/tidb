@@ -52,11 +52,6 @@ type DDLForTest interface {
 	RemoveReorgCtx(id int64)
 }
 
-// IsReorgCanceled exports for testing.
-func (rc *reorgCtx) IsReorgCanceled() bool {
-	return rc.isReorgCanceled()
-}
-
 // NewReorgCtx exports for testing.
 func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	return d.newReorgCtx(jobID, rowCount)
