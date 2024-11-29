@@ -371,6 +371,7 @@ import (
 	commit                "COMMIT"
 	committed             "COMMITTED"
 	compact               "COMPACT"
+	compress              "COMPRESS"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
 	compressionLevel      "COMPRESSION_LEVEL"
@@ -707,7 +708,6 @@ import (
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
-	compress              "COMPRESS"
 	constraints           "CONSTRAINTS"
 	cooldown              "COOLDOWN"
 	copyKwd               "COPY"
@@ -6778,6 +6778,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPRESS"
 |	"COMPRESSED"
 |	"CONSISTENCY"
 |	"CONSISTENT"
@@ -7178,7 +7179,6 @@ NotKeywordToken:
 |	"BIT_XOR"
 |	"BRIEF"
 |	"CAST"
-|	"COMPRESS"
 |	"COPY"
 |	"CURTIME"
 |	"CURDATE"
@@ -8358,6 +8358,10 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args:   []ast.ExprNode{$3, $5, $7},
 		}
+	}
+|	"COMPRESS" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 
 GetFormatSelector:
