@@ -128,6 +128,7 @@ var (
 	// TODO this memory flag is meaningless, a store is always bootstrapped once,
 	// we can always get the version from the store, remove it later.
 	storeBootstrapped     = make(map[string]bool)
+	storeEEBootstrapped   = make(map[string]bool)
 	storeBootstrappedLock sync.Mutex
 
 	// schemaLease is lease of info schema, we use this to check whether info schema
@@ -155,6 +156,7 @@ func setStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	storeBootstrapped[storeUUID] = true
+	storeEEBootstrapped[storeUUID] = true
 }
 
 // unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
@@ -163,6 +165,7 @@ func unsetStoreBootstrapped(storeUUID string) {
 	storeBootstrappedLock.Lock()
 	defer storeBootstrappedLock.Unlock()
 	delete(storeBootstrapped, storeUUID)
+	delete(storeEEBootstrapped, storeUUID)
 }
 
 // SetSchemaLease changes the default schema lease time for DDL.

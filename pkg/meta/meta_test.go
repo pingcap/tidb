@@ -411,6 +411,25 @@ func TestMeta(t *testing.T) {
 
 	require.Equal(t, int64(10), bootstrapVer)
 
+	bootstrapEEVer, err := m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), bootstrapEEVer)
+
+	err = m.FinishBootstrapEE(int64(1))
+	require.NoError(t, err)
+
+	bootstrapEEVer, err = m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), bootstrapEEVer)
+
+	// Test case for meta.FinishBootstrap with a version.
+	err = m.FinishBootstrapEE(int64(10))
+	require.NoError(t, err)
+	bootstrapEEVer, err = m.GetBootstrapEEVersion()
+	require.NoError(t, err)
+
+	require.Equal(t, int64(10), bootstrapEEVer)
+
 	// Test case for SchemaDiff.
 	schemaDiff := &model.SchemaDiff{
 		Version:    100,
