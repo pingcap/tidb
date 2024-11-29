@@ -2388,7 +2388,7 @@ func (w *worker) addTableIndex(
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(t, reorgInfo)
+			err := w.executeDistTask(ctx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -2469,7 +2469,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -2520,7 +2520,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				return err
 			}
 			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2557,7 +2557,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 			defer close(done)
 			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2578,7 +2578,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if err = w.isReorgRunnable(stepCtx, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
 						if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
 							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
