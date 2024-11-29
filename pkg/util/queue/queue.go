@@ -79,6 +79,7 @@ func (r *Queue[T]) Clear() {
 	r.size = 0
 }
 
+// ClearAndExpandIfNeed clear the queue and try to expand the elements
 func (r *Queue[T]) ClearAndExpandIfNeed(size int) {
 	r.Clear()
 
