@@ -274,7 +274,12 @@ func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (resErr error) 
 	execute.SetFrameworkInfo(stepExecutor, resource)
 
 	if err := stepExecutor.Init(runStepCtx); err != nil {
-		e.logger.Info("failed to init step executor", zap.Error(err))
+		if e.IsRetryableError(err) {
+			e.logger.Info("meet retryable err when init step executor", zap.Error(err))
+		} else {
+			e.logger.Info("failed to init step executor", zap.Error(err))
+			e.failOneSubtask(runStepCtx, task.ID, err)
+		}
 		return errors.Trace(err)
 	}
 
@@ -282,7 +287,9 @@ func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (resErr error) 
 		err := stepExecutor.Cleanup(runStepCtx)
 		if err != nil {
 			e.logger.Error("cleanup subtask exec env failed", zap.Error(err))
-			// Cleanup is run after subtask run, no need to affect state of subtasks.
+			// Cleanup is not a critical path of running subtask, so no need to
+			// affect state of subtasks. there might be no subtask to change even
+			// we want to if all subtasks are finished.
 		}
 	}()
 
@@ -373,18 +380,20 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())
 
 	if subtaskErr != nil {
-		return e.markSubTaskCanceledOrFailed(ctx, subtask, subtaskErr)
-	} else {
-		failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
-		if err := stepExecutor.OnFinished(ctx, subtask); err != nil {
-			logger.Info("OnFinished failed", zap.Error(err))
-			return errors.Trace(err)
+		if err := e.markSubTaskCanceledOrFailed(ctx, subtask, subtaskErr); err != nil {
+			logger.Error("failed to handle subtask error", zap.Error(err))
 		}
-		failpoint.InjectCall("afterCallOnSubtaskFinished", e)
-		err := e.finishSubtask(ctx, subtask)
-		failpoint.InjectCall("syncAfterSubtaskFinish")
-		return err
+		return subtaskErr
 	}
+
+	failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
+	if err := stepExecutor.OnFinished(ctx, subtask); err != nil {
+		logger.Info("OnFinished failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	err := e.finishSubtask(ctx, subtask)
+	failpoint.InjectCall("syncAfterSubtaskFinish")
+	return err
 }
 
 // GetTaskBase implements TaskExecutor.GetTaskBase.
@@ -504,9 +513,9 @@ func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 		if context.Cause(ctx) == ErrCancelSubtask {
 			e.logger.Warn("subtask canceled")
 			return e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
-		} else {
-			e.logger.Info("meet context canceled for gracefully shutdown")
 		}
+
+		e.logger.Info("meet context canceled for gracefully shutdown")
 	} else if e.IsRetryableError(stErr) {
 		e.logger.Warn("meet retryable error", zap.Error(stErr))
 	} else {

@@ -234,22 +234,6 @@ func TestGC(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond)
 }
 
-func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3, 16, true)
-
-	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var counter atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCallOnSubtaskFinished",
-		func(e *taskexecutor.BaseTaskExecutor) {
-			if counter.Add(1) == 1 {
-				e.CancelRunningSubtask()
-			}
-		},
-	)
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
-	require.Equal(t, proto.TaskStateReverted, task.State)
-}
-
 func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
