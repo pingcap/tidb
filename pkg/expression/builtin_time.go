@@ -98,6 +98,7 @@ var (
 	_ functionClass = &fromUnixTimeFunctionClass{}
 	_ functionClass = &getFormatFunctionClass{}
 	_ functionClass = &strToDateFunctionClass{}
+	_ functionClass = &toDateFunctionClass{}
 	_ functionClass = &sysDateFunctionClass{}
 	_ functionClass = &currentDateFunctionClass{}
 	_ functionClass = &currentTimeFunctionClass{}
@@ -1844,6 +1845,51 @@ func (b *builtinGetFormatSig) evalString(ctx EvalContext, row chunk.Row) (string
 	return res, false, nil
 }
 
+type toDateFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toDateFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	var (
+		retTp = types.ETDatetime
+		bf    baseBuiltinFunc
+		err   error
+	)
+	if len(args) == c.maxArgs {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, types.ETString, types.ETString)
+	} else {
+		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, types.ETString)
+	}
+	if err != nil {
+		return nil, err
+	}
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinStrToDateDatetimeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_StrToDateDatetime)
+	return sig, nil
+}
+
+func convertFormatFromOracelToMysql(format string, defaultFormat bool) string {
+	var newFormat string
+
+	if defaultFormat {
+		newFormat = "%Y-%m-%d"
+	} else {
+		newFormat = strings.ToUpper(format)
+		newFormat = strings.ReplaceAll(newFormat, "YYYY", "%Y")
+		newFormat = strings.ReplaceAll(newFormat, "MM", "%m")
+		newFormat = strings.ReplaceAll(newFormat, "DD", "%d")
+		newFormat = strings.ReplaceAll(newFormat, "HH24:MI:SS", "%H:%i:%s")
+	}
+
+	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
+	return newFormat
+}
+
 type strToDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -1856,11 +1902,6 @@ func (c *strToDateFunctionClass) getRetTp(ctx BuildContext, arg Expression) (tp 
 	strArg := WrapWithCastAsString(ctx, arg)
 	format, isNull, err := strArg.EvalString(ctx.GetEvalCtx(), chunk.Row{})
 	if err != nil || isNull {
-		return
-	}
-
-	if c.funcName == ast.ToDate {
-		tp = mysql.TypeDatetime
 		return
 	}
 
@@ -1921,27 +1962,6 @@ func (b *builtinStrToDateDateSig) Clone() builtinFunc {
 	return newSig
 }
 
-func ConvertFormatFromOracelToMysql(format string) string {
-	var newFormat string
-
-	switch strings.ToUpper(format) {
-	case "YYYY-MM-DD":
-		newFormat = "%Y-%m-%d"
-	case "YYYY/MM/DD":
-		newFormat = "%Y/%m/%d"
-	case "YYYYMMDD":
-		newFormat = "%Y%m%d"
-	case "YYYY-MM-DD HH24:MI:SS":
-		newFormat = "%Y-%m-%d %H:%i:%s"
-	default:
-		newFormat = format
-	}
-
-	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
-
-	return newFormat
-}
-
 func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	date, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
@@ -1952,8 +1972,6 @@ func (b *builtinStrToDateDateSig) evalTime(ctx EvalContext, row chunk.Row) (type
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-
-	format = ConvertFormatFromOracelToMysql(format)
 
 	var t types.Time
 	tc := typeCtx(ctx)
@@ -1984,12 +2002,19 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
-	format, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return types.ZeroTime, isNull, err
-	}
 
-	format = ConvertFormatFromOracelToMysql(format)
+	var (
+		defaultFormat = true
+		format        string
+	)
+	if len(b.args) >= 2 {
+		defaultFormat = false
+		format, isNull, err = b.args[1].EvalString(ctx, row)
+		if isNull || err != nil {
+			return types.ZeroTime, isNull, err
+		}
+	}
+	format = convertFormatFromOracelToMysql(format, defaultFormat)
 
 	var t types.Time
 	tc := typeCtx(ctx)
@@ -2027,8 +2052,6 @@ func (b *builtinStrToDateDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 	if isNull || err != nil {
 		return types.Duration{}, isNull, err
 	}
-
-	format = ConvertFormatFromOracelToMysql(format)
 
 	var t types.Time
 	tc := typeCtx(ctx)
