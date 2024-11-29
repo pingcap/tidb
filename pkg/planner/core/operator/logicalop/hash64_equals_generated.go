@@ -729,6 +729,30 @@ func (op *LogicalSelection) Equals(other any) bool {
 }
 
 // Hash64 implements the Hash64Equals interface.
+func (op *LogicalSequence) Hash64(h base.Hasher) {
+	h.HashString(plancodec.TypeSequence)
+	op.BaseLogicalPlan.Hash64(h)
+}
+
+// Equals implements the Hash64Equals interface, only receive *LogicalSequence pointer.
+func (op *LogicalSequence) Equals(other any) bool {
+	op2, ok := other.(*LogicalSequence)
+	if !ok {
+		return false
+	}
+	if op == nil {
+		return op2 == nil
+	}
+	if op2 == nil {
+		return false
+	}
+	if !op.BaseLogicalPlan.Equals(&op2.BaseLogicalPlan) {
+		return false
+	}
+	return true
+}
+
+// Hash64 implements the Hash64Equals interface.
 func (op *LogicalShow) Hash64(h base.Hasher) {
 	h.HashString(plancodec.TypeShow)
 	op.LogicalSchemaProducer.Hash64(h)
