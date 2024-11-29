@@ -33,6 +33,94 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestLogicalSortHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalSort{}.Init(ctx, 1)
+	s2 := logicalop.LogicalSort{}.Init(ctx, 1)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.ByItems = []*util.ByItems{}
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s2.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: false}}
+	hasher1.Reset()
+	s1.Hash64(hasher1)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+
+	s1.ByItems = []*util.ByItems{{Expr: col1, Desc: true}}
+	hasher1.Reset()
+	s1.Hash64(hasher1)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+}
+
+func TestLogicalShowDDLJobs(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalShowDDLJobs{}.Init(ctx)
+	s2 := logicalop.LogicalShowDDLJobs{}.Init(ctx)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.LogicalSchemaProducer.SetSchema(expression.NewSchema(col1))
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+}
+
+func TestLogicalShowHash64Equals(t *testing.T) {
+	col1 := &expression.Column{
+		ID:      1,
+		Index:   0,
+		RetType: types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	ctx := mock.NewContext()
+	s1 := logicalop.LogicalShow{}.Init(ctx)
+	s2 := logicalop.LogicalShow{}.Init(ctx)
+	hasher1 := base.NewHashEqualer()
+	hasher2 := base.NewHashEqualer()
+	s1.Hash64(hasher1)
+	s2.Hash64(hasher2)
+	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
+	require.True(t, s1.Equals(s2))
+
+	s2.LogicalSchemaProducer.SetSchema(expression.NewSchema(col1))
+	hasher2.Reset()
+	s2.Hash64(hasher2)
+	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
+	require.False(t, s1.Equals(s2))
+}
+
 func TestLogicalSequence(t *testing.T) {
 	ctx := mock.NewContext()
 	m1 := logicalop.LogicalSequence{}.Init(ctx, 1)
