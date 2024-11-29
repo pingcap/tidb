@@ -38,7 +38,7 @@ import (
 
 var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
-	DumpStatsDeltaRatio = 1 / 10000.0
+	DumpStatsDeltaRatio = 1 / 100.0
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
