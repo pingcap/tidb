@@ -295,6 +295,7 @@ const (
 	ReleaseAllLocks = "release_all_locks"
 	Sleep           = "sleep"
 	UUID            = "uuid"
+	GetGUID         = "get_guid"
 	UUIDShort       = "uuid_short"
 	UUIDToBin       = "uuid_to_bin"
 	BinToUUID       = "bin_to_uuid"

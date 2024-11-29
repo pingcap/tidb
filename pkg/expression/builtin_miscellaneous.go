@@ -62,6 +62,7 @@ var (
 	_ functionClass = &uuidToBinFunctionClass{}
 	_ functionClass = &binToUUIDFunctionClass{}
 	_ functionClass = &isUUIDFunctionClass{}
+	_ functionClass = &getGUIDFunctionClass{}
 	_ functionClass = &tidbShardFunctionClass{}
 )
 
@@ -1373,6 +1374,27 @@ func (c *uuidFunctionClass) getFunction(ctx BuildContext, args []Expression) (bu
 	return sig, nil
 }
 
+type getGUIDFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *getGUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(36)
+	sig := &builtinGetGUIDSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_UUID)
+	return sig, nil
+}
+
 type builtinUUIDSig struct {
 	baseBuiltinFunc
 }
@@ -1392,6 +1414,33 @@ func (b *builtinUUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, i
 		return
 	}
 	d = id.String()
+	return
+}
+
+type builtinGetGUIDSig struct {
+	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinGetGUIDSig) Clone() builtinFunc {
+	newSig := &builtinGetGUIDSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinGetGUIDSig.
+func (b *builtinGetGUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
+	var id uuid.UUID
+	id, err = uuid.NewUUID()
+	if err != nil {
+		return
+	}
+	// Replace all '-' with an empty string
+	d = strings.ReplaceAll(id.String(), "-", "")
+
 	return
 }
 
