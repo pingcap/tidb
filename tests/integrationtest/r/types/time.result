@@ -171,3 +171,5 @@ timestamp '2024-01-01 14:00:00.123456789+02:00'
 select timestamp '2024-01-01 14+01:00';
 timestamp '2024-01-01 14+01:00'
 2024-01-01 14:01:00
+select timestamp'10101.5';
+Error 1525 (HY000): Incorrect datetime value: '10101.5'

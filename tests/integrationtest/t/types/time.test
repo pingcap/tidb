@@ -124,5 +124,9 @@ select timestamp '2024-01-01 14:00:00.123456789';
 select timestamp '2024-01-01 14:00:00.123456789+02:00';
 select timestamp '2024-01-01 14+01:00';
 
+# Should we really support this MySQL 'internal' format?
+# mysql result; 2010-10-01 05:00:00
+-- error 1525
+select timestamp'10101.5';
 
 # TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
