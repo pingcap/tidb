@@ -16,7 +16,6 @@ package local
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/kv"
 	"math/rand"
 	"sync"
 	"testing"
@@ -26,6 +25,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
