@@ -167,10 +167,10 @@ func buildHist(
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	minNumBuckets := int64(100)
-	if numBuckets != 254 || ndv < numBuckets {
-		minNumBuckets = numBuckets
-	}
 	maxValuesPerBucket := max(float64(count)/float64(minNumBuckets)+sampleFactor, 2)
+	if numBuckets != 254 || ndv < numBuckets {
+		maxValuesPerBucket = valuesPerBucket
+	}
 
 	bucketIdx := 0
 	var lastCount int64
