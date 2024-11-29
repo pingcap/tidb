@@ -387,8 +387,7 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 
 	metaMut := jobCtx.metaMut
 	job.BinlogInfo.FinishedTS = metaMut.StartTS
-	jobCtx.logger.Info("finish DDL job", zap.String("job", job.String()),
-		zap.Int64("schema version", job.BinlogInfo.SchemaVersion), zap.Uint64("BinlogInfo.FinishedTS", job.BinlogInfo.FinishedTS))
+	jobCtx.logger.Info("finish DDL job", zap.String("job", job.String()), zap.Int64("schema version", job.BinlogInfo.SchemaVersion))
 	updateRawArgs := true
 	if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
 		// ActionAddPrimaryKey needs to check the warnings information in job.Args.
