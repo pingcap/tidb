@@ -157,7 +157,6 @@ const (
 	SecToTime        = "sec_to_time"
 	Second           = "second"
 	StrToDate        = "str_to_date"
-	ToDate           = "to_date"
 	SubDate          = "subdate"
 	SubTime          = "subtime"
 	Sysdate          = "sysdate"
@@ -381,6 +380,9 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// oracle functions.
+	ToDate = "to_date"
 )
 
 type FuncCallExprType int8
