@@ -99,7 +99,6 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	}); err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("update stats cache", zap.Int("rows", len(rows)))
 
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
