@@ -167,7 +167,7 @@ func buildHist(
 	// thus we need to add a sampleFactor to avoid building too many buckets.
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	minNumBuckets := int64(100)
-	if numBuckets != 254 {
+	if numBuckets != 254 || ndv < numBuckets {
 		minNumBuckets = numBuckets
 	}
 	maxValuesPerBucket := max(float64(count)/float64(minNumBuckets)+sampleFactor, 2)
@@ -225,16 +225,18 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-		} else if (bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat <= origNdvFactor && currentCount <= maxValuesPerBucket && valuesPerBucket <= maxValuesPerBucket) ||
-			currentCount <= valuesPerBucket {
-			// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
-			hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
 		} else {
-			lastCount = hg.Buckets[bucketIdx].Count
-			// The bucket is full, store the item in the next bucket.
-			bucketIdx++
-			// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
-			hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			skewedValue := bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat > origNdvFactor
+			if (!skewedValue && valuesPerBucket <= maxValuesPerBucket && currentCount <= maxValuesPerBucket) || currentCount <= valuesPerBucket {
+				// The last value in the bucket is NOT skewed, and the bucket still has room to store a new item, update the bucket.
+				hg.updateLastBucket(&samples[i].Value, int64(totalCount), int64(ndvFactor), false)
+			} else {
+				lastCount = hg.Buckets[bucketIdx].Count
+				// The bucket is full, store the item in the next bucket.
+				bucketIdx++
+				// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
+				hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
+			}
 		}
 		// If we're running out of buckets - we need to increase the skewed value (origNDVFactor) and valuesPerBucket
 		remainingCount := float64(count) - totalCount
