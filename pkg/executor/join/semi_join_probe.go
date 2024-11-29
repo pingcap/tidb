@@ -341,9 +341,9 @@ func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk
 	}
 }
 
-func (j *semiJoinProbe) IsCurrentChunkProbeDone() bool {
-	if j.ctx.hasOtherCondition() && !j.unFinishedProbeRowIdxQueue.IsEmpty() {
+func (s *semiJoinProbe) IsCurrentChunkProbeDone() bool {
+	if s.ctx.hasOtherCondition() && !s.unFinishedProbeRowIdxQueue.IsEmpty() {
 		return false
 	}
-	return j.baseJoinProbe.IsCurrentChunkProbeDone()
+	return s.baseJoinProbe.IsCurrentChunkProbeDone()
 }
