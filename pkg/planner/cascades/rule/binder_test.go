@@ -80,7 +80,7 @@ func TestBinderFail(t *testing.T) {
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder := NewBinder(pa, rootGE)
 	b := bytes.Buffer{}
-	buf := util.NewBufStrWriter(&b)
+	buf := util.NewStrBuffer(&b)
 	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
@@ -97,7 +97,7 @@ func TestBinderFail(t *testing.T) {
 	pa.SetChildren(p2)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
-	buf = util.NewBufStrWriter(&b)
+	buf = util.NewStrBuffer(&b)
 	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
@@ -109,7 +109,7 @@ func TestBinderFail(t *testing.T) {
 	rootGE = mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
-	buf = util.NewBufStrWriter(&b)
+	buf = util.NewStrBuffer(&b)
 	binder.bsw = buf
 	require.False(t, binder.Next())
 	buf.Flush()
@@ -219,7 +219,7 @@ func TestBinderMultiNext(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := util.NewBufStrWriter(&b)
+	buf := util.NewStrBuffer(&b)
 	binder.bsw = buf
 
 	require.True(t, binder.Next())
@@ -312,7 +312,7 @@ func TestBinderAny(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := util.NewBufStrWriter(&b)
+	buf := util.NewStrBuffer(&b)
 	binder.bsw = buf
 
 	require.True(t, binder.Next())
@@ -393,7 +393,7 @@ func TestBinderMultiAny(t *testing.T) {
 	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
-	buf := util.NewBufStrWriter(&b)
+	buf := util.NewStrBuffer(&b)
 	binder.bsw = buf
 
 	require.True(t, binder.Next())
