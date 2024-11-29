@@ -98,27 +98,59 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		currentTime := time.Now()
+
+		// Create slice of items with their modification ratios
+		type itemWithRatio struct {
+			id    int64
+			item  variable.TableDelta
+			ratio float64
+		}
+		items := make([]itemWithRatio, 0, len(deltaMap))
+
+		// Calculate ratios
 		for id, item := range deltaMap {
 			if !s.needDumpStatsDelta(is, dumpAll, id, item, currentTime) {
 				continue
 			}
-			updated, err := s.dumpTableStatCountToKV(is, id, item)
+			tbl, ok := s.statsHandle.TableInfoByID(is, id)
+			if !ok {
+				continue
+			}
+			stats := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
+			ratio := float64(item.Count) / float64(stats.RealtimeCount)
+			items = append(items, itemWithRatio{id: id, item: item, ratio: ratio})
+		}
+
+		// Sort by ratio descending
+		slices.SortFunc(items, func(a, b itemWithRatio) int {
+			return -cmp.Compare(a.ratio, b.ratio)
+		})
+
+		// Process only top 5000
+		const maxItems = 5000
+		if len(items) > maxItems {
+			items = items[:maxItems]
+		}
+
+		// Process sorted items
+		for _, item := range items {
+			updated, err := s.dumpTableStatCountToKV(is, item.id, item.item)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			if updated {
-				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+				UpdateTableDeltaMap(deltaMap, item.id, -item.item.Delta, -item.item.Count, nil)
 			}
-			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
-				delete(deltaMap, id)
+			if err = storage.DumpTableStatColSizeToKV(sctx, item.id, item.item); err != nil {
+				delete(deltaMap, item.id)
 				return errors.Trace(err)
 			}
 			if updated {
-				delete(deltaMap, id)
+				delete(deltaMap, item.id)
 			} else {
-				m := deltaMap[id]
+				m := deltaMap[item.id]
 				m.ColSize = nil
-				deltaMap[id] = m
+				deltaMap[item.id] = m
 			}
 		}
 		return nil
