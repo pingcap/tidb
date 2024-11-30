@@ -19,12 +19,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -66,24 +69,14 @@ type StatsUsage interface {
 	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
 
-	// Below methods are for index usage.
+	IndexUsage
 
-	// NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
-	// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
-	// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
-	NewSessionIndexUsageCollector() interface{}
-
-	// DumpIndexUsageToKV dumps all collected index usage info to storage.
-	DumpIndexUsageToKV() error
-
-	// GCIndexUsage removes unnecessary index usage data.
-	GCIndexUsage() error
-
+	// TODO: extract these function to a new interface only for delta/stats usage, like `IndexUsage`.
 	// Blow methods are for table delta and stats usage.
 
 	// NewSessionStatsItem allocates a stats collector for a session.
 	// TODO: use interface{} to avoid cycle import, remove this interface{}.
-	NewSessionStatsItem() interface{}
+	NewSessionStatsItem() any
 
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
@@ -93,6 +86,24 @@ type StatsUsage interface {
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
+}
+
+// IndexUsage is an interface to define the function of collecting index usage stats.
+type IndexUsage interface {
+	// NewSessionIndexUsageCollector creates a new Collector for a session.
+	NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector
+
+	// GCIndexUsage removes unnecessary index usage data.
+	GCIndexUsage() error
+
+	// StartWorker starts for the collector worker.
+	StartWorker()
+
+	// Close closes and waits for the index usage collector worker.
+	Close()
+
+	// GetIndexUsage returns the index usage information
+	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
 }
 
 // StatsHistory is used to manage historical stats.
@@ -107,10 +118,54 @@ type StatsHistory interface {
 	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
+// PriorityQueueSnapshot is the snapshot of the stats priority queue.
+type PriorityQueueSnapshot struct {
+	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
+	MustRetryTables []int64           `json:"must_retry_tables"`
+}
+
+// AnalysisJobJSON represents the JSON format of an AnalysisJob.
+//
+//nolint:fieldalignment
+type AnalysisJobJSON struct {
+	Type               string            `json:"type"`
+	TableID            int64             `json:"table_id"`
+	Weight             float64           `json:"weight"`
+	PartitionIDs       []int64           `json:"partition_ids"`
+	IndexIDs           []int64           `json:"index_ids"`
+	PartitionIndexIDs  map[int64][]int64 `json:"partition_index_ids"`
+	Indicators         IndicatorsJSON    `json:"indicators"`
+	HasNewlyAddedIndex bool              `json:"has_newly_added_index"`
+}
+
+// IndicatorsJSON represents the JSON format of Indicators.
+type IndicatorsJSON struct {
+	ChangePercentage     string `json:"change_percentage"`
+	TableSize            string `json:"table_size"`
+	LastAnalysisDuration string `json:"last_analysis_duration"`
+}
+
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type StatsAnalyze interface {
+	owner.Listener
+
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
+
+	// StartAnalyzeJob updates the job status to `running` and sets the start time.
+	// There is no guarantee that the job record will actually be updated. If the job fails to start, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	StartAnalyzeJob(job *statistics.AnalyzeJob)
+
+	// UpdateAnalyzeJobProgress updates the current progress of the analyze job.
+	// There is no guarantee that the job record will actually be updated. If the job fails to update, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	UpdateAnalyzeJobProgress(job *statistics.AnalyzeJob, rowCount int64)
+
+	// FinishAnalyzeJob updates the job status to `finished`, sets the end time, and updates the job info.
+	// There is no guarantee that the job record will actually be updated. If the job fails to finish, an error will be logged.
+	// It is OK because this won't affect the analysis job's success.
+	FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason error, analyzeType statistics.JobType)
 
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
@@ -132,6 +187,12 @@ type StatsAnalyze interface {
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+
+	// GetPriorityQueueSnapshot returns the stats priority queue.
+	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
+	// Close closes the analyze worker.
+	Close()
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -143,7 +204,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(is infoschema.InfoSchema) error
+	Update(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -156,6 +217,10 @@ type StatsCache interface {
 
 	// UpdateStatsCache updates the cache.
 	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+
+	// GetNextCheckVersionWithOffset returns the last version with offset.
+	// It is used to fetch updated statistics from the stats meta table.
+	GetNextCheckVersionWithOffset() uint64
 
 	// MaxTableStatsVersion returns the version of the current cache, which is defined as
 	// the max table stats version the cache has in its lifecycle.
@@ -228,6 +293,15 @@ type StatsLock interface {
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
 
+// PartitionStatisticLoadTask currently records a partition-level jsontable.
+type PartitionStatisticLoadTask struct {
+	JSONTable  *statsutil.JSONTable
+	PhysicalID int64
+}
+
+// PersistFunc is used to persist JSONTable in the partition level.
+type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -240,12 +314,8 @@ type StatsReadWriter interface {
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
-	// UpdateStatsMetaDelta updates the count and modify_count for the given table in mysql.stats_meta.
-	// It will add the delta to the original count and modify_count. The delta can be positive or negative.
-	UpdateStatsMetaDelta(tableID int64, count, delta int64) (err error)
-
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
-	LoadNeededHistograms() (err error)
+	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
@@ -256,6 +326,9 @@ type StatsReadWriter interface {
 
 	// SaveTableStatsToStorage saves the stats of a table to storage.
 	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+
+	// SaveMetaToStorage saves the stats meta of a table to storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
@@ -319,6 +392,15 @@ type StatsReadWriter interface {
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
 
+	// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+	// Notice:
+	//  1. It might call the function `persist` with nil jsontable.
+	//  2. It is only used by BR, so partitions' statistic are always dumped.
+	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist PersistFunc) error
+
+	// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+	LoadStatsFromJSONConcurrently(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
+
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
 	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
@@ -340,24 +422,44 @@ type StatsReadWriter interface {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
+	Retry     int
 }
 
 // StatsLoad is used to load stats concurrently
+// TODO(hawkingrei): Our implementation of loading statistics is flawed.
+// Currently, we enqueue tasks that require loading statistics into a channel,
+// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
+// we filter out duplicate tasks. However, the issue with this approach is that it does
+// not filter out all duplicate tasks, but only the duplicates within the number of workers.
+// Such an implementation is not reasonable.
+//
+// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
+//
+// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
+// │                                                                                       │
+// │                                       singleflight                                    │
+// │                                                                                       │
+// └───────────────────────────────────────────────────────────────────────────────────────┘
+//
+//		            │                │
+//	   ┌────────────▼──────┐ ┌───────▼───────────┐
+//	   │                   │ │                   │
+//	   │  syncload worker  │ │  syncload worker  │
+//	   │                   │ │                   │
+//	   └───────────────────┘ └───────────────────┘
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
-	SubCtxs        []sessionctx.Context
 	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
-	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error
 
 	// SyncWaitStatsLoad will wait for the load requests to finish.
 	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
@@ -370,29 +472,33 @@ type StatsSyncLoad interface {
 
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+}
 
-	// SetSubCtxs sets the sessionctx which is used to run queries background.
-	// TODO: use SessionPool instead.
-	SetSubCtxs(idx int, sctx sessionctx.Context)
+// GlobalStatsInfo represents the contextual information pertaining to global statistics.
+type GlobalStatsInfo struct {
+	HistIDs []int64
+	// When the `isIndex == 0`, HistIDs will be the column IDs.
+	// Otherwise, HistIDs will only contain the index ID.
+	IsIndex      int
+	StatsVersion int
 }
 
 // StatsGlobal is used to manage partition table global stats.
 type StatsGlobal interface {
 	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
-	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+	MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		info *GlobalStatsInfo,
 		physicalID int64,
-		isIndex bool,
-		histIDs []int64,
-	) (globalStats interface{}, err error)
+	) (err error)
 }
 
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(event *statsutil.DDLEvent) error
+	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
-	DDLEventCh() chan *statsutil.DDLEvent
+	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
 
 // StatsHandle is used to manage TiDB Statistics.
@@ -412,8 +518,14 @@ type StatsHandle interface {
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
 
+	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
+	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
+
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
+	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// StatsGC is used to do the GC job.
 	StatsGC

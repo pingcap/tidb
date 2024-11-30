@@ -17,7 +17,6 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -43,11 +42,11 @@ func (*rowNumber) ResetPartialResult(pr PartialResult) {
 	p.curIdx = 0
 }
 
-func (*rowNumber) UpdatePartialResult(_ sessionctx.Context, _ []chunk.Row, _ PartialResult) (memDelta int64, err error) {
+func (*rowNumber) UpdatePartialResult(_ AggFuncUpdateContext, _ []chunk.Row, _ PartialResult) (memDelta int64, err error) {
 	return 0, nil
 }
 
-func (rn *rowNumber) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+func (rn *rowNumber) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4RowNumber)(pr)
 	p.curIdx++
 	chk.AppendInt64(rn.ordinal, p.curIdx)
@@ -56,6 +55,6 @@ func (rn *rowNumber) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRes
 
 var _ SlidingWindowAggFunc = &rowNumber{}
 
-func (*rowNumber) Slide(_ sessionctx.Context, _ func(uint64) chunk.Row, _, _, _, _ uint64, _ PartialResult) error {
+func (*rowNumber) Slide(_ AggFuncUpdateContext, _ func(uint64) chunk.Row, _, _, _, _ uint64, _ PartialResult) error {
 	return nil
 }

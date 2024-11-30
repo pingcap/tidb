@@ -158,24 +158,10 @@ explain format='brief' select b from t use index(k) where b > 2 order by b limit
 id	estRows	task	access object	operator info
 Projection	1.00	root		executor__distsql.t.b
 └─SelectLock	1.00	root		for update 0
-  └─TopN	1.00	root		executor__distsql.t.b, offset:0, count:1
-    └─PartitionUnion	4.00	root		
-      ├─IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-      │ ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ │ └─IndexRangeScan	1.00	cop[tikv]	table:t, partition:p0, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
-      │ └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
-      ├─IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-      │ ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ │ └─IndexRangeScan	1.00	cop[tikv]	table:t, partition:p1, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
-      │ └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t, partition:p1	keep order:false, stats:pseudo
-      ├─IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-      │ ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-      │ │ └─IndexRangeScan	1.00	cop[tikv]	table:t, partition:p2, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
-      │ └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
-      └─IndexLookUp	1.00	root		limit embedded(offset:0, count:1)
-        ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-        │ └─IndexRangeScan	1.00	cop[tikv]	table:t, partition:p3, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
-        └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t, partition:p3	keep order:false, stats:pseudo
+  └─Limit	1.00	root		offset:0, count:1
+    └─IndexReader	1.00	root	partition:all	index:Limit
+      └─Limit	1.00	cop[tikv]		offset:0, count:1
+        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3
@@ -184,10 +170,10 @@ explain format='brief' select b from t use index(k) where b > 2 order by b limit
 id	estRows	task	access object	operator info
 Projection	1.00	root		executor__distsql.t.b
 └─SelectLock	1.00	root		for update 0
-  └─IndexLookUp	1.00	root	partition:all	limit embedded(offset:0, count:1)
-    ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:1
-    │ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
-    └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false
+  └─Limit	1.00	root		offset:0, count:1
+    └─IndexReader	1.00	root	partition:all	index:Limit
+      └─Limit	1.00	cop[tikv]		offset:0, count:1
+        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3

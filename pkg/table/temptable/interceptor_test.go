@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -265,13 +265,13 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		AddTable(model.TempTableGlobal, 3).
 		AddTable(model.TempTableLocal, 5)
 
-	normalTb, ok := is.TableByID(1)
+	normalTb, ok := is.TableByID(context.Background(), 1)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableNone, normalTb.Meta().TempTableType)
-	globalTb, ok := is.TableByID(3)
+	globalTb, ok := is.TableByID(context.Background(), 3)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableGlobal, globalTb.Meta().TempTableType)
-	localTb, ok := is.TableByID(5)
+	localTb, ok := is.TableByID(context.Background(), 5)
 	require.True(t, ok)
 	require.Equal(t, model.TempTableLocal, localTb.Meta().TempTableType)
 
@@ -296,7 +296,7 @@ func TestGetSessionTemporaryTableKey(t *testing.T) {
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
 		require.Equal(t, "Get", invokes[0].Method, i)
-		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
 
 		// test for nil session
@@ -441,7 +441,7 @@ func TestInterceptorOnGet(t *testing.T) {
 			invokes := snap.GetInvokes()
 			require.Equal(t, 1, len(invokes), i)
 			require.Equal(t, "Get", invokes[0].Method, i)
-			require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+			require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 			snap.ResetInvokes()
 		}
 	}
@@ -483,7 +483,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		invokes := retriever.GetInvokes()
 		require.Equal(t, 1, len(invokes), i)
 		require.Equal(t, "Get", invokes[0].Method, i)
-		require.Equal(t, []interface{}{ctx, c.Key}, invokes[0].Args)
+		require.Equal(t, []any{ctx, c.Key}, invokes[0].Args)
 		retriever.ResetInvokes()
 
 		val, err = emptyRetrieverInterceptor.OnGet(ctx, snap, c.Key)
@@ -1283,12 +1283,12 @@ func TestIterTable(t *testing.T) {
 		}
 		require.Equal(t, c.result, result, i)
 
-		tbl, ok := is.TableByID(c.tblID)
+		tbl, ok := is.TableByID(context.Background(), c.tblID)
 		if !ok || tbl.Meta().TempTableType == model.TempTableNone {
 			require.Equal(t, 0, len(retriever.GetInvokes()), i)
 			require.Equal(t, 1, len(snap.GetInvokes()), i)
 			require.Equal(t, "Iter", snap.GetInvokes()[0].Method)
-			require.Equal(t, []interface{}{c.args[0], c.args[1]}, snap.GetInvokes()[0].Args, i)
+			require.Equal(t, []any{c.args[0], c.args[1]}, snap.GetInvokes()[0].Args, i)
 		}
 
 		if ok && tbl.Meta().TempTableType == model.TempTableGlobal {
@@ -1303,7 +1303,7 @@ func TestIterTable(t *testing.T) {
 			} else {
 				require.Equal(t, 1, len(retriever.GetInvokes()), i)
 				require.Equal(t, "Iter", retriever.GetInvokes()[0].Method)
-				require.Equal(t, []interface{}{c.args[0], c.args[1]}, retriever.GetInvokes()[0].Args, i)
+				require.Equal(t, []any{c.args[0], c.args[1]}, retriever.GetInvokes()[0].Args, i)
 			}
 		}
 

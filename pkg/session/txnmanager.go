@@ -208,9 +208,7 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	var sql string
 	if node != nil {
 		sql = node.OriginalText()
-		if m.sctx.GetSessionVars().EnableRedactLog {
-			sql = parser.Normalize(sql)
-		}
+		sql = parser.Normalize(sql, m.sctx.GetSessionVars().EnableRedactLog)
 	}
 	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
@@ -307,6 +305,14 @@ func (m *txnManager) OnLocalTemporaryTableCreated() {
 }
 
 func (m *txnManager) AdviseWarmup() error {
+	if m.sctx.GetSessionVars().BulkDMLEnabled {
+		// We don't want to validate the feasibility of pipelined DML here.
+		// We'd like to check it later after optimization so that optimizer info can be used.
+		// And it does not make much sense to save such a little time for pipelined-dml as it's
+		// for bulk processing.
+		return nil
+	}
+
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
 	}
@@ -314,7 +320,7 @@ func (m *txnManager) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+func (m *txnManager) AdviseOptimizeWithPlan(plan any) error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}
@@ -327,6 +333,7 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	}
 
 	if r.StaleReadTS > 0 {
+		m.sctx.GetSessionVars().TxnCtx.StaleReadTs = r.StaleReadTS
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
@@ -366,4 +373,9 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
+}
+
+// SetOptionsBeforeCommit sets options before commit.
+func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
+	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
 }

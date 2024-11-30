@@ -180,5 +180,11 @@
       "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
       "explain format = 'brief' select /*+ use_index(t)*/ * from t"
     ]
+  },
+  {
+    "name": "TestHints",
+    "cases": [
+      "select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3"
+    ]
   }
 ]

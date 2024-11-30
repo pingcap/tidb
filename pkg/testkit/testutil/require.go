@@ -27,14 +27,14 @@ import (
 )
 
 // DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
-func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...interface{}) {
+func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...any) {
 	res, err := actual.Compare(types.DefaultStmtNoWarningContext, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)
 }
 
 // HandleEqual verifies that the actual handle is equal to the expected handle.
-func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...interface{}) {
+func HandleEqual(t testing.TB, expected, actual kv.Handle, msgAndArgs ...any) {
 	require.Equal(t, expected.IsInt(), actual.IsInt(), msgAndArgs)
 	require.Equal(t, expected.String(), actual.String(), msgAndArgs)
 }

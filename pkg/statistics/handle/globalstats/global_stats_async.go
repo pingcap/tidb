@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -145,7 +145,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
-		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(
+			util.StatsCtx,
+			sctx,
+			partitionID,
+		)
 		if err != nil {
 			return err
 		}
@@ -515,17 +519,18 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// Merge histogram.
-			a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
+			globalHg := &(a.globalStats.Hg[item.idx])
+			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 			if err != nil {
 				return err
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range a.globalStats.Hg[item.idx].Buckets {
-				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
+			for j := range (*globalHg).Buckets {
+				(*globalHg).Buckets[j].NDV = 0
 			}
-			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
+			(*globalHg).NDV = a.globalStatsNDV[item.idx]
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}

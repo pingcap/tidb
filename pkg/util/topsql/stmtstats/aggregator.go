@@ -77,7 +77,7 @@ func (m *aggregator) run() {
 // If StatementStats has been closed, collect will remove it from the map.
 func (m *aggregator) aggregate() {
 	total := StatementStatsMap{}
-	m.statsSet.Range(func(statsR, _ interface{}) bool {
+	m.statsSet.Range(func(statsR, _ any) bool {
 		stats := statsR.(*StatementStats)
 		if stats.Finished() {
 			m.unregister(stats)
@@ -87,7 +87,7 @@ func (m *aggregator) aggregate() {
 	})
 	// If TopSQL is not enabled, just drop them.
 	if len(total) > 0 && state.TopSQLEnabled() {
-		m.collectors.Range(func(c, _ interface{}) bool {
+		m.collectors.Range(func(c, _ any) bool {
 			c.(Collector).CollectStmtStatsMap(total)
 			return true
 		})

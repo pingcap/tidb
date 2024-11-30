@@ -172,7 +172,7 @@ create table t (a int, b int, c int);
 alter table t add index t(a), add index t(b);
 Error 8200 (HY000): Unsupported operate same index 't'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
 create table t (a int, b int, c int);
 alter table t add index t(a), drop column a;
@@ -180,14 +180,14 @@ Error 8200 (HY000): Unsupported operate same column 'a'
 alter table t add index t(a, b), drop column a;
 Error 8200 (HY000): Unsupported operate same column 'a'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 drop table if exists t;
 create table t (a int, b int, c int);
 insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 1);
 alter table t add unique index i1(a), add unique index i2(a, b), add unique index i3(c);
 Error 1062 (23000): Duplicate entry '1' for key 't.i3'
 show index from t;
-Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered	Global
 alter table t add index i1(a), add index i2(a, b), add index i3(c);
 drop table if exists t;
 create table t (a int, b int, c int, index t(a));
@@ -319,7 +319,7 @@ drop table if exists t;
 create table t(a bigint null default '1761233443433596323', index t(a));
 insert into t set a = '-7184819032643664798';
 alter table t change column a b datetime null default '8972-12-24 10:56:03', rename index t to t1;
-Error 1292 (22007): Incorrect time value: '-7184819032643664798'
+Error 1292 (22007): Incorrect datetime value: '-7184819032643664798'
 drop table if exists t;
 create table t (a int, b double, index i(a, b));
 alter table t rename index i to i1, change column b c int;
@@ -373,12 +373,14 @@ select * from t use index (i3);
 c	d	e	f
 3	4	5	6
 drop table if exists t;
-create table t (a int auto_increment primary key, b int);
-alter table t modify column b tinyint, auto_increment = 100;
-insert into t (b) values (1);
+create table t (a int auto_increment primary key, b int) auto_id_cache = 100;
+insert into t(b) values(1);
+alter table t modify column b tinyint, auto_increment = 200;
+insert into t (b) values (2);
 select * from t;
 a	b
-100	1
+1	1
+200	2
 drop table if exists t;
 create table t (a int auto_increment primary key, b int);
 alter table t auto_increment = 110, auto_increment = 90;
@@ -430,7 +432,27 @@ alter table t add index i(a), add primary key (a);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) NOT NULL,
+  `a` int NOT NULL,
   KEY `i` (`a`),
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists child, parent;
+create table parent (ref int, key(ref));
+create table child (ref int, constraint fk1 foreign key (ref) references parent(ref), constraint fk2 foreign key (ref) references parent(ref));
+alter table child drop foreign key fk1, drop foreign key fk3;
+Error 1091 (42000): Can't DROP 'fk3'; check that column/key exists
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `ref` int DEFAULT NULL,
+  KEY `fk1` (`ref`),
+  CONSTRAINT `fk1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`),
+  CONSTRAINT `fk2` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table child drop foreign key fk1, drop foreign key fk2;
+show create table child;
+Table	Create Table
+child	CREATE TABLE `child` (
+  `ref` int DEFAULT NULL,
+  KEY `fk1` (`ref`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin

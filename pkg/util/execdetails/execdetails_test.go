@@ -15,7 +15,6 @@
 package execdetails
 
 import (
-	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -90,7 +89,41 @@ func TestString(t *testing.T) {
 						},
 					},
 				},
-				CommitPrimary: util.ReqDetailInfo{},
+				CommitPrimary: util.ReqDetailInfo{
+					ReqTotalTime: 2 * time.Second,
+					Region:       2000,
+					StoreAddr:    "tikv-2:20160",
+					ExecDetails: util.TiKVExecDetails{
+						TimeDetail: &util.TimeDetail{
+							TotalRPCWallTime: 1000 * time.Millisecond,
+						},
+						ScanDetail: &util.ScanDetail{
+							ProcessedKeys:             20,
+							TotalKeys:                 200,
+							RocksdbDeleteSkippedCount: 2,
+							RocksdbKeySkippedCount:    2,
+							RocksdbBlockCacheHitCount: 2,
+							RocksdbBlockReadCount:     2,
+							RocksdbBlockReadByte:      200,
+							RocksdbBlockReadDuration:  40 * time.Millisecond,
+						},
+						WriteDetail: &util.WriteDetail{
+							StoreBatchWaitDuration:        110 * time.Microsecond,
+							ProposeSendWaitDuration:       120 * time.Microsecond,
+							PersistLogDuration:            130 * time.Microsecond,
+							RaftDbWriteLeaderWaitDuration: 140 * time.Microsecond,
+							RaftDbSyncLogDuration:         145 * time.Microsecond,
+							RaftDbWriteMemtableDuration:   150 * time.Microsecond,
+							CommitLogDuration:             160 * time.Microsecond,
+							ApplyBatchWaitDuration:        170 * time.Microsecond,
+							ApplyLogDuration:              180 * time.Microsecond,
+							ApplyMutexLockDuration:        190 * time.Microsecond,
+							ApplyWriteLeaderWaitDuration:  200 * time.Microsecond,
+							ApplyWriteWalDuration:         201 * time.Microsecond,
+							ApplyWriteMemtableDuration:    202 * time.Microsecond,
+						},
+					},
+				},
 			},
 			WriteKeys:         1,
 			WriteSize:         1,
@@ -117,13 +150,22 @@ func TestString(t *testing.T) {
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
-		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
-		"store: tikv-1:20160, tikv_wall_time: 500ms, scan_detail: {total_process_keys: 10, total_keys: 100, " +
+		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
+		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
+		"store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, scan_detail: {total_process_keys: 10, total_keys: 100, " +
 		"rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: {cache_hit_count: 1, read_count: 1, " +
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, " +
-		"write_wal: 101µs, write_memtable: 102µs}}} Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
+		"write_wal: 101µs, write_memtable: 102µs}}} " +
+		"Commit_primary_rpc_detail: {total:2.000s, region_id: 2000, " +
+		"store: tikv-2:20160, time_detail: {tikv_wall_time: 1s}, scan_detail: {total_process_keys: 20, total_keys: 200, " +
+		"rocksdb: {delete_skipped_count: 2, key_skipped_count: 2, block: {cache_hit_count: 2, read_count: 2, " +
+		"read_byte: 200 Bytes, read_time: 40ms}}}, write_detail: {store_batch_wait: 110µs, propose_send_wait: 120µs, " +
+		"persist_log: {total: 130µs, write_leader_wait: 140µs, sync_log: 145µs, write_memtable: 150µs}, " +
+		"commit_log: 160µs, apply_batch_wait: 170µs, apply: {total:180µs, mutex_lock: 190µs, write_leader_wait: 200µs, " +
+		"write_wal: 201µs, write_memtable: 202µs}}} " +
+		"Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
 	require.Equal(t, expected, detail.String())
@@ -133,27 +175,29 @@ func TestString(t *testing.T) {
 
 func mockExecutorExecutionSummary(TimeProcessedNs, NumProducedRows, NumIterations uint64) *tipb.ExecutorExecutionSummary {
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, XXX_unrecognized: nil}
+		NumIterations: &NumIterations}
 }
 
-func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, totalDmfileScannedPacks, totalDmfileScannedRows, totalDmfileSkippedPacks, totalDmfileSkippedRows, totalDmfileRoughSetIndexCheckTimeMs, totalDmfileReadTimeMs, totalCreateSnapshotTimeMs, totalLocalRegionNum, totalRemoteRegionNum, totalLearnerReadMs, totalDisaggReadCacheHitSize, totalDisaggReadCacheMissSize uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
+func mockExecutorExecutionSummaryForTiFlash(TimeProcessedNs, NumProducedRows, NumIterations, Concurrency, dmfileScannedRows, dmfileSkippedRows, totalDmfileRsCheckMs, totalDmfileReadTimeMs, totalBuildSnapshotMs, localRegions, remoteRegions, totalLearnerReadMs, disaggReadCacheHitBytes, disaggReadCacheMissBytes, minTSOWaitTime, pipelineBreakerWaitTime, pipelineQueueTime uint64, ExecutorID string) *tipb.ExecutorExecutionSummary {
 	tiflashScanContext := tipb.TiFlashScanContext{
-		TotalDmfileScannedPacks:             &totalDmfileScannedPacks,
-		TotalDmfileSkippedPacks:             &totalDmfileSkippedPacks,
-		TotalDmfileScannedRows:              &totalDmfileScannedRows,
-		TotalDmfileSkippedRows:              &totalDmfileSkippedRows,
-		TotalDmfileRoughSetIndexCheckTimeMs: &totalDmfileRoughSetIndexCheckTimeMs,
-		TotalDmfileReadTimeMs:               &totalDmfileReadTimeMs,
-		TotalCreateSnapshotTimeMs:           &totalCreateSnapshotTimeMs,
-		TotalLocalRegionNum:                 &totalLocalRegionNum,
-		TotalRemoteRegionNum:                &totalRemoteRegionNum,
-		TotalLearnerReadMs:                  &totalLearnerReadMs,
-		TotalDisaggReadCacheHitSize:         &totalDisaggReadCacheHitSize,
-		TotalDisaggReadCacheMissSize:        &totalDisaggReadCacheMissSize,
+		DmfileDataScannedRows:    &dmfileScannedRows,
+		DmfileDataSkippedRows:    &dmfileSkippedRows,
+		TotalDmfileRsCheckMs:     &totalDmfileRsCheckMs,
+		TotalDmfileReadMs:        &totalDmfileReadTimeMs,
+		TotalBuildSnapshotMs:     &totalBuildSnapshotMs,
+		LocalRegions:             &localRegions,
+		RemoteRegions:            &remoteRegions,
+		TotalLearnerReadMs:       &totalLearnerReadMs,
+		DisaggReadCacheHitBytes:  &disaggReadCacheHitBytes,
+		DisaggReadCacheMissBytes: &disaggReadCacheMissBytes,
 	}
-	fmt.Println("tiflashScanContext is ", tiflashScanContext.String())
+	tiflashWaitSummary := tipb.TiFlashWaitSummary{
+		MinTSOWaitNs:          &minTSOWaitTime,
+		PipelineQueueWaitNs:   &pipelineBreakerWaitTime,
+		PipelineBreakerWaitNs: &pipelineQueueTime,
+	}
 	return &tipb.ExecutorExecutionSummary{TimeProcessedNs: &TimeProcessedNs, NumProducedRows: &NumProducedRows,
-		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, XXX_unrecognized: nil}
+		NumIterations: &NumIterations, Concurrency: &Concurrency, ExecutorId: &ExecutorID, DetailInfo: &tipb.ExecutorExecutionSummary_TiflashScanContext{TiflashScanContext: &tiflashScanContext}, TiflashWaitSummary: &tiflashWaitSummary}
 }
 
 func TestCopRuntimeStats(t *testing.T) {
@@ -215,10 +259,10 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 1, 8192, 0, 0, 15, 200, 40, 10, 4, 1, 100, 50, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 2, 12000, 1, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 1, 8192, 10, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 8192, 0, 15, 200, 40, 10, 4, 1, 100, 50, 30000000, 20000000, 10000000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 20000000, 10000000, 5000000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 12000, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 8192, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
@@ -232,20 +276,32 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
-	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 202ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_read_time: 1ms}", cop.String())
+	require.Equal(t, "tiflash_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2, threads:2}, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, lm_skip_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", cop.String())
 
 	copStats := cop.stats["8.8.8.8"]
 	require.NotNil(t, copStats)
 
 	copStats.SetRowNum(10)
 	copStats.Record(time.Second, 10)
-	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_scan:{dtfile:{total_scanned_packs:1, total_skipped_packs:0, total_scanned_rows:8192, total_skipped_rows:0, total_rs_index_check_time: 15ms, total_read_time: 200ms, total_disagg_read_cache_hit_size: 100, total_disagg_read_cache_miss_size: 50}, total_create_snapshot_time: 40ms, total_local_region_num: 10, total_remote_region_num: 4, total_learner_read_time: 1ms}", copStats.String())
-	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{dtfile:{total_scanned_packs:3, total_skipped_packs:11, total_scanned_rows:20192, total_skipped_rows:86000, total_rs_index_check_time: 100ms, total_read_time: 3000ms, total_disagg_read_cache_hit_size: 20, total_disagg_read_cache_miss_size: 0}, total_create_snapshot_time: 50ms, total_local_region_num: 6, total_remote_region_num: 2, total_learner_read_time: 0ms}"
+	require.Equal(t, "time:1s, loops:2, threads:1, tiflash_wait: {minTSO_wait: 30ms, pipeline_breaker_wait: 10ms, pipeline_queue_wait: 20ms}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, lm_skip_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:200ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}", copStats.String())
+	expected := "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, lm_skip_rows:0, local_regions:6, remote_regions:2, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:50ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:20192, data_skipped_rows:86000, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:100ms, tot_read:3000ms, disagg_cache_hit_bytes: 20, disagg_cache_miss_bytes: 0}}"
 	require.Equal(t, expected, stats.GetOrCreateCopStats(aggID, "tiflash").String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
 	require.NotNil(t, rootStats)
 	require.True(t, stats.ExistsRootStats(tableReaderID))
+}
+
+func TestVectorSearchStats(t *testing.T) {
+	stats := NewRuntimeStatsColl(nil)
+
+	var v uint64 = 1
+
+	execSummary := mockExecutorExecutionSummaryForTiFlash(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "")
+	execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext).TiflashScanContext.TotalVectorIdxLoadFromS3 = &v
+	stats.RecordOneCopTask(1, "tiflash", "8.8.8.8", execSummary)
+	s := stats.GetOrCreateCopStats(1, "tiflash")
+	require.Equal(t, "tiflash_task:{time:0s, loops:0, threads:0}, vector_idx:{load:{total:0ms,from_s3:1,from_disk:0,from_cache:0},search:{total:0ms,visited_nodes:0,discarded_nodes:0},read:{vec_total:0ms,others_total:0ms}}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, lm_skip_rows:0, local_regions:0, remote_regions:0, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:0ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:0, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:0ms, tot_read:0ms}}", s.String())
 }
 
 func TestRuntimeStatsWithCommit(t *testing.T) {
@@ -313,7 +369,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, " +
-		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, tikv_wall_time: 500ms, " +
+		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, " +
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
@@ -384,7 +440,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		LockKeys: lockDetail,
 	}
 	expect = "lock_keys: {time:1s, region:2, keys:10, resolve_lock:2s, backoff: {time: 3s, type: [backoff4 backoff5]}, " +
-		"slowest_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, tikv_wall_time: 500ms, scan_detail: " +
+		"slowest_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, scan_detail: " +
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
@@ -398,8 +454,10 @@ func TestRootRuntimeStats(t *testing.T) {
 	stmtStats := NewRuntimeStatsColl(nil)
 	basic1 := stmtStats.GetBasicRuntimeStats(pid)
 	basic2 := stmtStats.GetBasicRuntimeStats(pid)
+	basic1.RecordOpen(time.Millisecond * 10)
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
+	basic2.RecordClose(time.Millisecond * 100)
 	concurrency := &RuntimeStatsWithConcurrencyInfo{}
 	concurrency.SetConcurrencyInfo(NewConcurrencyInfo("worker", 15))
 	commitDetail := &util.CommitDetails{
@@ -416,7 +474,7 @@ func TestRootRuntimeStats(t *testing.T) {
 		Commit: commitDetail,
 	})
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:3s, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	expect := "time:3.11s, open:10ms, close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 }
 
@@ -480,15 +538,27 @@ func TestCopRuntimeStats2(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
+	timeDetail := &util.TimeDetail{
+		ProcessTime:      10 * time.Millisecond,
+		SuspendTime:      20 * time.Millisecond,
+		WaitTime:         30 * time.Millisecond,
+		KvReadWallTime:   5 * time.Millisecond,
+		TotalRPCWallTime: 50 * time.Millisecond,
+	}
 	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-	for i := 0; i < 1005; i++ {
+	for range 1005 {
 		stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
 		stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+		stats.RecordTimeDetail(tableScanID, "tikv", timeDetail)
 	}
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
 	expected := "tikv_task:{proc max:0s, min:0s, avg: 2ns, p80:2ns, p95:2ns, iters:2010, tasks:1005}, " +
-		"scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, block: {cache_hit_count: 10060, read_count: 20120, read_byte: 98.2 KB}}}"
+		"scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, " +
+		"rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, " +
+		"block: {cache_hit_count: 10060, read_count: 20120, read_byte: 98.2 KB}}}, " +
+		"time_detail: {total_process_time: 10.1s, total_suspend_time: 20.1s, total_wait_time: 30.2s, " +
+		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
 }

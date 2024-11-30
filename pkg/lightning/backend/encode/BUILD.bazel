@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "encode",
+    srcs = ["encode.go"],
+    importpath = "github.com/pingcap/tidb/pkg/lightning/backend/encode",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/lightning/log",
+        "//pkg/lightning/verification",
+        "//pkg/parser/mysql",
+        "//pkg/table",
+        "//pkg/types",
+    ],
+)

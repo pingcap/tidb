@@ -17,18 +17,22 @@ package variable
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
@@ -93,6 +97,11 @@ func TestCoprocessorOOMAction(t *testing.T) {
 			sql:  "select id from t5",
 		},
 	}
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/testRateLimitActionMockConsumeAndAssert", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/testRateLimitActionMockConsumeAndAssert"))
+	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/testRateLimitActionMockConsumeAndAssert", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/testRateLimitActionMockConsumeAndAssert"))
@@ -120,6 +129,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
@@ -171,38 +182,13 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		se.Close()
 	}
-}
-
-func TestStatementCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table stmt_count_limit (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	_, err := tk.Exec("insert into stmt_count_limit values (3)")
-	require.Error(t, err)
-
-	// begin is counted into history but this one is not.
-	tk.MustExec("SET SESSION autocommit = false")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
-	_, err = tk.Exec("insert into stmt_count_limit values (4)")
-	require.Error(t, err)
 }
 
 func TestCorrectScopeError(t *testing.T) {
@@ -318,6 +304,7 @@ func TestMaxExecutionTime(t *testing.T) {
 	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(500)")
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.HasMaxExecutionTime)
 	require.Equal(t, uint64(500), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
+	require.Equal(t, uint64(500), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("0"))
@@ -328,6 +315,9 @@ func TestMaxExecutionTime(t *testing.T) {
 
 	tk.MustExec("set @@MAX_EXECUTION_TIME = 150;")
 	tk.MustQuery("select * FROM MaxExecTime;")
+	require.Equal(t, uint64(150), tk.Session().GetSessionVars().GetMaxExecutionTime())
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(1000) */ * FROM MaxExecTime;")
+	require.Equal(t, uint64(1000), tk.Session().GetSessionVars().GetMaxExecutionTime())
 
 	tk.MustQuery("select @@global.MAX_EXECUTION_TIME;").Check(testkit.Rows("300"))
 	tk.MustQuery("select @@MAX_EXECUTION_TIME;").Check(testkit.Rows("150"))
@@ -361,4 +351,132 @@ func TestIsolationRead(t *testing.T) {
 	_, hasTiKV := engines[kv.TiKV]
 	require.True(t, hasTiFlash)
 	require.False(t, hasTiKV)
+}
+
+func TestLastQueryInfo(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	checkMatch := func(actual []string, expected []any) bool {
+		return strings.Contains(actual[0], expected[0].(string))
+	}
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
+	tk.MustExec("select a from t where a = 1")
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
+}
+
+type mockZapCore struct {
+	zapcore.Core
+	fields []map[string]zapcore.Field
+}
+
+func (mzc *mockZapCore) Enabled(zapcore.Level) bool { return true }
+
+func (mzc *mockZapCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(ent, mzc)
+}
+
+func (mzc *mockZapCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	if ent.Message == "GENERAL_LOG" {
+		m := make(map[string]zapcore.Field)
+		for _, field := range fields {
+			m[field.Key] = field
+		}
+		mzc.fields = append(mzc.fields, m)
+	}
+	return nil
+}
+
+func TestMockZapCore(t *testing.T) {
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	zl := zap.New(&mzc)
+	zl.Info("First", zap.String("name", "foo")) // ignored
+	zl.Info("GENERAL_LOG")                      // no fields
+	sql := zap.String("sql", "select 1111")     // 1 field
+	zl.Info("GENERAL_LOG", sql)
+	require.Len(t, mzc.fields, 2)
+	require.Len(t, mzc.fields[0], 0)
+	require.Len(t, mzc.fields[1], 1)
+	require.True(t, sql.Equals(mzc.fields[1]["sql"]))
+}
+
+func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
+	// mock logutil.GeneralLogger
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	// enable general log
+	oldVar := variable.ProcessGeneralLog.Swap(true)
+	defer variable.ProcessGeneralLog.Store(oldVar)
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY NOT NULL)")
+	sqlField := zap.String("sql", "insert t values (100)")
+	tk.MustExec(sqlField.String)
+
+	getTxnStartTS := func() (int64, bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && sql.Equals(sqlField) {
+				return fields["txnStartTS"].Integer, true
+			}
+		}
+		return 0, false
+	}
+
+	ts, ok := getTxnStartTS()
+	require.True(t, ts > 0)
+	require.True(t, ok)
+}
+
+func TestGeneralLogBinaryText(t *testing.T) {
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	store := testkit.CreateMockStore(t)
+
+	b := []byte{0x41, 0xf6, 0xec, 0x9a}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_general_log = 1")
+	tk.MustExec("select * /*+ no_quoted */ from mysql.user")
+	sqlBinary := fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b)
+	tk.MustExec(sqlBinary)
+
+	getSQLFields := func(s string) (sql zapcore.Field, originText zapcore.Field, ok bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && strings.Contains(sql.String, s) {
+				return sql, fields["originText"], true
+			}
+		}
+		return zapcore.Field{}, zapcore.Field{}, false
+	}
+
+	sql, originText, ok := getSQLFields("no_quoted")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.Empty(t, originText.String)
+
+	sql, originText, ok = getSQLFields("yes_quote")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.NotEmpty(t, originText.String)
+	ot, err := strconv.Unquote(originText.String)
+	require.NoError(t, err)
+	require.Equal(t, sqlBinary, ot)
 }

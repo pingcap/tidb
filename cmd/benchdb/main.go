@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -56,9 +58,9 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register("tikv", driver.TiKVDriver{})
+	err = store.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -96,11 +98,16 @@ func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
+	// maybe close below components, but it's for test anyway.
+	ctx := context.Background()
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	err = ddl.StartOwnerManager(ctx, store)
+	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.ExecuteInternal(context.Background(), "use test")
+	_, err = se.ExecuteInternal(ctx, "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -109,7 +116,7 @@ func newBenchDB() *benchDB {
 	}
 }
 
-func (ut *benchDB) mustExec(sql string, args ...interface{}) {
+func (ut *benchDB) mustExec(sql string, args ...any) {
 	// executeInternal only return one resultSet for this.
 	rs, err := ut.session.ExecuteInternal(context.Background(), sql, args...)
 	defer func() {
@@ -201,8 +208,8 @@ func (ut *benchDB) truncateTable() {
 func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 	var (
 		sum, first, last time.Duration
-		min              = time.Minute
-		max              = time.Nanosecond
+		minv             = time.Minute
+		maxv             = time.Nanosecond
 	)
 	cLogf("%s started", name)
 	for i := 0; i < count; i++ {
@@ -213,16 +220,16 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 			first = dur
 		}
 		last = dur
-		if dur < min {
-			min = dur
+		if dur < minv {
+			minv = dur
 		}
-		if dur > max {
-			max = dur
+		if dur > maxv {
+			maxv = dur
 		}
 		sum += dur
 	}
 	cLogf("%s done, avg %s, count %d, sum %s, first %s, last %s, max %s, min %s\n\n",
-		name, sum/time.Duration(count), count, sum, first, last, max, min)
+		name, sum/time.Duration(count), count, sum, first, last, maxv, minv)
 }
 
 // #nosec G404
@@ -294,12 +301,12 @@ func (ut *benchDB) query(spec string) {
 	})
 }
 
-func cLogf(format string, args ...interface{}) {
+func cLogf(format string, args ...any) {
 	str := fmt.Sprintf(format, args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }
 
-func cLog(args ...interface{}) {
+func cLog(args ...any) {
 	str := fmt.Sprint(args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }

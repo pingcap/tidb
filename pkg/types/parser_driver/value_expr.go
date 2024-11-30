@@ -44,7 +44,7 @@ import (
 func init() {
 	ast.NewValueExpr = newValueExpr
 	ast.NewParamMarkerExpr = newParamMarkerExpr
-	ast.NewDecimal = func(str string) (interface{}, error) {
+	ast.NewDecimal = func(str string) (any, error) {
 		dec := new(types.MyDecimal)
 		err := dec.FromString(hack.Slice(str))
 		if err == types.ErrTruncated {
@@ -52,11 +52,11 @@ func init() {
 		}
 		return dec, err
 	}
-	ast.NewHexLiteral = func(str string) (interface{}, error) {
+	ast.NewHexLiteral = func(str string) (any, error) {
 		h, err := types.NewHexLiteral(str)
 		return h, err
 	}
-	ast.NewBitLiteral = func(str string) (interface{}, error) {
+	ast.NewBitLiteral = func(str string) (any, error) {
 		b, err := types.NewBitLiteral(str)
 		return b, err
 	}
@@ -75,7 +75,7 @@ type ValueExpr struct {
 }
 
 // SetValue implements interface of ast.ValueExpr.
-func (n *ValueExpr) SetValue(res interface{}) {
+func (n *ValueExpr) SetValue(res any) {
 	n.Datum.SetValueWithDefaultCollation(res)
 }
 
@@ -128,7 +128,8 @@ func (n *ValueExpr) Restore(ctx *format.RestoreCtx) error {
 	case types.KindMysqlEnum,
 		types.KindMysqlBit, types.KindMysqlSet,
 		types.KindInterface, types.KindMinNotNull, types.KindMaxValue,
-		types.KindRaw, types.KindMysqlJSON:
+		types.KindRaw, types.KindMysqlJSON,
+		types.KindVectorFloat32:
 		// TODO implement Restore function
 		return errors.New("Not implemented")
 	default:
@@ -201,7 +202,7 @@ func UnwrapFromSingleQuotes(inStr string) string {
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
-func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
+func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
@@ -240,6 +241,14 @@ type ParamMarkerExpr struct {
 	Offset    int
 	Order     int
 	InExecute bool
+
+	// For "select ? as c from t group by c", the optimizer replaces the `c` in the by-clause to `group by ?`,
+	// but this conversion conflicts with the original semantic. The original `group by c` means grouping by the column `c`,
+	// while the converted `group by ?` means grouping by the `?-th` column in the select-list, for example, `group by 3` means
+	// grouping the result by the 3rd column.
+	// Use this flag to let the optimizer know whether `group by ?` is converted from this case and if it is, use this
+	// marker as normal value instead of column index in the by-clause.
+	UseAsValueInGbyByClause bool
 }
 
 // Restore implements Node interface.

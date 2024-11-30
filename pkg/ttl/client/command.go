@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -86,7 +87,7 @@ type TriggerNewTTLJobResponse struct {
 // CommandClient is an interface used to send and response command of TTL jobs
 type CommandClient interface {
 	// Command sends a command and waits for response. The first value of the return is the requestID, it always not empty.
-	Command(ctx context.Context, cmdType string, obj interface{}, response interface{}) (string, error)
+	Command(ctx context.Context, cmdType string, obj any, response any) (string, error)
 	// WatchCommand watches the commands that are sent
 	WatchCommand(ctx context.Context) <-chan *CmdRequest
 	// TakeCommand takes a command to ensure only one can handle the command.
@@ -96,7 +97,7 @@ type CommandClient interface {
 	TakeCommand(ctx context.Context, reqID string) (bool, error)
 	// ResponseCommand responses the result of the command. `TakeCommand` must be called first before `ResponseCommand`
 	// obj is the response object to the sender, if obj is an error, the sender will receive an error too.
-	ResponseCommand(ctx context.Context, reqID string, obj interface{}) error
+	ResponseCommand(ctx context.Context, reqID string, obj any) error
 }
 
 // TriggerNewTTLJob triggers a new TTL job
@@ -126,7 +127,7 @@ func NewCommandClient(etcdCli *clientv3.Client) CommandClient {
 	}
 }
 
-func (c *etcdClient) sendCmd(ctx context.Context, cmdType string, obj interface{}) (string, error) {
+func (c *etcdClient) sendCmd(ctx context.Context, cmdType string, obj any) (string, error) {
 	reqID := uuid.New().String()
 	data, err := json.Marshal(obj)
 	if err != nil {
@@ -155,7 +156,7 @@ func (c *etcdClient) sendCmd(ctx context.Context, cmdType string, obj interface{
 	return reqID, nil
 }
 
-func (c *etcdClient) waitCmdResponse(ctx context.Context, reqID string, obj interface{}) error {
+func (c *etcdClient) waitCmdResponse(ctx context.Context, reqID string, obj any) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*time.Duration(ttlCmdKeyLeaseSeconds))
 	defer cancel()
 
@@ -211,7 +212,7 @@ loop:
 }
 
 // Command implements the CommandClient
-func (c *etcdClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (
+func (c *etcdClient) Command(ctx context.Context, cmdType string, request any, response any) (
 	string, error) {
 	requestID, err := c.sendCmd(ctx, cmdType, request)
 	if err != nil {
@@ -230,7 +231,7 @@ func (c *etcdClient) TakeCommand(ctx context.Context, reqID string) (bool, error
 }
 
 // ResponseCommand implements the CommandClient
-func (c *etcdClient) ResponseCommand(ctx context.Context, reqID string, obj interface{}) error {
+func (c *etcdClient) ResponseCommand(ctx context.Context, reqID string, obj any) error {
 	resp := &cmdResponse{
 		RequestID: reqID,
 	}
@@ -301,7 +302,7 @@ func (c *etcdClient) WatchCommand(ctx context.Context) <-chan *CmdRequest {
 // mockClient is a mock implementation for CommandCli and NotificationCli
 type mockClient struct {
 	sync.Mutex
-	store                map[string]interface{}
+	store                map[string]any
 	commandWatchers      []chan *CmdRequest
 	notificationWatchers map[string][]chan clientv3.WatchResponse
 }
@@ -309,39 +310,29 @@ type mockClient struct {
 // NewMockCommandClient creates a mock command client
 func NewMockCommandClient() CommandClient {
 	return &mockClient{
-		store:                make(map[string]interface{}),
+		store:                make(map[string]any),
 		commandWatchers:      make([]chan *CmdRequest, 0, 1),
 		notificationWatchers: make(map[string][]chan clientv3.WatchResponse),
 	}
 }
 
 // Command implements the CommandClient
-func (c *mockClient) Command(ctx context.Context, cmdType string, request interface{}, response interface{}) (
+func (c *mockClient) Command(ctx context.Context, cmdType string, request any, response any) (
 	string, error) {
 	ctx, cancel := context.WithTimeout(ctx, time.Second*time.Duration(ttlCmdKeyLeaseSeconds))
 	defer cancel()
 
-	reqID, err := c.sendCmd(ctx, cmdType, request)
+	reqID, respCh, err := c.sendCmd(ctx, cmdType, request)
 	if err != nil {
 		return reqID, err
 	}
 
-	responseKey := ttlCmdKeyResponsePrefix + reqID
-	for ctx.Err() == nil {
-		time.Sleep(time.Second)
-		c.Lock()
-		val, ok := c.store[responseKey]
-		c.Unlock()
-
+	select {
+	case res, ok := <-respCh:
+		intest.Assert(ok, "response channel should not be closed")
 		if !ok {
-			continue
+			return "", errors.New("response channel is closed")
 		}
-
-		res, ok := val.(*cmdResponse)
-		if !ok {
-			return reqID, errors.New("response cannot be casted to *cmdResponse")
-		}
-
 		if res.ErrorMessage != "" {
 			return reqID, errors.New(res.ErrorMessage)
 		}
@@ -350,15 +341,16 @@ func (c *mockClient) Command(ctx context.Context, cmdType string, request interf
 			return reqID, err
 		}
 		return reqID, nil
+	case <-ctx.Done():
+		return reqID, ctx.Err()
 	}
-	return reqID, ctx.Err()
 }
 
-func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request interface{}) (string, error) {
+func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request any) (string, chan *cmdResponse, error) {
 	reqID := uuid.New().String()
 	data, err := json.Marshal(request)
 	if err != nil {
-		return reqID, err
+		return reqID, nil, err
 	}
 
 	req := &CmdRequest{
@@ -369,18 +361,22 @@ func (c *mockClient) sendCmd(ctx context.Context, cmdType string, request interf
 
 	c.Lock()
 	defer c.Unlock()
-	key := ttlCmdKeyRequestPrefix + reqID
-	c.store[key] = req
+	reqKey := ttlCmdKeyRequestPrefix + reqID
+	c.store[reqKey] = req
+	respKey := ttlCmdKeyResponsePrefix + reqID
+	respCh := make(chan *cmdResponse, 1)
+	c.store[respKey] = respCh
 	for _, ch := range c.commandWatchers {
 		select {
 		case <-ctx.Done():
-			return reqID, ctx.Err()
+			return reqID, nil, ctx.Err()
 		case ch <- req:
 		default:
-			return reqID, errors.New("watcher channel is blocked")
+			intest.Assert(false, "watcher channel should not be blocked")
+			return reqID, nil, errors.New("watcher channel is blocked")
 		}
 	}
-	return reqID, nil
+	return reqID, respCh, nil
 }
 
 // TakeCommand implements the CommandClient
@@ -396,7 +392,7 @@ func (c *mockClient) TakeCommand(_ context.Context, reqID string) (bool, error) 
 }
 
 // ResponseCommand implements the CommandClient
-func (c *mockClient) ResponseCommand(_ context.Context, reqID string, obj interface{}) error {
+func (c *mockClient) ResponseCommand(_ context.Context, reqID string, obj any) error {
 	c.Lock()
 	defer c.Unlock()
 
@@ -414,7 +410,19 @@ func (c *mockClient) ResponseCommand(_ context.Context, reqID string, obj interf
 		resp.Data = jsonData
 	}
 
-	c.store[ttlCmdKeyResponsePrefix+reqID] = resp
+	respKey := ttlCmdKeyResponsePrefix + reqID
+	item, ok := c.store[respKey]
+	if !ok {
+		return errors.New("response key not found for: " + reqID)
+	}
+	delete(c.store, respKey)
+	respCh := item.(chan *cmdResponse)
+	select {
+	case item.(chan *cmdResponse) <- resp:
+		close(respCh)
+	default:
+		intest.Assert(false, "response channel should not be blocked")
+	}
 	return nil
 }
 

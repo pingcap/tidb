@@ -19,10 +19,11 @@ import (
 	"hash/crc32"
 	"math"
 	"reflect"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	data "github.com/pingcap/tidb/pkg/types"
@@ -39,16 +40,17 @@ var (
 
 // First byte in the encoded value which specifies the encoding type.
 const (
-	NilFlag          byte = 0
-	BytesFlag        byte = 1
-	CompactBytesFlag byte = 2
-	IntFlag          byte = 3
-	UintFlag         byte = 4
-	FloatFlag        byte = 5
-	DecimalFlag      byte = 6
-	VarintFlag       byte = 8
-	VaruintFlag      byte = 9
-	JSONFlag         byte = 10
+	NilFlag           byte = 0
+	BytesFlag         byte = 1
+	CompactBytesFlag  byte = 2
+	IntFlag           byte = 3
+	UintFlag          byte = 4
+	FloatFlag         byte = 5
+	DecimalFlag       byte = 6
+	VarintFlag        byte = 8
+	VaruintFlag       byte = 9
+	JSONFlag          byte = 10
+	VectorFloat32Flag byte = 20
 )
 
 func bytesToU32Slice(b []byte) []uint32 {
@@ -253,8 +255,8 @@ type ColData struct {
 }
 
 // Encode encodes the column datum into bytes for checksum. If buf provided, append encoded data to it.
-func (c ColData) Encode(buf []byte) ([]byte, error) {
-	return appendDatumForChecksum(buf, c.Datum, c.GetType())
+func (c ColData) Encode(loc *time.Location, buf []byte) ([]byte, error) {
+	return appendDatumForChecksum(loc, buf, c.Datum, c.GetType())
 }
 
 // RowData is a list of ColData for row checksum calculation.
@@ -276,13 +278,13 @@ func (r RowData) Less(i int, j int) bool { return r.Cols[i].ID < r.Cols[j].ID }
 func (r RowData) Swap(i int, j int) { r.Cols[i], r.Cols[j] = r.Cols[j], r.Cols[i] }
 
 // Encode encodes all columns into bytes (for test purpose).
-func (r *RowData) Encode() ([]byte, error) {
+func (r *RowData) Encode(loc *time.Location) ([]byte, error) {
 	var err error
 	if len(r.Data) > 0 {
 		r.Data = r.Data[:0]
 	}
 	for _, col := range r.Cols {
-		r.Data, err = col.Encode(r.Data)
+		r.Data, err = col.Encode(loc, r.Data)
 		if err != nil {
 			return nil, err
 		}
@@ -291,12 +293,12 @@ func (r *RowData) Encode() ([]byte, error) {
 }
 
 // Checksum calculates the checksum of columns. Callers should make sure columns are sorted by id.
-func (r *RowData) Checksum() (checksum uint32, err error) {
+func (r *RowData) Checksum(loc *time.Location) (checksum uint32, err error) {
 	for _, col := range r.Cols {
 		if len(r.Data) > 0 {
 			r.Data = r.Data[:0]
 		}
-		r.Data, err = col.Encode(r.Data)
+		r.Data, err = col.Encode(loc, r.Data)
 		if err != nil {
 			return 0, err
 		}
@@ -305,7 +307,7 @@ func (r *RowData) Checksum() (checksum uint32, err error) {
 	return checksum, nil
 }
 
-func appendDatumForChecksum(buf []byte, dat *data.Datum, typ byte) (out []byte, err error) {
+func appendDatumForChecksum(loc *time.Location, buf []byte, dat *data.Datum, typ byte) (out []byte, err error) {
 	defer func() {
 		if x := recover(); x != nil {
 			// catch panic when datum and type mismatch
@@ -321,7 +323,14 @@ func appendDatumForChecksum(buf []byte, dat *data.Datum, typ byte) (out []byte, 
 	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob, mysql.TypeBlob:
 		out = appendLengthValue(buf, dat.GetBytes())
 	case mysql.TypeTimestamp, mysql.TypeDatetime, mysql.TypeDate, mysql.TypeNewDate:
-		out = appendLengthValue(buf, []byte(dat.GetMysqlTime().String()))
+		t := dat.GetMysqlTime()
+		if t.Type() == mysql.TypeTimestamp && loc != nil && loc != time.UTC {
+			err = t.ConvertTimeZone(loc, time.UTC)
+			if err != nil {
+				return
+			}
+		}
+		out = appendLengthValue(buf, []byte(t.String()))
 	case mysql.TypeDuration:
 		out = appendLengthValue(buf, []byte(dat.GetMysqlDuration().String()))
 	case mysql.TypeFloat, mysql.TypeDouble:
@@ -342,6 +351,8 @@ func appendDatumForChecksum(buf []byte, dat *data.Datum, typ byte) (out []byte, 
 		out = binary.LittleEndian.AppendUint64(buf, v)
 	case mysql.TypeJSON:
 		out = appendLengthValue(buf, []byte(dat.GetMysqlJSON().String()))
+	case mysql.TypeTiDBVectorFloat32:
+		out = dat.GetVectorFloat32().SerializeTo(buf)
 	case mysql.TypeNull, mysql.TypeGeometry:
 		out = buf
 	default:

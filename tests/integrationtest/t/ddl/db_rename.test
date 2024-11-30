@@ -13,3 +13,15 @@ alter table t rename index k2 to K2;
 -- error 1061
 alter table t rename key k3 to K2;
 
+# TestIssue51431
+drop table t;
+create table t(j json);
+alter table t add index idx1((cast(j as char(10) array)));
+alter table t rename index idx1 to idx2;
+alter table t add index idx1((cast(j as char(10) array)));
+insert into t values ('["1"]');
+alter table t add index IDX3((cast(j as char(10) array)));
+alter table t rename index IDX3 to IDX4;
+alter table t add index IDX3((cast(j as char(10) array)));
+insert into t values ('["2"]');
+select * from t;

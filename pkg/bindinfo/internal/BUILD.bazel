@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/parser",
+        "//pkg/parser/ast",
         "//pkg/testkit",
         "//pkg/util/parser",
         "@com_github_stretchr_testify//require",

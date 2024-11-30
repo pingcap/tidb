@@ -413,12 +413,3 @@ with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 l
 c1
 100
 set tidb_max_chunk_size=default;
-create table issue46522 (id int primary key);
-insert into issue46522 values (1);
-set @@tidb_disable_txn_auto_retry = off;
-begin optimistic;
-insert into issue46522 with t1 as (select id+1 from issue46522 where id = 1) select * from t1;
-begin optimistic;
-update issue46522 set id = id + 1;
-commit;
-commit;

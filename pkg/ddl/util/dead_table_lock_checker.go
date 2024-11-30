@@ -20,8 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -59,7 +60,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
+			logutil.DDLLogger().Info("clean dead table lock get alive servers failed.", zap.Error(err))
 			time.Sleep(defaultRetryInterval)
 			continue
 		}
@@ -73,7 +74,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 }
 
 // GetDeadLockedTables gets dead locked tables.
-func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, is infoschema.MetaOnlyInfoSchema) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
@@ -82,20 +83,19 @@ func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas 
 		return nil, err
 	}
 	deadLockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
-	for _, schema := range schemas {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-		for _, tbl := range schema.Tables {
+
+	tbls := is.ListTablesWithSpecialAttribute(func(t *model.TableInfo) bool {
+		return t.Lock != nil
+	})
+	for _, db := range tbls {
+		for _, tbl := range db.TableInfos {
 			if tbl.Lock == nil {
 				continue
 			}
 			for _, se := range tbl.Lock.Sessions {
 				if _, ok := aliveServers[se.ServerID]; !ok {
 					deadLockTables[se] = append(deadLockTables[se], model.TableLockTpInfo{
-						SchemaID: schema.ID,
+						SchemaID: tbl.DBID,
 						TableID:  tbl.ID,
 						Tp:       tbl.Lock.Tp,
 					})

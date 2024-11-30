@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -193,14 +193,14 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(h.sctx, is, nil)
+	b := newExecutorBuilder(h.sctx, is)
 	return b.build(plan), nil
 }
 
@@ -256,7 +256,7 @@ func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coproces
 
 func (*CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
 	return &coprocessor.Response{
-		OtherError: err.Error(),
+		OtherError: errors.ErrorStack(err),
 	}
 }
 

@@ -114,7 +114,7 @@ func (ts tsItems) Swap(i, j int) {
 }
 
 func (ts tsItems) sorted() bool {
-	for n := 0; n < len(ts)-1; n++ {
+	for n := range len(ts) - 1 {
 		if ts[n].timestamp > ts[n+1].timestamp {
 			return false
 		}
@@ -646,7 +646,7 @@ func (m *normalizedSQLMap) take() *normalizedSQLMap {
 // toProto converts the normalizedSQLMap to the corresponding protobuf representation.
 func (m *normalizedSQLMap) toProto() []tipb.SQLMeta {
 	metas := make([]tipb.SQLMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v interface{}) bool {
+	m.data.Load().Range(func(k, v any) bool {
 		meta := v.(sqlMeta)
 		metas = append(metas, tipb.SQLMeta{
 			SqlDigest:     []byte(k.(string)),
@@ -710,7 +710,7 @@ func (m *normalizedPlanMap) take() *normalizedPlanMap {
 // toProto converts the normalizedPlanMap to the corresponding protobuf representation.
 func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPlan planBinaryCompressFunc) []tipb.PlanMeta {
 	metas := make([]tipb.PlanMeta, 0, m.length.Load())
-	m.data.Load().Range(func(k, v interface{}) bool {
+	m.data.Load().Range(func(k, v any) bool {
 		originalMeta := v.(planMeta)
 		protoMeta := tipb.PlanMeta{
 			PlanDigest: hack.Slice(k.(string)),

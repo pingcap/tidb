@@ -69,7 +69,7 @@ func (*Store) GetMemCache() kv.MemManager {
 }
 
 // ShowStatus implements kv.Storage interface.
-func (*Store) ShowStatus(_ context.Context, _ string) (interface{}, error) { return nil, nil }
+func (*Store) ShowStatus(_ context.Context, _ string) (any, error) { return nil, nil }
 
 // GetMinSafeTS implements kv.Storage interface.
 func (*Store) GetMinSafeTS(_ string) uint64 {
@@ -85,3 +85,11 @@ func (*Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 func (*Store) GetCodec() tikv.Codec {
 	return nil
 }
+
+// GetOption implements kv.Storage interface.
+func (*Store) GetOption(_ any) (any, bool) {
+	return nil, false
+}
+
+// SetOption implements kv.Storage interface.
+func (*Store) SetOption(_, _ any) {}

@@ -99,7 +99,7 @@ func main() {
 		flag.Usage()
 	}
 
-	var manifest map[string]interface{}
+	var manifest map[string]any
 	_, err = toml.DecodeFile(filepath.Join(pkgDir, "manifest.toml"), &manifest)
 	if err != nil {
 		log.Printf("read pkg %s's manifest failure, %+v\n", pkgDir, err)
@@ -142,6 +142,7 @@ func main() {
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
+		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
 	buildCmd.Dir = pkgDir

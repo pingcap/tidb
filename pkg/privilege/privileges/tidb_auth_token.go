@@ -80,7 +80,7 @@ func (jwks *JWKSImpl) LoadJWKS4AuthToken(ctx context.Context, wg *sync.WaitGroup
 }
 
 // checkSigWithRetry verifies the signature in the jwt, and returns the claims.
-func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[string]interface{}, error) {
+func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[string]any, error) {
 	var (
 		verifiedPayload []byte
 		err             error

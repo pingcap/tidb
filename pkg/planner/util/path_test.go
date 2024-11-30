@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -102,21 +102,22 @@ func TestOnlyPointRange(t *testing.T) {
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 
+	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
 	intHandlePath := &util.AccessPath{IsIntHandlePath: true}
 	intHandlePath.Ranges = []*ranger.Range{&nullPointRange, &onePointRange}
-	require.True(t, intHandlePath.OnlyPointRange(sctx))
+	require.True(t, intHandlePath.OnlyPointRange(tc))
 	intHandlePath.Ranges = []*ranger.Range{&onePointRange, &one2TwoRange}
-	require.False(t, intHandlePath.OnlyPointRange(sctx))
+	require.False(t, intHandlePath.OnlyPointRange(tc))
 
 	indexPath := &util.AccessPath{Index: &model.IndexInfo{Columns: make([]*model.IndexColumn, 1)}}
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
-	require.True(t, indexPath.OnlyPointRange(sctx))
+	require.True(t, indexPath.OnlyPointRange(tc))
 	indexPath.Ranges = []*ranger.Range{&nullPointRange, &onePointRange}
-	require.False(t, indexPath.OnlyPointRange(sctx))
+	require.False(t, indexPath.OnlyPointRange(tc))
 	indexPath.Ranges = []*ranger.Range{&onePointRange, &one2TwoRange}
-	require.False(t, indexPath.OnlyPointRange(sctx))
+	require.False(t, indexPath.OnlyPointRange(tc))
 
 	indexPath.Index.Columns = make([]*model.IndexColumn, 2)
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
-	require.False(t, indexPath.OnlyPointRange(sctx))
+	require.False(t, indexPath.OnlyPointRange(tc))
 }

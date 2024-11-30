@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +39,7 @@ import (
 func TestLengthAndOctetLength(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		isNil    bool
 		getErr   bool
@@ -60,7 +60,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 	lengthMethods := []string{ast.Length, ast.OctetLength}
 	for _, lengthMethod := range lengthMethods {
 		for _, c := range cases {
-			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []any{c.args})...)
 			require.NoError(t, err)
 			d, err := f.Eval(ctx, chunk.Row{})
 			if c.getErr {
@@ -95,7 +95,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 		for _, c := range tbl {
 			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 			require.NoError(t, err)
-			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []any{c.input})...)
 			require.NoError(t, err)
 			d, err := f.Eval(ctx, chunk.Row{})
 			require.NoError(t, err)
@@ -107,7 +107,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 func TestASCII(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		isNil    bool
 		getErr   bool
@@ -122,7 +122,7 @@ func TestASCII(t *testing.T) {
 		{"你好", 228, false, false},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
 		d, err := f.Eval(ctx, chunk.Row{})
@@ -156,7 +156,7 @@ func TestASCII(t *testing.T) {
 	for _, c := range tbl {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -167,19 +167,19 @@ func TestASCII(t *testing.T) {
 func TestConcat(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args    []interface{}
+		args    []any
 		isNil   bool
 		getErr  bool
 		res     string
 		retType *types.FieldType
 	}{
 		{
-			[]interface{}{nil},
+			[]any{nil},
 			true, false, "",
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
-			[]interface{}{"a", "b",
+			[]any{"a", "b",
 				1, 2,
 				1.1, 1.2,
 				types.NewDecFromFloatForTest(1.1),
@@ -192,12 +192,12 @@ func TestConcat(t *testing.T) {
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(40).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
-			[]interface{}{"a", "b", nil, "c"},
+			[]any{"a", "b", nil, "c"},
 			true, false, "",
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(3).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
 		{
-			[]interface{}{errors.New("must error")},
+			[]any{errors.New("must error")},
 			false, true, "",
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlag(mysql.BinaryFlag).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP(),
 		},
@@ -238,14 +238,14 @@ func TestConcatSig(t *testing.T) {
 	concat := &builtinConcatSig{base, 5}
 
 	cases := []struct {
-		args     []interface{}
+		args     []any
 		warnings int
 		res      string
 	}{
-		{[]interface{}{"a", "b"}, 0, "ab"},
-		{[]interface{}{"aaa", "bbb"}, 1, ""},
-		{[]interface{}{"中", "a"}, 0, "中a"},
-		{[]interface{}{"中文", "a"}, 2, ""},
+		{[]any{"a", "b"}, 0, "ab"},
+		{[]any{"aaa", "bbb"}, 1, ""},
+		{[]any{"中", "a"}, 0, "中a"},
+		{[]any{"中文", "a"}, 2, ""},
 	}
 
 	for _, c := range cases {
@@ -271,40 +271,40 @@ func TestConcatSig(t *testing.T) {
 func TestConcatWS(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     []interface{}
+		args     []any
 		isNil    bool
 		getErr   bool
 		expected string
 	}{
 		{
-			[]interface{}{nil, nil},
+			[]any{nil, nil},
 			true, false, "",
 		},
 		{
-			[]interface{}{nil, "a", "b"},
+			[]any{nil, "a", "b"},
 			true, false, "",
 		},
 		{
-			[]interface{}{",", "a", "b", "hello", `$^%`},
+			[]any{",", "a", "b", "hello", `$^%`},
 			false, false,
 			`a,b,hello,$^%`,
 		},
 		{
-			[]interface{}{"|", "a", nil, "b", "c"},
+			[]any{"|", "a", nil, "b", "c"},
 			false, false,
 			"a|b|c",
 		},
 		{
-			[]interface{}{",", "a", ",", "b", "c"},
+			[]any{",", "a", ",", "b", "c"},
 			false, false,
 			"a,,,b,c",
 		},
 		{
-			[]interface{}{errors.New("must error"), "a", "b"},
+			[]any{errors.New("must error"), "a", "b"},
 			false, true, "",
 		},
 		{
-			[]interface{}{",", "a", "b", 1, 2, 1.1, 0.11,
+			[]any{",", "a", "b", 1, 2, 1.1, 0.11,
 				types.NewDecFromFloatForTest(1.1),
 				types.NewTime(types.FromDate(2000, 1, 1, 12, 01, 01, 0), mysql.TypeDatetime, types.DefaultFsp),
 				types.Duration{
@@ -317,7 +317,7 @@ func TestConcatWS(t *testing.T) {
 
 	fcName := ast.ConcatWS
 	// ERROR 1582 (42000): Incorrect parameter count in the call to native function 'concat_ws'
-	_, err := newFunctionForTest(ctx, fcName, primitiveValsToConstants(ctx, []interface{}{nil})...)
+	_, err := newFunctionForTest(ctx, fcName, primitiveValsToConstants(ctx, []any{nil})...)
 	require.Error(t, err)
 
 	for _, c := range cases {
@@ -336,7 +336,7 @@ func TestConcatWS(t *testing.T) {
 		}
 	}
 
-	_, err = funcs[ast.ConcatWS].getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{nil, nil}))
+	_, err = funcs[ast.ConcatWS].getFunction(ctx, primitiveValsToConstants(ctx, []any{nil, nil}))
 	require.NoError(t, err)
 }
 
@@ -359,14 +359,14 @@ func TestConcatWSSig(t *testing.T) {
 	concat := &builtinConcatWSSig{base, 6}
 
 	cases := []struct {
-		args     []interface{}
+		args     []any
 		warnings int
 		res      string
 	}{
-		{[]interface{}{",", "a", "b"}, 0, "a,b"},
-		{[]interface{}{",", "aaa", "bbb"}, 1, ""},
-		{[]interface{}{",", "中", "a"}, 0, "中,a"},
-		{[]interface{}{",", "中文", "a"}, 2, ""},
+		{[]any{",", "a", "b"}, 0, "a,b"},
+		{[]any{",", "aaa", "bbb"}, 1, ""},
+		{[]any{",", "中", "a"}, 0, "中,a"},
+		{[]any{",", "中文", "a"}, 2, ""},
 	}
 
 	for _, c := range cases {
@@ -400,25 +400,25 @@ func TestLeft(t *testing.T) {
 	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{"abcde", 3}, false, false, "abc"},
-		{[]interface{}{"abcde", 0}, false, false, ""},
-		{[]interface{}{"abcde", 1.2}, false, false, "a"},
-		{[]interface{}{"abcde", 1.9}, false, false, "ab"},
-		{[]interface{}{"abcde", -1}, false, false, ""},
-		{[]interface{}{"abcde", 100}, false, false, "abcde"},
-		{[]interface{}{"abcde", nil}, true, false, ""},
-		{[]interface{}{nil, 3}, true, false, ""},
-		{[]interface{}{"abcde", "3"}, false, false, "abc"},
-		{[]interface{}{"abcde", "a"}, false, false, ""},
-		{[]interface{}{1234, 3}, false, false, "123"},
-		{[]interface{}{12.34, 3}, false, false, "12."},
-		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
-		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
+		{[]any{"abcde", 3}, false, false, "abc"},
+		{[]any{"abcde", 0}, false, false, ""},
+		{[]any{"abcde", 1.2}, false, false, "a"},
+		{[]any{"abcde", 1.9}, false, false, "ab"},
+		{[]any{"abcde", -1}, false, false, ""},
+		{[]any{"abcde", 100}, false, false, "abcde"},
+		{[]any{"abcde", nil}, true, false, ""},
+		{[]any{nil, 3}, true, false, ""},
+		{[]any{"abcde", "3"}, false, false, "abc"},
+		{[]any{"abcde", "a"}, false, false, ""},
+		{[]any{1234, 3}, false, false, "123"},
+		{[]any{12.34, 3}, false, false, "12."},
+		{[]any{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x01})},
+		{[]any{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Left, primitiveValsToConstants(ctx, c.args)...)
@@ -450,25 +450,25 @@ func TestRight(t *testing.T) {
 	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{"abcde", 3}, false, false, "cde"},
-		{[]interface{}{"abcde", 0}, false, false, ""},
-		{[]interface{}{"abcde", 1.2}, false, false, "e"},
-		{[]interface{}{"abcde", 1.9}, false, false, "de"},
-		{[]interface{}{"abcde", -1}, false, false, ""},
-		{[]interface{}{"abcde", 100}, false, false, "abcde"},
-		{[]interface{}{"abcde", nil}, true, false, ""},
-		{[]interface{}{nil, 1}, true, false, ""},
-		{[]interface{}{"abcde", "3"}, false, false, "cde"},
-		{[]interface{}{"abcde", "a"}, false, false, ""},
-		{[]interface{}{1234, 3}, false, false, "234"},
-		{[]interface{}{12.34, 3}, false, false, ".34"},
-		{[]interface{}{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
-		{[]interface{}{errors.New("must err"), 0}, false, true, ""},
+		{[]any{"abcde", 3}, false, false, "cde"},
+		{[]any{"abcde", 0}, false, false, ""},
+		{[]any{"abcde", 1.2}, false, false, "e"},
+		{[]any{"abcde", 1.9}, false, false, "de"},
+		{[]any{"abcde", -1}, false, false, ""},
+		{[]any{"abcde", 100}, false, false, "abcde"},
+		{[]any{"abcde", nil}, true, false, ""},
+		{[]any{nil, 1}, true, false, ""},
+		{[]any{"abcde", "3"}, false, false, "cde"},
+		{[]any{"abcde", "a"}, false, false, ""},
+		{[]any{1234, 3}, false, false, "234"},
+		{[]any{12.34, 3}, false, false, ".34"},
+		{[]any{types.NewBinaryLiteralFromUint(0x0102, -1), 1}, false, false, string([]byte{0x02})},
+		{[]any{errors.New("must err"), 0}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Right, primitiveValsToConstants(ctx, c.args)...)
@@ -492,16 +492,16 @@ func TestRight(t *testing.T) {
 
 func TestRepeat(t *testing.T) {
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNull bool
 		res    string
 	}{
-		{[]interface{}{"a", int64(2)}, false, "aa"},
-		{[]interface{}{"a", uint64(16777217)}, false, strings.Repeat("a", 16777217)},
-		{[]interface{}{"a", int64(16777216)}, false, strings.Repeat("a", 16777216)},
-		{[]interface{}{"a", int64(-1)}, false, ""},
-		{[]interface{}{"a", int64(0)}, false, ""},
-		{[]interface{}{"a", uint64(0)}, false, ""},
+		{[]any{"a", int64(2)}, false, "aa"},
+		{[]any{"a", uint64(16777217)}, false, strings.Repeat("a", 16777217)},
+		{[]any{"a", int64(16777216)}, false, strings.Repeat("a", 16777216)},
+		{[]any{"a", int64(-1)}, false, ""},
+		{[]any{"a", int64(0)}, false, ""},
+		{[]any{"a", uint64(0)}, false, ""},
 	}
 
 	ctx := createContext(t)
@@ -536,14 +536,14 @@ func TestRepeatSig(t *testing.T) {
 	repeat := &builtinRepeatSig{base, 1000}
 
 	cases := []struct {
-		args    []interface{}
+		args    []any
 		warning int
 		res     string
 	}{
-		{[]interface{}{"a", int64(6)}, 0, "aaaaaa"},
-		{[]interface{}{"a", int64(10001)}, 1, ""},
-		{[]interface{}{"毅", int64(6)}, 0, "毅毅毅毅毅毅"},
-		{[]interface{}{"毅", int64(334)}, 2, ""},
+		{[]any{"a", int64(6)}, 0, "aaaaaa"},
+		{[]any{"a", int64(10001)}, 1, ""},
+		{[]any{"毅", int64(6)}, 0, "毅毅毅毅毅毅"},
+		{[]any{"毅", int64(334)}, 2, ""},
 	}
 
 	for _, c := range cases {
@@ -570,18 +570,18 @@ func TestRepeatSig(t *testing.T) {
 func TestLower(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{nil}, true, false, ""},
-		{[]interface{}{"ab"}, false, false, "ab"},
-		{[]interface{}{1}, false, false, "1"},
-		{[]interface{}{"one week’s time TEST"}, false, false, "one week’s time test"},
-		{[]interface{}{"one week's time TEST"}, false, false, "one week's time test"},
-		{[]interface{}{"ABC测试DEF"}, false, false, "abc测试def"},
-		{[]interface{}{"ABCテストDEF"}, false, false, "abcテストdef"},
+		{[]any{nil}, true, false, ""},
+		{[]any{"ab"}, false, false, "ab"},
+		{[]any{1}, false, false, "1"},
+		{[]any{"one week’s time TEST"}, false, false, "one week’s time test"},
+		{[]any{"one week's time TEST"}, false, false, "one week's time test"},
+		{[]any{"ABC测试DEF"}, false, false, "abc测试def"},
+		{[]any{"ABCテストDEF"}, false, false, "abcテストdef"},
 	}
 
 	for _, c := range cases {
@@ -617,7 +617,7 @@ func TestLower(t *testing.T) {
 	for _, c := range tbl {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -628,18 +628,18 @@ func TestLower(t *testing.T) {
 func TestUpper(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{nil}, true, false, ""},
-		{[]interface{}{"ab"}, false, false, "ab"},
-		{[]interface{}{1}, false, false, "1"},
-		{[]interface{}{"one week’s time TEST"}, false, false, "ONE WEEK’S TIME TEST"},
-		{[]interface{}{"one week's time TEST"}, false, false, "ONE WEEK'S TIME TEST"},
-		{[]interface{}{"abc测试def"}, false, false, "ABC测试DEF"},
-		{[]interface{}{"abcテストdef"}, false, false, "ABCテストDEF"},
+		{[]any{nil}, true, false, ""},
+		{[]any{"ab"}, false, false, "ab"},
+		{[]any{1}, false, false, "1"},
+		{[]any{"one week’s time TEST"}, false, false, "ONE WEEK’S TIME TEST"},
+		{[]any{"one week's time TEST"}, false, false, "ONE WEEK'S TIME TEST"},
+		{[]any{"abc测试def"}, false, false, "ABC测试DEF"},
+		{[]any{"abcテストdef"}, false, false, "ABCテストDEF"},
 	}
 
 	for _, c := range cases {
@@ -676,7 +676,7 @@ func TestUpper(t *testing.T) {
 	for _, c := range tbl {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -694,7 +694,7 @@ func TestReverse(t *testing.T) {
 	require.Equal(t, types.KindNull, d.Kind())
 
 	tbl := []struct {
-		Input  interface{}
+		Input  any
 		Expect string
 	}{
 		{"abc", "cba"},
@@ -718,26 +718,26 @@ func TestReverse(t *testing.T) {
 func TestStrcmp(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    int64
 	}{
-		{[]interface{}{"123", "123"}, false, false, 0},
-		{[]interface{}{"123", "1"}, false, false, 1},
-		{[]interface{}{"1", "123"}, false, false, -1},
-		{[]interface{}{"123", "45"}, false, false, -1},
-		{[]interface{}{123, "123"}, false, false, 0},
-		{[]interface{}{"12.34", 12.34}, false, false, 0},
-		{[]interface{}{nil, "123"}, true, false, 0},
-		{[]interface{}{"123", nil}, true, false, 0},
-		{[]interface{}{"", "123"}, false, false, -1},
-		{[]interface{}{"123", ""}, false, false, 1},
-		{[]interface{}{"", ""}, false, false, 0},
-		{[]interface{}{"", nil}, true, false, 0},
-		{[]interface{}{nil, ""}, true, false, 0},
-		{[]interface{}{nil, nil}, true, false, 0},
-		{[]interface{}{"123", errors.New("must err")}, false, true, 0},
+		{[]any{"123", "123"}, false, false, 0},
+		{[]any{"123", "1"}, false, false, 1},
+		{[]any{"1", "123"}, false, false, -1},
+		{[]any{"123", "45"}, false, false, -1},
+		{[]any{123, "123"}, false, false, 0},
+		{[]any{"12.34", 12.34}, false, false, 0},
+		{[]any{nil, "123"}, true, false, 0},
+		{[]any{"123", nil}, true, false, 0},
+		{[]any{"", "123"}, false, false, -1},
+		{[]any{"123", ""}, false, false, 1},
+		{[]any{"", ""}, false, false, 0},
+		{[]any{"", nil}, true, false, 0},
+		{[]any{nil, ""}, true, false, 0},
+		{[]any{nil, nil}, true, false, 0},
+		{[]any{"123", errors.New("must err")}, false, true, 0},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Strcmp, primitiveValsToConstants(ctx, c.args)...)
@@ -759,27 +759,27 @@ func TestStrcmp(t *testing.T) {
 func TestReplace(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 		flen   int
 	}{
-		{[]interface{}{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
-		{[]interface{}{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
-		{[]interface{}{1234, 2, 55}, false, false, "15534", 20},
-		{[]interface{}{"", "a", "b"}, false, false, "", 0},
-		{[]interface{}{"abc", "", "d"}, false, false, "abc", 3},
-		{[]interface{}{"aaa", "a", ""}, false, false, "", 3},
-		{[]interface{}{nil, "a", "b"}, true, false, "", 0},
-		{[]interface{}{"a", nil, "b"}, true, false, "", 1},
-		{[]interface{}{"a", "b", nil}, true, false, "", 1},
-		{[]interface{}{errors.New("must err"), "a", "b"}, false, true, "", -1},
+		{[]any{"www.mysql.com", "mysql", "pingcap"}, false, false, "www.pingcap.com", 17},
+		{[]any{"www.mysql.com", "w", 1}, false, false, "111.mysql.com", 260},
+		{[]any{1234, 2, 55}, false, false, "15534", 20},
+		{[]any{"", "a", "b"}, false, false, "", 0},
+		{[]any{"abc", "", "d"}, false, false, "abc", 3},
+		{[]any{"aaa", "a", ""}, false, false, "", 3},
+		{[]any{nil, "a", "b"}, true, false, "", 0},
+		{[]any{"a", nil, "b"}, true, false, "", 1},
+		{[]any{"a", "b", nil}, true, false, "", 1},
+		{[]any{errors.New("must err"), "a", "b"}, false, true, "", -1},
 	}
 	for i, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Replace, primitiveValsToConstants(ctx, c.args)...)
 		require.NoError(t, err)
-		require.Equalf(t, c.flen, f.GetType().GetFlen(), "test %v", i)
+		require.Equalf(t, c.flen, f.GetType(ctx).GetFlen(), "test %v", i)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
@@ -800,27 +800,27 @@ func TestReplace(t *testing.T) {
 func TestSubstring(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{"Quadratically", 5}, false, false, "ratically"},
-		{[]interface{}{"Sakila", 1}, false, false, "Sakila"},
-		{[]interface{}{"Sakila", 2}, false, false, "akila"},
-		{[]interface{}{"Sakila", -3}, false, false, "ila"},
-		{[]interface{}{"Sakila", 0}, false, false, ""},
-		{[]interface{}{"Sakila", 100}, false, false, ""},
-		{[]interface{}{"Sakila", -100}, false, false, ""},
-		{[]interface{}{"Quadratically", 5, 6}, false, false, "ratica"},
-		{[]interface{}{"Sakila", -5, 3}, false, false, "aki"},
-		{[]interface{}{"Sakila", 2, 0}, false, false, ""},
-		{[]interface{}{"Sakila", 2, -1}, false, false, ""},
-		{[]interface{}{"Sakila", 2, 100}, false, false, "akila"},
-		{[]interface{}{nil, 2, 3}, true, false, ""},
-		{[]interface{}{"Sakila", nil, 3}, true, false, ""},
-		{[]interface{}{"Sakila", 2, nil}, true, false, ""},
-		{[]interface{}{errors.New("must error"), 2, 3}, false, true, ""},
+		{[]any{"Quadratically", 5}, false, false, "ratically"},
+		{[]any{"Sakila", 1}, false, false, "Sakila"},
+		{[]any{"Sakila", 2}, false, false, "akila"},
+		{[]any{"Sakila", -3}, false, false, "ila"},
+		{[]any{"Sakila", 0}, false, false, ""},
+		{[]any{"Sakila", 100}, false, false, ""},
+		{[]any{"Sakila", -100}, false, false, ""},
+		{[]any{"Quadratically", 5, 6}, false, false, "ratica"},
+		{[]any{"Sakila", -5, 3}, false, false, "aki"},
+		{[]any{"Sakila", 2, 0}, false, false, ""},
+		{[]any{"Sakila", 2, -1}, false, false, ""},
+		{[]any{"Sakila", 2, 100}, false, false, "akila"},
+		{[]any{nil, 2, 3}, true, false, ""},
+		{[]any{"Sakila", nil, 3}, true, false, ""},
+		{[]any{"Sakila", 2, nil}, true, false, ""},
+		{[]any{errors.New("must error"), 2, 3}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Substring, primitiveValsToConstants(ctx, c.args)...)
@@ -848,7 +848,7 @@ func TestSubstring(t *testing.T) {
 func TestConvert(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		str           interface{}
+		str           any
 		cs            string
 		result        string
 		hasBinaryFlag bool
@@ -880,7 +880,7 @@ func TestConvert(t *testing.T) {
 
 	// Test case for getFunction() error
 	errTbl := []struct {
-		str interface{}
+		str any
 		cs  string
 		err string
 	}{
@@ -909,29 +909,29 @@ func TestConvert(t *testing.T) {
 func TestSubstringIndex(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{"www.pingcap.com", ".", 2}, false, false, "www.pingcap"},
-		{[]interface{}{"www.pingcap.com", ".", -2}, false, false, "pingcap.com"},
-		{[]interface{}{"www.pingcap.com", ".", 0}, false, false, ""},
-		{[]interface{}{"www.pingcap.com", ".", 100}, false, false, "www.pingcap.com"},
-		{[]interface{}{"www.pingcap.com", ".", -100}, false, false, "www.pingcap.com"},
-		{[]interface{}{"www.pingcap.com", "d", 0}, false, false, ""},
-		{[]interface{}{"www.pingcap.com", "d", 1}, false, false, "www.pingcap.com"},
-		{[]interface{}{"www.pingcap.com", "d", -1}, false, false, "www.pingcap.com"},
-		{[]interface{}{"www.pingcap.com", "", 0}, false, false, ""},
-		{[]interface{}{"www.pingcap.com", "", 1}, false, false, ""},
-		{[]interface{}{"www.pingcap.com", "", -1}, false, false, ""},
-		{[]interface{}{"", ".", 0}, false, false, ""},
-		{[]interface{}{"", ".", 1}, false, false, ""},
-		{[]interface{}{"", ".", -1}, false, false, ""},
-		{[]interface{}{nil, ".", 1}, true, false, ""},
-		{[]interface{}{"www.pingcap.com", nil, 1}, true, false, ""},
-		{[]interface{}{"www.pingcap.com", ".", nil}, true, false, ""},
-		{[]interface{}{errors.New("must error"), ".", 1}, false, true, ""},
+		{[]any{"www.pingcap.com", ".", 2}, false, false, "www.pingcap"},
+		{[]any{"www.pingcap.com", ".", -2}, false, false, "pingcap.com"},
+		{[]any{"www.pingcap.com", ".", 0}, false, false, ""},
+		{[]any{"www.pingcap.com", ".", 100}, false, false, "www.pingcap.com"},
+		{[]any{"www.pingcap.com", ".", -100}, false, false, "www.pingcap.com"},
+		{[]any{"www.pingcap.com", "d", 0}, false, false, ""},
+		{[]any{"www.pingcap.com", "d", 1}, false, false, "www.pingcap.com"},
+		{[]any{"www.pingcap.com", "d", -1}, false, false, "www.pingcap.com"},
+		{[]any{"www.pingcap.com", "", 0}, false, false, ""},
+		{[]any{"www.pingcap.com", "", 1}, false, false, ""},
+		{[]any{"www.pingcap.com", "", -1}, false, false, ""},
+		{[]any{"", ".", 0}, false, false, ""},
+		{[]any{"", ".", 1}, false, false, ""},
+		{[]any{"", ".", -1}, false, false, ""},
+		{[]any{nil, ".", 1}, true, false, ""},
+		{[]any{"www.pingcap.com", nil, 1}, true, false, ""},
+		{[]any{"www.pingcap.com", ".", nil}, true, false, ""},
+		{[]any{errors.New("must error"), ".", 1}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.SubstringIndex, primitiveValsToConstants(ctx, c.args)...)
@@ -963,7 +963,7 @@ func TestSpace(t *testing.T) {
 	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -980,7 +980,7 @@ func TestSpace(t *testing.T) {
 		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Space, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.Space, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1033,38 +1033,38 @@ func TestLocate(t *testing.T) {
 	ctx := createContext(t)
 	// 1. Test LOCATE without binary input.
 	tbl := []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{"bar", "foobarbar"}, 4},
-		{[]interface{}{"xbar", "foobar"}, 0},
-		{[]interface{}{"", "foobar"}, 1},
-		{[]interface{}{"foobar", ""}, 0},
-		{[]interface{}{"", ""}, 1},
-		{[]interface{}{"好世", "你好世界"}, 2},
-		{[]interface{}{"界面", "你好世界"}, 0},
-		{[]interface{}{"b", "中a英b文"}, 4},
-		{[]interface{}{"bAr", "foobArbar"}, 4},
-		{[]interface{}{nil, "foobar"}, nil},
-		{[]interface{}{"bar", nil}, nil},
-		{[]interface{}{"bar", "foobarbar", 5}, 7},
-		{[]interface{}{"xbar", "foobar", 1}, 0},
-		{[]interface{}{"", "foobar", 2}, 2},
-		{[]interface{}{"foobar", "", 1}, 0},
-		{[]interface{}{"", "", 2}, 0},
-		{[]interface{}{"A", "大A写的A", 0}, 0},
-		{[]interface{}{"A", "大A写的A", 1}, 2},
-		{[]interface{}{"A", "大A写的A", 2}, 2},
-		{[]interface{}{"A", "大A写的A", 3}, 5},
-		{[]interface{}{"BaR", "foobarBaR", 5}, 7},
-		{[]interface{}{nil, nil}, nil},
-		{[]interface{}{"", nil}, nil},
-		{[]interface{}{nil, ""}, nil},
-		{[]interface{}{nil, nil, 1}, nil},
-		{[]interface{}{"", nil, 1}, nil},
-		{[]interface{}{nil, "", 1}, nil},
-		{[]interface{}{"foo", nil, -1}, nil},
-		{[]interface{}{nil, "bar", 0}, nil},
+		{[]any{"bar", "foobarbar"}, 4},
+		{[]any{"xbar", "foobar"}, 0},
+		{[]any{"", "foobar"}, 1},
+		{[]any{"foobar", ""}, 0},
+		{[]any{"", ""}, 1},
+		{[]any{"好世", "你好世界"}, 2},
+		{[]any{"界面", "你好世界"}, 0},
+		{[]any{"b", "中a英b文"}, 4},
+		{[]any{"bAr", "foobArbar"}, 4},
+		{[]any{nil, "foobar"}, nil},
+		{[]any{"bar", nil}, nil},
+		{[]any{"bar", "foobarbar", 5}, 7},
+		{[]any{"xbar", "foobar", 1}, 0},
+		{[]any{"", "foobar", 2}, 2},
+		{[]any{"foobar", "", 1}, 0},
+		{[]any{"", "", 2}, 0},
+		{[]any{"A", "大A写的A", 0}, 0},
+		{[]any{"A", "大A写的A", 1}, 2},
+		{[]any{"A", "大A写的A", 2}, 2},
+		{[]any{"A", "大A写的A", 3}, 5},
+		{[]any{"BaR", "foobarBaR", 5}, 7},
+		{[]any{nil, nil}, nil},
+		{[]any{"", nil}, nil},
+		{[]any{nil, ""}, nil},
+		{[]any{nil, nil, 1}, nil},
+		{[]any{"", nil, 1}, nil},
+		{[]any{nil, "", 1}, nil},
+		{[]any{"foo", nil, -1}, nil},
+		{[]any{nil, "bar", 0}, nil},
 	}
 	Dtbl := tblToDtbl(tbl)
 	instr := funcs[ast.Locate]
@@ -1078,20 +1078,20 @@ func TestLocate(t *testing.T) {
 	}
 	// 2. Test LOCATE with binary input
 	tbl2 := []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{[]byte("BaR"), "foobArbar"}, 0},
-		{[]interface{}{"BaR", []byte("foobArbar")}, 0},
-		{[]interface{}{[]byte("bAr"), "foobarBaR", 5}, 0},
-		{[]interface{}{"bAr", []byte("foobarBaR"), 5}, 0},
-		{[]interface{}{"bAr", []byte("foobarbAr"), 5}, 7},
+		{[]any{[]byte("BaR"), "foobArbar"}, 0},
+		{[]any{"BaR", []byte("foobArbar")}, 0},
+		{[]any{[]byte("bAr"), "foobarBaR", 5}, 0},
+		{[]any{"bAr", []byte("foobarBaR"), 5}, 0},
+		{[]any{"bAr", []byte("foobarbAr"), 5}, 7},
 	}
 	Dtbl2 := tblToDtbl(tbl2)
 	for i, c := range Dtbl2 {
 		exprs := datumsToConstants(c["Args"])
-		types.SetBinChsClnFlag(exprs[0].GetType())
-		types.SetBinChsClnFlag(exprs[1].GetType())
+		types.SetBinChsClnFlag(exprs[0].GetType(ctx))
+		types.SetBinChsClnFlag(exprs[1].GetType(ctx))
 		f, err := instr.getFunction(ctx, exprs)
 		require.NoError(t, err)
 		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -1104,28 +1104,28 @@ func TestLocate(t *testing.T) {
 func TestTrim(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args   []interface{}
+		args   []any
 		isNil  bool
 		getErr bool
 		res    string
 	}{
-		{[]interface{}{"   bar   "}, false, false, "bar"},
-		{[]interface{}{"\t   bar   \n"}, false, false, "\t   bar   \n"},
-		{[]interface{}{"\r   bar   \t"}, false, false, "\r   bar   \t"},
-		{[]interface{}{"   \tbar\n     "}, false, false, "\tbar\n"},
-		{[]interface{}{""}, false, false, ""},
-		{[]interface{}{nil}, true, false, ""},
-		{[]interface{}{"xxxbarxxx", "x"}, false, false, "bar"},
-		{[]interface{}{"bar", "x"}, false, false, "bar"},
-		{[]interface{}{"   bar   ", ""}, false, false, "   bar   "},
-		{[]interface{}{"", "x"}, false, false, ""},
-		{[]interface{}{"bar", nil}, true, false, ""},
-		{[]interface{}{nil, "x"}, true, false, ""},
-		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
-		{[]interface{}{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
-		{[]interface{}{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
-		{[]interface{}{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
-		{[]interface{}{errors.New("must error")}, false, true, ""},
+		{[]any{"   bar   "}, false, false, "bar"},
+		{[]any{"\t   bar   \n"}, false, false, "\t   bar   \n"},
+		{[]any{"\r   bar   \t"}, false, false, "\r   bar   \t"},
+		{[]any{"   \tbar\n     "}, false, false, "\tbar\n"},
+		{[]any{""}, false, false, ""},
+		{[]any{nil}, true, false, ""},
+		{[]any{"xxxbarxxx", "x"}, false, false, "bar"},
+		{[]any{"bar", "x"}, false, false, "bar"},
+		{[]any{"   bar   ", ""}, false, false, "   bar   "},
+		{[]any{"", "x"}, false, false, ""},
+		{[]any{"bar", nil}, true, false, ""},
+		{[]any{nil, "x"}, true, false, ""},
+		{[]any{"xxxbarxxx", "x", int(ast.TrimLeading)}, false, false, "barxxx"},
+		{[]any{"barxxyz", "xyz", int(ast.TrimTrailing)}, false, false, "barx"},
+		{[]any{"xxxbarxxx", "x", int(ast.TrimBoth)}, false, false, "bar"},
+		{[]any{"bar", nil, int(ast.TrimLeading)}, true, false, ""},
+		{[]any{errors.New("must error")}, false, true, ""},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Trim, primitiveValsToConstants(ctx, c.args)...)
@@ -1156,7 +1156,7 @@ func TestTrim(t *testing.T) {
 func TestLTrim(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -1176,7 +1176,7 @@ func TestLTrim(t *testing.T) {
 		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LTrim, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.LTrim, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1198,7 +1198,7 @@ func TestLTrim(t *testing.T) {
 func TestRTrim(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -1216,7 +1216,7 @@ func TestRTrim(t *testing.T) {
 		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.RTrim, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.RTrim, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1238,7 +1238,7 @@ func TestRTrim(t *testing.T) {
 func TestHexFunc(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -1257,7 +1257,7 @@ func TestHexFunc(t *testing.T) {
 		{errors.New("must err"), false, true, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1286,7 +1286,7 @@ func TestHexFunc(t *testing.T) {
 	for _, c := range strCases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.errCode != 0 {
@@ -1308,7 +1308,7 @@ func TestHexFunc(t *testing.T) {
 func TestUnhexFunc(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -1326,7 +1326,7 @@ func TestUnhexFunc(t *testing.T) {
 		{errors.New("must error"), false, true, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.Unhex, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.Unhex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1348,7 +1348,7 @@ func TestUnhexFunc(t *testing.T) {
 func TestBitLength(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		chs      string
 		expected int64
 		isNil    bool
@@ -1367,7 +1367,7 @@ func TestBitLength(t *testing.T) {
 	for _, c := range cases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1394,8 +1394,8 @@ func TestChar(t *testing.T) {
 		str      string
 		iNum     int64
 		fNum     float64
-		charset  interface{}
-		result   interface{}
+		charset  any
+		result   any
 		warnings int
 	}{
 		{"65", 66, 67.5, "utf8", "ABD", 0},                               // float
@@ -1407,7 +1407,7 @@ func TestChar(t *testing.T) {
 		{"1234567", 1234567, 1234567, "gbk", "\u0012謬\u0012謬\u0012謬", 0}, // test char for gbk
 		{"123456789", 123456789, 123456789, "gbk", nil, 1},               // invalid 123456789 in gbk
 	}
-	run := func(i int, result interface{}, warnCnt int, dts ...interface{}) {
+	run := func(i int, result any, warnCnt int, dts ...any) {
 		fc := funcs[ast.CharFunc]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(dts...)))
 		require.NoError(t, err, i)
@@ -1424,17 +1424,19 @@ func TestChar(t *testing.T) {
 		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
 	}
 	// char() returns null only when the sql_mode is strict.
-	ctx.GetSessionVars().StrictSQLMode = true
+	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
 	run(-1, nil, 1, 123456, "utf8")
-	ctx.GetSessionVars().StrictSQLMode = false
+
+	ctx.GetSessionVars().SQLMode = ctx.GetSessionVars().SQLMode &^ (mysql.ModeStrictTransTables | mysql.ModeStrictAllTables)
+	require.False(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
 	run(-2, string([]byte{1}), 1, 123456, "utf8")
 }
 
 func TestCharLength(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		input  interface{}
-		result interface{}
+		input  any
+		result any
 	}{
 		{"33", 2},  // string
 		{"你好", 2},  // mb string
@@ -1453,8 +1455,8 @@ func TestCharLength(t *testing.T) {
 
 	// Test binary string
 	tbl = []struct {
-		input  interface{}
-		result interface{}
+		input  any
+		result any
 	}{
 		{"33", 2},   // string
 		{"你好", 6},   // mb string
@@ -1465,7 +1467,7 @@ func TestCharLength(t *testing.T) {
 	for _, v := range tbl {
 		fc := funcs[ast.CharLength]
 		arg := datumsToConstants(types.MakeDatums(v.input))
-		tp := arg[0].GetType()
+		tp := arg[0].GetType(ctx)
 		tp.SetType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
@@ -1482,9 +1484,9 @@ func TestCharLength(t *testing.T) {
 func TestFindInSet(t *testing.T) {
 	ctx := createContext(t)
 	for _, c := range []struct {
-		str    interface{}
-		strlst interface{}
-		ret    interface{}
+		str    any
+		strlst any
+		ret    any
 	}{
 		{"foo", "foo,bar", 1},
 		{"foo", "foobar,bar", 0},
@@ -1517,19 +1519,19 @@ func TestField(t *testing.T) {
 	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	tbl := []struct {
-		argLst []interface{}
-		ret    interface{}
+		argLst []any
+		ret    any
 	}{
-		{[]interface{}{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
-		{[]interface{}{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
-		{[]interface{}{"ej", "Hej", "ej", "Heja", "ej", "hej", "foo"}, int64(2)},
-		{[]interface{}{1, 2, 3, 11, 1}, int64(4)},
-		{[]interface{}{nil, 2, 3, 11, 1}, int64(0)},
-		{[]interface{}{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
-		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
-		{[]interface{}{"1.1a", 2.1, 3.1, 11.1, 1.1}, int64(4)},
-		{[]interface{}{1.10, 0, 11e-1}, int64(2)},
-		{[]interface{}{"abc", 0, 1, 11.1, 1.1}, int64(1)},
+		{[]any{"ej", "Hej", "ej", "Heja", "hej", "foo"}, int64(2)},
+		{[]any{"fo", "Hej", "ej", "Heja", "hej", "foo"}, int64(0)},
+		{[]any{"ej", "Hej", "ej", "Heja", "ej", "hej", "foo"}, int64(2)},
+		{[]any{1, 2, 3, 11, 1}, int64(4)},
+		{[]any{nil, 2, 3, 11, 1}, int64(0)},
+		{[]any{1.1, 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]any{1.1, "2.1", "3.1", "11.1", "1.1"}, int64(4)},
+		{[]any{"1.1a", 2.1, 3.1, 11.1, 1.1}, int64(4)},
+		{[]any{1.10, 0, 11e-1}, int64(2)},
+		{[]any{"abc", 0, 1, 11.1, 1.1}, int64(1)},
 	}
 	for _, c := range tbl {
 		fc := funcs[ast.Field]
@@ -1548,7 +1550,7 @@ func TestLpad(t *testing.T) {
 		str    string
 		len    int64
 		padStr string
-		expect interface{}
+		expect any
 	}{
 		{"hi", 5, "?", "???hi"},
 		{"hi", 1, "?", "h"},
@@ -1588,7 +1590,7 @@ func TestRpad(t *testing.T) {
 		str    string
 		len    int64
 		padStr string
-		expect interface{}
+		expect any
 	}{
 		{"hi", 5, "?", "hi???"},
 		{"hi", 1, "?", "h"},
@@ -1762,34 +1764,34 @@ func TestInsertBinarySig(t *testing.T) {
 func TestInstr(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Args []interface{}
-		Want interface{}
+		Args []any
+		Want any
 	}{
-		{[]interface{}{"foobarbar", "bar"}, 4},
-		{[]interface{}{"xbar", "foobar"}, 0},
+		{[]any{"foobarbar", "bar"}, 4},
+		{[]any{"xbar", "foobar"}, 0},
 
-		{[]interface{}{123456234, 234}, 2},
-		{[]interface{}{123456, 567}, 0},
-		{[]interface{}{1e10, 1e2}, 1},
-		{[]interface{}{1.234, ".234"}, 2},
-		{[]interface{}{1.234, ""}, 1},
-		{[]interface{}{"", 123}, 0},
-		{[]interface{}{"", ""}, 1},
+		{[]any{123456234, 234}, 2},
+		{[]any{123456, 567}, 0},
+		{[]any{1e10, 1e2}, 1},
+		{[]any{1.234, ".234"}, 2},
+		{[]any{1.234, ""}, 1},
+		{[]any{"", 123}, 0},
+		{[]any{"", ""}, 1},
 
-		{[]interface{}{"中文美好", "美好"}, 3},
-		{[]interface{}{"中文美好", "世界"}, 0},
-		{[]interface{}{"中文abc", "a"}, 3},
+		{[]any{"中文美好", "美好"}, 3},
+		{[]any{"中文美好", "世界"}, 0},
+		{[]any{"中文abc", "a"}, 3},
 
-		{[]interface{}{"live long and prosper", "long"}, 6},
+		{[]any{"live long and prosper", "long"}, 6},
 
-		{[]interface{}{"not binary string", "binary"}, 5},
-		{[]interface{}{"upper case", "upper"}, 1},
-		{[]interface{}{"UPPER CASE", "CASE"}, 7},
-		{[]interface{}{"中文abc", "abc"}, 3},
+		{[]any{"not binary string", "binary"}, 5},
+		{[]any{"upper case", "upper"}, 1},
+		{[]any{"UPPER CASE", "CASE"}, 7},
+		{[]any{"中文abc", "abc"}, 3},
 
-		{[]interface{}{"foobar", nil}, nil},
-		{[]interface{}{nil, "foobar"}, nil},
-		{[]interface{}{nil, nil}, nil},
+		{[]any{"foobar", nil}, nil},
+		{[]any{nil, "foobar"}, nil},
+		{[]any{nil, nil}, nil},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -1807,7 +1809,7 @@ func TestInstr(t *testing.T) {
 func TestLoadFile(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		arg    interface{}
+		arg    any
 		isNil  bool
 		getErr bool
 		res    string
@@ -1818,7 +1820,7 @@ func TestLoadFile(t *testing.T) {
 		{nil, true, false, ""},
 	}
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.LoadFile, primitiveValsToConstants(ctx, []interface{}{c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.LoadFile, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -1839,16 +1841,16 @@ func TestLoadFile(t *testing.T) {
 func TestMakeSet(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		argList []interface{}
-		ret     interface{}
+		argList []any
+		ret     any
 	}{
-		{[]interface{}{1, "a", "b", "c"}, "a"},
-		{[]interface{}{1 | 4, "hello", "nice", "world"}, "hello,world"},
-		{[]interface{}{1 | 4, "hello", "nice", nil, "world"}, "hello"},
-		{[]interface{}{0, "a", "b", "c"}, ""},
-		{[]interface{}{nil, "a", "b", "c"}, nil},
-		{[]interface{}{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
-		{[]interface{}{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
+		{[]any{1, "a", "b", "c"}, "a"},
+		{[]any{1 | 4, "hello", "nice", "world"}, "hello,world"},
+		{[]any{1 | 4, "hello", "nice", nil, "world"}, "hello"},
+		{[]any{0, "a", "b", "c"}, ""},
+		{[]any{nil, "a", "b", "c"}, nil},
+		{[]any{-100 | 4, "hello", "nice", "abc", "world"}, "abc,world"},
+		{[]any{-1, "hello", "nice", "abc", "world"}, "hello,nice,abc,world"},
 	}
 
 	for _, c := range tbl {
@@ -1865,7 +1867,7 @@ func TestMakeSet(t *testing.T) {
 func TestOct(t *testing.T) {
 	ctx := createContext(t)
 	octTests := []struct {
-		origin interface{}
+		origin any
 		ret    string
 	}{
 		{"-2.7", "1777777777777777777776"},
@@ -1914,18 +1916,18 @@ func TestOct(t *testing.T) {
 func TestFormat(t *testing.T) {
 	ctx := createContext(t)
 	formatTests := []struct {
-		number    interface{}
-		precision interface{}
+		number    any
+		precision any
 		locale    string
-		ret       interface{}
+		ret       any
 	}{
 		{12332.12341111111111111111111111111111111111111, 4, "en_US", "12,332.1234"},
 		{nil, 22, "en_US", nil},
 	}
 	formatTests1 := []struct {
-		number    interface{}
-		precision interface{}
-		ret       interface{}
+		number    any
+		precision any
+		ret       any
 		warnings  int
 	}{
 		// issue #8796
@@ -1964,22 +1966,22 @@ func TestFormat(t *testing.T) {
 		{1, "", "1", 1},
 	}
 	formatTests2 := struct {
-		number    interface{}
-		precision interface{}
+		number    any
+		precision any
 		locale    string
-		ret       interface{}
+		ret       any
 	}{-12332.123456, -4, "zh_CN", "-12,332"}
 	formatTests3 := struct {
-		number    interface{}
-		precision interface{}
+		number    any
+		precision any
 		locale    string
-		ret       interface{}
+		ret       any
 	}{"-12332.123456", "4", "de_GE", "-12,332.1235"}
 	formatTests4 := struct {
-		number    interface{}
-		precision interface{}
-		locale    interface{}
-		ret       interface{}
+		number    any
+		precision any
+		locale    any
+		ret       any
 	}{1, 4, nil, "1.0000"}
 
 	fc := funcs[ast.Format]
@@ -2007,7 +2009,7 @@ func TestFormat(t *testing.T) {
 			for i := 0; i < tt.warnings; i++ {
 				require.Truef(t, terror.ErrorEqual(types.ErrTruncatedWrongVal, warnings[i].Err), "test %v", tt)
 			}
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		}
 	}
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(origTypeFlags)
@@ -2037,14 +2039,14 @@ func TestFormat(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		require.True(t, terror.ErrorEqual(errUnknownLocale, warnings[i].Err))
 	}
-	ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+	ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 }
 
 func TestFromBase64(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		args   interface{}
-		expect interface{}
+		args   any
+		expect any
 	}{
 		{"", ""},
 		{"YWJj", "abc"},
@@ -2134,7 +2136,7 @@ func TestFromBase64Sig(t *testing.T) {
 			require.Equal(t, 1, len(warnings))
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		}
 		require.Equal(t, test.expect, res)
 	}
@@ -2143,32 +2145,32 @@ func TestFromBase64Sig(t *testing.T) {
 func TestInsert(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		args   []interface{}
-		expect interface{}
+		args   []any
+		expect any
 	}{
-		{[]interface{}{"Quadratic", 3, 4, "What"}, "QuWhattic"},
-		{[]interface{}{"Quadratic", -1, 4, "What"}, "Quadratic"},
-		{[]interface{}{"Quadratic", 3, 100, "What"}, "QuWhat"},
-		{[]interface{}{nil, 3, 100, "What"}, nil},
-		{[]interface{}{"Quadratic", nil, 4, "What"}, nil},
-		{[]interface{}{"Quadratic", 3, nil, "What"}, nil},
-		{[]interface{}{"Quadratic", 3, 4, nil}, nil},
-		{[]interface{}{"Quadratic", 3, -1, "What"}, "QuWhat"},
-		{[]interface{}{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
-		{[]interface{}{"Quadratic", -1, nil, "What"}, nil},
-		{[]interface{}{"Quadratic", -1, 4, nil}, nil},
+		{[]any{"Quadratic", 3, 4, "What"}, "QuWhattic"},
+		{[]any{"Quadratic", -1, 4, "What"}, "Quadratic"},
+		{[]any{"Quadratic", 3, 100, "What"}, "QuWhat"},
+		{[]any{nil, 3, 100, "What"}, nil},
+		{[]any{"Quadratic", nil, 4, "What"}, nil},
+		{[]any{"Quadratic", 3, nil, "What"}, nil},
+		{[]any{"Quadratic", 3, 4, nil}, nil},
+		{[]any{"Quadratic", 3, -1, "What"}, "QuWhat"},
+		{[]any{"Quadratic", 3, 1, "What"}, "QuWhatdratic"},
+		{[]any{"Quadratic", -1, nil, "What"}, nil},
+		{[]any{"Quadratic", -1, 4, nil}, nil},
 
-		{[]interface{}{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
-		{[]interface{}{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
-		{[]interface{}{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
-		{[]interface{}{nil, 3, 100, "王雨叶"}, nil},
-		{[]interface{}{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
-		{[]interface{}{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
-		{[]interface{}{"我叫小雨呀", 3, 4, nil}, nil},
-		{[]interface{}{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
-		{[]interface{}{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
-		{[]interface{}{"我叫小雨呀", -1, nil, "王雨叶"}, nil},
-		{[]interface{}{"我叫小雨呀", -1, 2, nil}, nil},
+		{[]any{"我叫小雨呀", 3, 2, "王雨叶"}, "我叫王雨叶呀"},
+		{[]any{"我叫小雨呀", -1, 2, "王雨叶"}, "我叫小雨呀"},
+		{[]any{"我叫小雨呀", 3, 100, "王雨叶"}, "我叫王雨叶"},
+		{[]any{nil, 3, 100, "王雨叶"}, nil},
+		{[]any{"我叫小雨呀", nil, 4, "王雨叶"}, nil},
+		{[]any{"我叫小雨呀", 3, nil, "王雨叶"}, nil},
+		{[]any{"我叫小雨呀", 3, 4, nil}, nil},
+		{[]any{"我叫小雨呀", 3, -1, "王雨叶"}, "我叫王雨叶"},
+		{[]any{"我叫小雨呀", 3, 1, "王雨叶"}, "我叫王雨叶雨呀"},
+		{[]any{"我叫小雨呀", -1, nil, "王雨叶"}, nil},
+		{[]any{"我叫小雨呀", -1, 2, nil}, nil},
 	}
 	fc := funcs[ast.InsertFunc]
 	for _, test := range tests {
@@ -2189,7 +2191,7 @@ func TestInsert(t *testing.T) {
 func TestOrd(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected int64
 		chs      string
 		isNil    bool
@@ -2215,7 +2217,7 @@ func TestOrd(t *testing.T) {
 	for _, c := range cases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 
 		d, err := f.Eval(ctx, chunk.Row{})
@@ -2237,15 +2239,15 @@ func TestOrd(t *testing.T) {
 func TestElt(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		argLst []interface{}
-		ret    interface{}
+		argLst []any
+		ret    any
 	}{
-		{[]interface{}{1, "Hej", "ej", "Heja", "hej", "foo"}, "Hej"},
-		{[]interface{}{9, "Hej", "ej", "Heja", "hej", "foo"}, nil},
-		{[]interface{}{-1, "Hej", "ej", "Heja", "ej", "hej", "foo"}, nil},
-		{[]interface{}{0, 2, 3, 11, 1}, nil},
-		{[]interface{}{3, 2, 3, 11, 1}, "11"},
-		{[]interface{}{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
+		{[]any{1, "Hej", "ej", "Heja", "hej", "foo"}, "Hej"},
+		{[]any{9, "Hej", "ej", "Heja", "hej", "foo"}, nil},
+		{[]any{-1, "Hej", "ej", "Heja", "ej", "hej", "foo"}, nil},
+		{[]any{0, 2, 3, 11, 1}, nil},
+		{[]any{3, 2, 3, 11, 1}, "11"},
+		{[]any{1.1, "2.1", "3.1", "11.1", "1.1"}, "2.1"},
 	}
 	for _, c := range tbl {
 		fc := funcs[ast.Elt]
@@ -2260,19 +2262,19 @@ func TestElt(t *testing.T) {
 func TestExportSet(t *testing.T) {
 	ctx := createContext(t)
 	estd := []struct {
-		argLst []interface{}
+		argLst []any
 		res    string
 	}{
-		{[]interface{}{-9223372036854775807, "Y", "N", ",", 5}, "Y,N,N,N,N"},
-		{[]interface{}{-6, "Y", "N", ",", 5}, "N,Y,N,Y,Y"},
-		{[]interface{}{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
-		{[]interface{}{5, "Y", "N", ",", 0}, ""},
-		{[]interface{}{5, "Y", "N", ",", 1}, "Y"},
-		{[]interface{}{6, "1", "0", ",", 10}, "0,1,1,0,0,0,0,0,0,0"},
-		{[]interface{}{333333, "Ysss", "sN", "---", 9}, "Ysss---sN---Ysss---sN---Ysss---sN---sN---sN---sN"},
-		{[]interface{}{7, "Y", "N"}, "Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"},
-		{[]interface{}{7, "Y", "N", 6}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
-		{[]interface{}{7, "Y", "N", 6, 133}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+		{[]any{-9223372036854775807, "Y", "N", ",", 5}, "Y,N,N,N,N"},
+		{[]any{-6, "Y", "N", ",", 5}, "N,Y,N,Y,Y"},
+		{[]any{5, "Y", "N", ",", 4}, "Y,N,Y,N"},
+		{[]any{5, "Y", "N", ",", 0}, ""},
+		{[]any{5, "Y", "N", ",", 1}, "Y"},
+		{[]any{6, "1", "0", ",", 10}, "0,1,1,0,0,0,0,0,0,0"},
+		{[]any{333333, "Ysss", "sN", "---", 9}, "Ysss---sN---Ysss---sN---Ysss---sN---sN---sN---sN"},
+		{[]any{7, "Y", "N"}, "Y,Y,Y,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N,N"},
+		{[]any{7, "Y", "N", 6}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
+		{[]any{7, "Y", "N", 6, 133}, "Y6Y6Y6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N6N"},
 	}
 	fc := funcs[ast.ExportSet]
 	for _, c := range estd {
@@ -2289,8 +2291,8 @@ func TestExportSet(t *testing.T) {
 
 func TestBin(t *testing.T) {
 	tbl := []struct {
-		Input    interface{}
-		Expected interface{}
+		Input    any
+		Expected any
 	}{
 		{"10", "1010"},
 		{"10.2", "1010"},
@@ -2322,8 +2324,8 @@ func TestBin(t *testing.T) {
 func TestQuote(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		arg interface{}
-		ret interface{}
+		arg any
+		ret any
 	}{
 		{`Don\'t!`, `'Don\\\'t!'`},
 		{`Don't`, `'Don\'t'`},
@@ -2351,7 +2353,7 @@ func TestQuote(t *testing.T) {
 func TestToBase64(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		args   interface{}
+		args   any
 		expect string
 		isNil  bool
 		getErr bool
@@ -2386,7 +2388,7 @@ func TestToBase64(t *testing.T) {
 	}
 	if strconv.IntSize == 32 {
 		tests = append(tests, struct {
-			args   interface{}
+			args   any
 			expect string
 			isNil  bool
 			getErr bool
@@ -2399,7 +2401,7 @@ func TestToBase64(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []interface{}{test.args})...)
+		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []any{test.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if test.getErr {
@@ -2432,7 +2434,7 @@ func TestToBase64(t *testing.T) {
 	for _, c := range tbl {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []interface{}{c.input})...)
+		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -2502,7 +2504,7 @@ func TestToBase64Sig(t *testing.T) {
 			require.Equal(t, 1, len(warnings))
 			lastWarn := warnings[len(warnings)-1]
 			require.True(t, terror.ErrorEqual(errWarnAllowedPacketOverflowed, lastWarn.Err))
-			ctx.GetSessionVars().StmtCtx.SetWarnings([]stmtctx.SQLWarn{})
+			ctx.GetSessionVars().StmtCtx.SetWarnings([]contextutil.SQLWarn{})
 		} else {
 			require.False(t, isNull)
 		}
@@ -2514,9 +2516,9 @@ func TestStringRight(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Right]
 	tests := []struct {
-		str    interface{}
-		length interface{}
-		expect interface{}
+		str    any
+		length any
+		expect any
 	}{
 		{"helloworld", 5, "world"},
 		{"helloworld", 10, "helloworld"},
@@ -2546,10 +2548,10 @@ func TestWeightString(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.WeightString]
 	tests := []struct {
-		expr    interface{}
+		expr    any
 		padding string
 		length  int
-		expect  interface{}
+		expect  any
 	}{
 		{nil, "NONE", 0, nil},
 		{7, "NONE", 0, nil},
@@ -2622,32 +2624,32 @@ func TestWeightString(t *testing.T) {
 func TestTranslate(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args  []interface{}
+		args  []any
 		isNil bool
 		isErr bool
 		res   string
 	}{
-		{[]interface{}{"ABC", "A", "B"}, false, false, "BBC"},
-		{[]interface{}{"ABC", "Z", "ABC"}, false, false, "ABC"},
-		{[]interface{}{"A.B.C", ".A", "|"}, false, false, "|B|C"},
-		{[]interface{}{"中文", "文", "国"}, false, false, "中国"},
-		{[]interface{}{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
-		{[]interface{}{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
-		{[]interface{}{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
-		{[]interface{}{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
-		{[]interface{}{"abc", "ab", ""}, false, false, "c"},
-		{[]interface{}{"aaa", "a", ""}, false, false, ""},
-		{[]interface{}{"", "null", "null"}, false, false, ""},
-		{[]interface{}{"null", "", "null"}, false, false, "null"},
-		{[]interface{}{"null", "null", ""}, false, false, ""},
-		{[]interface{}{nil, "error", "error"}, true, false, ""},
-		{[]interface{}{"error", nil, "error"}, true, false, ""},
-		{[]interface{}{"error", "error", nil}, true, false, ""},
-		{[]interface{}{nil, nil, nil}, true, false, ""},
-		{[]interface{}{[]byte{255}, []byte{255}, []byte{255}}, false, false, string([]byte{255})},
-		{[]interface{}{[]byte{255, 255}, []byte{255}, []byte{254}}, false, false, string([]byte{254, 254})},
-		{[]interface{}{[]byte{255, 255}, []byte{255, 255}, []byte{254, 253}}, false, false, string([]byte{254, 254})},
-		{[]interface{}{[]byte{255, 254, 253, 252, 251}, []byte{253, 252, 251}, []byte{254, 253}}, false, false, string([]byte{255, 254, 254, 253})},
+		{[]any{"ABC", "A", "B"}, false, false, "BBC"},
+		{[]any{"ABC", "Z", "ABC"}, false, false, "ABC"},
+		{[]any{"A.B.C", ".A", "|"}, false, false, "|B|C"},
+		{[]any{"中文", "文", "国"}, false, false, "中国"},
+		{[]any{"UPPERCASE", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"}, false, false, "uppercase"},
+		{[]any{"lowercase", "abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ"}, false, false, "LOWERCASE"},
+		{[]any{"aaaaabbbbb", "aaabbb", "xyzXYZ"}, false, false, "xxxxxXXXXX"},
+		{[]any{"Ti*DB User's Guide", " */'", "___"}, false, false, "Ti_DB_Users_Guide"},
+		{[]any{"abc", "ab", ""}, false, false, "c"},
+		{[]any{"aaa", "a", ""}, false, false, ""},
+		{[]any{"", "null", "null"}, false, false, ""},
+		{[]any{"null", "", "null"}, false, false, "null"},
+		{[]any{"null", "null", ""}, false, false, ""},
+		{[]any{nil, "error", "error"}, true, false, ""},
+		{[]any{"error", nil, "error"}, true, false, ""},
+		{[]any{"error", "error", nil}, true, false, ""},
+		{[]any{nil, nil, nil}, true, false, ""},
+		{[]any{[]byte{255}, []byte{255}, []byte{255}}, false, false, string([]byte{255})},
+		{[]any{[]byte{255, 255}, []byte{255}, []byte{254}}, false, false, string([]byte{254, 254})},
+		{[]any{[]byte{255, 255}, []byte{255, 255}, []byte{254, 253}}, false, false, string([]byte{254, 254})},
+		{[]any{[]byte{255, 254, 253, 252, 251}, []byte{253, 252, 251}, []byte{254, 253}}, false, false, string([]byte{255, 254, 254, 253})},
 	}
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.Translate, primitiveValsToConstants(ctx, c.args)...)
@@ -2673,7 +2675,7 @@ func TestCIWeightString(t *testing.T) {
 		str     string
 		padding string
 		length  int
-		expect  interface{}
+		expect  any
 	}
 
 	checkResult := func(collation string, tests []weightStringTest) {

@@ -31,10 +31,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -43,14 +45,15 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
@@ -60,6 +63,9 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
 )
+
+// bootstrapOwnerKey is the key used by ddl owner mutex during boostrap.
+var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
@@ -459,20 +465,19 @@ const (
 		lock_name VARCHAR(64) NOT NULL PRIMARY KEY
 	);`
 	// CreateMDLView is a view about metadata locks.
-	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-		SELECT job_id,
-			db_name,
-			table_name,
-			query,
+	CreateMDLView = `CREATE OR REPLACE SQL SECURITY INVOKER VIEW mysql.tidb_mdl_view as (
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
 			session_id,
-			txnstart,
+			cluster_tidb_trx.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
-		FROM information_schema.ddl_jobs,
-			information_schema.cluster_tidb_trx,
-			information_schema.cluster_processlist
-		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
-			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
-			AND cluster_tidb_trx.session_id = cluster_processlist.id
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',(', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), '),') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -573,7 +578,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
@@ -583,6 +588,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -593,7 +599,7 @@ const (
 		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
     	task_key VARCHAR(256) NOT NULL,
 		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
+		dispatcher_id VARCHAR(261),
 		state VARCHAR(64) NOT NULL,
 		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
@@ -603,6 +609,7 @@ const (
 		meta LONGBLOB,
 		concurrency INT(11),
 		step INT(11),
+		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		key(state),
       	UNIQUE KEY task_key(task_key)
@@ -610,41 +617,26 @@ const (
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
-        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        host VARCHAR(261) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
-        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
-
-	// CreateLoadDataJobs is a table that LOAD DATA uses
-	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
-       job_id bigint(64) NOT NULL AUTO_INCREMENT,
-       expected_status ENUM('running', 'paused', 'canceled') NOT NULL DEFAULT 'running',
-       create_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-       start_time TIMESTAMP(6) NULL DEFAULT NULL,
-       update_time TIMESTAMP(6) NULL DEFAULT NULL,
-       end_time TIMESTAMP(6) NULL DEFAULT NULL,
-       data_source TEXT NOT NULL,
-       table_schema VARCHAR(64) NOT NULL,
-       table_name VARCHAR(64) NOT NULL,
-       import_mode VARCHAR(64) NOT NULL,
-       create_user VARCHAR(32) NOT NULL,
-       progress TEXT DEFAULT NULL,
-       result_message TEXT DEFAULT NULL,
-       error_message TEXT DEFAULT NULL,
-       PRIMARY KEY (job_id),
-       KEY (create_time),
-       KEY (create_user));`
+        cpu_count int default 0,
+        keyspace_id bigint(8) NOT NULL DEFAULT -1
+    );`
 
 	// CreateRunawayTable stores the query which is identified as runaway or quarantined because of in watch list.
 	CreateRunawayTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_runaway_queries (
 		resource_group_name varchar(32) not null,
-		time TIMESTAMP NOT NULL,
+		start_time TIMESTAMP NOT NULL,
+		repeats int default 1,
 		match_type varchar(12) NOT NULL,
-		action varchar(12) NOT NULL,
-		original_sql TEXT NOT NULL,
-		plan_digest TEXT NOT NULL,
+		action varchar(64) NOT NULL,
+		sample_sql TEXT NOT NULL,
+		sql_digest varchar(64) NOT NULL,
+		plan_digest varchar(64) NOT NULL,
 		tidb_server varchar(512),
+		rule VARCHAR(512) DEFAULT '',
 		INDEX plan_index(plan_digest(64)) COMMENT "accelerate the speed when select runaway query",
-		INDEX time_index(time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(start_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -657,6 +649,8 @@ const (
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
+		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
 		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -672,8 +666,20 @@ const (
 		watch_text TEXT NOT NULL,
 		source varchar(512) NOT NULL,
 		action bigint(10),
+		switch_group_name VARCHAR(32) DEFAULT '',
+		rule VARCHAR(512) DEFAULT '',
 		done_time TIMESTAMP(6) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
+
+	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
+	CreateRequestUnitByGroupTable = `CREATE TABLE IF NOT EXISTS mysql.request_unit_by_group (
+		start_time TIMESTAMP(6) NOT NULL,
+		end_time TIMESTAMP(6) NOT NULL,
+		resource_group VARCHAR(32) NOT null,
+		total_ru bigint(64) UNSIGNED NOT NULL,
+		PRIMARY KEY (start_time, end_time, resource_group),
+		KEY (resource_group)
+	);`
 
 	// CreateImportJobs is a table that IMPORT INTO uses.
 	CreateImportJobs = `CREATE TABLE IF NOT EXISTS mysql.tidb_import_jobs (
@@ -695,6 +701,64 @@ const (
 		PRIMARY KEY (id),
 		KEY (created_by),
 		KEY (status));`
+
+	// CreatePITRIDMap is a table that records the id map from upstream to downstream for PITR.
+	CreatePITRIDMap = `CREATE TABLE IF NOT EXISTS mysql.tidb_pitr_id_map (
+		restored_ts BIGINT NOT NULL,
+		upstream_cluster_id BIGINT NOT NULL,
+		segment_id BIGINT NOT NULL,
+		id_map BLOB(524288) NOT NULL,
+		update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		PRIMARY KEY (restored_ts, upstream_cluster_id, segment_id));`
+
+	// DropMySQLIndexUsageTable removes the table `mysql.schema_index_usage`
+	DropMySQLIndexUsageTable = "DROP TABLE IF EXISTS mysql.schema_index_usage"
+
+	// CreateSysSchema creates a new schema called `sys`.
+	CreateSysSchema = `CREATE DATABASE IF NOT EXISTS sys;`
+
+	// CreateSchemaUnusedIndexesView creates a view to use `information_schema.tidb_index_usage` to get the unused indexes.
+	CreateSchemaUnusedIndexesView = `CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
+		SELECT
+			table_schema as object_schema,
+			table_name as object_name,
+			index_name
+		FROM information_schema.cluster_tidb_index_usage
+		WHERE
+			table_schema not in ('sys', 'mysql', 'INFORMATION_SCHEMA', 'PERFORMANCE_SCHEMA') and
+			index_name != 'PRIMARY'
+		GROUP BY table_schema, table_name, index_name
+		HAVING
+			sum(last_access_time) is null;`
+
+	// CreateIndexAdvisorTable is a table to store the index advisor results.
+	CreateIndexAdvisorTable = `CREATE TABLE IF NOT EXISTS mysql.index_advisor_results (
+       id bigint primary key not null auto_increment,
+       created_at datetime not null,
+       updated_at datetime not null,
+
+       schema_name varchar(64) not null,
+       table_name varchar(64) not null,
+       index_name varchar(127) not null,
+       index_columns varchar(500) not null COMMENT 'split by ",", e.g. "c1", "c1,c2", "c1,c2,c3,c4,c5"',
+
+       index_details json,        -- est_index_size, reason, DDL to create this index, ...
+       top_impacted_queries json, -- improvement, plan before and after this index, ...
+       workload_impact json,      -- improvement and more details, ...
+       extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
+       index idx_create(created_at),
+       index idx_update(updated_at),
+       unique index idx(schema_name, table_name, index_columns))`
+
+	// CreateKernelOptionsTable is a table to store kernel options for tidb.
+	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
+        module varchar(128),
+        name varchar(128),
+        value varchar(128),
+        updated_at datetime,
+        status varchar(128),
+        description text,
+        primary key(module, name))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -751,8 +815,8 @@ const (
 	// The variable name in mysql.tidb table and it will be used when we want to know
 	// system timezone.
 	tidbSystemTZ = "system_tz"
-	// The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
-	tidbNewCollationEnabled = "new_collation_enabled"
+	// TidbNewCollationEnabled The variable name in mysql.tidb table and it will indicate if the new collations are enabled in the TiDB cluster.
+	TidbNewCollationEnabled = "new_collation_enabled"
 	// The variable name in mysql.tidb table and it records the default value of
 	// mem-quota-query when upgrade from v3.0.x to v4.0.9+.
 	tidbDefMemoryQuotaQuery = "default_memory_quota_query"
@@ -966,6 +1030,7 @@ const (
 	// version 138 set tidb_enable_null_aware_anti_join to true
 	version138 = 138
 	// version 139 creates mysql.load_data_jobs table for LOAD DATA statement
+	// deprecated in version184
 	version139 = 139
 	// version 140 add column task_key to mysql.tidb_global_task
 	version140 = 140
@@ -1032,20 +1097,111 @@ const (
 	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
-	// version 180
+
+	// ...
+	// [version180, version189] is the version range reserved for patches of 7.5.x
+	// ...
+
+	// version 190
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
-	version180 = 180
+	//   add cpu_count to mysql.dist_framework_meta
+	//   modify `mysql.dist_framework_meta` host from VARCHAR(100) to VARCHAR(261)
+	//   modify `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history` exec_id from varchar(256) to VARCHAR(261)
+	//   modify `mysql.tidb_global_task`/`mysql.tidb_global_task_history` dispatcher_id from varchar(256) to VARCHAR(261)
+	version190 = 190
 
-	// version 181
-	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
-	version181 = 181
+	// version 191
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version191 = 191
+
+	// version 192
+	//   add new system table `mysql.request_unit_by_group`, which is used for
+	//   historical RU consumption by resource group per day.
+	version192 = 192
+
+	// version 193
+	//   replace `mysql.tidb_mdl_view` table
+	version193 = 193
+
+	// version 194
+	//   remove `mysql.load_data_jobs` table
+	version194 = 194
+
+	// version 195
+	//   drop `mysql.schema_index_usage` table
+	//   create `sys` schema
+	//   create `sys.schema_unused_indexes` table
+	version195 = 195
+
+	// version 196
+	//   add column `target_scope` for 'mysql.tidb_global_task` table
+	//   add column `target_scope` for 'mysql.tidb_global_task_history` table
+	version196 = 196
+
+	// version 197
+	//   replace `mysql.tidb_mdl_view` table
+	version197 = 197
+
+	// version 198
+	//   add column `owner_id` for `mysql.tidb_mdl_info` table
+	version198 = 198
+
+	// ...
+	// [version199, version208] is the version range reserved for patches of 8.1.x
+	// ...
+
+	// version 209
+	//   sets `tidb_resource_control_strict_mode` to off when a cluster upgrades from some version lower than v8.2.
+	version209 = 209
+	// version210 indicates that if TiDB is upgraded from a lower version(lower than 8.3.0), the tidb_analyze_column_options will be set to ALL.
+	version210 = 210
+
+	// version211 add column `summary` to `mysql.tidb_background_subtask_history`.
+	version211 = 211
+
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` to `mysql.tidb_runaway_queries`.
+	// 3. modify column length of `action`.
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
+	version212 = 212
+
+	// version 213
+	//   create `mysql.tidb_pitr_id_map` table
+	version213 = 213
+
+	// version 214
+	//   create `mysql.index_advisor_results` table
+	version214 = 214
+
+	// If the TiDB upgrading from the a version before v7.0 to a newer version, we keep the tidb_enable_inl_join_inner_multi_pattern to 0.
+	version215 = 215
+
+	// version 216
+	//   changes variable `tidb_scatter_region` value from ON to "table" and OFF to "".
+	version216 = 216
+
+	// version 217
+	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
+	version217 = 217
+
+	// version 218
+	// enable fast_create_table on default
+	version218 = 218
+
+	// ...
+	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// ...
+
+	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version181
+var currentBootstrapVersion int64 = version218
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1200,8 +1356,25 @@ var (
 		upgradeToVer177,
 		upgradeToVer178,
 		upgradeToVer179,
-		upgradeToVer180,
-		upgradeToVer181,
+		upgradeToVer190,
+		upgradeToVer191,
+		upgradeToVer192,
+		upgradeToVer193,
+		upgradeToVer194,
+		upgradeToVer195,
+		upgradeToVer196,
+		upgradeToVer197,
+		upgradeToVer198,
+		upgradeToVer209,
+		upgradeToVer210,
+		upgradeToVer211,
+		upgradeToVer212,
+		upgradeToVer213,
+		upgradeToVer214,
+		upgradeToVer215,
+		upgradeToVer216,
+		upgradeToVer217,
+		upgradeToVer218,
 	}
 )
 
@@ -1265,36 +1438,101 @@ var (
 	SupportUpgradeHTTPOpVer int64 = version174
 )
 
+func acquireLock(store kv.Storage) (func(), error) {
+	etcdCli, err := storepkg.NewEtcdCli(store)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if etcdCli == nil {
+		// Special handling for test.
+		logutil.BgLogger().Warn("skip acquire ddl owner lock for uni-store")
+		return func() {
+			// do nothing
+		}, nil
+	}
+	releaseFn, err := owner.AcquireDistributedLock(context.Background(), etcdCli, bootstrapOwnerKey, 10)
+	if err != nil {
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+		return nil, errors.Trace(err)
+	}
+	return func() {
+		releaseFn()
+		if err2 := etcdCli.Close(); err2 != nil {
+			logutil.BgLogger().Error("failed to close etcd client", zap.Error(err2))
+		}
+	}, nil
+}
+
+func checkDistTask(s sessiontypes.Session, ver int64) {
+	if ver > version195 {
+		// since version195 we enable dist task by default, no need to check
+		return
+	}
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT HIGH_PRIORITY variable_value from mysql.global_variables where variable_name = %?;", variable.TiDBEnableDistTask)
+	if err != nil {
+		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
+	}
+	defer terror.Call(rs.Close)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	if err != nil {
+		logutil.BgLogger().Fatal("check dist task failed, getting tidb_enable_dist_task failed", zap.Error(err))
+	}
+	if req.NumRows() == 0 {
+		// Not set yet.
+		return
+	} else if req.GetRow(0).GetString(0) == variable.On {
+		logutil.BgLogger().Fatal("cannot upgrade when tidb_enable_dist_task is enabled, "+
+			"please set tidb_enable_dist_task to off before upgrade", zap.Error(err))
+	}
+
+	// Even if the variable is set to `off`, we still need to check the tidb_global_task.
+	rs2, err := s.ExecuteInternal(ctx, `SELECT id FROM %n.%n WHERE state not in (%?, %?, %?)`,
+		mysql.SystemDB,
+		"tidb_global_task",
+		proto.TaskStateSucceed,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+	)
+	if err != nil {
+		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
+	}
+	defer terror.Call(rs2.Close)
+	req = rs2.NewChunk(nil)
+	err = rs2.Next(ctx, req)
+	if err != nil {
+		logutil.BgLogger().Fatal("check dist task failed, reading tidb_global_task failed", zap.Error(err))
+	}
+	if req.NumRows() > 0 {
+		logutil.BgLogger().Fatal("check dist task failed, some distributed tasks is still running", zap.Error(err))
+	}
+}
+
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
 func upgrade(s sessiontypes.Session) {
-	ver, err := getBootstrapVersion(s)
-	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
-		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		return
-	}
-	printClusterState(s, ver)
-
-	// Only upgrade from under version92 and this TiDB is not owner set.
-	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
-	if ver < version92 {
-		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
-		if err != nil {
-			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
-		}
-		if !useConcurrentDDL {
-			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
-			// overwrite variable EnableConcurrentDDL.
-			variable.DDLForce2Queue.Store(true)
-		}
-	}
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
+	var ver int64
+	ver, err = getBootstrapVersion(s)
+	terror.MustNil(err)
+	if ver >= currentBootstrapVersion {
+		// It is already bootstrapped/upgraded by a higher version TiDB server.
+		return
+	}
+
+	checkDistTask(s, ver)
+	printClusterState(s, ver)
+
+	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
+	// but during upgrade we disable it.
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -1308,7 +1546,6 @@ func upgrade(s sessiontypes.Session) {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -1484,7 +1721,7 @@ func upgradeToVer12(s sessiontypes.Session, ver int64) {
 	terror.MustNil(err)
 	sql := "SELECT HIGH_PRIORITY user, host, password FROM mysql.user WHERE password != ''"
 	rs, err := s.ExecuteInternal(ctx, sql)
-	if terror.ErrorEqual(err, core.ErrUnknownColumn) {
+	if terror.ErrorEqual(err, plannererrors.ErrUnknownColumn) {
 		sql := "SELECT HIGH_PRIORITY user, host, authentication_string FROM mysql.user WHERE authentication_string != ''"
 		rs, err = s.ExecuteInternal(ctx, sql)
 	}
@@ -1776,7 +2013,7 @@ func writeNewCollationParameter(s sessiontypes.Session, flag bool) {
 		b = varTrue
 	}
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE=%?`,
-		mysql.SystemDB, mysql.TiDBTable, tidbNewCollationEnabled, b, comment, b,
+		mysql.SystemDB, mysql.TiDBTable, TidbNewCollationEnabled, b, comment, b,
 	)
 }
 
@@ -2025,7 +2262,6 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 
@@ -2037,7 +2273,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 
 		mustExecute(s, "COMMIT")
 	}()
-	mustExecute(s, h.LockBindInfoSQL())
+	mustExecute(s, bindinfo.LockBindInfoSQL)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	var rs sqlexec.RecordSet
 	rs, err = s.ExecuteInternal(ctx,
@@ -2095,7 +2331,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		if err != nil {
 			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
 		}
-		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
+		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind), "ON")
 		if _, ok := bindMap[originWithDB]; ok {
 			// The results are sorted in descending order of time.
 			// And in the following cases, duplicate originWithDB may occur
@@ -2259,19 +2495,7 @@ func upgradeToVer80(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_analyze_version exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_analyze_version | 1" since this is the old behavior before we introduce this variable.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBAnalyzeVersion, 1)
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeVersion, 1)
 }
 
 // For users that upgrade TiDB from a pre-4.0 version, we want to disable index merge by default.
@@ -2282,19 +2506,7 @@ func upgradeToVer81(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_enable_index_merge exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_enable_index_merge | off".
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableIndexMerge, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableIndexMerge, variable.Off)
 }
 
 func upgradeToVer82(s sessiontypes.Session, ver int64) {
@@ -2429,19 +2641,7 @@ func upgradeToVer97(s sessiontypes.Session, ver int64) {
 	}
 	// Check if tidb_opt_range_max_size exists in mysql.GLOBAL_VARIABLES.
 	// If not, insert "tidb_opt_range_max_size | 0" since this is the old behavior before we introduce this variable.
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptRangeMaxSize, 0)
+	initGlobalVariableIfNotExists(s, variable.TiDBOptRangeMaxSize, 0)
 }
 
 func upgradeToVer98(s sessiontypes.Session, ver int64) {
@@ -2460,8 +2660,8 @@ func upgradeToVer99After(s sessiontypes.Session) {
 	sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
 		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableMDL, 1)
 	mustExecute(s, sql)
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
 		return t.SetMetadataLock(true)
 	})
 	terror.MustNil(err)
@@ -2510,19 +2710,7 @@ func upgradeToVer105(s sessiontypes.Session, ver int64) {
 	if ver >= version105 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBCostModelVersion, "1")
+	initGlobalVariableIfNotExists(s, variable.TiDBCostModelVersion, "1")
 }
 
 func upgradeToVer106(s sessiontypes.Session, ver int64) {
@@ -2614,20 +2802,7 @@ func upgradeToVer135(s sessiontypes.Session, ver int64) {
 	if ver >= version135 {
 		return
 	}
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptAdvancedJoinHint, false)
+	initGlobalVariableIfNotExists(s, variable.TiDBOptAdvancedJoinHint, false)
 }
 
 func upgradeToVer136(s sessiontypes.Session, ver int64) {
@@ -2651,12 +2826,7 @@ func upgradeToVer138(s sessiontypes.Session, ver int64) {
 	mustExecute(s, "REPLACE HIGH_PRIORITY INTO %n.%n VALUES (%?, %?);", mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBOptimizerEnableNAAJ, variable.On)
 }
 
-func upgradeToVer139(s sessiontypes.Session, ver int64) {
-	if ver >= version139 {
-		return
-	}
-	mustExecute(s, CreateLoadDataJobs)
-}
+func upgradeToVer139(sessiontypes.Session, int64) {}
 
 func upgradeToVer140(s sessiontypes.Session, ver int64) {
 	if ver >= version140 {
@@ -2696,19 +2866,7 @@ func upgradeToVer142(s sessiontypes.Session, ver int64) {
 	if ver >= version142 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
-
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableNonPreparedPlanCache, variable.Off)
 }
 
 func upgradeToVer143(s sessiontypes.Session, ver int64) {
@@ -2723,19 +2881,8 @@ func upgradeToVer144(s sessiontypes.Session, ver int64) {
 	if ver >= version144 {
 		return
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats)
-	terror.MustNil(err)
-	req := rs.NewChunk(nil)
-	err = rs.Next(ctx, req)
-	terror.MustNil(err)
-	if req.NumRows() != 0 {
-		return
-	}
 
-	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
-		mysql.SystemDB, mysql.GlobalVariablesTable, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
+	initGlobalVariableIfNotExists(s, variable.TiDBPlanCacheInvalidationOnFreshStats, variable.Off)
 }
 
 func upgradeToVer146(s sessiontypes.Session, ver int64) {
@@ -2845,7 +2992,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		}
 		for i := 0; i < req.NumRows(); i++ {
 			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
-			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
 			// update `in (?)` to `in (...)`
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
@@ -2887,8 +3034,8 @@ func upgradeToVer177(s sessiontypes.Session, ver int64) {
 func writeDDLTableVersion(s sessiontypes.Session) {
 	var err error
 	var ddlTableVersion meta.DDLTableVersion
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(_ context.Context, txn kv.Transaction) error {
+		t := meta.NewMutator(txn)
 		ddlTableVersion, err = t.CheckDDLTableVersion()
 		return err
 	})
@@ -2916,8 +3063,8 @@ func upgradeToVer179(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
 }
 
-func upgradeToVer180(s sessiontypes.Session, ver int64) {
-	if ver >= version180 {
+func upgradeToVer190(s sessiontypes.Session, ver int64) {
+	if ver >= version190 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
@@ -2938,14 +3085,208 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta MODIFY COLUMN `host` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history MODIFY COLUMN `exec_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history MODIFY COLUMN `dispatcher_id` VARCHAR(261)")
 }
 
-func upgradeToVer181(s sessiontypes.Session, ver int64) {
-	if ver >= version181 {
+func upgradeToVer191(s sessiontypes.Session, ver int64) {
+	if ver >= version191 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_history ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer192(s sessiontypes.Session, ver int64) {
+	if ver >= version192 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer193(s sessiontypes.Session, ver int64) {
+	if ver >= version193 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer194(s sessiontypes.Session, ver int64) {
+	if ver >= version194 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.load_data_jobs")
+}
+
+func upgradeToVer195(s sessiontypes.Session, ver int64) {
+	if ver >= version195 {
+		return
+	}
+
+	doReentrantDDL(s, DropMySQLIndexUsageTable)
+}
+
+func upgradeToVer196(s sessiontypes.Session, ver int64) {
+	if ver >= version196 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN target_scope VARCHAR(256) DEFAULT '' AFTER `step`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer197(s sessiontypes.Session, ver int64) {
+	if ver >= version197 {
+		return
+	}
+
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer198(s sessiontypes.Session, ver int64) {
+	if ver >= version198 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_mdl_info ADD COLUMN owner_id VARCHAR(64) NOT NULL DEFAULT '';", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer209(s sessiontypes.Session, ver int64) {
+	if ver >= version209 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBResourceControlStrictMode, variable.Off)
+}
+
+func upgradeToVer210(s sessiontypes.Session, ver int64) {
+	if ver >= version210 {
+		return
+	}
+
+	// Check if tidb_analyze_column_options exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_analyze_column_options to ALL since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeColumnOptions, model.AllColumns.String())
+
+	// Check if tidb_opt_projection_push_down exists in mysql.GLOBAL_VARIABLES.
+	// If not, set tidb_opt_projection_push_down to Off since this is the old behavior before we introduce this variable.
+	initGlobalVariableIfNotExists(s, variable.TiDBOptProjectionPushDown, variable.Off)
+}
+
+func upgradeToVer211(s sessiontypes.Session, ver int64) {
+	if ver >= version211 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer212(s sessiontypes.Session, ver int64) {
+	if ver >= version212 {
+		return
+	}
+	// need to ensure curVersion has the column before rename.
+	// version169 created `tidb_runaway_queries` table
+	// version172 created `tidb_runaway_watch` and `tidb_runaway_watch_done` tables
+	if ver < version172 {
+		return
+	}
+	// version212 changed a lots of runaway related table.
+	// 1. switchGroup: add column `switch_group_name` to `mysql.tidb_runaway_watch` and `mysql.tidb_runaway_watch_done`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `switch_group_name` VARCHAR(32) DEFAULT '' AFTER `action`;", infoschema.ErrColumnExists)
+	// 2. modify column `plan_digest` type, modify column `time` to `start_time,
+	// modify column `original_sql` to `sample_sql` and unique union key to `mysql.tidb_runaway_queries`.
+	// add column `sql_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `sql_digest` varchar(64) DEFAULT '' AFTER `original_sql`;", infoschema.ErrColumnExists)
+	// add column `repeats`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `repeats` int DEFAULT 1 AFTER `time`;", infoschema.ErrColumnExists)
+	// rename column name from `time` to `start_time`, will auto rebuild the index.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `time` TO `start_time`", infoschema.ErrColumnNotExists)
+	// rename column `original_sql` to `sample_sql`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries RENAME COLUMN `original_sql` TO `sample_sql`", infoschema.ErrColumnNotExists)
+	// modify column type of `plan_digest`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `plan_digest` varchar(64) DEFAULT '';", infoschema.ErrColumnExists)
+	// 3. modify column length of `action`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries MODIFY COLUMN `action` VARCHAR(64) NOT NULL;", infoschema.ErrColumnExists)
+	// 4. add column `rule` to `mysql.tidb_runaway_watch`, `mysql.tidb_runaway_watch_done` and `mysql.tidb_runaway_queries`.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `switch_group_name`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_queries ADD COLUMN `rule` VARCHAR(512) DEFAULT '' AFTER `tidb_server`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer213(s sessiontypes.Session, ver int64) {
+	if ver >= version213 {
+		return
+	}
+
+	mustExecute(s, CreatePITRIDMap)
+}
+
+func upgradeToVer214(s sessiontypes.Session, ver int64) {
+	if ver >= version214 {
+		return
+	}
+
+	mustExecute(s, CreateIndexAdvisorTable)
+	mustExecute(s, CreateKernelOptionsTable)
+}
+
+func upgradeToVer215(s sessiontypes.Session, ver int64) {
+	if ver >= version215 {
+		return
+	}
+
+	initGlobalVariableIfNotExists(s, variable.TiDBEnableINLJoinInnerMultiPattern, variable.Off)
+}
+
+func upgradeToVer216(s sessiontypes.Session, ver int64) {
+	if ver >= version216 {
+		return
+	}
+
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'OFF'")
+	mustExecute(s, "UPDATE mysql.global_variables SET VARIABLE_VALUE='table' WHERE VARIABLE_NAME = 'tidb_scatter_region' AND VARIABLE_VALUE = 'ON'")
+}
+
+func upgradeToVer217(s sessiontypes.Session, ver int64) {
+	if ver >= version217 {
+		return
+	}
+	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
+	// Otherwise do nothing.
+	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	// empty, just make lint happy.
+}
+
+// initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
+func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT VARIABLE_VALUE FROM %n.%n WHERE VARIABLE_NAME=%?;",
+		mysql.SystemDB, mysql.GlobalVariablesTable, name)
+	terror.MustNil(err)
+	req := rs.NewChunk(nil)
+	err = rs.Next(ctx, req)
+	terror.MustNil(err)
+	if req.NumRows() != 0 {
+		return
+	}
+
+	mustExecute(s, "INSERT HIGH_PRIORITY IGNORE INTO %n.%n VALUES (%?, %?);",
+		mysql.SystemDB, mysql.GlobalVariablesTable, name, val)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
@@ -3023,8 +3364,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateOptRuleBlacklist)
 	// Create stats_extended table.
 	mustExecute(s, CreateStatsExtended)
-	// Create schema_index_usage.
-	mustExecute(s, CreateSchemaIndexUsageTable)
 	// Create stats_fm_sketch table.
 	mustExecute(s, CreateStatsFMSketchTable)
 	// Create global_grants
@@ -3063,8 +3402,6 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTask)
 	// Create tidb_global_task_history table
 	mustExecute(s, CreateGlobalTaskHistory)
-	// Create load_data_jobs
-	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
 	// create runaway_watch
@@ -3077,6 +3414,18 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 	// create dist_framework_meta
 	mustExecute(s, CreateDistFrameworkMeta)
+	// create request_unit_by_group
+	mustExecute(s, CreateRequestUnitByGroupTable)
+	// create tidb_pitr_id_map
+	mustExecute(s, CreatePITRIDMap)
+	// create `sys` schema
+	mustExecute(s, CreateSysSchema)
+	// create `sys.schema_unused_indexes` view
+	mustExecute(s, CreateSchemaUnusedIndexesView)
+	// create mysql.index_advisor_results
+	mustExecute(s, CreateIndexAdvisorTable)
+	// create mysql.tidb_kernel_options
+	mustExecute(s, CreateKernelOptionsTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3151,37 +3500,7 @@ func doDMLWorks(s sessiontypes.Session) {
 		if !v.HasGlobalScope() {
 			continue
 		}
-		vVal := v.Value
-		switch v.Name {
-		case variable.TiDBTxnMode:
-			if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
-				vVal = "pessimistic"
-			}
-		case variable.TiDBEnableAsyncCommit, variable.TiDBEnable1PC:
-			if config.GetGlobalConfig().Store == "tikv" {
-				vVal = variable.On
-			}
-		case variable.TiDBMemOOMAction:
-			if intest.InTest {
-				vVal = variable.OOMActionLog
-			}
-		case variable.TiDBEnableAutoAnalyze:
-			if intest.InTest {
-				vVal = variable.Off
-			}
-		// For the following sysvars, we change the default
-		// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
-		// It is better to change the value in the Sysvar struct, so that
-		// all installs will have the same value.
-		case variable.TiDBRowFormatVersion:
-			vVal = strconv.Itoa(variable.DefTiDBRowFormatV2)
-		case variable.TiDBTxnAssertionLevel:
-			vVal = variable.AssertionFastStr
-		case variable.TiDBEnableMutationChecker:
-			vVal = variable.On
-		case variable.TiDBPessimisticTransactionFairLocking:
-			vVal = variable.On
-		}
+		vVal := variable.GlobalSystemVariableInitialValue(v.Name, v.Value)
 
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlescape.EscapeString(k), sqlescape.EscapeString(vVal))
@@ -3224,7 +3543,7 @@ func doDMLWorks(s sessiontypes.Session) {
 	}
 }
 
-func mustExecute(s sessiontypes.Session, sql string, args ...interface{}) {
+func mustExecute(s sessiontypes.Session, sql string, args ...any) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, sql, args...)
@@ -3247,21 +3566,23 @@ func oldPasswordUpgrade(pass string) (string, error) {
 }
 
 // rebuildAllPartitionValueMapAndSorted rebuilds all value map and sorted info for list column partitions with InfoSchema.
-func rebuildAllPartitionValueMapAndSorted(s *session) {
+func rebuildAllPartitionValueMapAndSorted(ctx context.Context, s *session) {
 	type partitionExpr interface {
 		PartitionExpr() *tables.PartitionExpr
 	}
 
 	p := parser.New()
 	is := s.GetInfoSchema().(infoschema.InfoSchema)
-	for _, dbInfo := range is.AllSchemas() {
-		for _, t := range is.SchemaTables(dbInfo.Name) {
-			pi := t.Meta().GetPartitionInfo()
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
+	for _, db := range dbs {
+		for _, t := range db.TableInfos {
+			pi := t.GetPartitionInfo()
 			if pi == nil || pi.Type != model.PartitionTypeList {
 				continue
 			}
-
-			pe := t.(partitionExpr).PartitionExpr()
+			tbl, ok := is.TableByID(ctx, t.ID)
+			intest.Assert(ok, "table not found in infoschema")
+			pe := tbl.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
 					logutil.BgLogger().Warn("build list column partition value map and sorted failed")

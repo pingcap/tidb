@@ -15,111 +15,130 @@
 package ingest
 
 import (
-	"fmt"
-
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// Register create a new engineInfo and register it to the backend context.
-func (bc *litBackendCtx) Register(jobID, indexID int64, schemaName, tableName string) (Engine, error) {
-	// Calculate lightning concurrency degree and set memory usage
-	// and pre-allocate memory usage for worker.
-	bc.MemRoot.RefreshConsumption()
-	ok := bc.MemRoot.CheckConsume(int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
-	if !ok {
-		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.MemRoot, bc.jobID, indexID)
-	}
+// Register implements BackendCtx.
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error) {
+	ret := make([]Engine, 0, len(indexIDs))
 
-	var info string
-	en, exist := bc.Load(indexID)
-	if !exist || en.openedEngine == nil {
-		if exist && en.closedEngine != nil {
-			// Import failed before, try to import again.
-			err := en.ImportAndClean()
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
-		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		ok := bc.MemRoot.CheckConsume(StructSizeEngineInfo + engineCacheSize)
+	for _, indexID := range indexIDs {
+		en, ok := bc.engines[indexID]
 		if !ok {
-			return nil, genEngineAllocMemFailedErr(bc.ctx, bc.MemRoot, bc.jobID, indexID)
-		}
-
-		mgr := backend.MakeEngineManager(bc.backend)
-		cfg := generateLocalEngineConfig(jobID, schemaName, tableName)
-		openedEn, err := mgr.OpenEngine(bc.ctx, cfg, tableName, int32(indexID))
-		if err != nil {
-			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail, zap.Int64("job ID", jobID),
-				zap.Int64("index ID", indexID), zap.Error(err))
-			return nil, errors.Trace(err)
-		}
-		id := openedEn.GetEngineUUID()
-		en = newEngineInfo(bc.ctx, jobID, indexID, cfg, openedEn, id, 1, bc.MemRoot)
-		bc.Store(indexID, en)
-		bc.MemRoot.Consume(StructSizeEngineInfo)
-		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
-		info = LitInfoOpenEngine
-	} else {
-		if en.writerCount+1 > bc.cfg.TikvImporter.RangeConcurrency {
-			logutil.Logger(bc.ctx).Warn(LitErrExceedConcurrency, zap.Int64("job ID", jobID),
-				zap.Int64("index ID", indexID),
-				zap.Int("concurrency", bc.cfg.TikvImporter.RangeConcurrency))
-			return nil, dbterror.ErrIngestFailed.FastGenByArgs("concurrency quota exceeded")
-		}
-		en.writerCount++
-		info = LitInfoAddWriter
-	}
-	bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), int64(bc.cfg.TikvImporter.LocalWriterMemCacheSize))
-	logutil.Logger(bc.ctx).Info(info, zap.Int64("job ID", jobID),
-		zap.Int64("index ID", indexID),
-		zap.Int64("current memory usage", bc.MemRoot.CurrentUsage()),
-		zap.Int64("memory limitation", bc.MemRoot.MaxMemoryQuota()),
-		zap.Int("current writer count", en.writerCount))
-	return en, nil
-}
-
-// Unregister delete the engineInfo from the engineManager.
-func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
-	ei, exist := bc.Load(indexID)
-	if !exist {
-		return
-	}
-
-	ei.Clean()
-	bc.Delete(indexID)
-	bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
-	bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
-	bc.MemRoot.Release(StructSizeEngineInfo)
-}
-
-// ResetWorkers reset the writer count of the engineInfo because
-// the goroutines of backfill workers have been terminated.
-func (bc *litBackendCtx) ResetWorkers(jobID int64) {
-	for _, indexID := range bc.Keys() {
-		ei, exist := bc.Load(indexID)
-		if !exist {
 			continue
 		}
-		bc.MemRoot.Release(StructSizeWriterCtx * int64(ei.writerCount))
-		bc.MemRoot.ReleaseWithTag(encodeEngineTag(jobID, indexID))
-		engineCacheSize := int64(bc.cfg.TikvImporter.EngineMemCacheSize)
-		bc.MemRoot.ConsumeWithTag(encodeEngineTag(jobID, indexID), engineCacheSize)
-		ei.writerCount = 0
+		ret = append(ret, en)
 	}
+	if l := len(ret); l > 0 {
+		if l != len(indexIDs) {
+			return nil, errors.Errorf(
+				"engines index ID number mismatch: job ID %d, required number of index IDs: %d, actual number of engines: %d",
+				bc.jobID, len(indexIDs), l,
+			)
+		}
+		return ret, nil
+	}
+
+	bc.memRoot.RefreshConsumption()
+	numIdx := int64(len(indexIDs))
+	ok := bc.memRoot.CheckConsume(numIdx * structSizeEngineInfo)
+	if !ok {
+		return nil, genEngineAllocMemFailedErr(bc.ctx, bc.memRoot, bc.jobID, indexIDs)
+	}
+
+	mgr := backend.MakeEngineManager(bc.backend)
+	ts := uint64(0)
+	if c := bc.checkpointMgr; c != nil {
+		ts = c.GetTS()
+	}
+	cfg := generateLocalEngineConfig(ts)
+
+	openedEngines := make(map[int64]*engineInfo, numIdx)
+
+	for i, indexID := range indexIDs {
+		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
+		if err != nil {
+			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
+				zap.Int64("job ID", bc.jobID),
+				zap.Int64("index ID", indexID),
+				zap.Error(err))
+
+			for _, e := range openedEngines {
+				e.Close(true)
+			}
+			return nil, errors.Trace(err)
+		}
+
+		openedEngines[indexID] = newEngineInfo(
+			bc.ctx,
+			bc.jobID,
+			indexID,
+			uniques[i],
+			cfg,
+			openedEngine,
+			openedEngine.GetEngineUUID(),
+			bc.memRoot,
+		)
+	}
+
+	for _, indexID := range indexIDs {
+		ei := openedEngines[indexID]
+		ret = append(ret, ei)
+		bc.engines[indexID] = ei
+	}
+	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
+	bc.tbl = tbl
+
+	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
+		zap.Int64s("index IDs", indexIDs),
+		zap.Int64("current memory usage", bc.memRoot.CurrentUsage()),
+		zap.Int64("memory limitation", bc.memRoot.MaxMemoryQuota()))
+	return ret, nil
 }
 
-// unregisterAll delete all engineInfo from the engineManager.
-func (bc *litBackendCtx) unregisterAll(jobID int64) {
-	for _, idxID := range bc.Keys() {
-		bc.Unregister(jobID, idxID)
-	}
-}
+// UnregisterOpt controls the behavior of backend context unregistering.
+type UnregisterOpt int
 
-func encodeEngineTag(jobID, indexID int64) string {
-	return fmt.Sprintf("%d-%d", jobID, indexID)
+const (
+	// OptCloseEngines only closes engines, it does not clean up sort path data.
+	OptCloseEngines UnregisterOpt = 1 << iota
+	// OptCleanData cleans up local sort dir data.
+	OptCleanData
+	// OptCheckDup checks if there is duplicate entry for unique indexes.
+	OptCheckDup
+)
+
+// FinishAndUnregisterEngines implements BackendCtx.
+func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
+	bc.unregisterMu.Lock()
+	defer bc.unregisterMu.Unlock()
+
+	if len(bc.engines) == 0 {
+		return nil
+	}
+	numIdx := int64(len(bc.engines))
+	for _, ei := range bc.engines {
+		ei.Close(opt&OptCleanData != 0)
+	}
+
+	if opt&OptCheckDup != 0 {
+		for _, ei := range bc.engines {
+			if ei.unique {
+				err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+
+	bc.engines = make(map[int64]*engineInfo, 10)
+
+	bc.memRoot.Release(numIdx * structSizeEngineInfo)
+
+	return nil
 }

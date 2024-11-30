@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "timeout_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "timeout_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/bindinfo",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

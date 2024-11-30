@@ -15,10 +15,15 @@
 package mockstore
 
 import (
+	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
+	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -37,7 +42,7 @@ func (d MockTiKVDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "mocktikv") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeMockTiKV {
 		return nil, errors.Errorf("Uri scheme expected(mocktikv) but found (%s)", u.Scheme)
 	}
 
@@ -59,7 +64,7 @@ func (d EmbedUnistoreDriver) Open(path string) (kv.Storage, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if !strings.EqualFold(u.Scheme, "unistore") {
+	if config.StoreType(strings.ToLower(u.Scheme)) != config.StoreTypeUniStore {
 		return nil, errors.Errorf("Uri scheme expected(unistore) but found (%s)", u.Scheme)
 	}
 
@@ -93,6 +98,7 @@ type mockOptions struct {
 	storeType        StoreType
 	ddlCheckerHijack bool
 	tikvOptions      []tikv.Option
+	pdAddrs          []string
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -104,6 +110,13 @@ func WithMultipleOptions(opts ...MockTiKVStoreOption) MockTiKVStoreOption {
 		for _, opt := range opts {
 			opt(args)
 		}
+	}
+}
+
+// WithPDAddr set pd address for pd service discovery in mock PD client.
+func WithPDAddr(addr []string) MockTiKVStoreOption {
+	return func(args *mockOptions) {
+		args.pdAddrs = addr
 	}
 }
 
@@ -166,6 +179,26 @@ func WithDDLChecker() MockTiKVStoreOption {
 	}
 }
 
+// WithMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
+func WithMockTiFlash(nodes int) MockTiKVStoreOption {
+	return WithMultipleOptions(
+		WithClusterInspector(func(c testutils.Cluster) {
+			mockCluster := c.(*unistore.Cluster)
+			_, _, region1 := BootstrapWithSingleStore(c)
+			tiflashIdx := 0
+			for tiflashIdx < nodes {
+				store2 := c.AllocID()
+				peer2 := c.AllocID()
+				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
+				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
+				mockCluster.AddPeer(region1, store2, peer2)
+				tiflashIdx++
+			}
+		}),
+		WithStoreType(EmbedUnistore),
+	)
+}
+
 // DDLCheckerInjector is used to break import cycle.
 var DDLCheckerInjector func(kv.Storage) kv.Storage
 
@@ -192,6 +225,14 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	case MockTiKV:
 		store, err = newMockTikvStore(&opt)
 	case EmbedUnistore:
+		// Don't do this unless we figure out why the test image does not accelerate out unit tests.
+		// if opt.path == "" && len(options) == 0 && ImageAvailable() {
+		// 	// Create the store from the image.
+		// 	if path, err := copyImage(); err == nil {
+		// 		opt.path = path
+		// 	}
+		// }
+
 		store, err = newUnistore(&opt)
 	default:
 		panic("unsupported mockstore")
@@ -204,6 +245,31 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		store = DDLCheckerInjector(store)
 	}
 	return store, nil
+}
+
+// ImageFilePath is used by testing, it's the file path for the bootstraped store image.
+const ImageFilePath = "/tmp/tidb-unistore-bootstraped-image/"
+
+// ImageAvailable checks whether the store image file is available.
+func ImageAvailable() bool {
+	_, err := os.ReadDir(ImageFilePath)
+	if err != nil {
+		return false
+	}
+	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
+	return err == nil
+}
+
+func copyImage() (string, error) {
+	path, err := os.MkdirTemp("", "tidb-unistore-temp")
+	if err != nil {
+		return "", err
+	}
+	err = cp.Copy(ImageFilePath, path)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

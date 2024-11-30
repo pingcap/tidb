@@ -62,15 +62,22 @@ import (
 			{{ template "SetNull" . }}
 			continue
 		}{{ end }}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				{{ template "SetNull" . }}
 				continue
 			}
 			return err
+		}
+{{ end }}
+
+{{ define "CheckZeroDate" }}
+		if arg0.IsZero() {
+			{{ template "SetNull" . }}
+			continue
 		}
 {{ end }}
 
@@ -107,7 +114,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 {{ end }}
 
 {{ if or (eq .SigName "builtinAddStringAndStringSig") (eq .SigName "builtinSubStringAndStringSig") }}
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.Reserve{{ .Output.TypeNameInColumn }}(n)
 		for i := 0; i < n; i++ {
@@ -170,37 +177,39 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 
 		// calculate
 	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
+	 	{{ template "CheckZeroDate" . }}
 		{{ if eq $.FuncName "AddTime" }}
-		output, err := arg0.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(typeCtx(ctx), types.Duration{Duration: arg1, Fsp: -1})
 		{{ else }}
-		sc := ctx.GetSessionVars().StmtCtx
+		tc := typeCtx(ctx)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
+		output, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
 		}
 
 	{{ else if or (eq .SigName "builtinAddDatetimeAndStringSig") (eq .SigName "builtinSubDatetimeAndStringSig") }}
+	 	{{ template "CheckZeroDate" . }}
 		{{ if eq $.FuncName "AddTime" }}
 		{{ template "ConvertStringToDuration" . }}
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
+		output, err := arg0.Add(typeCtx(ctx), arg1Duration)
 		{{ else }}
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.SetNull(i, true) // fixed: true
 				continue
 			}
 			return err
 		}
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
+		output, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
 			return err
@@ -231,20 +240,20 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		}
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
-		sc := ctx.GetSessionVars().StmtCtx
-		fsp1 := b.args[1].GetType().GetDecimal()
+		tc := typeCtx(ctx)
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
 		if isDuration(arg0) {
 			{{ if eq $.FuncName "AddTime" }}
-			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			output, err = strDurationAddDuration(tc, arg0, arg1Duration)
 			{{ else }}
-			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			output, err = strDurationSubDuration(tc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					{{ template "SetNull" . }}
 					continue
 				}
@@ -252,15 +261,15 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			}
 		} else {
 			{{ if eq $.FuncName "AddTime" }}
-			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(tc, arg0, arg1Duration)
 			{{ else }}
-			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(tc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				{{ template "SetNull" . }}
 				continue
 			}
@@ -271,13 +280,13 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		var isNull bool
 		if isDuration(arg0) {
 			{{ if eq $.FuncName "AddTime" }}
-			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			output, err = strDurationAddDuration(tc, arg0, arg1Duration)
 			{{ else }}
-			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			output, err = strDurationSubDuration(tc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					{{ template "SetNull" . }}
 					continue
 				}
@@ -285,44 +294,53 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			}
 		} else {
 			{{ if eq $.FuncName "AddTime" }}
-			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(tc, arg0, arg1Duration)
 			{{ else }}
-			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(tc, arg0, arg1Duration)
 			{{ end }}
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				{{ template "SetNull" . }}
 				continue
 			}
 		}
 	{{ else if or (eq .SigName "builtinAddDateAndDurationSig") (eq .SigName "builtinSubDateAndDurationSig") }}
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
+	 	{{ template "CheckZeroDate" . }}
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
 		{{ if eq $.FuncName "AddTime" }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			{{ template "SetNull" . }}
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 	{{ else if or (eq .SigName "builtinAddDateAndStringSig") (eq .SigName "builtinSubDateAndStringSig") }}
+		{{ template "CheckZeroDate" . }}
 		{{ template "ConvertStringToDuration" . }}
-		fsp0 := b.args[0].GetType().GetDecimal()
+		 arg0.SetType(mysql.TypeDatetime)
 		{{ if eq $.FuncName "AddTime" }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 		{{ else }}
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 		{{ end }}
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			{{ template "SetNull" . }}
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 	{{ end }}
 
 		// commit result
@@ -415,7 +433,7 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			)
 		{{- end }}
 		{{- if or (or $AIsString $BIsString) (and $AIsTime $BIsTime) }}
-			stmtCtx := ctx.GetSessionVars().StmtCtx
+			tc := typeCtx(ctx)
 		{{- end }}
 	for i:=0; i<n ; i++{
 		if result.IsNull(i) {
@@ -426,7 +444,7 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			{{ if $BIsDuration }} lhsDur, _, lhsIsDuration,
 			{{- else if $BIsTime }} _, lhsTime, lhsIsDuration,
 			{{- else if $BIsString }} lhsDur, lhsTime, lhsIsDuration,
-			{{- end }}  err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.GetDecimal())
+			{{- end }}  err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}
@@ -452,7 +470,7 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			{{ if $AIsDuration }} rhsDur, _, rhsIsDuration,
 			{{- else if $AIsTime }}_, rhsTime, rhsIsDuration,
 			{{- else if $AIsString }} rhsDur, rhsTime, rhsIsDuration,
-			{{- end}}  err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.GetDecimal())
+			{{- end}}  err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 			if err != nil  {
 				return err
 			}
@@ -486,12 +504,12 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			if lhsIsDuration {
 				d, isNull, err = calculateDurationTimeDiff(ctx, lhsDur, rhsDur)
 			} else {
-				d, isNull, err = calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+				d, isNull, err = calculateTimeDiff(tc, lhsTime, rhsTime)
 			}
 		{{- else if or $AIsDuration $BIsDuration }}
 			d, isNull, err := calculateDurationTimeDiff(ctx, lhs, rhs)
 		{{- else if or $AIsTime $BIsTime }}
-			d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+			d, isNull, err := calculateTimeDiff(tc, lhsTime, rhsTime)
 		{{- end }}
 		if err != nil {
 			return err
@@ -584,7 +602,7 @@ type gener struct {
 	defaultGener
 }
 
-func (g gener) gen() interface{} {
+func (g gener) gen() any {
 	result := g.defaultGener.gen()
 	if _, ok := result.(string); ok {
 		dg := newDefaultGener(0, types.ETDuration)
@@ -684,22 +702,13 @@ func (g gener) gen() interface{} {
 		// {{ $sig.SigName }}
 			{
 				retEvalType: types.ET{{ .Output.ETName }},
-				{{- if eq .TestTypeA "" }}
 				childrenTypes: []types.EvalType{types.ET{{ .TypeA.ETName }}, types.ET{{ .TypeB.ETName }}},
-				{{- else }}
-				childrenTypes: []types.EvalType{types.ET{{ .TestTypeA }}, types.ET{{ .TestTypeB }}},
-				{{- end }}
 				{{- if ne .FieldTypeA "" }}
 				childrenFieldTypes: []*types.FieldType{types.NewFieldType(mysql.Type{{.FieldTypeA}}), types.NewFieldType(mysql.Type{{.FieldTypeB}})},
 				{{- end }}
 				geners: []dataGenerator{
-					{{- if eq .TestTypeA "" }}
 					gener{*newDefaultGener(0.2, types.ET{{.TypeA.ETName}})},
 					gener{*newDefaultGener(0.2, types.ET{{.TypeB.ETName}})},
-					{{- else }}
-					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeA }})},
-					gener{*newDefaultGener(0.2, types.ET{{ .TestTypeB }})},
-					{{- end }}
 				},
 			},
 	{{- end }}
@@ -785,8 +794,8 @@ var addTimeSigsTmpl = []sig{
 	{SigName: "builtinAddDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinAddStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinAddStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinAddDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration"},
+	{SigName: "builtinAddDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String"},
 
 	{SigName: "builtinAddTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinAddTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -800,8 +809,8 @@ var subTimeSigsTmpl = []sig{
 	{SigName: "builtinSubDurationAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeDuration},
 	{SigName: "builtinSubStringAndDurationSig", TypeA: TypeString, TypeB: TypeDuration, Output: TypeString},
 	{SigName: "builtinSubStringAndStringSig", TypeA: TypeString, TypeB: TypeString, Output: TypeString},
-	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDuration, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration", TestTypeA: "Datetime", TestTypeB: "Duration"},
-	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDuration, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String", TestTypeA: "Datetime", TestTypeB: "String"},
+	{SigName: "builtinSubDateAndDurationSig", TypeA: TypeDatetime, TypeB: TypeDuration, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "Duration"},
+	{SigName: "builtinSubDateAndStringSig", TypeA: TypeDatetime, TypeB: TypeString, Output: TypeString, FieldTypeA: "Date", FieldTypeB: "String"},
 
 	{SigName: "builtinSubTimeDateTimeNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeDatetime, AllNull: true},
 	{SigName: "builtinSubTimeStringNullSig", TypeA: TypeDatetime, TypeB: TypeDatetime, Output: TypeString, AllNull: true, FieldTypeA: "Date", FieldTypeB: "Datetime"},
@@ -893,7 +902,6 @@ type sig struct {
 	SigName                string
 	TypeA, TypeB, Output   TypeContext
 	FieldTypeA, FieldTypeB string // Optional
-	TestTypeA, TestTypeB   string // Optional, specific Type for test in builtinAddDateAndDurationSig & builtinAddDateAndStringSig
 	AllNull                bool
 }
 

@@ -16,7 +16,7 @@ package tableutil
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // TempTable is used to store transaction-specific or session-specific information for global / local temporary tables.
@@ -33,7 +33,7 @@ type TempTable interface {
 
 	// The stats of this table (*statistics.Table).
 	// Define the return type as interface{} here to avoid cycle imports.
-	GetStats() interface{}
+	GetStats() any
 
 	GetSize() int64
 	SetSize(int64)

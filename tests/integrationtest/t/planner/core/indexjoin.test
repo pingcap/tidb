@@ -1,0 +1,60 @@
+# Test index join
+set @@tidb_enable_inl_join_inner_multi_pattern=on;
+
+create table t(a int, b int, index idx(a, b));
+create table t1 like t;
+insert into t values(1, 1), (1, 2), (1, 3);
+insert into t1 values(1, 1), (1, 2);
+
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+begin;
+insert into t1 values(1, 3);
+insert into t values(1, 4);
+explain format='brief' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+select /*+ HASH_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
+rollback;
+
+# Test agg as inner side of index join
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a order by t1.a, tmp.count_b;
+select /*+ HASH_JOIN(tmp) */ t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a order by t1.a, tmp.count_b;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
+select /*+ INL_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
+select /*+ HASH_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b order by  t1.a, tmp.count_b;
+# hint doesn't work
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.count_b = t1.b;
+# hint works
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+select /*+ HASH_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t group by a, b) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a;
+select /*+ INL_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+select /*+ HASH_JOIN(tmp) */ tmp.a, t1.b from (select a, b from t where a=1 group by a, b having a>0 ) tmp, t1 where tmp.a=t1.a order by tmp.a, t1.b;
+# hint doesn't work
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a;
+
+# Test the diff type with same column
+# The firstrow() function will changed the column type from float to double but it will not changed the unique id of column. So we need to test the result of index join.
+create table t3 (a int, b float, index idx (b));
+create table t4 (a int, b double);
+insert into t3 values (1, 1.0), (1, 2.0), (2, 3.0);
+insert into t4 values (1, 1.11111111);
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b;
+select /*+ INL_JOIN(tmp) */ tmp.b, t4.b from (select b from t3 group by b) tmp, t4 where tmp.b=t4.b order by tmp.b, t4.b;
+
+# Test the selection, projection inside of "zippedChildren"
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a, b from t where a>=1 group by a, b) tmp, t1 where tmp.a=t1.a;
+# hint doesn't work for expr projection
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a+1 as a1, b from t where a>=1 group by a, b having a=1) tmp, t1 where tmp.a1=t1.b;
+
+# Test stream agg for index join
+# We need to force stream agg by hint than we can use stream agg for index join
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
+# The order by index is not equal this agg function, so we can't use stream agg
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a;
+explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ b, a from t group by b, a) tmp, t1 where tmp.a=t1.a and tmp.b=t1.b;
+
+set @@tidb_enable_inl_join_inner_multi_pattern=default;

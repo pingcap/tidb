@@ -17,6 +17,7 @@
 package realtikvtest
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
@@ -54,11 +56,15 @@ var (
 	// KeyspaceName is an option to specify the name of keyspace that the tests run on,
 	// this option is only valid while the flag WithRealTiKV is set.
 	KeyspaceName = flag.String("keyspace-name", "", "the name of keyspace that the tests run on")
+
+	// RetainOldData is used to control whether a new realtikv store should remove old tables.
+	RetainOldData = false
 )
 
 // RunTestMain run common setups for all real tikv tests.
 func RunTestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	*WithRealTiKV = true
 	flag.Parse()
 	session.SetSchemaLease(5 * time.Second)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -76,13 +82,17 @@ func RunTestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
+		// top function of this routine might be "sync.runtime_notifyListWait(0xc0098f5450, 0x0)", so we use IgnoreAnyFunction.
+		goleak.IgnoreAnyFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
+		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		// the resolveFlushedLocks goroutine runs in the background to commit or rollback locks.
+		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/txnkv/transaction.(*twoPhaseCommitter).resolveFlushedLocks.func1"),
 	}
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
@@ -112,28 +122,39 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	if *WithRealTiKV {
 		var d driver.TiKVDriver
+		storeBak := config.GetGlobalConfig().Store
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.TxnLocalLatches.Enabled = false
 			conf.KeyspaceName = *KeyspaceName
+			conf.Store = config.StoreTypeTiKV
 		})
 		store, err = d.Open(*TiKVPath)
 		require.NoError(t, err)
-
+		require.NoError(t, ddl.StartOwnerManager(context.Background(), store))
 		dom, err = session.BootstrapSession(store)
 		require.NoError(t, err)
+		// TestGetTSFailDirtyState depends on the dirty state to work, i.e. some
+		// special branch on uni-store, else it causes DATA RACE, so we need to switch
+		// back to make sure it works, see https://github.com/pingcap/tidb/issues/57221
+		config.GetGlobalConfig().Store = storeBak
 		sm := testkit.MockSessionManager{}
 		dom.InfoSyncer().SetSessionManager(&sm)
 		tk := testkit.NewTestKit(t, store)
 		// set it to default value.
 		tk.MustExec(fmt.Sprintf("set global innodb_lock_wait_timeout = %d", variable.DefInnodbLockWaitTimeout))
 		tk.MustExec("use test")
-		rs := tk.MustQuery("show tables")
-		tables := []string{}
-		for _, row := range rs.Rows() {
-			tables = append(tables, fmt.Sprintf("`%v`", row[0]))
-		}
-		if len(tables) > 0 {
-			tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+		if !RetainOldData {
+			rs := tk.MustQuery("show tables")
+			tables := []string{}
+			for _, row := range rs.Rows() {
+				tables = append(tables, fmt.Sprintf("`%v`", row[0]))
+			}
+			for _, table := range tables {
+				tk.MustExec(fmt.Sprintf("alter table %s nocache", table))
+			}
+			if len(tables) > 0 {
+				tk.MustExec(fmt.Sprintf("drop table %s", strings.Join(tables, ",")))
+			}
 		}
 	} else {
 		store, err = mockstore.NewMockStore(opts...)
@@ -147,6 +168,7 @@ func CreateMockStoreAndDomainAndSetup(t *testing.T, opts ...mockstore.MockTiKVSt
 
 	t.Cleanup(func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		require.NoError(t, store.Close())
 		transaction.PrewriteMaxBackoff.Store(20000)
 		view.Stop()

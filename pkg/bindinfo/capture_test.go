@@ -15,6 +15,7 @@
 package bindinfo_test
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -22,11 +23,13 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -250,7 +253,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, key idx_b(b), key idx_c(c))")
-	require.True(t, tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)"))
+	tk.MustUseIndex("select * from t where b = 1 and c > 1", "idx_b(b)")
 	tk.MustExec("prepare stmt from 'select /*+ use_index(t,idx_c) */ * from t where b = ? and c > ?'")
 	tk.MustExec("set @p = 1")
 	tk.MustExec("execute stmt using @p, @p")
@@ -263,7 +266,7 @@ func TestCapturePreparedStmt(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 
-	require.True(t, tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)"))
+	tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)")
 	tk.MustExec("admin flush bindings")
 	tk.MustExec("admin evolve bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -287,15 +290,11 @@ func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {
 	// Create virtual tiflash replica info.
 	domSession := domain.GetDomain(tk.Session())
 	is := domSession.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 	// Here the plan is the TiFlash plan.
 	rows := tk.MustQuery("explain select * from t").Rows()
@@ -328,13 +327,12 @@ func TestBindingSource(t *testing.T) {
 	// Test Source for SQL created sql
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
-	sql, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind := bindData.Bindings[0]
-	require.Equal(t, bindinfo.Manual, bind.Source)
+	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Manual, binding.Source)
 
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -348,13 +346,12 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
-	sql, sqlDigest = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
-	bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, bindinfo.Capture, bind.Source)
+	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Capture, binding.Source)
 }
 
 func TestCapturedBindingCharset(t *testing.T) {
@@ -422,7 +419,7 @@ func TestUpdateSubqueryCapture(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
-	bindSQL := "UPDATE /*+ hash_join(@`upd_1` `test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
+	bindSQL := "UPDATE /*+ hash_join(`test`.`t2`@`sel_2`), hash_join(`test`.`t1`), use_index(@`upd_1` `test`.`t1` `idx_b`), no_order_index(@`upd_1` `test`.`t1` `idx_b`), use_index(@`sel_1` `test`.`t2` ), use_index(@`sel_2` `test`.`t2` )*/ `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	originSQL := "UPDATE `test`.`t1` SET `b`=1 WHERE `b` = 2 AND (`a` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1) OR `c` IN (SELECT `a` FROM `test`.`t2` WHERE `b` = 1))"
 	require.Equal(t, bindSQL, rows[0][1])
 	tk.MustExec(originSQL)
@@ -458,12 +455,12 @@ func TestIssue20417(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t`", rows[0][0])
 	require.Equal(t, "SELECT /*+ use_index(`t` `idxb`)*/ * FROM `test`.`t`", rows[0][1])
-	require.True(t, tk.MustUseIndex("select * from t", "idxb(b)"))
-	require.True(t, tk.MustUseIndex("select * from test.t", "idxb(b)"))
+	tk.MustUseIndex("select * from t", "idxb(b)")
+	tk.MustUseIndex("select * from test.t", "idxb(b)")
 
 	tk.MustExec("create global binding for select * from t WHERE b=2 AND c=3924541 using select /*+ use_index(@sel_1 test.t idxb) */ * from t WHERE b=2 AND c=3924541")
-	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
-	require.True(t, tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)"))
+	tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `test`.`t` WHERE `b`=2 AND `c`=3924541", "idxb(b)")
+	tk.MustUseIndex("SELECT /*+ use_index(@`sel_1` `test`.`t` `idxc`)*/ * FROM `t` WHERE `b`=2 AND `c`=3924541", "idxb(b)")
 
 	// Test for capture baseline
 	internal.UtilCleanBindingEnv(tk, dom)
@@ -662,6 +659,7 @@ func TestCaptureTableFilterValid(t *testing.T) {
 }
 
 func TestCaptureWildcardFilter(t *testing.T) {
+	t.Skip("the old implementation of Capture is considered as deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -699,7 +697,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		var rows [][]interface{}
+		var rows [][]any
 		require.Eventually(t, func() bool {
 			rows = tk.MustQuery("show global bindings").Sort().Rows()
 			return len(rows) == len(dbTbls)
@@ -767,6 +765,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 }
 
 func TestCaptureFilter(t *testing.T) {
+	t.Skip("the old implementation of Capture is considered as deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)

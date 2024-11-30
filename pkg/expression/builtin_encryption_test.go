@@ -16,6 +16,7 @@ package expression
 
 import (
 	"context"
+	"crypto/md5"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -26,19 +27,19 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 var cryptTests = []struct {
 	chs      string
-	origin   interface{}
-	password interface{}
-	crypt    interface{}
+	origin   any
+	password any
+	crypt    any
 }{
 	{mysql.DefaultCollationName, "", "", ""},
 	{mysql.DefaultCollationName, "pingcap", "1234567890123456", "2C35B5A4ADF391"},
@@ -64,7 +65,7 @@ func TestSQLDecode(t *testing.T) {
 		require.NoError(t, err)
 		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CollationConnection, tt.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.password})...)
+		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []any{tt.origin, tt.password})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -89,7 +90,7 @@ func TestSQLEncode(t *testing.T) {
 		} else {
 			h = nil
 		}
-		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []interface{}{h, test.password})...)
+		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []any{h, test.password})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -108,40 +109,40 @@ func TestSQLEncode(t *testing.T) {
 
 var aesTests = []struct {
 	mode   string
-	origin interface{}
-	params []interface{}
-	crypt  interface{}
+	origin any
+	params []any
+	crypt  any
 }{
 	// test for ecb
-	{"aes-128-ecb", "pingcap", []interface{}{"1234567890123456"}, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
-	{"aes-128-ecb", "pingcap123", []interface{}{"1234567890123456"}, "CEC348F4EF5F84D3AA6C4FA184C65766"},
-	{"aes-128-ecb", "pingcap", []interface{}{"123456789012345678901234"}, "6F1589686860C8E8C7A40A78B25FF2C0"},
-	{"aes-128-ecb", "pingcap", []interface{}{"123"}, "996E0CA8688D7AD20819B90B273E01C6"},
-	{"aes-128-ecb", "pingcap", []interface{}{123}, "996E0CA8688D7AD20819B90B273E01C6"},
-	{"aes-128-ecb", nil, []interface{}{123}, nil},
-	{"aes-192-ecb", "pingcap", []interface{}{"1234567890123456"}, "9B139FD002E6496EA2D5C73A2265E661"},
-	{"aes-256-ecb", "pingcap", []interface{}{"1234567890123456"}, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
+	{"aes-128-ecb", "pingcap", []any{"1234567890123456"}, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
+	{"aes-128-ecb", "pingcap123", []any{"1234567890123456"}, "CEC348F4EF5F84D3AA6C4FA184C65766"},
+	{"aes-128-ecb", "pingcap", []any{"123456789012345678901234"}, "6F1589686860C8E8C7A40A78B25FF2C0"},
+	{"aes-128-ecb", "pingcap", []any{"123"}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", "pingcap", []any{123}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", nil, []any{123}, nil},
+	{"aes-192-ecb", "pingcap", []any{"1234567890123456"}, "9B139FD002E6496EA2D5C73A2265E661"},
+	{"aes-256-ecb", "pingcap", []any{"1234567890123456"}, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
 	// test for cbc
-	{"aes-128-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2ECA0077C5EA5768A0485AA522774792"},
-	{"aes-128-cbc", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "483788634DA8817423BA0934FD2C096E"},
-	{"aes-192-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "516391DB38E908ECA93AAB22870EC787"},
-	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
-	{"aes-256-cbc", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "A26BA27CA4BE9D361D545AA84A17002D"},
-	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-128-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2ECA0077C5EA5768A0485AA522774792"},
+	{"aes-128-cbc", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "483788634DA8817423BA0934FD2C096E"},
+	{"aes-192-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "516391DB38E908ECA93AAB22870EC787"},
+	{"aes-256-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-256-cbc", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "A26BA27CA4BE9D361D545AA84A17002D"},
+	{"aes-256-cbc", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
 	// test for ofb
-	{"aes-128-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
-	{"aes-128-ofb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
-	{"aes-192-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
-	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
-	{"aes-256-ofb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
-	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-128-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-ofb", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-ofb", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-ofb", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 	// test for cfb
-	{"aes-128-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
-	{"aes-128-cfb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
-	{"aes-192-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
-	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
-	{"aes-256-cfb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
-	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-128-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-cfb", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-cfb", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-cfb", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 }
 
 func TestAESEncrypt(t *testing.T) {
@@ -172,24 +173,24 @@ func TestAESEncrypt(t *testing.T) {
 	gbkTests := []struct {
 		mode   string
 		chs    string
-		origin interface{}
-		params []interface{}
+		origin any
+		params []any
 		crypt  string
 	}{
 		// test for ecb
-		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
-		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
-		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
-		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
-		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
-		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
+		{"aes-128-ecb", "utf8mb4", "你好", []any{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []any{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []any{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []any{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []any{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []any{"你好"}, "84982910338160D037615D283AD413DE"},
 		// test for cbc
-		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
-		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
-		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
-		{"aes-128-cbc", "gbk", "123", []interface{}{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
-		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
-		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+		{"aes-128-cbc", "utf8mb4", "你好", []any{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []any{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []any{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []any{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []any{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []any{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
 	}
 
 	for _, tt := range gbkTests {
@@ -199,7 +200,7 @@ func TestAESEncrypt(t *testing.T) {
 		err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 
-		args := primitiveValsToConstants(ctx, []interface{}{tt.origin})
+		args := primitiveValsToConstants(ctx, []any{tt.origin})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
 
@@ -244,24 +245,24 @@ func TestAESDecrypt(t *testing.T) {
 	gbkTests := []struct {
 		mode   string
 		chs    string
-		origin interface{}
-		params []interface{}
+		origin any
+		params []any
 		crypt  string
 	}{
 		// test for ecb
-		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
-		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
-		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
-		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
-		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
-		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
+		{"aes-128-ecb", "utf8mb4", "你好", []any{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []any{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []any{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []any{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []any{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []any{"你好"}, "84982910338160D037615D283AD413DE"},
 		// test for cbc
-		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
-		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
-		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
-		{"aes-128-cbc", "gbk", "123", []interface{}{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
-		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
-		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+		{"aes-128-cbc", "utf8mb4", "你好", []any{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []any{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []any{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []any{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []any{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []any{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
 	}
 
 	for _, tt := range gbkTests {
@@ -281,7 +282,7 @@ func TestAESDecrypt(t *testing.T) {
 	}
 }
 
-func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
 	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	fc := funcs[fnName]
@@ -300,7 +301,7 @@ func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	require.True(t, crypt.IsNull())
 }
 
-func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
@@ -333,7 +334,7 @@ func toHex(d types.Datum) (h types.Datum) {
 	return
 }
 
-func fromHex(str interface{}) (d types.Datum) {
+func fromHex(str any) (d types.Datum) {
 	if str == nil {
 		return
 	}
@@ -348,7 +349,7 @@ func TestSha1Hash(t *testing.T) {
 	ctx := createContext(t)
 	sha1Tests := []struct {
 		chs    string
-		origin interface{}
+		origin any
 		crypt  string
 	}{
 		{mysql.DefaultCollationName, "test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
@@ -367,7 +368,7 @@ func TestSha1Hash(t *testing.T) {
 	for _, tt := range sha1Tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin}))
+		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin}))
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		res, err := crypt.ToString()
@@ -386,9 +387,9 @@ func TestSha2Hash(t *testing.T) {
 	ctx := createContext(t)
 	sha2Tests := []struct {
 		chs        string
-		origin     interface{}
-		hashLength interface{}
-		crypt      interface{}
+		origin     any
+		hashLength any
+		crypt      any
 		validCase  bool
 	}{
 		{mysql.DefaultCollationName, "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
@@ -438,7 +439,7 @@ func TestSha2Hash(t *testing.T) {
 	for _, tt := range sha2Tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.hashLength}))
+		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
 		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
@@ -456,7 +457,7 @@ func TestMD5Hash(t *testing.T) {
 	ctx := createContext(t)
 
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected string
 		charset  string
 		isNil    bool
@@ -480,7 +481,7 @@ func TestMD5Hash(t *testing.T) {
 	for _, c := range cases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
@@ -496,6 +497,25 @@ func TestMD5Hash(t *testing.T) {
 	}
 	_, err := funcs[ast.MD5].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
+}
+
+func MD5HashOld(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return fmt.Sprintf("%x", sum)
+}
+
+func MD5HashNew(arg string) string {
+	sum := md5.Sum([]byte(arg))
+	return hex.EncodeToString(sum[:])
+}
+
+func BenchmarkMD5Hash(b *testing.B) {
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		MD5HashOld("abc")
+		//MD5HashNew("abc")
+	}
 }
 
 func TestRandomBytes(t *testing.T) {
@@ -541,8 +561,8 @@ func TestCompress(t *testing.T) {
 	fc := funcs[ast.Compress]
 	tests := []struct {
 		chs    string
-		in     interface{}
-		expect interface{}
+		in     any
+		expect any
 	}{
 		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
 		{"", "", ""},
@@ -555,7 +575,7 @@ func TestCompress(t *testing.T) {
 	for _, test := range tests {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs)
 		require.NoErrorf(t, err, "%v", test)
-		arg := primitiveValsToConstants(ctx, []interface{}{test.in})
+		arg := primitiveValsToConstants(ctx, []any{test.in})
 		f, err := fc.getFunction(ctx, arg)
 		require.NoErrorf(t, err, "%v", test)
 		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
@@ -571,8 +591,8 @@ func TestCompress(t *testing.T) {
 func TestUncompress(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		in     interface{}
-		expect interface{}
+		in     any
+		expect any
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
@@ -606,8 +626,8 @@ func TestUncompress(t *testing.T) {
 func TestUncompressLength(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		in     interface{}
-		expect interface{}
+		in     any
+		expect any
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), int64(11)},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), int64(11)}, // zlib result from TiDB
@@ -642,8 +662,8 @@ func TestValidatePasswordStrength(t *testing.T) {
 	require.NoError(t, err)
 
 	tests := []struct {
-		in     interface{}
-		expect interface{}
+		in     any
+		expect any
 	}{
 		{nil, nil},
 		{"123", 0},
@@ -685,7 +705,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 func TestPassword(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     interface{}
+		args     any
 		expected string
 		charset  string
 		isNil    bool
@@ -708,7 +728,7 @@ func TestPassword(t *testing.T) {
 	for _, c := range cases {
 		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []interface{}{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
 		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {

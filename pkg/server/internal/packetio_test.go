@@ -424,3 +424,34 @@ func TestCompressedReaderLong(t *testing.T) {
 		require.Equal(t, expected, data)
 	})
 }
+
+// MariaDB Java Connecter 2.X would generate wrong sequence number for the sub header.
+// TiDB should be compatible with it.
+//
+// MySQL Compressed Protocol Header:
+// 0e 00 00   					Compressed length
+// 00         					Compressed Packetnr
+// 00 00 00   					Uncompressed length
+//
+// MySQL Protocol Header:
+// 0a 00 00   					Payload length
+// 01         					Packet Sequence Number (it should be 0x00, but MariaDB Connector/J 2.x sets it to 0x01)
+// 03							COM_QUERY
+// 73 65 6c 65 63 74 20 31 3b   "select 1;"
+func TestSubHeaderWithWrongSequenceNumber(t *testing.T) {
+	var inBuffer bytes.Buffer
+	_, err := inBuffer.Write([]byte{0x0e, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x0a, 0x00, 0x00, 0x01, 0x03, 0x73, 0x65, 0x6c,
+		0x65, 0x63, 0x74, 0x20, 0x31, 0x3b})
+	require.NoError(t, err)
+	// Test read one packet
+	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
+	pkt := NewPacketIO(brc)
+	pkt.SetCompressionAlgorithm(mysql.CompressionZlib)
+	readBytes, err := pkt.ReadPacket()
+	require.NoError(t, err)
+	require.Equal(t, uint8(1), pkt.sequence)
+	require.Equal(t, uint8(1), pkt.compressedSequence)
+	require.Equal(t, []byte{0x03, 0x73, 0x65, 0x6c, 0x65, 0x63,
+		0x74, 0x20, 0x31, 0x3b}, readBytes)
+}

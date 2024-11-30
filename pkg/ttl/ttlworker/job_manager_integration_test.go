@@ -25,15 +25,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	dbsession "github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -41,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -63,6 +68,46 @@ func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
 	}
 }
 
+func TestGetSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@time_zone = 'Asia/Shanghai'")
+	tk.MustExec("set @@global.time_zone= 'Europe/Berlin'")
+	tk.MustExec("set @@tidb_retry_limit=1")
+	tk.MustExec("set @@tidb_enable_1pc=0")
+	tk.MustExec("set @@tidb_enable_async_commit=0")
+	tk.MustExec("set @@tidb_isolation_read_engines='tiflash,tidb'")
+	var getCnt atomic.Int32
+
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		if getCnt.CompareAndSwap(0, 1) {
+			return tk.Session(), nil
+		}
+		require.FailNow(t, "get session more than once")
+		return nil, nil
+	}, 1, 1, 0)
+	defer pool.Close()
+
+	se, err := ttlworker.GetSessionForTest(pool)
+	require.NoError(t, err)
+	defer se.Close()
+
+	// global time zone should not change
+	tk.MustQuery("select @@global.time_zone").Check(testkit.Rows("Europe/Berlin"))
+	tz, err := se.GlobalTimeZone(context.TODO())
+	require.NoError(t, err)
+	require.Equal(t, "Europe/Berlin", tz.String())
+
+	// session variables should be set
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("UTC 0 1 1 tikv,tiflash,tidb"))
+
+	// all session variables should be restored after close
+	se.Close()
+	tk.MustQuery("select @@time_zone, @@tidb_retry_limit, @@tidb_enable_1pc, @@tidb_enable_async_commit, @@tidb_isolation_read_engines").
+		Check(testkit.Rows("Asia/Shanghai 1 0 0 tiflash,tidb"))
+}
+
 func TestParallelLockNewJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
@@ -75,14 +120,14 @@ func TestParallelLockNewJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 	se := sessionFactory()
-	job, err := m.LockJob(context.Background(), se, testTable, time.Now(), uuid.NewString(), false)
+	job, err := m.LockJob(context.Background(), se, testTable, se.Now(), uuid.NewString(), false)
 	require.NoError(t, err)
-	job.Finish(se, time.Now(), &ttlworker.TTLSummary{})
+	job.Finish(se, se.Now(), &ttlworker.TTLSummary{})
 
 	// lock one table in parallel, only one of them should lock successfully
 	testTimes := 100
 	concurrency := 5
-	now := time.Now()
+	now := se.Now()
 	for i := 0; i < testTimes; i++ {
 		successCounter := atomic.NewUint64(0)
 		successJob := &ttlworker.TTLJob{}
@@ -111,7 +156,7 @@ func TestParallelLockNewJob(t *testing.T) {
 		wg.Wait()
 
 		require.Equal(t, uint64(1), successCounter.Load())
-		successJob.Finish(se, time.Now(), &ttlworker.TTLSummary{})
+		successJob.Finish(se, se.Now(), &ttlworker.TTLSummary{})
 	}
 }
 
@@ -123,7 +168,7 @@ func TestFinishJob(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, store)
 
-	testTable := &cache.PhysicalTable{ID: 2, Schema: model.NewCIStr("db1"), TableInfo: &model.TableInfo{ID: 1, Name: model.NewCIStr("t1"), TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
+	testTable := &cache.PhysicalTable{ID: 2, Schema: pmodel.NewCIStr("db1"), TableInfo: &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t1"), TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay)}}}
 
 	tk.MustExec("insert into mysql.tidb_ttl_table_status(table_id) values (2)")
 
@@ -131,7 +176,7 @@ func TestFinishJob(t *testing.T) {
 	m := ttlworker.NewJobManager("test-id", nil, store, nil, nil)
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 	se := sessionFactory()
-	startTime := time.Now()
+	startTime := se.Now()
 	job, err := m.LockJob(context.Background(), se, testTable, startTime, uuid.NewString(), false)
 	require.NoError(t, err)
 
@@ -156,7 +201,7 @@ func TestFinishJob(t *testing.T) {
 	summary.SummaryText = string(summaryBytes)
 
 	require.NoError(t, err)
-	endTime := time.Now()
+	endTime := se.Now()
 	job.Finish(se, endTime, summary)
 	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 " + summary.SummaryText))
 	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
@@ -169,26 +214,19 @@ func TestFinishJob(t *testing.T) {
 }
 
 func TestTTLAutoAnalyze(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval")
+	defer boostJobScheduleForTest(t)()
 
-	originAutoAnalyzeMinCnt := autoanalyze.AutoAnalyzeMinCnt
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	originAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+		statistics.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
+	tk.MustExec("create table t (id int, created_at datetime, index idx(id, created_at))")
 
 	// insert ten rows, the 2,3,4,6,9,10 of them are expired
 	for i := 1; i <= 10; i++ {
@@ -199,15 +237,14 @@ func TestTTLAutoAnalyze(t *testing.T) {
 
 		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
 	}
-	// TODO: use a better way to pause and restart ttl worker after analyze the table to make it more stable
-	// but as the ttl worker takes several seconds to start, it's not too serious.
 	tk.MustExec("analyze table t")
 	rows := tk.MustQuery("show stats_meta").Rows()
 	require.Equal(t, rows[0][4], "0")
 	require.Equal(t, rows[0][5], "10")
+	tk.MustExec("alter table t ttl = `created_at` + interval 1 day")
 
-	retryTime := 15
-	retryInterval := time.Second * 2
+	retryTime := 300
+	retryInterval := 100 * time.Millisecond
 	deleted := false
 	for retryTime >= 0 {
 		retryTime--
@@ -225,13 +262,12 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 	require.True(t, h.HandleAutoAnalyze())
 }
 
 func TestTriggerTTLJob(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval")
+	defer boostJobScheduleForTest(t)()
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 5*time.Minute)
 	defer cancel()
@@ -240,7 +276,7 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY")
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	tblID := tbl.Meta().ID
 	require.NoError(t, err)
 
@@ -249,10 +285,6 @@ func TestTriggerTTLJob(t *testing.T) {
 	timerCli := timerapi.NewDefaultTimerClient(timerStore)
 
 	// make sure the table had run a job one time to make the test stable
-	cli := do.TTLJobManager().GetCommandCli()
-	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t")
-	r := tk.MustQuery("select last_job_id, current_job_id from mysql.tidb_ttl_table_status where table_id=?", tblID)
-	require.Equal(t, 1, len(r.Rows()))
 	waitTTLJobFinished(t, tk, tblID, timerCli)
 
 	now := time.Now()
@@ -264,6 +296,7 @@ func TestTriggerTTLJob(t *testing.T) {
 	tk.MustExec("insert into t values(3, ?)", expreDateStr)
 	tk.MustExec("insert into t values(4, ?)", nowDateStr)
 
+	cli := do.TTLJobManager().GetCommandCli()
 	res, err := client.TriggerNewTTLJob(ctx, cli, "test", "t")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(res.TableResult))
@@ -280,8 +313,7 @@ func TestTriggerTTLJob(t *testing.T) {
 }
 
 func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval")
+	defer boostJobScheduleForTest(t)()
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	timerStore := timertable.NewTableTimerStore(0, do.SysSessionPool(), "mysql", "tidb_timers", nil)
@@ -295,13 +327,13 @@ func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ttl_running_tasks=32")
 
 	tk.MustExec("create table t1(id int primary key, t datetime) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
-	tbl1, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl1, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	tblID1 := tbl1.Meta().ID
 	tk.MustExec("insert into t1 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
 
 	tk.MustExec("create table t2(id int primary key, t timestamp) TTL=`t` + INTERVAL 1 DAY TTL_ENABLE='OFF'")
-	tbl2, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl2, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblID2 := tbl2.Meta().ID
 	tk.MustExec("insert into t2 values(1, NOW()), (2, NOW() - INTERVAL 31 HOUR), (3, NOW() - INTERVAL 33 HOUR)")
@@ -310,12 +342,6 @@ func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 	tk.MustExec("set @@time_zone='UTC'")
 	tk.MustExec("alter table t1 TTL_ENABLE='ON'")
 	tk.MustExec("alter table t2 TTL_ENABLE='ON'")
-
-	ctx, cancel := context.WithTimeout(context.TODO(), time.Minute)
-	defer cancel()
-	cli := do.TTLJobManager().GetCommandCli()
-	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t1")
-	_, _ = client.TriggerNewTTLJob(ctx, cli, "test", "t2")
 
 	waitTTLJobFinished(t, tk, tblID1, timerCli)
 	tk.MustQuery("select id from t1 order by id asc").Check(testkit.Rows("1", "2"))
@@ -327,7 +353,7 @@ func TestTTLDeleteWithTimeZoneChange(t *testing.T) {
 func waitTTLJobFinished(t *testing.T, tk *testkit.TestKit, tableID int64, timerCli timerapi.TimerClient) {
 	start := time.Now()
 	for time.Since(start) < time.Minute {
-		time.Sleep(time.Second)
+		time.Sleep(10 * time.Millisecond)
 		r := tk.MustQuery("select last_job_id, current_job_id, parent_table_id from mysql.tidb_ttl_table_status where table_id=?", tableID)
 		rows := r.Rows()
 		if len(rows) == 0 {
@@ -357,21 +383,19 @@ func waitTTLJobFinished(t *testing.T, tk *testkit.TestKit, tableID int64, timerC
 }
 
 func TestTTLJobDisable(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval")
-	failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", time.Second))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval")
-
-	originAutoAnalyzeMinCnt := autoanalyze.AutoAnalyzeMinCnt
-	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer boostJobScheduleForTest(t)()
+	originAutoAnalyzeMinCnt := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		autoanalyze.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
+		statistics.AutoAnalyzeMinCnt = originAutoAnalyzeMinCnt
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+
+	// turn off the `tidb_ttl_job_enable`
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int, created_at datetime) ttl = `created_at` + interval 1 day")
@@ -385,28 +409,18 @@ func TestTTLJobDisable(t *testing.T) {
 
 		tk.MustExec("insert into t values(?, ?)", i, t.Format(time.RFC3339))
 	}
-	// turn off the `tidb_ttl_job_enable`
-	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
-	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
 
-	retryTime := 15
-	retryInterval := time.Second * 2
-	deleted := false
-	for retryTime >= 0 {
-		retryTime--
-		time.Sleep(retryInterval)
+	time.Sleep(time.Second)
 
-		rows := tk.MustQuery("select count(*) from t").Rows()
-		count, err := strconv.Atoi(rows[0][0].(string))
-		require.NoError(t, err)
-		if count < 10 {
-			deleted = true
-			break
-		}
+	// no rows should be deleted as the ttl job is disabled
+	rows := tk.MustQuery("select count(*) from t").Rows()
+	count, err := strconv.Atoi(rows[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, 10, count)
 
-		require.Len(t, dom.TTLJobManager().RunningJobs(), 0)
-	}
-	require.False(t, deleted)
+	// no jobs
+	require.Len(t, dom.TTLJobManager().RunningJobs(), 0)
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_job_history").Check(testkit.Rows("0"))
 }
 
 func TestSubmitJob(t *testing.T) {
@@ -421,7 +435,7 @@ func TestSubmitJob(t *testing.T) {
 		"PARTITION p0 VALUES LESS THAN (10)," +
 		"PARTITION p1 VALUES LESS THAN (100)" +
 		")")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ttlp1"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("ttlp1"))
 	require.NoError(t, err)
 	tableID := table.Meta().ID
 	var physicalID int64
@@ -497,7 +511,7 @@ func TestRescheduleJobs(t *testing.T) {
 
 	now := time.Now()
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
@@ -543,7 +557,63 @@ func TestRescheduleJobs(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_job_schedule_window_start_time='23:58'")
 	tk.MustExec("set global tidb_ttl_job_schedule_window_end_time='23:59'")
 	anotherManager.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
-	tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("ttl job is disabled"))
+	tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("out of TTL job schedule window"))
+}
+
+func TestRescheduleJobsAfterTableDropped(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	waitAndStopTTLManager(t, dom)
+
+	now := time.Now()
+	createTableSQL := "create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'"
+	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
+
+	removeBehaviors := []struct {
+		remove string
+		resume string
+	}{
+		{"drop table test.t", createTableSQL},
+		{"alter table test.t remove ttl", "alter table test.t ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'"},
+		{"alter table test.t ttl_enable = 'OFF'", "alter table test.t ttl_enable = 'ON'"},
+	}
+	for i, rb := range removeBehaviors {
+		se := sessionFactory()
+		m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+			return true
+		})
+		m.TaskManager().ResizeWorkersWithSysVar()
+		require.NoError(t, m.InfoSchemaCache().Update(se))
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+		// submit job
+		require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, fmt.Sprintf("request%d", i)))
+		sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+		rows, err := se.ExecuteSQL(ctx, sql, args...)
+		require.NoError(t, err)
+		tableStatus, err := cache.RowToTableStatus(se, rows[0])
+		require.NoError(t, err)
+		require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
+		// there is already a task
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+
+		// break the table
+		tk.MustExec(rb.remove)
+		require.NoError(t, m.InfoSchemaCache().Update(se))
+		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+		m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
+		tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or the TTL on this table has been stopped"))
+
+		// resume the table
+		tk.MustExec(rb.resume)
+		table, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		m.DoGC(context.TODO(), se)
+	}
 }
 
 func TestJobTimeout(t *testing.T) {
@@ -553,14 +623,14 @@ func TestJobTimeout(t *testing.T) {
 
 	waitAndStopTTLManager(t, dom)
 
-	now := time.Now()
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	tableID := table.Meta().ID
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
+	now := se.Now()
 	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
 		return true
 	})
@@ -616,13 +686,12 @@ func TestTriggerScanTask(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	sessionFactory := sessionFactory(t, store)
-	now := time.Now()
 	se := sessionFactory()
 
 	waitAndStopTTLManager(t, dom)
 
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -630,39 +699,26 @@ func TestTriggerScanTask(t *testing.T) {
 		return true
 	})
 	require.NoError(t, m.InfoSchemaCache().Update(se))
-	m.TaskManager().ResizeWorkersWithSysVar()
-	m.Start()
-	defer func() {
-		m.Stop()
-		require.NoError(t, m.WaitStopped(context.Background(), time.Second*10))
-	}()
-
 	nCli := m.GetNotificationCli()
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+	done := make(chan struct{})
 	go func() {
 		<-nCli.WatchNotification(context.Background(), "scan")
-		wg.Done()
+		close(done)
 	}()
 	require.NoError(t, m.SubmitJob(se, tblID, tblID, "request1"))
 
 	// notification is sent
-	wg.Wait()
-
-	for time.Now().Before(now.Add(time.Second * 5)) {
-		time.Sleep(time.Second)
-		rows := tk.MustQuery("SELECT status FROM mysql.tidb_ttl_task").Rows()
-		if len(rows) == 0 {
-			break
-		}
-		if rows[0][0] == cache.TaskStatusFinished {
-			break
-		}
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	select {
+	case <-done:
+	case <-timeoutCtx.Done():
+		require.FailNow(t, "notification not got")
 	}
 }
 
 func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
-	maxWaitTime := 30
+	maxWaitTime := 300
 	for {
 		maxWaitTime--
 		if maxWaitTime < 0 {
@@ -673,7 +729,7 @@ func waitAndStopTTLManager(t *testing.T, dom *domain.Domain) {
 			require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Second*10))
 			return
 		}
-		time.Sleep(time.Second)
+		time.Sleep(time.Millisecond * 10)
 		continue
 	}
 }
@@ -715,9 +771,46 @@ func TestGCScanTasks(t *testing.T) {
 	addScanTaskRecord(3, 2, 1)
 	addScanTaskRecord(3, 2, 2)
 
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+		return true
+	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
-	ttlworker.DoGC(context.TODO(), se)
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id, scan_id from mysql.tidb_ttl_task order by job_id, scan_id asc").Check(testkit.Rows("1 1", "1 2"))
+}
+
+func TestGCTableStatus(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
+	// insert table status without corresponding table
+	tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", 2024, 2024)
+
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+		return true
+	})
+	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
+	m.DoGC(context.TODO(), se)
+	tk.MustQuery("select * from mysql.tidb_ttl_table_status").Check(nil)
+
+	// insert a running table status without corresponding table
+	tk.MustExec("INSERT INTO mysql.tidb_ttl_table_status (table_id,parent_table_id) VALUES (?, ?)", 2024, 2024)
+	tk.MustExec(`UPDATE mysql.tidb_ttl_table_status
+			SET current_job_id = ?,
+				current_job_owner_id = '12345',
+				current_job_start_time = NOW(),
+				current_job_status = 'running',
+				current_job_status_update_time = NOW(),
+				current_job_ttl_expire = NOW(),
+				current_job_owner_hb_time = NOW()
+			WHERE table_id = ?`, 1, 2024)
+	m.DoGC(context.TODO(), se)
+	// it'll not be removed
+	tk.MustQuery("select current_job_id from mysql.tidb_ttl_table_status").Check(testkit.Rows("1"))
 }
 
 func TestGCTTLHistory(t *testing.T) {
@@ -757,8 +850,12 @@ func TestGCTTLHistory(t *testing.T) {
 	addHistory(5, 90)
 	addHistory(6, 91)
 	addHistory(7, 100)
+
+	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+		return true
+	})
 	se := session.NewSession(tk.Session(), tk.Session(), func(_ session.Session) {})
-	ttlworker.DoGC(context.TODO(), se)
+	m.DoGC(context.TODO(), se)
 	tk.MustQuery("select job_id from mysql.tidb_ttl_job_history order by job_id asc").Check(testkit.Rows("1", "2", "3", "4", "5"))
 }
 
@@ -770,7 +867,7 @@ func TestJobMetrics(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 
 	tk.MustExec("create table test.t (id int, created_at datetime) ttl = `created_at` + interval 1 minute ttl_job_interval = '1m'")
-	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
@@ -926,9 +1023,41 @@ func TestDelayMetrics(t *testing.T) {
 	checkRecord(records, "t5", emptyTime)
 }
 
+type poolTestWrapper struct {
+	util.SessionPool
+	inuse atomic.Int64
+}
+
+func wrapPoolForTest(pool util.SessionPool) *poolTestWrapper {
+	return &poolTestWrapper{SessionPool: pool}
+}
+
+func (w *poolTestWrapper) Get() (pools.Resource, error) {
+	r, err := w.SessionPool.Get()
+	if err == nil {
+		w.inuse.Add(1)
+	}
+	return r, err
+}
+
+func (w *poolTestWrapper) Put(r pools.Resource) {
+	w.inuse.Add(-1)
+	w.SessionPool.Put(r)
+}
+
+func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
+	require.Zero(t, w.inuse.Load())
+}
+
 func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
+
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -938,19 +1067,19 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 
 	// not ttl table
 	tk.MustExec("create table t1(t timestamp)")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.False(t, adapter.CanSubmitJob(tbl.Meta().ID, tbl.Meta().ID))
 
 	// ttl table
 	tk.MustExec("create table ttl1(t timestamp) TTL=`t`+interval 1 DAY")
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ttl1"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("ttl1"))
 	require.NoError(t, err)
 	require.True(t, adapter.CanSubmitJob(tbl.Meta().ID, tbl.Meta().ID))
 
 	// ttl table but disabled
 	tk.MustExec("create table ttl2(t timestamp) TTL=`t`+interval 1 DAY TTL_ENABLE='OFF'")
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ttl2"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("ttl2"))
 	require.NoError(t, err)
 	require.False(t, adapter.CanSubmitJob(tbl.Meta().ID, tbl.Meta().ID))
 
@@ -959,7 +1088,7 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 		"PARTITION p0 VALUES LESS THAN (10)," +
 		"PARTITION p1 VALUES LESS THAN (100)" +
 		")")
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ttlp1"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("ttlp1"))
 	require.NoError(t, err)
 	for _, def := range tbl.Meta().Partition.Definitions {
 		require.True(t, adapter.CanSubmitJob(tbl.Meta().ID, def.ID))
@@ -986,7 +1115,7 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 			tk.MustExec("update mysql.tidb_ttl_task set status='finished' where job_id=?", jobID)
 		}
 	}
-	tbl, err = dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("ttl1"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("ttl1"))
 	require.NoError(t, err)
 	require.True(t, adapter.CanSubmitJob(tbl.Meta().ID, tbl.Meta().ID))
 	tk.MustExec("update mysql.tidb_ttl_task set status='running' where job_id='8'")
@@ -1053,7 +1182,9 @@ func TestManagerJobAdapterSubmitJob(t *testing.T) {
 
 func TestManagerJobAdapterGetJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1144,4 +1275,227 @@ func TestManagerJobAdapterGetJob(t *testing.T) {
 		require.Equal(t, summary, *job.Summary, status)
 		tk.MustExec("delete from mysql.tidb_ttl_job_history")
 	}
+}
+
+func TestManagerJobAdapterNow(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@global.time_zone ='Europe/Berlin'")
+	tk.MustExec("set @@time_zone='Asia/Shanghai'")
+
+	now, err := adapter.Now()
+	require.NoError(t, err)
+	localNow := time.Now()
+
+	require.Equal(t, "Europe/Berlin", now.Location().String())
+	require.InDelta(t, now.Unix(), localNow.Unix(), 10)
+}
+
+func TestFinishAndUpdateOwnerAtSameTime(t *testing.T) {
+	// Finishing a `TTLJob` will remove all the `TTLTask` of the job, and at the same time
+	// the `task_manager` may update the owner of the task, which may cause a write conflict.
+	// This test is to simulate this scenario.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	now := se.Now().Add(time.Hour * 48)
+	m := ttlworker.NewJobManager("test-ttl-job-manager", nil, store, nil, nil)
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+
+	job, err := m.LockJob(context.Background(), se, m.InfoSchemaCache().Tables[testTable.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+
+	continueFinish := make(chan struct{})
+	doneFinish := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-before-remove-task-in-finish", func() {
+		<-continueFinish
+	})
+
+	go func() {
+		defer close(doneFinish)
+		finishSe := sessionFactory()
+		require.NoError(t, job.Finish(finishSe, finishSe.Now(), &ttlworker.TTLSummary{}))
+	}()
+
+	_, err = m.TaskManager().LockScanTask(se, &cache.TTLTask{
+		ScanID:  0,
+		JobID:   job.ID(),
+		TableID: testTable.Meta().ID,
+	}, now)
+	require.NoError(t, err)
+	close(continueFinish)
+	<-doneFinish
+
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+}
+
+func TestFinishError(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	errCount := 5
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ttl/ttlworker/ttl-finish", func(err *error) {
+		errCount -= 1
+		if errCount > 0 {
+			*err = errors.New("mock error")
+		}
+	})
+
+	now := se.Now()
+
+	m := ttlworker.NewJobManager("test-ttl-job-manager", nil, store, nil, nil)
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+
+	initializeTest := func() {
+		errCount = 5
+		now = now.Add(time.Hour * 48)
+		job, err := m.LockJob(context.Background(), se, m.InfoSchemaCache().Tables[testTable.Meta().ID], now, uuid.NewString(), false)
+		require.NoError(t, err)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+		task, err := m.TaskManager().LockScanTask(se, &cache.TTLTask{
+			ScanID:  0,
+			JobID:   job.ID(),
+			TableID: testTable.Meta().ID,
+		}, now)
+		require.NoError(t, err)
+		task.SetResult(nil)
+		err = m.TaskManager().ReportTaskFinished(se, now, task)
+		require.NoError(t, err)
+		tk.MustQuery("select status from mysql.tidb_ttl_task").Check(testkit.Rows("finished"))
+	}
+
+	// Test the `CheckFinishedJob` can tolerate the `job.finish` error
+	initializeTest()
+	for i := 0; i < 4; i++ {
+		m.CheckFinishedJob(se)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+	}
+	m.CheckFinishedJob(se)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+
+	// Test the `rescheduleJobs` can tolerate the `job.finish` error
+	// cancel job branch
+	initializeTest()
+	variable.EnableTTLJob.Store(false)
+	t.Cleanup(func() {
+		variable.EnableTTLJob.Store(true)
+	})
+	for i := 0; i < 4; i++ {
+		m.RescheduleJobs(se, now)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+	}
+	m.RescheduleJobs(se, now)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+	variable.EnableTTLJob.Store(true)
+	// remove table branch
+	initializeTest()
+	tk.MustExec("drop table t")
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	for i := 0; i < 4; i++ {
+		m.RescheduleJobs(se, now)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+	}
+	m.RescheduleJobs(se, now)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	testTable, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// Teset the `updateHeartBeat` can tolerate the `job.finish` error
+	initializeTest()
+	for i := 0; i < 4; i++ {
+		// timeout is 6h
+		now = now.Add(time.Hour * 8)
+		m.UpdateHeartBeat(context.Background(), se, now)
+		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+	}
+	m.UpdateHeartBeat(context.Background(), se, now)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("0"))
+}
+
+func boostJobScheduleForTest(t *testing.T) func() {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-job-triggered-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/sync-timer", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-job-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+
+	return func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-job-triggered-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/sync-timer"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-job-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/resize-workers-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-status-table-cache-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/update-info-schema-cache-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval"))
+	}
+}
+
+func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+
+	sessionFactory := sessionFactory(t, store)
+	se := sessionFactory()
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	m1 := ttlworker.NewJobManager("test-ttl-job-manager-1", nil, store, nil, nil)
+	require.NoError(t, m1.InfoSchemaCache().Update(se))
+	require.NoError(t, m1.TableStatusCache().Update(ctx, se))
+
+	now := se.Now()
+	_, err = m1.LockJob(context.Background(), se, m1.InfoSchemaCache().Tables[testTable.Meta().ID], now, uuid.NewString(), false)
+	require.NoError(t, err)
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running"))
+
+	// lose heartbeat. Simulate the situation that m1 doesn't update the hearbeat for 8 hours.
+	now = now.Add(time.Hour * 8)
+
+	// stop the tidb_ttl_job_enable
+	tk.MustExec("set global tidb_ttl_job_enable = 'OFF'")
+	defer tk.MustExec("set global tidb_ttl_job_enable = 'ON'")
+
+	// reschedule and try to get the job
+	m2 := ttlworker.NewJobManager("test-ttl-job-manager-2", nil, store, nil, nil)
+	require.NoError(t, m2.InfoSchemaCache().Update(se))
+	require.NoError(t, m2.TableStatusCache().Update(ctx, se))
+	m2.RescheduleJobs(se, now)
+
+	// the job should have been cancelled
+	tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
 }

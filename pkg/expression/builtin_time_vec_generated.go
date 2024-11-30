@@ -62,7 +62,12 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		output, err := arg0.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
+		output, err := arg0.Add(typeCtx(ctx), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
 			return err
@@ -117,22 +122,27 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.SetNull(i, true) // fixed: true
 				continue
 			}
 			return err
 		}
 
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
+		output, err := arg0.Add(typeCtx(ctx), arg1Duration)
 
 		if err != nil {
 			return err
@@ -247,11 +257,11 @@ func (b *builtinAddDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.SetNull(i, true) // fixed: true
 				continue
 			}
@@ -315,18 +325,18 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
-		fsp1 := b.args[1].GetType().GetDecimal()
+		tc := typeCtx(ctx)
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
 		if isDuration(arg0) {
 
-			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			output, err = strDurationAddDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					result.AppendNull() // fixed: false
 					continue
 				}
@@ -334,13 +344,13 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 			}
 		} else {
 
-			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -370,7 +380,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
@@ -405,11 +415,11 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -420,11 +430,11 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		var isNull bool
 		if isDuration(arg0) {
 
-			output, err = strDurationAddDuration(sc, arg0, arg1Duration)
+			output, err = strDurationAddDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					result.AppendNull() // fixed: false
 					continue
 				}
@@ -432,13 +442,13 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 			}
 		} else {
 
-			output, isNull, err = strDatetimeAddDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeAddDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -464,7 +474,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -479,7 +489,7 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -498,16 +508,25 @@ func (b *builtinAddDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
-		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
+		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
+
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -529,7 +548,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -544,7 +563,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -561,29 +580,37 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
 			return err
 		}
 
-		fsp0 := b.args[0].GetType().GetDecimal()
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Add(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration)
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -675,9 +702,14 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
+		tc := typeCtx(ctx)
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
+		output, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -732,21 +764,26 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.SetNull(i, true) // fixed: true
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.SetNull(i, true) // fixed: true
 				continue
 			}
 			return err
 		}
-		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
+		output, err := arg0.Add(typeCtx(ctx), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -861,11 +898,11 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.SetNull(i, true) // fixed: true
 				continue
 			}
@@ -929,18 +966,18 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
-		fsp1 := b.args[1].GetType().GetDecimal()
+		tc := typeCtx(ctx)
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
 		var isNull bool
 		if isDuration(arg0) {
 
-			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			output, err = strDurationSubDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					result.AppendNull() // fixed: false
 					continue
 				}
@@ -948,13 +985,13 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 			}
 		} else {
 
-			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -984,7 +1021,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 
-	arg1Type := b.args[1].GetType()
+	arg1Type := b.args[1].GetType(ctx)
 	if mysql.HasBinaryFlag(arg1Type.GetFlag()) {
 		result.ReserveString(n)
 		for i := 0; i < n; i++ {
@@ -1019,11 +1056,11 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -1034,11 +1071,11 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 		var isNull bool
 		if isDuration(arg0) {
 
-			output, err = strDurationSubDuration(sc, arg0, arg1Duration)
+			output, err = strDurationSubDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-					sc.AppendWarning(err)
+					tc.AppendWarning(err)
 					result.AppendNull() // fixed: false
 					continue
 				}
@@ -1046,13 +1083,13 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 			}
 		} else {
 
-			output, isNull, err = strDatetimeSubDuration(sc, arg0, arg1Duration)
+			output, isNull, err = strDatetimeSubDuration(tc, arg0, arg1Duration)
 
 			if err != nil {
 				return err
 			}
 			if isNull {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -1078,7 +1115,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1093,7 +1130,7 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	arg1s := buf1.GoDurations()
 
@@ -1112,16 +1149,25 @@ func (b *builtinSubDateAndDurationSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		fsp0 := b.args[0].GetType().GetDecimal()
-		fsp1 := b.args[1].GetType().GetDecimal()
-		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		fsp1 := b.args[1].GetType(ctx).GetDecimal()
+		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
+		tc := typeCtx(ctx)
+		arg0.SetType(mysql.TypeDatetime)
+
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -1143,7 +1189,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEvalDuration(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEvalTime(ctx, input, buf0); err != nil {
 		return err
 	}
 
@@ -1158,7 +1204,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 	result.ReserveString(n)
 
-	arg0s := buf0.GoDurations()
+	arg0s := buf0.Times()
 
 	for i := 0; i < n; i++ {
 
@@ -1175,29 +1221,37 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 
 		// calculate
 
+		if arg0.IsZero() {
+			result.AppendNull() // fixed: false
+			continue
+		}
+
 		if !isDuration(arg1) {
 			result.AppendNull() // fixed: false
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
+		tc := typeCtx(ctx)
+		arg1Duration, _, err := types.ParseDuration(tc, arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
-				sc.AppendWarning(err)
+				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
 			return err
 		}
 
-		fsp0 := b.args[0].GetType().GetDecimal()
+		arg0.SetType(mysql.TypeDatetime)
 
-		sum, err := types.Duration{Duration: arg0, Fsp: fsp0}.Sub(arg1Duration)
+		res, err := arg0.Add(tc, arg1Duration.Neg())
 
 		if err != nil {
-			return err
+			tc.AppendWarning(err)
+			result.AppendNull() // fixed: false
+			continue
 		}
-		output := sum.String()
+
+		output := res.String()
 
 		// commit result
 
@@ -1285,13 +1339,13 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 
 	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		lhsTime := arg0[i]
-		_, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.GetDecimal())
+		_, rhsTime, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1299,7 +1353,7 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 			result.SetNull(i, true)
 			continue
 		}
-		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		d, isNull, err := calculateTimeDiff(tc, lhsTime, rhsTime)
 		if err != nil {
 			return err
 		}
@@ -1340,13 +1394,13 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 		lhs types.Duration
 		rhs types.Duration
 	)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		lhs.Duration = arg0[i]
-		rhsDur, _, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.GetDecimal())
+		rhsDur, _, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1445,12 +1499,12 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 
 	result.MergeNulls(buf0, buf1)
 	arg1 := buf1.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		_, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.GetDecimal())
+		_, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1459,7 +1513,7 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 			continue
 		}
 		rhsTime := arg1[i]
-		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		d, isNull, err := calculateTimeDiff(tc, lhsTime, rhsTime)
 		if err != nil {
 			return err
 		}
@@ -1500,12 +1554,12 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 		lhs types.Duration
 		rhs types.Duration
 	)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, _, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.GetDecimal())
+		lhsDur, _, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1556,16 +1610,16 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input 
 	}
 
 	result.MergeNulls(buf0, buf1)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(stmtCtx, buf0.GetString(i), b.tp.GetDecimal())
+		lhsDur, lhsTime, lhsIsDuration, err := convertStringToDuration(tc, buf0.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
-		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(stmtCtx, buf1.GetString(i), b.tp.GetDecimal())
+		rhsDur, rhsTime, rhsIsDuration, err := convertStringToDuration(tc, buf1.GetString(i), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1580,7 +1634,7 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input 
 		if lhsIsDuration {
 			d, isNull, err = calculateDurationTimeDiff(ctx, lhsDur, rhsDur)
 		} else {
-			d, isNull, err = calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+			d, isNull, err = calculateTimeDiff(tc, lhsTime, rhsTime)
 		}
 		if err != nil {
 			return err
@@ -1624,14 +1678,14 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *chu
 	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
 		lhsTime := arg0[i]
 		rhsTime := arg1[i]
-		d, isNull, err := calculateTimeDiff(stmtCtx, lhsTime, rhsTime)
+		d, isNull, err := calculateTimeDiff(tc, lhsTime, rhsTime)
 		if err != nil {
 			return err
 		}

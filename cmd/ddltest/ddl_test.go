@@ -33,7 +33,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -95,12 +97,13 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
-
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -118,6 +121,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+	ddl.CloseOwnerManager()
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())
@@ -388,7 +392,7 @@ func isRetryError(err error) bool {
 	return false
 }
 
-func (s *ddlSuite) exec(query string, args ...interface{}) (sql.Result, error) {
+func (s *ddlSuite) exec(query string, args ...any) (sql.Result, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Exec(query, args...)
@@ -405,7 +409,7 @@ func (s *ddlSuite) exec(query string, args ...interface{}) (sql.Result, error) {
 	}
 }
 
-func (s *ddlSuite) mustExec(query string, args ...interface{}) sql.Result {
+func (s *ddlSuite) mustExec(query string, args ...any) sql.Result {
 	r, err := s.exec(query, args...)
 	if err != nil {
 		log.Fatal("[mustExec fail]query",
@@ -418,7 +422,7 @@ func (s *ddlSuite) mustExec(query string, args ...interface{}) sql.Result {
 	return r
 }
 
-func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
+func (s *ddlSuite) execInsert(query string, args ...any) sql.Result {
 	for {
 		r, err := s.exec(query, args...)
 		if err == nil {
@@ -441,7 +445,7 @@ func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
 	}
 }
 
-func (s *ddlSuite) query(query string, args ...interface{}) (*sql.Rows, error) {
+func (s *ddlSuite) query(query string, args ...any) (*sql.Rows, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Query(query, args...)
@@ -491,25 +495,25 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 }
 
 func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), model.NewCIStr("test_ddl"), model.NewCIStr(name))
 	require.NoError(t, err)
 	return tbl
 }
 
-func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
+func dumpRows(t *testing.T, rows *sql.Rows) [][]any {
 	cols, err := rows.Columns()
 	require.NoError(t, err)
-	var ay [][]interface{}
+	var ay [][]any
 	for rows.Next() {
-		v := make([]interface{}, len(cols))
+		v := make([]any, len(cols))
 		for i := range v {
-			v[i] = new(interface{})
+			v[i] = new(any)
 		}
 		err = rows.Scan(v...)
 		require.NoError(t, err)
 
 		for i := range v {
-			v[i] = *(v[i].(*interface{}))
+			v[i] = *(v[i].(*any))
 		}
 		ay = append(ay, v)
 	}
@@ -519,7 +523,7 @@ func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
 	return ay
 }
 
-func matchRows(t *testing.T, rows *sql.Rows, expected [][]interface{}) {
+func matchRows(t *testing.T, rows *sql.Rows, expected [][]any) {
 	ay := dumpRows(t, rows)
 	require.Equalf(t, len(expected), len(ay), "%v", expected)
 	for i := range ay {
@@ -527,7 +531,7 @@ func matchRows(t *testing.T, rows *sql.Rows, expected [][]interface{}) {
 	}
 }
 
-func match(t *testing.T, row []interface{}, expected ...interface{}) {
+func match(t *testing.T, row []any, expected ...any) {
 	require.Equal(t, len(expected), len(row))
 	for i := range row {
 		if row[i] == nil {
@@ -590,7 +594,7 @@ func TestSimple(t *testing.T) {
 
 		rows, err := s.query("select c1 from test_simple limit 1")
 		require.NoError(t, err)
-		matchRows(t, rows, [][]interface{}{{1}})
+		matchRows(t, rows, [][]any{{1}})
 
 		done = s.runDDL("drop table if exists test_simple")
 		err = <-done
@@ -1157,5 +1161,5 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
+	_ = store.Register(config.StoreTypeTiKV, tidbdriver.TiKVDriver{})
 }

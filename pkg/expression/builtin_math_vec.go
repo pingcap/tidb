@@ -20,6 +20,7 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -36,7 +37,8 @@ func (b *builtinLog1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -59,7 +61,8 @@ func (b *builtinLog2Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -82,7 +85,8 @@ func (b *builtinLog10Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -287,7 +291,7 @@ func (b *builtinExpSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result 
 		}
 		exp := math.Exp(f64s[i])
 		if math.IsInf(exp, 0) || math.IsNaN(exp) {
-			s := fmt.Sprintf("exp(%s)", b.args[0].String())
+			s := fmt.Sprintf("exp(%s)", b.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
 			if err := types.ErrOverflow.GenWithStackByArgs("DOUBLE", s); err != nil {
 				return err
 			}
@@ -478,7 +482,8 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			tc := typeCtx(ctx)
+			tc.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])
@@ -765,7 +770,7 @@ func (b *builtinCeilIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.Ch
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -801,7 +806,7 @@ func (b *builtinTruncateIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -845,7 +850,7 @@ func (b *builtinTruncateUintSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	i64s := result.Int64s()
 	buf64s := buf.Int64s()
 
-	if mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag()) {
+	if mysql.HasUnsignedFlag(b.args[1].GetType(ctx).GetFlag()) {
 		return nil
 	}
 
@@ -957,7 +962,7 @@ func (b *builtinTruncateDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 			continue
 		}
 		result := new(types.MyDecimal)
-		if err := ds[i].Round(result, mathutil.Min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
+		if err := ds[i].Round(result, min(int(i64s[i]), ft), types.ModeTruncate); err != nil {
 			return err
 		}
 		ds[i] = *result
@@ -992,7 +997,7 @@ func (b *builtinRoundWithFracDecSig) vecEvalDecimal(ctx EvalContext, input *chun
 			continue
 		}
 		// TODO: reuse d64[i] and remove the temporary variable tmp.
-		if err := d64s[i].Round(tmp, mathutil.Min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
+		if err := d64s[i].Round(tmp, min(int(i64s[i]), b.tp.GetDecimal()), types.ModeHalfUp); err != nil {
 			return err
 		}
 		d64s[i] = *tmp
@@ -1020,7 +1025,7 @@ func (b *builtinFloorIntToDecSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 
 	i64s := buf.Int64s()
 	d := result.Decimals()
-	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
+	isUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

@@ -15,6 +15,7 @@
 package optimizor_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -55,19 +57,19 @@ func TestDumpStatsAPI(t *testing.T) {
 	dom, err := session.GetDomain(store)
 	require.NoError(t, err)
 	server.SetDomain(dom)
-
-	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
-	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	client.WaitUntilServerOnline()
 
 	statsHandler := optimizor.NewStatsHandler(dom)
 
 	prepareData(t, client, statsHandler)
-	tableInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	err = dom.GetHistoricalStatsWorker().DumpHistoricalStats(tableInfo.Meta().ID, dom.StatsHandle())
 	require.NoError(t, err)
@@ -159,7 +161,7 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServerClient, handler *optimizor.StatsHandler) {
@@ -196,12 +198,12 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	}()
 	h := statHandle.Domain().StatsHandle()
 	tk := testkit.NewDBTestKit(t, db)
-	tk.MustExec("create table test2(a int) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
+	tk.MustExec("create table test2(a int, index idx(a)) PARTITION BY RANGE ( a ) (PARTITION p0 VALUES LESS THAN (6))")
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.Update(context.Background(), is))
 }
 
 func prepare4DumpHistoryStats(t *testing.T, client *testserverclient.TestServerClient) {
@@ -279,12 +281,67 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
-	var other interface{}
-	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
+	var other any
+	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count, &other)
 	require.NoError(t, err)
 	require.Equal(t, "tidb", dbName)
 	require.Equal(t, "test", tableName)
 	require.Equal(t, int64(3), modifyCount)
 	require.Equal(t, int64(4), count)
 	require.NoError(t, rows.Close())
+}
+
+func TestStatsPriorityQueueAPI(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	router := mux.NewRouter()
+	handler := optimizor.NewStatsPriorityQueueHandler(dom)
+	router.Handle("/stats/priority-queue", handler)
+
+	resp, err := client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "priority queue not initialized", string(js))
+
+	// Init the queue.
+	handle := dom.StatsHandle()
+	require.False(t, handle.HandleAutoAnalyze())
+
+	resp, err = client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var snapshot types.PriorityQueueSnapshot
+	err = json.Unmarshal(js, &snapshot)
+	require.NoError(t, err)
+	require.Empty(t, snapshot.CurrentJobs)
+	require.Empty(t, snapshot.MustRetryTables)
 }

@@ -2,16 +2,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "execute",
-    srcs = [
-        "interface.go",
-        "summary.go",
-    ],
+    srcs = ["interface.go"],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/storage",
-        "//pkg/util/logutil",
-        "@org_uber_go_zap//:zap",
-    ],
+    deps = ["//pkg/disttask/framework/proto"],
 )

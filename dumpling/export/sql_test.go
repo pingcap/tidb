@@ -1618,8 +1618,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}()
 
 	tidbConf := dbconfig.NewConfig()
-	stores := []string{"unistore", "mocktikv", "tikv"}
-	for _, store := range stores {
+	for _, store := range dbconfig.StoreTypeList() {
 		tidbConf.Store = store
 		tidbConfBytes, err := json.Marshal(tidbConf)
 		require.NoError(t, err)
@@ -1627,7 +1626,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 			sqlmock.NewRows([]string{"@@tidb_config"}).AddRow(string(tidbConfBytes)))
 		hasTiKV, err := CheckTiDBWithTiKV(db)
 		require.NoError(t, err)
-		if store == "tikv" {
+		if store == dbconfig.StoreTypeTiKV {
 			require.True(t, hasTiKV)
 		} else {
 			require.False(t, hasTiKV)
@@ -1636,7 +1635,7 @@ func TestCheckTiDBWithTiKV(t *testing.T) {
 	}
 
 	errLackPrivilege := errors.New("ERROR 1142 (42000): SELECT command denied to user 'test'@'%' for table 'tidb'")
-	expectedResults := []interface{}{errLackPrivilege, 1, 0}
+	expectedResults := []any{errLackPrivilege, 1, 0}
 	for i, res := range expectedResults {
 		t.Logf("case #%d", i)
 		mock.ExpectQuery("SELECT @@tidb_config").WillReturnError(errLackPrivilege)

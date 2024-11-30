@@ -19,11 +19,11 @@ import (
 	"crypto/tls"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -46,12 +46,12 @@ type Session interface {
 	// Parse is deprecated, use ParseWithParams() instead.
 	Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 	// ExecuteInternal is a helper around ParseWithParams() and ExecuteStmt(). It is not allowed to execute multiple statements.
-	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
+	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
 	String() string // String is used to debug.
 	CommitTxn(context.Context) error
 	RollbackTxn(context.Context)
 	// PrepareStmt executes prepare statement in binary protocol.
-	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*ast.ResultField, err error)
+	PrepareStmt(sql string) (stmtID uint32, paramCount int, fields []*resolve.ResultField, err error)
 	// ExecutePreparedStmt executes a prepared statement.
 	// Deprecated: please use ExecuteStmt, this function is left for testing only.
 	// TODO: remove ExecutePreparedStmt.
@@ -78,13 +78,8 @@ type Session interface {
 	// PrepareTxnCtx is exported for test.
 	PrepareTxnCtx(context.Context) error
 	// FieldList returns fields list of a table.
-	FieldList(tableName string) (fields []*ast.ResultField, err error)
+	FieldList(tableName string) (fields []*resolve.ResultField, err error)
 	SetPort(port string)
-
-	// set cur session operations allowed when tikv disk full happens.
-	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
-	GetDiskFullOpt() kvrpcpb.DiskFullOpt
-	ClearDiskFullOpt()
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)

@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mock",
+    srcs = [
+        "schema_loader_mock.go",
+        "systable_manager_mock.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/mock",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/meta/model",
+        "@org_uber_go_mock//gomock",
+    ],
+)

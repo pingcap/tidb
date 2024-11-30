@@ -22,19 +22,20 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -45,9 +46,9 @@ var (
 // The definition of selectivity is (row count after filter / row count before filter).
 // And exprs must be CNF now, in other words, `exprs[0] and exprs[1] and ... and exprs[len - 1]`
 // should be held when you call this.
-// Currently the time complexity is o(n^2).
+// Currently, the time complexity is o(n^2).
 func Selectivity(
-	ctx sessionctx.Context,
+	ctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	exprs []expression.Expression,
 	filledPaths []*planutil.AccessPath,
@@ -59,14 +60,14 @@ func Selectivity(
 	var exprStrs []string
 	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(ctx)
-		exprStrs = expression.ExprsToStringsForDisplay(exprs)
+		exprStrs = expression.ExprsToStringsForDisplay(ctx.GetExprCtx().GetEvalCtx(), exprs)
 		debugtrace.RecordAnyValuesWithNames(ctx, "Input Expressions", exprStrs)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(ctx, "Result", result)
 			debugtrace.LeaveContextCommon(ctx)
 		}()
 	}
-	// If table's count is zero or conditions are empty, we should return 100% selectivity.
+	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
 		return 1, nil, nil
 	}
@@ -75,17 +76,16 @@ func Selectivity(
 	tableID := coll.PhysicalID
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
-	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		ret = pseudoSelectivity(coll, exprs)
+	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
+		ret = pseudoSelectivity(ctx, coll, exprs)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
-				expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
+				expression.ComposeCNFCondition(ctx.GetExprCtx(), exprs...), ret*float64(coll.RealtimeCount))
 		}
 		return ret, nil, nil
 	}
 
 	var nodes []*StatsNode
-
 	var remainedExprStrs []string
 	remainedExprs := make([]expression.Expression, 0, len(exprs))
 
@@ -100,9 +100,9 @@ func Selectivity(
 			continue
 		}
 
-		colHist := coll.Columns[c.UniqueID]
+		colHist := coll.GetCol(c.UniqueID)
 		var sel float64
-		if colHist == nil || colHist.IsInvalid(ctx, coll.Pseudo) {
+		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -110,20 +110,25 @@ func Selectivity(
 			sel = 1.0 / pseudoEqualRate
 		}
 		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(ctx.GetExprCtx().GetEvalCtx(), errors.RedactLogDisable), "Selectivity", sel)
 		}
 		ret *= sel
 	}
 
-	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
+	extractedCols := make([]*expression.Column, 0, coll.ColNum())
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	colIDs := maps.Keys(coll.Columns)
-	slices.Sort(colIDs)
-	for _, id := range colIDs {
-		colStats := coll.Columns[id]
-		col := expression.ColInfo2Col(extractedCols, colStats.Info)
-		if col != nil {
-			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
+	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	extractedCols = slices.CompactFunc(extractedCols, func(a, b *expression.Column) bool {
+		return a.ID == b.ID
+	})
+	for _, col := range extractedCols {
+		id := col.UniqueID
+		colStats := coll.GetCol(id)
+		if colStats != nil {
+			maskCovered, ranges, _, _, err :=
+				getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -143,21 +148,45 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
+		} else if !col.IsHidden {
+			// TODO: We are able to remove this path if we remove the async stats load.
+			statistics.ColumnStatsIsInvalid(nil, ctx, coll, col.ID)
+			recordUsedItemStatsStatus(ctx, (*statistics.Column)(nil), tableID, col.ID)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
 	for _, path := range filledPaths {
-		// Index merge path and table path don't have index.
+		// Index merge path and table path don't have an index.
 		if path.Index == nil {
 			continue
 		}
 		id2Paths[path.Index.ID] = path
 	}
-	idxIDs := maps.Keys(coll.Indices)
+	idxIDs := make([]int64, 0, coll.IdxNum())
+	coll.ForEachIndexImmutable(func(id int64, _ *statistics.Index) bool {
+		idxIDs = append(idxIDs, id)
+		return false
+	})
+	// Stabilize the result.
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
-		idxStats := coll.Indices[id]
-		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
+		idxStats := coll.GetIdx(id)
+		idxInfo := idxStats.Info
+		if idxInfo.MVIndex {
+			totalSelectivity, mask, ok := getMaskAndSelectivityForMVIndex(ctx, coll, id, remainedExprs)
+			if !ok {
+				continue
+			}
+			nodes = append(nodes, &StatsNode{
+				Tp:          IndexType,
+				ID:          id,
+				mask:        mask,
+				numCols:     len(idxInfo.Columns),
+				Selectivity: totalSelectivity,
+			})
+			continue
+		}
+		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColUniqueIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
 			for i := 0; i < len(idxCols) && i < len(idxStats.Info.Columns); i++ {
@@ -168,8 +197,8 @@ func Selectivity(
 			if len(idxCols) > len(idxStats.Info.Columns) {
 				lengths = append(lengths, types.UnspecifiedLength)
 			}
-			maskCovered, ranges, partCover, err := getMaskAndRanges(ctx, remainedExprs,
-				ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
+			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
+				getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -179,13 +208,14 @@ func Selectivity(
 			}
 			selectivity := cnt / float64(coll.RealtimeCount)
 			nodes = append(nodes, &StatsNode{
-				Tp:          IndexType,
-				ID:          id,
-				mask:        maskCovered,
-				Ranges:      ranges,
-				numCols:     len(idxStats.Info.Columns),
-				Selectivity: selectivity,
-				partCover:   partCover,
+				Tp:                       IndexType,
+				ID:                       id,
+				mask:                     maskCovered,
+				Ranges:                   ranges,
+				numCols:                  len(idxStats.Info.Columns),
+				Selectivity:              selectivity,
+				partCover:                partCover,
+				minAccessCondsForDNFCond: minAccessCondsForDNFCond,
 			})
 		}
 	}
@@ -212,7 +242,7 @@ func Selectivity(
 					curExpr = append(curExpr, remainedExprs[i])
 				}
 			}
-			expr := expression.ComposeCNFCondition(ctx, curExpr...)
+			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
 			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		} else if sc.EnableOptimizerDebugTrace {
 			var strs []string
@@ -269,7 +299,7 @@ func Selectivity(
 
 	// Try to cover remaining Constants
 	for i, c := range notCoveredConstants {
-		if expression.MaybeOverOptimized4PlanCache(ctx, []expression.Expression{c}) {
+		if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), []expression.Expression{c}) {
 			continue
 		}
 		if c.Value.IsNull() {
@@ -297,13 +327,13 @@ OUTER:
 		// If there are columns not in stats, we won't handle them. This case might happen after DDL operations.
 		cols := expression.ExtractColumns(scalarCond)
 		for i := range cols {
-			if _, ok := coll.Columns[cols[i].UniqueID]; !ok {
+			if colStats := coll.GetCol(cols[i].UniqueID); colStats == nil {
 				continue OUTER
 			}
 		}
 
 		dnfItems := expression.FlattenDNFConditions(scalarCond)
-		dnfItems = ranger.MergeDNFItems4Col(ctx, dnfItems)
+		dnfItems = ranger.MergeDNFItems4Col(ctx.GetRangerCtx(), dnfItems)
 		// If the conditions only contain a single column, we won't handle them.
 		if len(dnfItems) <= 1 {
 			continue
@@ -349,7 +379,7 @@ OUTER:
 		if sc.EnableOptimizerCETrace {
 			// Tracing for the expression estimation results after applying the DNF estimation result.
 			curExpr = append(curExpr, remainedExprs[i])
-			expr := expression.ComposeCNFCondition(ctx, curExpr...)
+			expr := expression.ComposeCNFCondition(ctx.GetExprCtx(), curExpr...)
 			ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", expr, ret*float64(coll.RealtimeCount))
 		}
 	}
@@ -411,10 +441,96 @@ OUTER:
 
 	if sc.EnableOptimizerCETrace {
 		// Tracing for the expression estimation results after applying the default selectivity.
-		totalExpr := expression.ComposeCNFCondition(ctx, remainedExprs...)
+		totalExpr := expression.ComposeCNFCondition(ctx.GetExprCtx(), remainedExprs...)
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
+}
+
+// CalcTotalSelectivityForMVIdxPath calculates the total selectivity for the given partial paths of an MV index merge path.
+// It corresponds with the meaning of AccessPath.CountAfterAccess, as used in buildPartialPathUp4MVIndex.
+// It uses the independence assumption to estimate the selectivity.
+func CalcTotalSelectivityForMVIdxPath(
+	coll *statistics.HistColl,
+	partialPaths []*planutil.AccessPath,
+	isIntersection bool,
+) float64 {
+	selectivities := make([]float64, 0, len(partialPaths))
+	for _, path := range partialPaths {
+		// For a partial path, we distinguish between two cases if it's a mv index path.
+		// 1. We will access a single value on the virtual column of the mv index.
+		//   In this case, handles from a single partial path must be unique.
+		//   The CountAfterAccess of a partial path will never be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess will be exactly the same as the
+		//   CountAfterAccess of the partial path (currently there's no index filter for partial path of mv index merge
+		//   path).
+		// 2. We use the mv index as if it's a non-MV index, which means the virtual column is not involved in the access
+		//   conditions.
+		//   In this case, we may read repeated handles from a single partial path.
+		//   The CountAfterAccess of a partial path might be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess might be less than the CountAfterAccess
+		//   of the partial path
+		// For example:
+		// create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+		// insert into t value(1,'{"b":[1,2,3,4]}'), (2,'{"b":[3,4,5,6]}');
+		// The index has 8 entries.
+		// Case 1:
+		//   select * from t use index (iad) where a = 1 and 1 member of (d->'$.b');
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:1 Range:[1 1,1 1]
+		//   └─TableRowIDScan RowCount:1
+		// Case 2:
+		//   select * from t use index (iad) where a = 1;
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:4 Range:[1,1]
+		//   └─TableRowIDScan RowCount:1
+		// From the example, it should be obvious that we need different total row count to calculate the selectivity of
+		// the access conditions:
+		// Case 1: Here we should use the table total row count
+		//   Selectivity( a = 1 and 1 member of (d->'$.b') ) = 1 / 2
+		// Case 2: Here we should use the index total row count
+		//   Selectivity( a = 1 ) = 4 / 8
+		//
+		// Now, the `Case 2` above has been avoided because a mv index may not contain all rows. See the related issue
+		// https://github.com/pingcap/tidb/issues/50125 and fix https://github.com/pingcap/tidb/pull/50183
+		realtimeCount := coll.RealtimeCount
+		if !path.IsTablePath() && path.Index.MVIndex {
+			var virtualCol *expression.Column
+			for _, col := range coll.MVIdx2Columns[path.Index.ID] {
+				if col.VirtualExpr != nil {
+					virtualCol = col
+					break
+				}
+			}
+			cols := expression.ExtractColumnsFromExpressions(
+				nil,
+				path.AccessConds,
+				func(column *expression.Column) bool {
+					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
+				},
+			)
+			// If we can't find the virtual column from the access conditions, it's the case 2.
+			if len(cols) == 0 {
+				realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.GetIdx(path.Index.ID))
+			}
+		}
+		sel := path.CountAfterAccess / float64(realtimeCount)
+		sel = mathutil.Clamp(sel, 0, 1)
+		selectivities = append(selectivities, sel)
+	}
+	var totalSelectivity float64
+	if isIntersection {
+		totalSelectivity = 1
+		for _, sel := range selectivities {
+			totalSelectivity *= sel
+		}
+	} else {
+		totalSelectivity = 0
+		for _, sel := range selectivities {
+			totalSelectivity = (sel + totalSelectivity) - totalSelectivity*sel
+		}
+	}
+	return totalSelectivity
 }
 
 // StatsNode is used for calculating selectivity.
@@ -432,6 +548,8 @@ type StatsNode struct {
 	// partCover indicates whether the bit in the mask is for a full cover or partial cover. It is only true
 	// when the condition is a DNF expression on index, and the expression is not totally extracted as access condition.
 	partCover bool
+	// Please see comments of planner/util.AccessPath.MinAccessCondsForDNFCond for more details.
+	minAccessCondsForDNFCond int
 }
 
 // The type of the StatsNode.
@@ -490,7 +608,18 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 	mask := int64(math.MaxInt64)
 	for {
 		// Choose the index that covers most.
-		bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel := -1, 0, ColType, 0, int64(0), float64(0)
+		bestMask := int64(0)
+		best := &statsNodeForGreedyChoice{
+			StatsNode: &StatsNode{
+				Tp:                       ColType,
+				Selectivity:              0,
+				numCols:                  0,
+				partCover:                true,
+				minAccessCondsForDNFCond: -1,
+			},
+			idx:        -1,
+			coverCount: 0,
+		}
 		for i, set := range nodes {
 			if marked[i] {
 				continue
@@ -506,37 +635,88 @@ func GetUsableSetsByGreedy(nodes []*StatsNode) (newBlocks []*StatsNode) {
 				marked[i] = true
 				continue
 			}
-			// We greedy select the stats info based on:
-			// (1): The stats type, always prefer the primary key or index.
-			// (2): The number of expression that it covers, the more the better.
-			// (3): The number of columns that it contains, the less the better.
-			// (4): The selectivity of the covered conditions, the less the better.
-			//      The rationale behind is that lower selectivity tends to reflect more functional dependencies
-			//      between columns. It's hard to decide the priority of this rule against rule 2 and 3, in order
-			//      to avoid massive plan changes between tidb-server versions, I adopt this conservative strategy
-			//      to impose this rule after rule 2 and 3.
-			if (bestTp == ColType && set.Tp != ColType) ||
-				bestCount < bits ||
-				(bestCount == bits && bestNumCols > set.numCols) ||
-				(bestCount == bits && bestNumCols == set.numCols && bestSel > set.Selectivity) {
-				bestID, bestCount, bestTp, bestNumCols, bestMask, bestSel = i, bits, set.Tp, set.numCols, curMask, set.Selectivity
+			current := &statsNodeForGreedyChoice{
+				StatsNode:  set,
+				idx:        i,
+				coverCount: bits,
+			}
+			if current.isBetterThan(best) {
+				best = current
+				bestMask = curMask
 			}
 		}
-		if bestCount == 0 {
+		if best.coverCount == 0 {
 			break
 		}
 
-		// Update the mask, remove the bit that nodes[bestID].mask has.
+		// Update the mask, remove the bit that nodes[best.idx].mask has.
 		mask &^= bestMask
 
-		newBlocks = append(newBlocks, nodes[bestID])
-		marked[bestID] = true
+		newBlocks = append(newBlocks, nodes[best.idx])
+		marked[best.idx] = true
 	}
 	return
 }
 
-// isColEqCorCol checks if the expression is a eq function that one side is correlated column and another is column.
-// If so, it will return the column's reference. Otherwise return nil instead.
+type statsNodeForGreedyChoice struct {
+	*StatsNode
+	idx        int
+	coverCount int
+}
+
+func (s *statsNodeForGreedyChoice) isBetterThan(other *statsNodeForGreedyChoice) bool {
+	// none of them should be nil
+	if s == nil || other == nil {
+		return false
+	}
+	// 1. The stats type, always prefer the primary key or index.
+	if s.Tp != ColType && other.Tp == ColType {
+		return true
+	}
+	// 2. The number of expression that it covers, the more, the better.
+	if s.coverCount > other.coverCount {
+		return true
+	}
+	// Worse or equal. We return false for both cases. The same for the following rules.
+	if s.coverCount != other.coverCount {
+		return false
+	}
+	// 3. It's only for DNF. Full cover is better than partial cover
+	if !s.partCover && other.partCover {
+		return true
+	}
+	if s.partCover != other.partCover {
+		return false
+	}
+	// 4. It's only for DNF. The minimum number of access conditions among all DNF items, the more, the better.
+	// s.coverCount is not enough for DNF, so we use this field to make the judgment more accurate.
+	if s.minAccessCondsForDNFCond > other.minAccessCondsForDNFCond {
+		return true
+	}
+	if s.minAccessCondsForDNFCond != other.minAccessCondsForDNFCond {
+		return false
+	}
+
+	// 5. The number of columns that it contains, the less, the better.
+	if s.numCols < other.numCols {
+		return true
+	}
+	if s.numCols != other.numCols {
+		return false
+	}
+	// 6. The selectivity of the covered conditions, the less, the better.
+	// The rationale behind is that lower selectivity tends to reflect more functional dependencies
+	// between columns. It's hard to decide the priority of this rule against rules above, in order
+	// to avoid massive plan changes between tidb-server versions, I adopt this conservative strategy
+	// to impose this rule after rules above.
+	if s.Selectivity < other.Selectivity {
+		return true
+	}
+	return false
+}
+
+// isColEqCorCol checks if the expression is an eq function that one side is correlated column and another is column.
+// If so, it will return the column's reference. Otherwise, return nil instead.
 func isColEqCorCol(filter expression.Expression) *expression.Column {
 	f, ok := filter.(*expression.ScalarFunction)
 	if !ok || f.FuncName.L != ast.EQ {
@@ -557,15 +737,16 @@ func isColEqCorCol(filter expression.Expression) *expression.Column {
 
 // findPrefixOfIndexByCol will find columns in index by checking the unique id or the virtual expression.
 // So it will return at once no matching column is found.
-func findPrefixOfIndexByCol(ctx sessionctx.Context, cols []*expression.Column, idxColIDs []int64,
+func findPrefixOfIndexByCol(ctx planctx.PlanContext, cols []*expression.Column, idxColIDs []int64,
 	cachedPath *planutil.AccessPath) []*expression.Column {
 	if cachedPath != nil {
+		evalCtx := ctx.GetExprCtx().GetEvalCtx()
 		idxCols := cachedPath.IdxCols
 		retCols := make([]*expression.Column, 0, len(idxCols))
 	idLoop:
 		for _, idCol := range idxCols {
 			for _, col := range cols {
-				if col.EqualByExprAndID(ctx, idCol) {
+				if col.EqualByExprAndID(evalCtx, idCol) {
 					retCols = append(retCols, col)
 					continue idLoop
 				}
@@ -578,52 +759,89 @@ func findPrefixOfIndexByCol(ctx sessionctx.Context, cols []*expression.Column, i
 	return expression.FindPrefixOfIndex(cols, idxColIDs)
 }
 
-func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, rangeType ranger.RangeType,
+func getMaskAndRanges(ctx planctx.PlanContext, exprs []expression.Expression, rangeType ranger.RangeType,
 	lengths []int, cachedPath *planutil.AccessPath, cols ...*expression.Column) (
-	mask int64, ranges []*ranger.Range, partCover bool, err error) {
+	mask int64, ranges []*ranger.Range, partCover bool, minAccessCondsForDNFCond int, err error) {
 	isDNF := false
 	var accessConds, remainedConds []expression.Expression
 	switch rangeType {
 	case ranger.ColumnRangeType:
-		accessConds = ranger.ExtractAccessConditionsForColumn(ctx, exprs, cols[0])
-		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx, cols[0].RetType,
+		accessConds = ranger.ExtractAccessConditionsForColumn(ctx.GetRangerCtx(), exprs, cols[0])
+		ranges, accessConds, _, err = ranger.BuildColumnRange(accessConds, ctx.GetRangerCtx(), cols[0].RetType,
 			types.UnspecifiedLength, ctx.GetSessionVars().RangeMaxSize)
 	case ranger.IndexRangeType:
 		if cachedPath != nil {
-			ranges, accessConds, remainedConds, isDNF = cachedPath.Ranges,
-				cachedPath.AccessConds, cachedPath.TableFilters, cachedPath.IsDNFCond
+			ranges = cachedPath.Ranges
+			accessConds = cachedPath.AccessConds
+			remainedConds = cachedPath.TableFilters
+			isDNF = cachedPath.IsDNFCond
+			minAccessCondsForDNFCond = cachedPath.MinAccessCondsForDNFCond
 			break
 		}
 		var res *ranger.DetachRangeResult
-		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx, exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
+		res, err = ranger.DetachCondAndBuildRangeForIndex(ctx.GetRangerCtx(), exprs, cols, lengths, ctx.GetSessionVars().RangeMaxSize)
 		if err != nil {
-			return 0, nil, false, err
+			return 0, nil, false, 0, err
 		}
-		ranges, accessConds, remainedConds, isDNF = res.Ranges, res.AccessConds, res.RemainedConds, res.IsDNFCond
+		ranges = res.Ranges
+		accessConds = res.AccessConds
+		remainedConds = res.RemainedConds
+		isDNF = res.IsDNFCond
+		minAccessCondsForDNFCond = res.MinAccessCondsForDNFCond
 	default:
 		panic("should never be here")
 	}
 	if err != nil {
-		return 0, nil, false, err
+		return 0, nil, false, 0, err
 	}
 	if isDNF && len(accessConds) > 0 {
 		mask |= 1
-		return mask, ranges, len(remainedConds) > 0, nil
+		return mask, ranges, len(remainedConds) > 0, minAccessCondsForDNFCond, nil
 	}
 	for i := range exprs {
 		for j := range accessConds {
-			if exprs[i].Equal(ctx, accessConds[j]) {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessConds[j]) {
 				mask |= 1 << uint64(i)
 				break
 			}
 		}
 	}
-	return mask, ranges, false, nil
+	return mask, ranges, false, 0, nil
+}
+
+func getMaskAndSelectivityForMVIndex(
+	ctx planctx.PlanContext,
+	coll *statistics.HistColl,
+	id int64,
+	exprs []expression.Expression,
+) (float64, int64, bool) {
+	cols := coll.MVIdx2Columns[id]
+	if len(cols) == 0 {
+		return 1.0, 0, false
+	}
+	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
+	// buildPartialPaths4MVIndex() in planner/core.
+	accessConds, _, _ := CollectFilters4MVIndex(ctx, exprs, cols)
+	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.GetIdx(id).Info, coll)
+	if err != nil || !ok {
+		return 1.0, 0, false
+	}
+	totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
+	var mask int64
+	for i := range exprs {
+		for _, accessCond := range accessConds {
+			if exprs[i].Equal(ctx.GetExprCtx().GetEvalCtx(), accessCond) {
+				mask |= 1 << uint64(i)
+				break
+			}
+		}
+	}
+	return totalSelectivity, mask, true
 }
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
-func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
+func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
 	// 1. Make sure the expressions
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
@@ -657,13 +875,13 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 	var hist *statistics.Histogram
 	var topn *statistics.TopN
 	if isIndex {
-		stats := coll.Indices[i]
+		stats := coll.GetIdx(i)
 		statsVer = stats.StatsVer
 		hist = &stats.Histogram
 		nullCnt = hist.NullCount
 		topn = stats.TopN
 	} else {
-		stats := coll.Columns[i]
+		stats := coll.GetCol(i)
 		statsVer = stats.StatsVer
 		hist = &stats.Histogram
 		nullCnt = hist.NullCount
@@ -696,6 +914,7 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 	}
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, max(1, topNLen))
 	selected := make([]bool, 0, max(histBucketsLen, topNLen))
+	vecEnabled := sctx.GetSessionVars().EnableVectorizedExpression
 
 	// 3. Calculate the TopN part selectivity.
 	// This stage is considered as the core functionality of this method, errors in this stage would make this entire method fail.
@@ -708,7 +927,7 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 			}
 			c.AppendDatum(0, &val)
 		}
-		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -725,7 +944,7 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(hist.Bounds), selected)
 		if err != nil {
 			return false, 0, err
 		}
@@ -759,7 +978,7 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 	c.Reset()
 	c.AppendNull(0)
 	selected = selected[:0]
-	selected, err = expression.VectorizedFilter(sctx, filters, chunk.NewIterator4Chunk(c), selected)
+	selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, filters, chunk.NewIterator4Chunk(c), selected)
 	if err != nil || len(selected) != 1 || !selected[0] {
 		nullSel = 0
 	} else {
@@ -771,18 +990,17 @@ func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, 
 	return true, res, err
 }
 
-func findAvailableStatsForCol(sctx sessionctx.Context, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
+func findAvailableStatsForCol(sctx planctx.PlanContext, coll *statistics.HistColl, uniqueID int64) (isIndex bool, idx int64) {
 	// try to find available stats in column stats
-	if colStats, ok := coll.Columns[uniqueID]; ok && colStats != nil && !colStats.IsInvalid(sctx, coll.Pseudo) && colStats.IsFullLoad() {
+	if colStats := coll.GetCol(uniqueID); !statistics.ColumnStatsIsInvalid(colStats, sctx, coll, uniqueID) && colStats.IsFullLoad() {
 		return false, uniqueID
 	}
 	// try to find available stats in single column index stats (except for prefix index)
-	for idxStatsIdx, cols := range coll.Idx2ColumnIDs {
+	for idxStatsIdx, cols := range coll.Idx2ColUniqueIDs {
 		if len(cols) == 1 && cols[0] == uniqueID {
-			idxStats, ok := coll.Indices[idxStatsIdx]
-			if ok &&
+			idxStats := coll.GetIdx(idxStatsIdx)
+			if !statistics.IndexStatsIsInvalid(sctx, idxStats, coll, idxStatsIdx) &&
 				idxStats.Info.Columns[0].Length == types.UnspecifiedLength &&
-				!idxStats.IsInvalid(sctx, coll.Pseudo) &&
 				idxStats.IsFullLoad() {
 				return true, idxStatsIdx
 			}
@@ -792,7 +1010,7 @@ func findAvailableStatsForCol(sctx sessionctx.Context, coll *statistics.HistColl
 }
 
 // getEqualCondSelectivity gets the selectivity of the equal conditions.
-func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl, idx *statistics.Index, bytes []byte,
+func getEqualCondSelectivity(sctx planctx.PlanContext, coll *statistics.HistColl, idx *statistics.Index, bytes []byte,
 	usedColsLen int, idxPointRange *ranger.Range) (result float64, err error) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -820,23 +1038,24 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 	}
 	val := types.NewBytesDatum(bytes)
 	if outOfRangeOnIndex(idx, val) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
-		colIDs := coll.Idx2ColumnIDs[idx.ID]
+		colIDs := coll.Idx2ColUniqueIDs[idx.ID]
 		var ndv int64
 		for i, colID := range colIDs {
 			if i >= usedColsLen {
 				break
 			}
-			if col, ok := coll.Columns[colID]; ok {
+			if col := coll.GetCol(colID); col != nil {
 				ndv = max(ndv, col.Histogram.NDV)
 			}
 		}
-		return outOfRangeEQSelectivity(sctx, ndv, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+		return outOfRangeEQSelectivity(sctx, ndv, realtimeCnt, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)
@@ -856,7 +1075,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 // and has the same distribution with analyzed rows, which means each unique value should have the
 // same number of rows(Tot/NDV) of it.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
+func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, columnRowCount int64) (result float64) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -880,7 +1099,7 @@ func outOfRangeEQSelectivity(sctx sessionctx.Context, ndv, realtimeRowCount, col
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
 func crossValidationSelectivity(
-	sctx sessionctx.Context,
+	sctx planctx.PlanContext,
 	coll *statistics.HistColl,
 	idx *statistics.Index,
 	usedColsLen int,
@@ -908,37 +1127,63 @@ func crossValidationSelectivity(
 		}()
 	}
 	minRowCount = math.MaxFloat64
-	cols := coll.Idx2ColumnIDs[idx.ID]
+	cols := coll.Idx2ColUniqueIDs[idx.ID]
 	crossValidationSelectivity = 1.0
 	totalRowCount := idx.TotalRowCount()
 	for i, colID := range cols {
 		if i >= usedColsLen {
 			break
 		}
-		if col, ok := coll.Columns[colID]; ok {
-			if col.IsInvalid(sctx, coll.Pseudo) {
-				continue
-			}
-			// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
-			// Otherwise we would get 0.0 estRow from GetColumnRowCount.
-			rang := ranger.Range{
-				LowVal:      []types.Datum{idxPointRange.LowVal[i]},
-				LowExclude:  false,
-				HighVal:     []types.Datum{idxPointRange.HighVal[i]},
-				HighExclude: false,
-				Collators:   []collate.Collator{idxPointRange.Collators[i]},
-			}
+		col := coll.GetCol(colID)
+		if statistics.ColumnStatsIsInvalid(col, sctx, coll, colID) {
+			continue
+		}
+		// Since the column range is point range(LowVal is equal to HighVal), we need to set both LowExclude and HighExclude to false.
+		// Otherwise we would get 0.0 estRow from GetColumnRowCount.
+		rang := ranger.Range{
+			LowVal:      []types.Datum{idxPointRange.LowVal[i]},
+			LowExclude:  false,
+			HighVal:     []types.Datum{idxPointRange.HighVal[i]},
+			HighExclude: false,
+			Collators:   []collate.Collator{idxPointRange.Collators[i]},
+		}
 
-			rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
-			if err != nil {
-				return 0, 0, err
-			}
-			crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
+		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
+		if err != nil {
+			return 0, 0, err
+		}
+		crossValidationSelectivity = crossValidationSelectivity * (rowCount / totalRowCount)
 
-			if rowCount < minRowCount {
-				minRowCount = rowCount
-			}
+		if rowCount < minRowCount {
+			minRowCount = rowCount
 		}
 	}
 	return minRowCount, crossValidationSelectivity, nil
 }
+
+// CollectFilters4MVIndex and BuildPartialPaths4MVIndex are for matching JSON expressions against mv index.
+// This logic is shared between the estimation logic and the access path generation logic. But the two functions are
+// defined in planner/core package and hard to move here. So we use this trick to avoid the import cycle.
+var (
+	CollectFilters4MVIndex func(
+		sctx planctx.PlanContext,
+		filters []expression.Expression,
+		idxCols []*expression.Column,
+	) (
+		accessFilters,
+		remainingFilters []expression.Expression,
+		accessTp int,
+	)
+	BuildPartialPaths4MVIndex func(
+		sctx planctx.PlanContext,
+		accessFilters []expression.Expression,
+		idxCols []*expression.Column,
+		mvIndex *model.IndexInfo,
+		histColl *statistics.HistColl,
+	) (
+		partialPaths []*planutil.AccessPath,
+		isIntersection bool,
+		ok bool,
+		err error,
+	)
+)

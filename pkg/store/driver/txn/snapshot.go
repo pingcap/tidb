@@ -87,7 +87,7 @@ func (s *tikvSnapshot) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, er
 	return &tikvScanner{scanner.(*txnsnapshot.Scanner)}, err
 }
 
-func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+func (s *tikvSnapshot) SetOption(opt int, val any) {
 	switch opt {
 	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))
@@ -118,7 +118,12 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 	case kv.ResourceGroupTag:
 		s.KVSnapshot.SetResourceGroupTag(val.([]byte))
 	case kv.ResourceGroupTagger:
-		s.KVSnapshot.SetResourceGroupTagger(val.(tikvrpc.ResourceGroupTagger))
+		switch tagger := val.(type) {
+		case tikvrpc.ResourceGroupTagger:
+			s.KVSnapshot.SetResourceGroupTagger(tagger)
+		case *kv.ResourceGroupTagBuilder:
+			s.KVSnapshot.SetResourceGroupTagger(tagger.BuildProtoTagger())
+		}
 	case kv.ReadReplicaScope:
 		s.KVSnapshot.SetReadReplicaScope(val.(string))
 	case kv.SnapInterceptor:

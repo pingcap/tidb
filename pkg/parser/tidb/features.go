@@ -32,6 +32,8 @@ const (
 	FeatureIDTTL = "ttl"
 	// FeatureIDResourceGroup is the `resource group` feature.
 	FeatureIDResourceGroup = "resource_group"
+	// FeatureIDGlobalIndex is the `Global Index` feature.
+	FeatureIDGlobalIndex = "global_index"
 )
 
 var featureIDs = map[string]struct{}{
@@ -42,6 +44,7 @@ var featureIDs = map[string]struct{}{
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
+	FeatureIDGlobalIndex:    {},
 }
 
 // CanParseFeature is used to check if a feature can be parsed.

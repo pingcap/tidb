@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -56,11 +55,11 @@ type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -68,7 +67,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 		if err != nil {
 			return nil, err
 		}
-		bf.tp = args[0].GetType().Clone()
+		bf.tp = args[0].GetType(ctx.GetEvalCtx()).Clone()
 		bf.tp.SetType(mysql.TypeVarString)
 		bf.tp.SetCharset(charset.CharsetBin)
 		bf.tp.SetCollate(charset.CollationBin)
@@ -82,6 +81,10 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []E
 
 type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInternalToBinarySig) Clone() builtinFunc {
@@ -95,7 +98,7 @@ func (b *builtinInternalToBinarySig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	tp := b.args[0].GetType()
+	tp := b.args[0].GetType(ctx)
 	enc := charset.FindEncoding(tp.GetCharset())
 	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpEncode)
 	return string(ret), false, err
@@ -115,7 +118,7 @@ func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk
 	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
 		return err
 	}
-	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
 	result.ReserveString(n)
 	encodedBuf := &bytes.Buffer{}
 	for i := 0; i < n; i++ {
@@ -135,14 +138,15 @@ func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk
 type tidbFromBinaryFunctionClass struct {
 	baseFunctionClass
 
-	tp *types.FieldType
+	tp                           *types.FieldType
+	cannotConvertStringAsWarning bool
 }
 
-func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType().EvalType()
+	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -151,7 +155,7 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args [
 			return nil, err
 		}
 		bf.tp = c.tp
-		sig = &builtinInternalFromBinarySig{bf}
+		sig = &builtinInternalFromBinarySig{bf, c.cannotConvertStringAsWarning}
 		sig.setPbCode(tipb.ScalarFuncSig_FromBinary)
 	default:
 		return nil, fmt.Errorf("unexpected argTp: %d", argTp)
@@ -161,11 +165,15 @@ func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args [
 
 type builtinInternalFromBinarySig struct {
 	baseBuiltinFunc
+
+	// TODO: also pass this field when pushing down this function. The behavior of TiDB and TiKV is different on this function now.
+	cannotConvertStringAsWarning bool
 }
 
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
 
@@ -180,8 +188,20 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	if err != nil {
 		strHex := formatInvalidChars(valBytes)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+		if b.cannotConvertStringAsWarning {
+			tc := typeCtx(ctx)
+			tc.AppendWarning(err)
+			if sqlMode(ctx).HasStrictMode() {
+				return "", true, nil
+			}
+
+			return string(ret), false, nil
+		}
+
+		return "", false, err
 	}
-	return string(ret), false, err
+	return string(ret), false, nil
 }
 
 func (b *builtinInternalFromBinarySig) vectorized() bool {
@@ -210,7 +230,21 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
 			strHex := formatInvalidChars(str)
-			return errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
+
+			if b.cannotConvertStringAsWarning {
+				tc := typeCtx(ctx)
+				tc.AppendWarning(err)
+				if sqlMode(ctx).HasStrictMode() {
+					result.AppendNull()
+					continue
+				}
+
+				result.AppendBytes(str)
+				continue
+			}
+
+			return err
 		}
 		result.AppendBytes(val)
 	}
@@ -218,7 +252,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 }
 
 // BuildToBinaryFunction builds to_binary function.
-func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Expression) {
+func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
@@ -233,8 +267,8 @@ func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Express
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType) (res Expression) {
-	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp}
+func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
+	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return expr
@@ -306,8 +340,8 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string) Expression {
-	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
+func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
+	argChs, dstChs := expr.GetType(ctx.GetEvalCtx()).GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
 		return expr
@@ -323,11 +357,11 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 			}
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
-			expr.GetType().GetType() != mysql.TypeNull {
-			ft := expr.GetType().Clone()
+			expr.GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeNull {
+			ft := expr.GetType(ctx.GetEvalCtx()).Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
-			return BuildFromBinaryFunction(ctx, expr, ft)
+			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)
 		}
 	}
 	return expr

@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -60,8 +60,6 @@ func init() {
 	// Setup the Hooks to dynamic control global resource controller.
 	variable.EnableGlobalResourceControlFunc = tikv.EnableResourceControl
 	variable.DisableGlobalResourceControlFunc = tikv.DisableResourceControl
-	// cannot use this package directly, it causes import cycle
-	importer.GetKVStore = getKVStore
 }
 
 // Option is a function that changes some config of Driver
@@ -162,6 +160,9 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		KeyPath:  d.security.ClusterSSLKey,
 	},
 		pd.WithGRPCDialOptions(
+			// keep the same with etcd, see
+			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
@@ -253,6 +254,21 @@ type tikvStore struct {
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
 	codec     tikv.Codec
+	opts      sync.Map
+}
+
+// GetOption wraps around sync.Map.
+func (s *tikvStore) GetOption(k any) (any, bool) {
+	return s.opts.Load(k)
+}
+
+// SetOption wraps around sync.Map.
+func (s *tikvStore) SetOption(k, v any) {
+	if v == nil {
+		s.opts.Delete(k)
+	} else {
+		s.opts.Store(k, v)
+	}
 }
 
 // Name gets the name of the storage engine
@@ -380,7 +396,7 @@ func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 }
 
 // ShowStatus returns the specified status of the storage
-func (s *tikvStore) ShowStatus(ctx context.Context, key string) (interface{}, error) {
+func (s *tikvStore) ShowStatus(ctx context.Context, key string) (any, error) {
 	return nil, kv.ErrNotImplemented
 }
 

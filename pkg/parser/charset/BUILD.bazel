@@ -20,7 +20,6 @@ go_library(
         "//pkg/parser/terror",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
-        "@org_golang_x_exp//slices",
         "@org_golang_x_text//encoding",
         "@org_golang_x_text//encoding/charmap",
         "@org_golang_x_text//encoding/japanese",

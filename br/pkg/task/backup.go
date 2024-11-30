@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -41,7 +42,6 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -71,7 +71,6 @@ const (
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
 	TxnBackupCmd   = "Txn Backup"
-	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.
@@ -159,7 +158,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
-func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	timeAgo, err := flags.GetDuration(flagBackupTimeago)
 	if err != nil {
 		return errors.Trace(err)
@@ -212,9 +211,13 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 	cfg.CompressionConfig = *compressionCfg
 
-	if err = cfg.Config.ParseFromFlags(flags); err != nil {
-		return errors.Trace(err)
+	// parse common flags if needed
+	if !skipCommonConfig {
+		if err = cfg.Config.ParseFromFlags(flags); err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
@@ -618,51 +621,33 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	summary.CollectInt("backup total ranges", len(ranges))
 
-	var updateCh glue.Progress
-	var unit backup.ProgressUnit
-	if len(ranges) < 100 {
-		unit = backup.RegionUnit
-		// The number of regions need to backup
-		approximateRegions := 0
-		for _, r := range ranges {
-			var regionCount int
-			regionCount, err = mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			approximateRegions += regionCount
-		}
-		// Redirect to log if there is no log file to avoid unreadable output.
-		updateCh = g.StartProgress(
-			ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
-		summary.CollectInt("backup total regions", approximateRegions)
-	} else {
-		unit = backup.RangeUnit
-		// To reduce the costs, we can use the range as unit of progress.
-		updateCh = g.StartProgress(
-			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
+	approximateRegions, err := getRegionCountOfRanges(ctx, mgr, ranges)
+	if err != nil {
+		return errors.Trace(err)
 	}
+	// Redirect to log if there is no log file to avoid unreadable output.
+	updateCh := g.StartProgress(
+		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
+	summary.CollectInt("backup total regions", approximateRegions)
 
 	progressCount := uint64(0)
-	progressCallBack := func(callBackUnit backup.ProgressUnit) {
-		if unit == callBackUnit {
-			updateCh.Inc()
+	progressCallBack := func() {
+		updateCh.Inc()
+		failpoint.Inject("progress-call-back", func(v failpoint.Value) {
+			log.Info("failpoint progress-call-back injected")
 			atomic.AddUint64(&progressCount, 1)
-			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
-				log.Info("failpoint progress-call-back injected")
-				if fileName, ok := v.(string); ok {
-					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
-					if osErr != nil {
-						log.Warn("failed to create file", zap.Error(osErr))
-					}
-					msg := []byte(fmt.Sprintf("%s:%d\n", unit, atomic.LoadUint64(&progressCount)))
-					_, err = f.Write(msg)
-					if err != nil {
-						log.Warn("failed to write data to file", zap.Error(err))
-					}
+			if fileName, ok := v.(string); ok {
+				f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+				if osErr != nil {
+					log.Warn("failed to create file", zap.Error(osErr))
 				}
-			})
-		}
+				msg := []byte(fmt.Sprintf("region:%d\n", atomic.LoadUint64(&progressCount)))
+				_, err = f.Write(msg)
+				if err != nil {
+					log.Warn("failed to write data to file", zap.Error(err))
+				}
+			}
+		})
 	}
 
 	if cfg.UseCheckpoint {
@@ -761,6 +746,23 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	return nil
 }
 
+func getRegionCountOfRanges(
+	ctx context.Context,
+	mgr *conn.Mgr,
+	ranges []rtree.Range,
+) (int, error) {
+	// The number of regions need to backup
+	approximateRegions := 0
+	for _, r := range ranges {
+		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		approximateRegions += regionCount
+	}
+	return approximateRegions, nil
+}
+
 // ParseTSString port from tidb setSnapshotTS.
 func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	if len(ts) == 0 {
@@ -789,18 +791,15 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-func DefaultBackupConfig() BackupConfig {
+func DefaultBackupConfig(commonConfig Config) BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineBackupFlags(fs)
 	cfg := BackupConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible operation failed.", zap.Error(err))
+		log.Panic("failed to parse backup flags to config", zap.Error(err))
 	}
+	cfg.Config = commonConfig
 	return cfg
 }
 

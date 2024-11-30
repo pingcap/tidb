@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 )
 
+// valid index: [LIndex, RIndex)
 type listMeta struct {
 	LIndex int64
 	RIndex int64
@@ -237,10 +238,10 @@ func (t *TxStructure) loadListMeta(metaKey []byte) (listMeta, error) {
 	return meta, nil
 }
 
-func adjustIndex(index int64, min, max int64) int64 {
+func adjustIndex(index int64, minv, maxv int64) int64 {
 	if index >= 0 {
-		return index + min
+		return index + minv
 	}
 
-	return index + max
+	return index + maxv
 }

@@ -71,7 +71,7 @@ func TestInfo(t *testing.T) {
 		Storage: s,
 		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(mockStore, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(mockStore, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		err := s.Close()
@@ -82,17 +82,19 @@ func TestInfo(t *testing.T) {
 	dom.etcdClient = client
 	// Mock new DDL and init the schema syncer with etcd client.
 	goCtx := context.Background()
-	dom.ddl = ddl.NewDDL(
+	dom.ddl, dom.ddlExecutor = ddl.NewDDL(
 		goCtx,
 		ddl.WithEtcdClient(dom.GetEtcdClient()),
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
+		ddl.WithSchemaLoader(dom),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
-	require.NoError(t, dom.Init(ddlLease, sysMockFactory, nil))
+	require.NoError(t, dom.Init(sysMockFactory, nil))
+	require.NoError(t, dom.Start(ddl.Bootstrap))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
@@ -119,9 +121,9 @@ func TestInfo(t *testing.T) {
 	require.Equalf(t, info.ID, infos[ddlID].ID, "server one info %v, info %v", infos[ddlID], info)
 
 	// Test the scene where syncer.Done() gets the information.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone", `return(true)`))
 	<-dom.ddl.SchemaSyncer().Done()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncer/ErrorMockSessionDone"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/schemaver/ErrorMockSessionDone"))
 	time.Sleep(15 * time.Millisecond)
 	syncerStarted := false
 	for i := 0; i < 1000; i++ {
@@ -148,7 +150,7 @@ func TestInfo(t *testing.T) {
 		},
 	}
 	ctx := mock.NewContext()
-	require.NoError(t, dom.ddl.CreateSchema(ctx, stmt))
+	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
 	require.NoError(t, dom.Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
@@ -174,13 +176,13 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext(), nil)
-	dom.autoAnalyzeWorker(nil)
+	dom.updateStatsWorker(mock.NewContext())
+	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
 	err = counter.Write(pb)
@@ -252,7 +254,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	require.NoError(t, err)
 
 	ddlLease := 80 * time.Millisecond
-	dom := NewDomain(store, ddlLease, 0, 0, 0, mockFactory)
+	dom := NewDomain(store, ddlLease, 0, 0, mockFactory)
 	defer func() {
 		dom.Close()
 		require.Nil(t, store.Close())
@@ -263,7 +265,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 	dom.sysVarCache.Unlock()
 
-	makeFailpointRes := func(v interface{}) string {
+	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
 		require.NoError(t, err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))
@@ -466,4 +468,21 @@ func TestIsAnalyzeTableSQL(t *testing.T) {
 	for _, tt := range tests {
 		require.True(t, isAnalyzeTableSQL(tt.sql))
 	}
+}
+
+func TestDeferFn(t *testing.T) {
+	var df deferFn
+	var a, b, c, d bool
+	df.add(func() { a = true }, time.Now().Add(50*time.Millisecond))
+	df.add(func() { b = true }, time.Now().Add(100*time.Millisecond))
+	df.add(func() { c = true }, time.Now().Add(10*time.Minute))
+	df.add(func() { d = true }, time.Now().Add(150*time.Millisecond))
+	time.Sleep(300 * time.Millisecond)
+	df.check()
+
+	require.True(t, a)
+	require.True(t, b)
+	require.False(t, c)
+	require.True(t, d)
+	require.Len(t, df.data, 1)
 }
