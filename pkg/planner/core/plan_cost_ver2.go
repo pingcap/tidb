@@ -199,7 +199,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			} else {
 				rows = max(rows, MaxPenaltyRowCount)
 			}
-			newRowCount := max(rows, float64(tblColHists.RealtimeCount))
+			newRowCount := max(rows, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
