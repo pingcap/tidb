@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -182,6 +183,10 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		sessionVars:       sessVars,
 		killed:            make(chan struct{}),
 	}
+}
+
+func (s *mockSession) GetStore() kv.Storage {
+	return nil
 }
 
 func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {

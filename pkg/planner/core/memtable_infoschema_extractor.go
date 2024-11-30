@@ -707,6 +707,9 @@ func listTablesForEachSchema(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		tables = filterSchemaObjectByRegexp(e, ec.table, tables, extractStrTableInfo)
 		for _, t := range tables {
 			schemaSlice = append(schemaSlice, s)

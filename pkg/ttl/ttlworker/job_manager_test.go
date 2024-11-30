@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -664,4 +666,19 @@ func TestLocalJobs(t *testing.T) {
 	}
 	assert.Len(t, m.localJobs(), 1)
 	assert.Equal(t, m.localJobs()[0].id, "1")
+}
+
+func TestSplitCnt(t *testing.T) {
+	require.Equal(t, 64, getScanSplitCnt(nil))
+	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
+
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(nil)}
+	for i := uint64(1); i <= 128; i++ {
+		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
+		if i <= 64 {
+			require.Equal(t, 64, getScanSplitCnt(s))
+		} else {
+			require.Equal(t, int(i), getScanSplitCnt(s))
+		}
+	}
 }
