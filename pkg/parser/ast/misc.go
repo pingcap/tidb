@@ -61,7 +61,7 @@ var (
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
-	_ StmtNode = &TrafficStmt{}
+	_ StmtNode = &TrafficReplayerStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -442,8 +442,8 @@ const (
 	TrafficOptionSpeed
 )
 
-// TrafficStmt is traffic operation statement.
-type TrafficStmt struct {
+// TrafficReplayerStmt is traffic operation statement.
+type TrafficReplayerStmt struct {
 	stmtNode
 	OpType  TrafficOpType
 	Options []*TrafficOption
@@ -458,8 +458,8 @@ type TrafficOption struct {
 }
 
 // Restore implements Node interface.
-func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("TRAFFIC ")
+func (n *TrafficReplayerStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TRAFFIC REPLAYER ")
 	switch n.OpType {
 	case TrafficOpCapture:
 		ctx.WriteKeyWord("CAPTURE ")
@@ -512,20 +512,20 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	case TrafficOpShow:
-		ctx.WriteKeyWord("SHOW")
+		ctx.WriteKeyWord("SHOW JOBS")
 	case TrafficOpCancel:
-		ctx.WriteKeyWord("CANCEL")
+		ctx.WriteKeyWord("CANCEL JOBS")
 	}
 	return nil
 }
 
 // Accept implements Node Accept interface.
-func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
+func (n *TrafficReplayerStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*TrafficStmt)
+	n = newNode.(*TrafficReplayerStmt)
 	return v.Leave(n)
 }
 

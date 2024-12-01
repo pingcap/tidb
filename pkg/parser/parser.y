@@ -15786,46 +15786,46 @@ PlanReplayerDumpOpt:
 
 /********************************************************************
  *
- * Traffic Statement
+ * Traffic Replayer Statement
  *
  * Examples:
- * TRAFFIC CAPTURE OUTPUT="/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
- * TRAFFIC REPLAY USER="u1" PASSWORD="123456" INPUT="/tmp/traffic" SPEED=1.0
- * TRAFFIC SHOW
- * TRAFFIC CANCEL
+ * TRAFFIC REPLAYER CAPTURE OUTPUT="/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
+ * TRAFFIC REPLAYER REPLAY USER="u1" PASSWORD="123456" INPUT="/tmp/traffic" SPEED=1.0
+ * TRAFFIC REPLAYER SHOW JOBS
+ * TRAFFIC REPLAYER CANCEL JOBS
  *******************************************************************/
 TrafficStmt:
-	"TRAFFIC" "CAPTURE" TrafficCaptureOptList
+	"TRAFFIC" "REPLAYER" "CAPTURE" TrafficCaptureOptList
 	{
-		x := &ast.TrafficStmt{
+		x := &ast.TrafficReplayerStmt{
 			OpType: ast.TrafficOpCapture,
 		}
-		if $3 != nil {
-			x.Options = $3.([]*ast.TrafficOption)
+		if $4 != nil {
+			x.Options = $4.([]*ast.TrafficOption)
 		}
 
 		$$ = x
 	}
-|	"TRAFFIC" "REPLAY" TrafficReplayOptList
+|	"TRAFFIC" "REPLAYER" "REPLAY" TrafficReplayOptList
 	{
-		x := &ast.TrafficStmt{
+		x := &ast.TrafficReplayerStmt{
 			OpType: ast.TrafficOpReplay,
 		}
-		if $3 != nil {
-			x.Options = $3.([]*ast.TrafficOption)
+		if $4 != nil {
+			x.Options = $4.([]*ast.TrafficOption)
 		}
 
 		$$ = x
 	}
-|	"TRAFFIC" "SHOW"
+|	"TRAFFIC" "REPLAYER" "SHOW" "JOBS"
 	{
-		$$ = &ast.TrafficStmt{
+		$$ = &ast.TrafficReplayerStmt{
 			OpType: ast.TrafficOpShow,
 		}
 	}
-|	"TRAFFIC" "CANCEL"
+|	"TRAFFIC" "REPLAYER" "CANCEL" "JOBS"
 	{
-		$$ = &ast.TrafficStmt{
+		$$ = &ast.TrafficReplayerStmt{
 			OpType: ast.TrafficOpCancel,
 		}
 	}
