@@ -794,7 +794,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
 	tbl.SetIdx(idx.ID, idxHist)
-	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Added:   []*statistics.Table{tbl},
 		Deleted: []int64{},
