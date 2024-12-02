@@ -3919,7 +3919,7 @@ create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
 explain analyze select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get_1	1.00	1	root	table:t	time.*loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
+Point_Get_1	1.00	1	root	table:t	time:<num>, open:<num>ns, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
 explain analyze select * from t where a in (1,2,3);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Batch_Point_Get_1	3.00	1	root	table:t	time.*loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
