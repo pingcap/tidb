@@ -265,6 +265,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
+// initStatsHistogramsSQLGen generates the SQL to load all stats_histograms records.
+// We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
 func initStatsHistogramsSQLGen(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
@@ -411,6 +413,9 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
+// initStatsTopNSQLGen generates the SQL to load all stats_top_n records.
+// We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
+// The stats of the column is not loaded during the bootstrap process.
 func initStatsTopNSQLGen(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl) */ HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	orderSuffix := " order by table_id"
@@ -638,6 +643,9 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 }
 
+// initStatsBucketsSQLGen generates the SQL to load all stats_top_n records.
+// We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
+// The stats of the column is not loaded during the bootstrap process.
 func initStatsBucketsSQLGen(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
@@ -747,8 +755,10 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 
 // InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
-// 2. Column/index stats are loaded. (only histogram)
+// 2. Column/index stats are marked whehter exists or not by initializing the table.ColAndIdxExistenceMap. (by reading mysql.stats_histograms)
 // 3. TopN, Bucket, FMSketch are not loaded.
+// And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
+// The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
@@ -778,7 +788,10 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 
 // InitStats initiates the stats cache.
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
-// 2. Column/index stats are loaded. (histogram, topn, buckets, FMSketch)
+// 2. Index stats are fully loaded. (histogram, topn, buckets)
+// 3. Column stats are just marked whehter exists or not by initializing the table.ColAndIdxExistenceMap. (by reading mysql.stats_histograms)
+// To work with auto-analyze's needs, we need to read all stats meta info into memory.
+// The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err error) {
 	totalMemory, err := memory.MemTotal()
 	if err != nil {

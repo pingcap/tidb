@@ -146,6 +146,8 @@ type IndicatorsJSON struct {
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the currently auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
@@ -204,6 +206,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
