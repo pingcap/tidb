@@ -594,9 +594,9 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 
-	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.CompactedRestoreCheckpointDatabaseName, nil)
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
 	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.CompactedRestoreCheckpointDatabaseName, 500*time.Millisecond, time.Second)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, 500*time.Millisecond, time.Second)
 	require.NoError(t, err)
 
 	data := map[string]struct {
@@ -628,15 +628,15 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 		respCount++
 	}
 
-	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.CompactedRestoreCheckpointDatabaseName, checker)
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.CustomSSTRestoreCheckpointDatabaseName, checker)
 	require.NoError(t, err)
 	require.Equal(t, 3, respCount)
 
-	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.CompactedRestoreCheckpointDatabaseName)
+	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.NoError(t, err)
 
-	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CompactedRestoreCheckpointDatabaseName)
+	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 	require.False(t, exists)
-	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.CompactedRestoreCheckpointDatabaseName))
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.CustomSSTRestoreCheckpointDatabaseName))
 	require.False(t, exists)
 }

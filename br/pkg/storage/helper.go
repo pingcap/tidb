@@ -54,7 +54,7 @@ func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s ExternalSto
 		defer close(ch)
 		pool := util.NewWorkerPool(128, "metadata")
 		eg, ectx := errgroup.WithContext(ctx)
-		err := s.WalkDir(ctx, walkOpt, func(path string, size int64) error {
+		err := s.WalkDir(ectx, walkOpt, func(path string, size int64) error {
 			pool.ApplyOnErrorGroup(eg, func() error {
 				metaBytes, err := s.ReadFile(ectx, path)
 				if err != nil {

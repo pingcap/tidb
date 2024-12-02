@@ -49,7 +49,7 @@ type checkpointStorage interface {
 const (
 	LogRestoreCheckpointDatabaseName       string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
 	SnapshotRestoreCheckpointDatabaseName  string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
-	CompactedRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Compacted_Restore_Checkpoint"
+	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 
 	// directory level table
 	checkpointDataTableName     string = "cpt_data"
@@ -92,7 +92,7 @@ const (
 func IsCheckpointDB(dbname pmodel.CIStr) bool {
 	return dbname.O == LogRestoreCheckpointDatabaseName ||
 		dbname.O == SnapshotRestoreCheckpointDatabaseName ||
-		dbname.O == CompactedRestoreCheckpointDatabaseName
+		dbname.O == CustomSSTRestoreCheckpointDatabaseName
 }
 
 const CheckpointIdMapBlockSize int = 524288
