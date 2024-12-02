@@ -1328,7 +1328,7 @@ func TestIssue41014(t *testing.T) {
 
 	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
-			"└─HashJoin_15 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+			"└─HashJoin_15 9990.00 root  inner join, left side:Selection_20, equal:[eq(test.tai2.rid, test.tai1.rid)]",
 			"  ├─Selection_20(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
 			"  │ └─Projection_19 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
 			"  │   └─TableReader_18 9990.00 root  data:Selection_17",
