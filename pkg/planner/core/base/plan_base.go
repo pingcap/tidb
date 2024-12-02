@@ -293,4 +293,7 @@ type LogicalPlan interface {
 
 	// ConvertOuterToInnerJoin converts outer joins if the matching rows are filtered.
 	ConvertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
+
+	// ResetChild clean lp's children.
+	ResetChild()
 }

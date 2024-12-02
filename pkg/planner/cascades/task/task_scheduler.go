@@ -14,42 +14,53 @@
 
 package task
 
-var _ Scheduler = &SimpleTaskScheduler{}
+import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+)
 
-// Scheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
-type Scheduler interface {
-	ExecuteTasks()
-}
+var _ base.Scheduler = &SimpleTaskScheduler{}
 
 // SimpleTaskScheduler is defined for serializing scheduling of memo tasks.
 type SimpleTaskScheduler struct {
-	Err          error
-	SchedulerCtx SchedulerContext
+	stack base.Stack
 }
 
-// ExecuteTasks implements the interface of TaskScheduler.
-func (s *SimpleTaskScheduler) ExecuteTasks() {
-	stack := s.SchedulerCtx.getStack()
-	defer func() {
-		// when step out of the scheduler, if the stack is empty, clean and release it.
-		if !stack.Empty() {
-			stack.Destroy()
-		}
-	}()
-	for !stack.Empty() {
-		// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
-		task := stack.Pop()
-		if err := task.execute(); err != nil {
-			s.Err = err
-			return
-		}
+// NewSimpleTaskScheduler return a simple task scheduler, init logic included.
+func NewSimpleTaskScheduler() base.Scheduler {
+	return &SimpleTaskScheduler{
+		stack: stackPool.Get().(base.Stack),
 	}
 }
 
-// SchedulerContext is defined for scheduling logic calling, also facilitate interface-oriented coding and testing.
-type SchedulerContext interface {
-	// we exported the Stack interface here rather than the basic stack implementation.
-	getStack() Stack
-	// we exported the only one push action to user, Task is an interface definition.
-	pushTask(task Task)
+// ExecuteTasks implements the interface of TaskScheduler.
+func (s *SimpleTaskScheduler) ExecuteTasks() error {
+	for !s.stack.Empty() {
+		// when use customized stack to drive the tasks, the call-chain state is dived in the stack.
+		task := s.stack.Pop()
+		if err := task.Execute(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Init allocate basic elements required by the scheduler.
+func (s *SimpleTaskScheduler) Init() {
+	if s.stack == nil {
+		s.stack = stackPool.Get().(base.Stack)
+	}
+}
+
+// Destroy release all the allocated elements inside stack.
+func (s *SimpleTaskScheduler) Destroy() {
+	// when step out of the scheduler, if the stack is empty, clean and release it.
+	stack := s.stack
+	// release parent pointer ref.
+	s.stack = nil
+	stack.Destroy()
+}
+
+// PushTask implements the scheduler's interface, add another task into scheduler.
+func (s *SimpleTaskScheduler) PushTask(task base.Task) {
+	s.stack.Push(task)
 }

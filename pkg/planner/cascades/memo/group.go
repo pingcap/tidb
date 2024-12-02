@@ -16,7 +16,6 @@ package memo
 
 import (
 	"container/list"
-	"fmt"
 	"io"
 	"strconv"
 
@@ -75,9 +74,12 @@ func (g *Group) Equals(other any) bool {
 // ******************************************* end of HashEqual methods *******************************************
 
 // Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(hash64u uint64) bool {
-	_, ok := g.hash2GroupExpr[hash64u]
-	return ok
+func (g *Group) Exists(hash64u uint64, e *GroupExpression) bool {
+	one, ok := g.hash2GroupExpr[hash64u]
+	if !ok {
+		return false
+	}
+	return one.Value.(*GroupExpression).Equals(e)
 }
 
 // Insert adds a GroupExpression to the Group.
@@ -87,10 +89,10 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
 	hash64 := e.Sum64()
-	if g.Exists(hash64) {
+	if g.Exists(hash64, e) {
 		return false
 	}
-	operand := pattern.GetOperand(e.logicalPlan)
+	operand := pattern.GetOperand(e.LogicalPlan)
 	var newEquiv *list.Element
 	mark, ok := g.Operand2FirstExpr[operand]
 	if ok {
@@ -125,9 +127,38 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 	return g.Operand2FirstExpr[operand]
 }
 
+// GetLogicalProperty return this group's logical property.
+func (g *Group) GetLogicalProperty() *property.LogicalProperty {
+	return g.logicalProp
+}
+
+// SetLogicalProperty set this group's logical property.
+func (g *Group) SetLogicalProperty(prop *property.LogicalProperty) {
+	g.logicalProp = prop
+}
+
+// IsExplored returns whether this group is explored.
+func (g *Group) IsExplored() bool {
+	return g.explored
+}
+
+// SetExplored set the group as tagged as explored.
+func (g *Group) SetExplored() {
+	g.explored = true
+}
+
 // String implements fmt.Stringer interface.
-func (g *Group) String(w io.Writer) {
-	fmt.Fprintf(w, "inputs:%s", strconv.Itoa(int(g.groupID)))
+func (g *Group) String(w io.StringWriter) {
+	// nolint:errcheck
+	w.WriteString(strconv.Itoa(int(g.groupID)))
+}
+
+// ForEachGE traverse the inside group expression with f call on them each.
+func (g *Group) ForEachGE(f func(ge *GroupExpression)) {
+	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpression)
+		f(expr)
+	}
 }
 
 // NewGroup creates a new Group with given logical prop.

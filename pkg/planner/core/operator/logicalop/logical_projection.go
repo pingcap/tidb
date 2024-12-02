@@ -100,7 +100,7 @@ func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression
 			return predicates, child
 		}
 	}
-	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
+	canBePushed, canNotBePushed := BreakDownPredicates(p, predicates)
 	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
 	return append(remained, canNotBePushed...), child
 }
@@ -481,7 +481,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 // ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
 func (p *LogicalProjection) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
 	proj := p.Self().(*LogicalProjection)
-	canBePushed, _ := breakDownPredicates(proj, predicates)
+	canBePushed, _ := BreakDownPredicates(proj, predicates)
 	child := proj.Children()[0]
 	child = child.ConvertOuterToInnerJoin(canBePushed)
 	proj.SetChildren(child)
@@ -593,8 +593,8 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 	return col
 }
 
-// breakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
+// BreakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
+func BreakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
 	canBePushed := make([]expression.Expression, 0, len(predicates))
 	canNotBePushed := make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()

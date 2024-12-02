@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cascades",
+    srcs = [
+        "yams.go",
+        "yams_context.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/base/yctx",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/task",
+        "//pkg/planner/core/base",
+    ],
+)

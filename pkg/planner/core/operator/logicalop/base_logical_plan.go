@@ -349,6 +349,11 @@ func (p *BaseLogicalPlan) ConvertOuterToInnerJoin(predicates []expression.Expres
 	return s
 }
 
+// ResetChild implements the LogicalPlan.<25> interface.
+func (p *BaseLogicalPlan) ResetChild() {
+	p.children = p.children[:0]
+}
+
 // *************************** implementation of self functionality ***************************
 
 // GetLogicalTS4TaskMap get the logical TimeStamp now to help rollback the TaskMap changes after that.

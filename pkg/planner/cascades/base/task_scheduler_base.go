@@ -12,32 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package base
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
-
-type ruleType int
-
-const (
-	// DEFAULT_NONE indicates this is none rule.
-	DEFAULT_NONE ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-
-	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
-	MUST_BE_LAST_RULE
-)
-
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
-}
-
-func init() {
-	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
+// Scheduler is a scheduling interface defined for serializing(single thread)/concurrent(multi thread) running.
+type Scheduler interface {
+	ExecuteTasks() error
+	Destroy()
+	PushTask(task Task)
 }

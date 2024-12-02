@@ -12,32 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package yctx
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
-
-type ruleType int
-
-const (
-	// DEFAULT_NONE indicates this is none rule.
-	DEFAULT_NONE ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-
-	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
-	MUST_BE_LAST_RULE
+import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 )
 
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
-}
-
-func init() {
-	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
+// YamsContext define the yams context as interface, since it will be defined
+// in cascades pkg, which ref task pkg with no doubt.
+// while in the task pkg, the concrete task need receive yams context as its
+// constructing args, which will lead a import cycle.
+type YamsContext interface {
+	Destroy()
+	GetScheduler() base.Scheduler
+	PushTask(task base.Task)
+	GetMemo() *memo.Memo
 }

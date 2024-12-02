@@ -12,32 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package rule
+package task
 
-import "github.com/pingcap/tidb/pkg/planner/cascades/memo"
-
-type ruleType int
-
-const (
-	// DEFAULT_NONE indicates this is none rule.
-	DEFAULT_NONE ruleType = iota
-	// XFJoinToApply refers to join to a apply rule.
-	XFJoinToApply
-
-	XF_PUSH_DOWN_PREDICATE_THROUGH_PROJECTION
-	MUST_BE_LAST_RULE
+import (
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base/yctx"
 )
 
-// String implements the fmt.Stringer interface.
-func (tp *ruleType) String() string {
-	switch *tp {
-	case XFJoinToApply:
-		return "join_to_apply"
-	default:
-		return "default_none"
-	}
+// BaseTask is base task wrapper structure for encapsulating basic things.
+type BaseTask struct {
+	yCtx yctx.YamsContext
 }
 
-func init() {
-	memo.NumOfRuleSet = int(MUST_BE_LAST_RULE)
+// Push pushes a new task into inside stack.
+func (b *BaseTask) Push(t base.Task) {
+	b.yCtx.PushTask(t)
 }
