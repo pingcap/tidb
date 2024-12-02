@@ -262,7 +262,7 @@ WHERE
       w
   );`).Check(testkit.Rows(
 		"Projection 9990.00 root  1->Column#17",
-		"└─IndexJoin 9990.00 root  inner join, inner:IndexReader, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
+		"└─IndexJoin 9990.00 root  inner join, inner:IndexReader, left side:IndexReader, outer key:test.p.groupid, inner key:test.g.groupid, equal cond:eq(test.p.groupid, test.g.groupid)",
 		"  ├─HashAgg(Build) 12800.00 root  group by:test.p.groupid, funcs:firstrow(test.p.groupid)->test.p.groupid",
 		"  │ └─Selection 12800.00 root  not(isnull(test.p.groupid))",
 		"  │   └─CTEFullScan 16000.00 root CTE:w data:CTE_0",
@@ -272,7 +272,7 @@ WHERE
 		"CTE_0 16000.00 root  Recursive CTE",
 		"├─IndexReader(Seed Part) 10000.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 10000.00 cop[tikv] table:p, index:k1(groupid) keep order:false, stats:pseudo",
-		"└─IndexHashJoin(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
+		"└─IndexHashJoin(Recursive Part) 10000.00 root  inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:test.p.groupid, inner key:test.g.parentid, equal cond:eq(test.p.groupid, test.g.parentid)",
 		"  ├─Selection(Build) 8000.00 root  not(isnull(test.p.groupid))",
 		"  │ └─CTETable 10000.00 root  Scan on CTE_0",
 		"  └─IndexLookUp(Probe) 10000.00 root  ",
