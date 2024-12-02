@@ -31,7 +31,9 @@ type ImportModeSwitcher struct {
 	switchModeInterval time.Duration
 	tlsConf            *tls.Config
 
-	switchCh chan struct{}
+	mu     sync.Mutex
+	cancel context.CancelFunc // Manages goroutine lifecycle
+	wg     sync.WaitGroup
 }
 
 func NewImportModeSwitcher(
@@ -43,15 +45,23 @@ func NewImportModeSwitcher(
 		pdClient:           pdClient,
 		switchModeInterval: switchModeInterval,
 		tlsConf:            tlsConf,
-		switchCh:           make(chan struct{}),
 	}
 }
 
-var closeOnce sync.Once
-
 // switchToNormalMode switch tikv cluster to normal mode.
 func (switcher *ImportModeSwitcher) SwitchToNormalMode(ctx context.Context) error {
-	closeOnce.Do(func() { close(switcher.switchCh) })
+	switcher.mu.Lock()
+	defer switcher.mu.Unlock()
+
+	if switcher.cancel == nil {
+		log.Info("TiKV is already in normal mode")
+		return nil
+	}
+	log.Info("Stopping the import mode goroutine")
+	switcher.cancel()
+	switcher.cancel = nil
+	// wait for switch goroutine exits
+	switcher.wg.Wait()
 	return switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Normal)
 }
 
@@ -116,26 +126,43 @@ func (switcher *ImportModeSwitcher) switchTiKVMode(
 	return nil
 }
 
-// SwitchToImportMode switch tikv cluster to import mode.
-func (switcher *ImportModeSwitcher) SwitchToImportMode(
+// GoSwitchToImportMode switch tikv cluster to import mode.
+func (switcher *ImportModeSwitcher) GoSwitchToImportMode(
 	ctx context.Context,
-) {
+) error {
+	switcher.mu.Lock()
+	defer switcher.mu.Unlock()
+
+	if switcher.cancel != nil {
+		log.Info("TiKV is already in import mode")
+		return nil
+	}
+
+	// Create a new context for the goroutine
+	ctx, cancel := context.WithCancel(context.Background())
+	switcher.cancel = cancel
+
+	// [important!] switch tikv mode into import at the beginning
+	log.Info("switch to import mode at beginning")
+	err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
+	if err != nil {
+		log.Warn("switch to import mode failed", zap.Error(err))
+		return errors.Trace(err)
+	}
+	switcher.wg.Add(1)
 	// tikv automatically switch to normal mode in every 10 minutes
 	// so we need ping tikv in less than 10 minute
 	go func() {
 		tick := time.NewTicker(switcher.switchModeInterval)
-		defer tick.Stop()
-
-		// [important!] switch tikv mode into import at the beginning
-		log.Info("switch to import mode at beginning")
-		err := switcher.switchTiKVMode(ctx, import_sstpb.SwitchMode_Import)
-		if err != nil {
-			log.Warn("switch to import mode failed", zap.Error(err))
-		}
+		defer func() {
+			switcher.wg.Done()
+			tick.Stop()
+		}()
 
 		for {
 			select {
 			case <-ctx.Done():
+				log.Info("stop automatic switch to import mode when context done")
 				return
 			case <-tick.C:
 				log.Info("switch to import mode")
@@ -143,12 +170,10 @@ func (switcher *ImportModeSwitcher) SwitchToImportMode(
 				if err != nil {
 					log.Warn("switch to import mode failed", zap.Error(err))
 				}
-			case <-switcher.switchCh:
-				log.Info("stop automatic switch to import mode")
-				return
 			}
 		}
 	}()
+	return nil
 }
 
 // RestorePreWork executes some prepare work before restore.
@@ -166,7 +191,10 @@ func RestorePreWork(
 
 	if switchToImport {
 		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
-		switcher.SwitchToImportMode(ctx)
+		err := switcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return pdutil.Nop, nil, err
+		}
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)

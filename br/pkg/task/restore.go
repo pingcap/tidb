@@ -726,12 +726,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 				}
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			} else {
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
@@ -823,13 +827,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
 		cfg.UseCheckpoint = false
 	}
+
 	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
+
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
 		return err
 	}
