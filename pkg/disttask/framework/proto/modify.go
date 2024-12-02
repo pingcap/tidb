@@ -14,6 +14,8 @@
 
 package proto
 
+import "fmt"
+
 // ModificationType is the type of task modification.
 type ModificationType string
 
@@ -33,8 +35,18 @@ type ModifyParam struct {
 	Modifications []Modification `json:"modifications"`
 }
 
+// String implements fmt.Stringer interface.
+func (p *ModifyParam) String() string {
+	return fmt.Sprintf("{prev_state: %s, modifications: %v}", p.PrevState, p.Modifications)
+}
+
 // Modification is one modification for task.
 type Modification struct {
 	Type ModificationType `json:"type"`
 	To   int64            `json:"to"`
+}
+
+// String implements fmt.Stringer interface.
+func (m Modification) String() string {
+	return fmt.Sprintf("{type: %s, to: %d}", m.Type, m.To)
 }
