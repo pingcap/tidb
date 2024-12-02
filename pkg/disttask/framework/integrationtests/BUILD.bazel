@@ -12,6 +12,7 @@ go_test(
         "framework_scope_test.go",
         "framework_test.go",
         "main_test.go",
+        "modify_test.go",
         "resource_control_test.go",
     ],
     flaky = True,

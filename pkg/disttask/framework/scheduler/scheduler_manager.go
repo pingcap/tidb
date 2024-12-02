@@ -213,6 +213,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
+		failpoint.InjectCall("beforeGetSchedulableTasks")
 		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
 			continue

@@ -489,4 +489,30 @@ func TestSchedulerMaintainTaskFields(t *testing.T) {
 		require.Equal(t, *scheduler.getTaskClone(), tmpTask)
 		require.True(t, ctrl.Satisfied())
 	})
+
+	t.Run("test on modifying", func(t *testing.T) {
+		taskBefore := schTask
+		taskBefore.State = proto.TaskStateModifying
+		taskBefore.ModifyParam = proto.ModifyParam{
+			PrevState: proto.TaskStateRunning,
+			Modifications: []proto.Modification{
+				{Type: proto.ModifyConcurrency, To: 123},
+			},
+		}
+		scheduler.task.Store(&taskBefore)
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(fmt.Errorf("modify err"))
+		recreateScheduler, err := scheduler.onModifying()
+		require.ErrorContains(t, err, "modify err")
+		require.False(t, recreateScheduler)
+
+		taskMgr.EXPECT().ModifiedTask(gomock.Any(), gomock.Any()).Return(nil)
+		recreateScheduler, err = scheduler.onModifying()
+		require.NoError(t, err)
+		require.True(t, recreateScheduler)
+		expectedTask := taskBefore
+		expectedTask.Concurrency = 123
+		expectedTask.State = proto.TaskStateRunning
+		expectedTask.ModifyParam = proto.ModifyParam{}
+		require.Equal(t, *scheduler.GetTask(), expectedTask)
+	})
 }
