@@ -276,7 +276,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 	rows := [][]any{
 		{"Projection_15", "root", "test.t1.b"},
-		{"└─Apply_17", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#7)"},
+		{"└─Apply_17", "root", "CARTESIAN inner join, left side:TableReader_20, other cond:gt(test.t1.b, Column#7)"},
 		{"  ├─TableReader_20(Build)", "root", "data:Selection_19"},
 		{"  │ └─Selection_19", "cop[tikv]", "not(isnull(test.t1.b))"},
 		{"  │   └─TableFullScan_18", "cop[tikv]", "keep order:false, stats:pseudo"},
@@ -2104,7 +2104,7 @@ func TestIssue46556(t *testing.T) {
 	tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
 	tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
 	tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
-		testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
+		testkit.Rows(`HashJoin 0.00 root  inner join, left side:Projection, equal:[eq(Column#5, test.t0.c0)]`,
 			`├─Projection(Build) 0.00 root  <nil>->Column#5`,
 			`│ └─TableDual 0.00 root  rows:0`,
 			`└─TableReader(Probe) 7992.00 root  data:Selection`,
