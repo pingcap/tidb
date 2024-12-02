@@ -844,7 +844,7 @@ retry:
 	// the meta region leader is slow.
 	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewReader(snapshot)
-	tblInfos, err := m.ListTables(dbInfo.ID)
+	tblInfos, err := m.ListTables(ctx, dbInfo.ID)
 	if err != nil {
 		if meta.ErrDBNotExists.Equal(err) {
 			return nil, nil
@@ -1428,7 +1428,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 }
 
 func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
-	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+	if len(b.updatePolicies) == 0 {
 		return
 	}
 
@@ -1439,14 +1439,6 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
 					b.markTableBundleShouldUpdate(tblInfo.ID)
-				}
-			}
-
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if _, ok := b.updatePartitions[par.ID]; ok {
-						b.markTableBundleShouldUpdate(tblInfo.ID)
-					}
 				}
 			}
 		}

@@ -363,7 +363,7 @@ func (h *Handle) initStatsHistogramsConcurrency(is infoschema.InfoSchema, cache 
 }
 
 func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
-	if isFullCache(cache, totalMemory) {
+	if IsFullCacheFunc(cache, totalMemory) {
 		return
 	}
 	affectedIndexes := make(map[*statistics.Index]struct{})
@@ -458,20 +458,20 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 }
 
 func (h *Handle) initStatsTopNConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
-	if isFullCache(cache, totalMemory) {
+	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("TopN", func(task initstats.Task) error {
-		if isFullCache(cache, totalMemory) {
+		if IsFullCacheFunc(cache, totalMemory) {
 			return nil
 		}
 		return h.initStatsTopNByPaging(cache, task, totalMemory)
 	}, uint64(maxTid), uint64(initStatsStep), initStatsPercentageInterval)
 	ls.LoadStats()
 	for tid <= maxTid {
-		if isFullCache(cache, totalMemory) {
+		if IsFullCacheFunc(cache, totalMemory) {
 			break
 		}
 		ls.SendTask(initstats.Task{
@@ -620,7 +620,7 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 }
 
 func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint64) error {
-	if isFullCache(cache, totalMemory) {
+	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
@@ -691,13 +691,13 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 }
 
 func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalMemory uint64) error {
-	if isFullCache(cache, totalMemory) {
+	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker("bucket", func(task initstats.Task) error {
-		if isFullCache(cache, totalMemory) {
+		if IsFullCacheFunc(cache, totalMemory) {
 			return nil
 		}
 		return h.initStatsBucketsByPaging(cache, task)
@@ -709,7 +709,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 			EndTid:   tid + initStatsStep,
 		})
 		tid += initStatsStep
-		if isFullCache(cache, totalMemory) {
+		if IsFullCacheFunc(cache, totalMemory) {
 			break
 		}
 	}
@@ -808,6 +808,9 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	h.Replace(cache)
 	return nil
 }
+
+// IsFullCacheFunc is whether the cache is full or not. but we can only change it when to test
+var IsFullCacheFunc func(cache statstypes.StatsCache, total uint64) bool = isFullCache
 
 func isFullCache(cache statstypes.StatsCache, total uint64) bool {
 	memQuota := variable.StatsCacheMemQuota.Load()

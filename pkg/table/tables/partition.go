@@ -196,14 +196,14 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	default:
 		return ret, nil
 	}
-	// In StateWriteReorganization we are using the 'old' partition definitions
+	// In WriteReorganization we are using the 'old' partition definitions
 	// and if any new change happens in DroppingDefinitions, it needs to be done
 	// also in AddingDefinitions (with new evaluation of the new expression)
-	// In StateDeleteReorganization we are using the 'new' partition definitions
+	// In DeleteReorganization/Public we are using the 'new' partition definitions
 	// and if any new change happens in AddingDefinitions, it needs to be done
 	// also in DroppingDefinitions (since session running on schema version -1)
-	// should also see the changes
-	if pi.DDLState == model.StateDeleteReorganization {
+	// should also see the changes.
+	if pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic {
 		// TODO: Explicitly explain the different DDL/New fields!
 		if pi.NewTableID != 0 {
 			ret.reorgPartitionExpr, err = newPartitionExpr(tblInfo, pi.DDLType, pi.DDLExpr, pi.DDLColumns, pi.DroppingDefinitions)
@@ -224,6 +224,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, err
 			}
+			p.skipAssert = true
 			partitions[def.ID] = p
 			ret.doubleWritePartitions[def.ID] = nil
 		}
@@ -247,6 +248,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 				if err != nil {
 					return nil, err
 				}
+				p.skipAssert = true
 				partitions[def.ID] = p
 			}
 		}
@@ -1475,18 +1477,23 @@ func (t *partitionedTable) locateReorgPartition(ctx expression.EvalContext, r []
 	// all partitions will be reorganized,
 	// so we can use the number in Dropping or AddingDefinitions,
 	// depending on current state.
-	num := len(pi.AddingDefinitions)
-	if pi.DDLState == model.StateDeleteReorganization {
-		num = len(pi.DroppingDefinitions)
+	reorgDefs := pi.AddingDefinitions
+	switch pi.DDLAction {
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		if pi.DDLState == model.StatePublic {
+			reorgDefs = pi.DroppingDefinitions
+		}
+		fallthrough
+	default:
+		if pi.DDLState == model.StateDeleteReorganization {
+			reorgDefs = pi.DroppingDefinitions
+		}
 	}
-	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(num), columnsSet, r)
+	idx, err := t.locatePartitionCommon(ctx, pi.DDLType, t.reorgPartitionExpr, uint64(len(reorgDefs)), columnsSet, r)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if pi.DDLState == model.StateDeleteReorganization {
-		return pi.DroppingDefinitions[idx].ID, nil
-	}
-	return pi.AddingDefinitions[idx].ID, nil
+	return reorgDefs[idx].ID, nil
 }
 
 func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext, partitionExpr *PartitionExpr, r []types.Datum) (int, error) {
@@ -1582,7 +1589,7 @@ func (t *partitionedTable) locateHashPartition(ctx expression.EvalContext, partE
 			data = r[col.Index]
 		default:
 			var err error
-			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLong))
+			data, err = r[col.Index].ConvertTo(ctx.TypeCtx(), types.NewFieldType(mysql.TypeLonglong))
 			if err != nil {
 				return 0, err
 			}
@@ -1656,7 +1663,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	tblInfo.ID = pi.NewTableID
+	if pi.NewTableID != 0 {
+		tblInfo.ID = pi.NewTableID
+	}
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
@@ -1759,7 +1768,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 	if err != nil {
 		return
 	}
-	if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+	if t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic {
 		return
 	}
 	if _, ok := t.reorganizePartitions[pid]; ok {
@@ -1769,6 +1778,10 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
+		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+			// Preserve the _tidb_rowid also in the new partition!
+			r = append(r, types.NewIntDatum(recordID.IntValue()))
+		}
 		recordID, err = tbl.addRecord(ctx, txn, r, opt)
 		if err != nil {
 			return
@@ -1893,6 +1906,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
+	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
 	if from != to {
@@ -1938,7 +1952,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 		}
-		if newTo != 0 && t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+		if newTo != 0 && !deleteOnly {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
@@ -1965,7 +1979,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if newTo == newFrom {
 			tbl = t.getPartition(newTo)
-			if t.Meta().Partition.DDLState == model.StateDeleteOnly {
+			if deleteOnly {
 				err = tbl.RemoveRecord(ctx, txn, h, currData)
 			} else {
 				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
@@ -1981,7 +1995,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if t.Meta().GetPartitionInfo().DDLState != model.StateDeleteOnly {
+		if !deleteOnly {
 			tbl = t.getPartition(newTo)
 			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {

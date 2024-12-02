@@ -17,10 +17,15 @@ package core
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"hash"
 	"math"
 	"slices"
 	"sort"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -422,17 +427,55 @@ func bool2Byte(flag bool) byte {
 
 // PlanCacheValue stores the cached Statement and StmtNode.
 type PlanCacheValue struct {
-	Plan          base.Plan          // not-read-only, session might update it before reusing
-	OutputColumns types.NameSlice    // read-only
-	memoryUsage   int64              // read-only
-	testKey       int64              // test-only
-	paramTypes    []*types.FieldType // read-only, all parameters' types, different parameters may share same plan
-	stmtHints     *hint.StmtHints    // read-only, hints which set session variables
+	// Meta Info, all are READ-ONLY once initialized.
+	SQLDigest        string
+	SQLText          string
+	StmtType         string             // select, update, insert, delete, etc.
+	ParseUser        string             // the user who parses/compiles this plan.
+	Binding          string             // the binding of this plan.
+	OptimizerEnvHash string             // other environment information that might affect the plan like "time_zone", "sql_mode".
+	ParseValues      string             // the actual values used when parsing/compiling this plan.
+	PlanDigest       string             // digest of the plan, used to identify the plan in the cache.
+	BinaryPlan       string             // binary of this Plan, use tidb_decode_binary_plan to decode this.
+	Memory           int64              // the memory usage of this plan, in bytes.
+	LoadTime         time.Time          // the time when this plan is loaded into the cache.
+	Plan             base.Plan          // READ-ONLY for Instance Cache, READ-WRITE for Session Cache.
+	OutputColumns    types.NameSlice    // output column names of this plan
+	ParamTypes       []*types.FieldType // all parameters' types, different parameters may share same plan
+	StmtHints        *hint.StmtHints    // related hints of this plan, like 'max_execution_time'.
+
+	// Runtime Info, all are READ-WRITE, use UpdateRuntimeInfo() and RuntimeInfo() to access them.
+	executions         int64 // the execution times.
+	processedKeys      int64 // the total number of processed keys in TiKV.
+	totalKeys          int64 // the total number of returned keys in TiKV.
+	sumLatency         int64 // the total latency of this plan, in nanoseconds.
+	lastUsedTimeInUnix int64 // the last time when this plan is used, in Unix timestamp.
+
+	testKey int64 // test-only
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
 // 100 KiB is approximate consumption of a plan from our internal tests
 const unKnownMemoryUsage = int64(50 * size.KB)
+
+// UpdateRuntimeInfo accumulates the runtime information of the plan.
+func (v *PlanCacheValue) UpdateRuntimeInfo(proKeys, totKeys, latency int64) {
+	atomic.AddInt64(&v.executions, 1)
+	atomic.AddInt64(&v.processedKeys, proKeys)
+	atomic.AddInt64(&v.totalKeys, totKeys)
+	atomic.AddInt64(&v.sumLatency, latency)
+	atomic.StoreInt64(&v.lastUsedTimeInUnix, time.Now().Unix())
+}
+
+// RuntimeInfo returns the runtime information of the plan.
+func (v *PlanCacheValue) RuntimeInfo() (exec, procKeys, totKeys, sumLat int64, lastUsedTime time.Time) {
+	exec = atomic.LoadInt64(&v.executions)
+	procKeys = atomic.LoadInt64(&v.processedKeys)
+	totKeys = atomic.LoadInt64(&v.totalKeys)
+	sumLat = atomic.LoadInt64(&v.sumLatency)
+	lastUsedTime = time.Unix(atomic.LoadInt64(&v.lastUsedTimeInUnix), 0)
+	return
+}
 
 // MemoryUsage return the memory usage of PlanCacheValue
 func (v *PlanCacheValue) MemoryUsage() (sum int64) {
@@ -440,8 +483,8 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 		return
 	}
 
-	if v.memoryUsage > 0 {
-		return v.memoryUsage
+	if v.Memory > 0 {
+		return v.Memory
 	}
 	switch x := v.Plan.(type) {
 	case base.PhysicalPlan:
@@ -458,9 +501,9 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 	sum += size.SizeOfInterface + size.SizeOfSlice*2 + int64(cap(v.OutputColumns))*size.SizeOfPointer +
 		size.SizeOfMap + size.SizeOfInt64*2
-	if v.paramTypes != nil {
-		sum += int64(cap(v.paramTypes)) * size.SizeOfPointer
-		for _, ft := range v.paramTypes {
+	if v.ParamTypes != nil {
+		sum += int64(cap(v.ParamTypes)) * size.SizeOfPointer
+		for _, ft := range v.ParamTypes {
 			sum += ft.MemoryUsage()
 		}
 	}
@@ -468,23 +511,76 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 	for _, name := range v.OutputColumns {
 		sum += name.MemoryUsage()
 	}
-	v.memoryUsage = sum
+	sum += int64(len(v.SQLDigest)) + int64(len(v.SQLText)) + int64(len(v.StmtType)) + int64(len(v.BinaryPlan)) +
+		int64(len(v.ParseUser)) + int64(len(v.Binding)) + int64(len(v.OptimizerEnvHash)) + int64(len(v.ParseValues))
+
+	// Runtime Info Size
+	sum += size.SizeOfFloat64 * 7
+
+	v.Memory = sum
 	return
 }
 
+var planCacheHasherPool = sync.Pool{
+	New: func() any {
+		return sha256.New()
+	},
+}
+
 // NewPlanCacheValue creates a SQLCacheValue.
-func NewPlanCacheValue(plan base.Plan, names []*types.FieldName,
-	paramTypes []*types.FieldType, stmtHints *hint.StmtHints) *PlanCacheValue {
+func NewPlanCacheValue(
+	sctx sessionctx.Context,
+	stmt *PlanCacheStmt,
+	cacheKey string,
+	binding string,
+	plan base.Plan, // the cached plan,
+	names []*types.FieldName, // output column names of this plan,
+	paramTypes []*types.FieldType, // corresponding parameter types of this plan,
+	stmtHints *hint.StmtHints, // corresponding hints of this plan,
+) *PlanCacheValue {
 	userParamTypes := make([]*types.FieldType, len(paramTypes))
 	for i, tp := range paramTypes {
 		userParamTypes[i] = tp.Clone()
 	}
-	return &PlanCacheValue{
+	var userName string
+	if sctx.GetSessionVars().User != nil { // might be nil if in test
+		userName = sctx.GetSessionVars().User.AuthUsername
+	}
+
+	flat := FlattenPhysicalPlan(plan, false)
+	binaryPlan := BinaryPlanStrFromFlatPlan(sctx.GetPlanCtx(), flat)
+
+	// calculate opt env hash using cacheKey and paramTypes
+	// (cacheKey, paramTypes) contains all factors that can affect the plan
+	// use the same hash algo with SQLDigest: sha256 + hex
+	hasher := planCacheHasherPool.Get().(hash.Hash)
+	hasher.Write(hack.Slice(cacheKey))
+	for _, tp := range paramTypes {
+		hasher.Write(hack.Slice(tp.String()))
+	}
+	optEnvHash := hex.EncodeToString(hasher.Sum(nil))
+	hasher.Reset()
+	planCacheHasherPool.Put(hasher)
+
+	pcv := &PlanCacheValue{
+		SQLDigest:        stmt.SQLDigest.String(),
+		SQLText:          stmt.StmtText,
+		StmtType:         stmt.PreparedAst.StmtType,
+		ParseUser:        userName,
+		Binding:          binding,
+		OptimizerEnvHash: optEnvHash,
+		ParseValues:      types.DatumsToStrNoErr(sctx.GetSessionVars().PlanCacheParams.AllParamValues()),
+		PlanDigest:       stmt.PlanDigest.String(),
+		BinaryPlan:       binaryPlan,
+
+		LoadTime:      time.Now(),
 		Plan:          plan,
 		OutputColumns: names,
-		paramTypes:    userParamTypes,
-		stmtHints:     stmtHints.Clone(),
+		ParamTypes:    userParamTypes,
+		StmtHints:     stmtHints.Clone(),
 	}
+	pcv.MemoryUsage() // initialize the memory usage field
+	return pcv
 }
 
 // planCacheStmtProcessor records all query features which may affect plan selection.

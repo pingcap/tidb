@@ -452,8 +452,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 func TestRootRuntimeStats(t *testing.T) {
 	pid := 1
 	stmtStats := NewRuntimeStatsColl(nil)
-	basic1 := stmtStats.GetBasicRuntimeStats(pid)
-	basic2 := stmtStats.GetBasicRuntimeStats(pid)
+	basic1 := stmtStats.GetBasicRuntimeStats(pid, true)
+	basic2 := stmtStats.GetBasicRuntimeStats(pid, true)
 	basic1.RecordOpen(time.Millisecond * 10)
 	basic1.Record(time.Second, 20)
 	basic2.Record(time.Second*2, 30)
@@ -474,7 +474,7 @@ func TestRootRuntimeStats(t *testing.T) {
 		Commit: commitDetail,
 	})
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:3.11s, open:10ms, close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
+	expect := "total_time:3.11s, total_open:10ms, total_close:100ms, loops:2, worker:15, commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, region_num:5, write_keys:3, write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 }
 

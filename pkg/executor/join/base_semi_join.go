@@ -36,6 +36,7 @@ type baseSemiJoin struct {
 	isLeftSideBuild bool
 
 	// isMatchedRows marks whether the left side row is matched
+	// It's used only when right side is build side.
 	isMatchedRows []bool
 
 	isNulls []bool
@@ -48,26 +49,30 @@ type baseSemiJoin struct {
 }
 
 func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
-	return &baseSemiJoin{
+	ret := &baseSemiJoin{
 		baseJoinProbe:   base,
 		isLeftSideBuild: isLeftSideBuild,
-		isMatchedRows:   make([]bool, 0),
 		isNulls:         make([]bool, 0),
 	}
+
+	return ret
 }
 
 func (b *baseSemiJoin) resetProbeState() {
-	b.isMatchedRows = b.isMatchedRows[:0]
-	for i := 0; i < b.chunkRows; i++ {
-		b.isMatchedRows = append(b.isMatchedRows, false)
+	if !b.isLeftSideBuild {
+		b.isMatchedRows = b.isMatchedRows[:0]
+		for i := 0; i < b.chunkRows; i++ {
+			b.isMatchedRows = append(b.isMatchedRows, false)
+		}
 	}
 
 	if b.ctx.hasOtherCondition() {
 		if b.unFinishedProbeRowIdxQueue == nil {
-			b.unFinishedProbeRowIdxQueue = queue.NewQueue[int](256)
+			b.unFinishedProbeRowIdxQueue = queue.NewQueue[int](b.chunkRows)
 		} else {
-			b.unFinishedProbeRowIdxQueue.Clear()
+			b.unFinishedProbeRowIdxQueue.ClearAndExpandIfNeed(b.chunkRows)
 		}
+
 		for i := 0; i < b.chunkRows; i++ {
 			if b.matchedRowsHeaders[i] != 0 {
 				b.unFinishedProbeRowIdxQueue.Push(i)
@@ -81,7 +86,7 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 	meta := b.ctx.hashTableMeta
 	for b.matchedRowsHeaders[b.currentProbeRow] != 0 && *joinedChkRemainCap > 0 && b.matchedRowsForCurrentProbeRow < maxMatchedRowNum {
 		candidateRow := tagHelper.toUnsafePointer(b.matchedRowsHeaders[b.currentProbeRow])
-		if isRightSideBuild {
+		if isRightSideBuild || !meta.isCurrentRowUsedWithAtomic(candidateRow) {
 			if isKeyMatched(meta.keyMode, b.serializedKeys[b.currentProbeRow], candidateRow, meta) {
 				b.appendBuildRowToCachedBuildRowsV1(b.currentProbeRow, candidateRow, joinedChk, 0, true)
 				b.matchedRowsForCurrentProbeRow++
@@ -89,17 +94,8 @@ func (b *baseSemiJoin) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRema
 			} else {
 				b.probeCollision++
 			}
-		} else {
-			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
-				if isKeyMatched(meta.keyMode, b.serializedKeys[b.currentProbeRow], candidateRow, meta) {
-					b.appendBuildRowToCachedBuildRowsV1(b.currentProbeRow, candidateRow, joinedChk, 0, true)
-					b.matchedRowsForCurrentProbeRow++
-					*joinedChkRemainCap--
-				} else {
-					b.probeCollision++
-				}
-			}
 		}
+
 		b.matchedRowsHeaders[b.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, b.matchedRowsHashValue[b.currentProbeRow])
 	}
 
@@ -111,7 +107,7 @@ func (b *baseSemiJoin) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlK
 
 	for joinedChkRemainCap > 0 && !b.unFinishedProbeRowIdxQueue.IsEmpty() {
 		probeRowIdx := b.unFinishedProbeRowIdxQueue.Pop()
-		if b.isMatchedRows[probeRowIdx] {
+		if isRightSideBuild && b.isMatchedRows[probeRowIdx] {
 			continue
 		}
 

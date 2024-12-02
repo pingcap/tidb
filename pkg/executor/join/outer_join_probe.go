@@ -384,19 +384,3 @@ func (j *outerJoinProbe) ResetProbe() {
 	j.rowIter = nil
 	j.baseJoinProbe.ResetProbe()
 }
-
-func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
-	totalRowCount := base.ctx.hashTableContext.hashTable.totalRowCount()
-	concurrency := base.ctx.Concurrency
-	workID := uint64(base.workID)
-	avgRowPerWorker := totalRowCount / uint64(concurrency)
-	startIndex := workID * avgRowPerWorker
-	endIndex := (workID + 1) * avgRowPerWorker
-	if workID == uint64(concurrency-1) {
-		endIndex = totalRowCount
-	}
-	if endIndex > totalRowCount {
-		endIndex = totalRowCount
-	}
-	return base.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
-}
