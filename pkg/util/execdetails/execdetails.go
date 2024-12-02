@@ -34,10 +34,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type testc struct {
-	store kv.StoreType
-}
-
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90

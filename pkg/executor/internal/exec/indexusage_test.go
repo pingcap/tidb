@@ -17,13 +17,13 @@ package exec_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/kv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"

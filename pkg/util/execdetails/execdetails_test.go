@@ -15,12 +15,12 @@
 package execdetails
 
 import (
-	"github.com/pingcap/tidb/pkg/kv"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
