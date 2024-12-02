@@ -17,6 +17,7 @@ package exec_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/kv"
 	"strings"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
-	runtimeStatsColl.GetOrCreateCopStats(planID, "test-store").RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
+	runtimeStatsColl.GetOrCreateCopStats(planID, kv.TiKV).RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,
