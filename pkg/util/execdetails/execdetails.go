@@ -683,13 +683,24 @@ func (p *Percentile[valueType]) Sum() float64 {
 
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString("time:")
+	buf.WriteString(FormatDuration(time.Duration(e.consume.Load())))
+	buf.WriteString(", loops:")
+	buf.WriteString(strconv.Itoa(int(e.loop.Load())))
 	if e.storeType == kv.TiFlash {
+		buf.WriteString(", threads:")
+		buf.WriteString(strconv.Itoa(int(e.threads)))
+		buf.WriteString(", ")
 		if e.tiflashWaitSummary.CanBeIgnored() {
-			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String())
+			buf.WriteString(e.tiflashScanContext.String())
+		} else {
+			buf.WriteString(e.tiflashWaitSummary.String())
+			buf.WriteString(", ")
+			buf.WriteString(e.tiflashScanContext.String())
 		}
-		return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashWaitSummary.String(), e.tiflashScanContext.String())
 	}
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
@@ -1690,20 +1701,23 @@ func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 
 // String implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) String() string {
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 8))
 	if len(e.concurrency) > 0 {
 		for i, concurrency := range e.concurrency {
 			if i > 0 {
-				result += ", "
+				buf.WriteString(", ")
 			}
 			if concurrency.concurrencyNum > 0 {
-				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteByte(':')
+				buf.WriteString(strconv.Itoa(concurrency.concurrencyNum))
 			} else {
-				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteString(":OFF")
 			}
 		}
 	}
-	return result
+	return buf.String()
 }
 
 // Merge implements the RuntimeStats interface.
@@ -1805,11 +1819,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			if len(e.Commit.Mu.PrewriteBackoffTypes) > 0 {
 				buf.WriteString(", prewrite type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.PrewriteBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.PrewriteBackoffTypes)
 			}
 			if len(e.Commit.Mu.CommitBackoffTypes) > 0 {
 				buf.WriteString(", commit type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.CommitBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.CommitBackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1887,7 +1901,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+				e.formatBackoff(buf, e.LockKeys.Mu.BackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1921,9 +1935,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
+func (*RuntimeStatsWithCommit) formatBackoff(buf *bytes.Buffer, backoffTypes []string) {
 	if len(backoffTypes) == 0 {
-		return ""
+		return
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
@@ -1936,7 +1950,14 @@ func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpArray = append(tpArray, tpStr)
 	}
 	slices.Sort(tpArray)
-	return fmt.Sprintf("%v", tpArray)
+	buf.WriteByte('[')
+	for i, tp := range tpArray {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(tp)
+	}
+	buf.WriteByte(']')
 }
 
 // FormatDuration uses to format duration, this function will prune precision before format duration.
@@ -2002,7 +2023,10 @@ type RURuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
 	if e.RUDetails != nil {
-		return fmt.Sprintf("RU:%f", e.RRU()+e.WRU())
+		buf := bytes.NewBuffer(make([]byte, 0, 8))
+		buf.WriteString("RU:")
+		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		return buf.String()
 	}
 	return ""
 }
