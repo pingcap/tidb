@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -472,7 +471,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
+func (c *CheckpointAdvancer) setCheckpoint(s spans.Valued) bool {
 	cp := NewCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
@@ -498,7 +497,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 		return err
 	}
 
-	if c.setCheckpoint(ctx, cp) {
+	if c.setCheckpoint(cp) {
 		log.Info("uploading checkpoint for task",
 			zap.Stringer("checkpoint", oracle.GetTimeFromTS(cp.Value)),
 			zap.Uint64("checkpoint", cp.Value),
@@ -585,7 +584,7 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 
 func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	c.checkpointsMu.Lock()
-	c.setCheckpoint(ctx, c.checkpoints.Min())
+	c.setCheckpoint(c.checkpoints.Min())
 	c.checkpointsMu.Unlock()
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
@@ -685,10 +684,14 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// do not block main tick here
 	go func() {
 		failpoint.Inject("AsyncResolveLocks", func() {})
+		maxTs := uint64(0)
+		for _, t := range targets {
+			maxTs = max(maxTs, t.Value)
+		}
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
-				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+				ctx, c.env, maxTs+1, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
 		}
 		workerPool := util.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
 		var wg sync.WaitGroup

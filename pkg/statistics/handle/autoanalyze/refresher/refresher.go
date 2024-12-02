@@ -82,17 +82,11 @@ func (r *Refresher) UpdateConcurrency() {
 }
 
 // AnalyzeHighestPriorityTables picks tables with the highest priority and analyzes them.
-func (r *Refresher) AnalyzeHighestPriorityTables() bool {
-	se, err := r.statsHandle.SPool().Get()
-	if err != nil {
-		statslogutil.StatsLogger().Error("Failed to get session context", zap.Error(err))
-		return false
-	}
-	defer r.statsHandle.SPool().Put(se)
-
-	sctx := se.(sessionctx.Context)
+// Note: Make sure the session has the latest variable values.
+// Usually, this is done by the caller through `util.CallWithSCtx`.
+func (r *Refresher) AnalyzeHighestPriorityTables(sctx sessionctx.Context) bool {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	err = r.setAutoAnalysisTimeWindow(parameters)
+	err := r.setAutoAnalysisTimeWindow(parameters)
 	if err != nil {
 		statslogutil.StatsLogger().Error("Set auto analyze time window failed", zap.Error(err))
 		return false
@@ -100,15 +94,17 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	if !r.isWithinTimeWindow() {
 		return false
 	}
+	currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 	if !r.jobs.IsInitialized() {
 		if err := r.jobs.Initialize(); err != nil {
 			statslogutil.StatsLogger().Error("Failed to initialize the queue", zap.Error(err))
 			return false
 		}
+		r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
+		r.lastSeenPruneMode = currentPruneMode
 	} else {
 		// Only do this if the queue is already initialized.
-		currentAutoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-		currentPruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		if currentAutoAnalyzeRatio != r.lastSeenAutoAnalyzeRatio || currentPruneMode != r.lastSeenPruneMode {
 			r.lastSeenAutoAnalyzeRatio = currentAutoAnalyzeRatio
 			r.lastSeenPruneMode = currentPruneMode
@@ -148,7 +144,7 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 			statslogutil.StatsLogger().Debug("Job already running, skipping", zap.Int64("tableID", job.GetTableID()))
 			continue
 		}
-		if valid, failReason := job.IsValidToAnalyze(sctx); !valid {
+		if valid, failReason := job.ValidateAndPrepare(sctx); !valid {
 			statslogutil.SingletonStatsSamplerLogger().Info(
 				"Table not ready for analysis",
 				zap.String("reason", failReason),
@@ -192,6 +188,11 @@ func (r *Refresher) AnalyzeHighestPriorityTables() bool {
 	return false
 }
 
+// GetPriorityQueueSnapshot returns the stats priority queue.
+func (r *Refresher) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return r.jobs.Snapshot()
+}
+
 func (r *Refresher) setAutoAnalysisTimeWindow(
 	parameters map[string]string,
 ) error {
@@ -231,10 +232,10 @@ func (r *Refresher) ProcessDMLChangesForTest() {
 	}
 }
 
-// RequeueFailedJobsForTest requeues failed jobs for the test.
+// RequeueMustRetryJobsForTest requeues must retry jobs for the test.
 // Only used in the test.
-func (r *Refresher) RequeueFailedJobsForTest() {
-	r.jobs.RequeueFailedJobs()
+func (r *Refresher) RequeueMustRetryJobsForTest() {
+	r.jobs.RequeueMustRetryJobs()
 }
 
 // Len returns the length of the analysis job queue.
@@ -260,6 +261,7 @@ func (*Refresher) OnBecomeOwner() {
 
 // OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
 func (r *Refresher) OnRetireOwner() {
-	// Stop the worker and close the queue.
+	// Theoretically we should stop the worker here, but stopping analysis jobs can be time-consuming.
+	// To avoid blocking etcd leader re-election, we only close the priority queue.
 	r.jobs.Close()
 }

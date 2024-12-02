@@ -859,15 +859,26 @@ func (w *worker) runOneJobStep(
 							logutil.DDLLogger().Info("job is paused",
 								zap.Int64("job_id", job.ID),
 								zap.Stringer("state", latestJob.State))
-							cancelStep(dbterror.ErrPausedDDLJob)
+							cancelStep(dbterror.ErrPausedDDLJob.FastGenByArgs(job.ID))
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
+						case model.JobStateRunning:
+							if latestJob.IsAlterable() {
+								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
+								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
+							}
 						}
 					}
 				}
 			})
 		}
+	}
+	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
+	// the unmarshalled job will have a nil value for the ReorgMeta field.
+	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 
 	prevState := job.State
@@ -883,7 +894,7 @@ func (w *worker) runOneJobStep(
 	case model.ActionModifySchemaCharsetAndCollate:
 		ver, err = onModifySchemaCharsetAndCollate(jobCtx, job)
 	case model.ActionDropSchema:
-		ver, err = onDropSchema(jobCtx, job)
+		ver, err = w.onDropSchema(jobCtx, job)
 	case model.ActionRecoverSchema:
 		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:

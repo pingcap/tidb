@@ -166,7 +166,7 @@ func (rc *SnapClient) GoValidateChecksum(
 			elapsed := time.Since(start)
 			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}

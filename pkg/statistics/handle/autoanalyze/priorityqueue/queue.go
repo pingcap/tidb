@@ -16,6 +16,7 @@ package priorityqueue
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -32,6 +33,7 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -40,8 +42,14 @@ const notInitializedErrMsg = "priority queue not initialized"
 const (
 	lastAnalysisDurationRefreshInterval = time.Minute * 10
 	dmlChangesFetchInterval             = time.Minute * 2
-	failedJobRequeueInterval            = time.Minute * 5
+	mustRetryJobRequeueInterval         = time.Minute * 5
 )
+
+// If the process takes longer than this threshold, we will log it as a slow log.
+const slowLogThreshold = 150 * time.Millisecond
+
+// Every 15 minutes, at most 1 log will be output.
+var queueSamplerLogger = logutil.SampleLoggerFactory(15*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 
 // pqHeap is an interface that wraps the methods of a priority queue heap.
 type pqHeap interface {
@@ -90,8 +98,13 @@ type AnalysisPriorityQueue struct {
 		runningJobs map[int64]struct{}
 		// lastDMLUpdateFetchTimestamp is the timestamp of the last DML update fetch.
 		lastDMLUpdateFetchTimestamp uint64
-		// failedJobs is a slice to store the failed jobs.
-		failedJobs map[int64]struct{}
+		// mustRetryJobs is a slice to store the must retry jobs.
+		// For now, we have two types of jobs:
+		// 1. The jobs that failed to be executed. We have to try it later.
+		// 2. The jobs failed to enqueue due to the ongoing analysis,
+		//    particularly for tables with new indexes created during this process.
+		// We will requeue the must retry jobs periodically.
+		mustRetryJobs map[int64]struct{}
 		// initialized is a flag to check if the queue is initialized.
 		initialized bool
 	}
@@ -142,7 +155,7 @@ func (pq *AnalysisPriorityQueue) Initialize() error {
 	pq.ctx = ctx
 	pq.syncFields.cancel = cancel
 	pq.syncFields.runningJobs = make(map[int64]struct{})
-	pq.syncFields.failedJobs = make(map[int64]struct{})
+	pq.syncFields.mustRetryJobs = make(map[int64]struct{})
 	pq.syncFields.initialized = true
 	pq.syncFields.mu.Unlock()
 
@@ -233,7 +246,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				pi := tblInfo.GetPartitionInfo()
 				if pi == nil {
 					job := jobFactory.CreateNonPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 					)
@@ -256,10 +268,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 				if pruneMode == variable.Static {
 					for pIDAndName, stats := range partitionStats {
 						job := jobFactory.CreateStaticPartitionAnalysisJob(
-							db.O,
 							tblInfo,
 							pIDAndName.ID,
-							pIDAndName.Name,
 							stats,
 						)
 						err := pq.pushWithoutLock(job)
@@ -269,7 +279,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 					}
 				} else {
 					job := jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-						db.O,
 						tblInfo,
 						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 						partitionStats,
@@ -298,8 +307,8 @@ func (pq *AnalysisPriorityQueue) run() {
 	defer dmlChangesFetchInterval.Stop()
 	timeRefreshInterval := time.NewTicker(lastAnalysisDurationRefreshInterval)
 	defer timeRefreshInterval.Stop()
-	failedJobRequeueInterval := time.NewTicker(failedJobRequeueInterval)
-	defer failedJobRequeueInterval.Stop()
+	mustRetryJobRequeueInterval := time.NewTicker(mustRetryJobRequeueInterval)
+	defer mustRetryJobRequeueInterval.Stop()
 
 	for {
 		select {
@@ -307,14 +316,14 @@ func (pq *AnalysisPriorityQueue) run() {
 			statslogutil.StatsLogger().Info("Priority queue stopped")
 			return
 		case <-dmlChangesFetchInterval.C:
-			statslogutil.StatsLogger().Info("Start to fetch DML changes of jobs")
+			queueSamplerLogger().Info("Start to fetch DML changes of tables")
 			pq.ProcessDMLChanges()
 		case <-timeRefreshInterval.C:
-			statslogutil.StatsLogger().Info("Start to refresh last analysis durations of jobs")
+			queueSamplerLogger().Info("Start to refresh last analysis durations of jobs")
 			pq.RefreshLastAnalysisDuration()
-		case <-failedJobRequeueInterval.C:
-			statslogutil.StatsLogger().Info("Start to request failed jobs")
-			pq.RequeueFailedJobs()
+		case <-mustRetryJobRequeueInterval.C:
+			queueSamplerLogger().Info("Start to requeue must retry jobs")
+			pq.RequeueMustRetryJobs()
 		}
 	}
 }
@@ -329,7 +338,10 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("DML changes processed", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				queueSamplerLogger().Info("DML changes processed", zap.Duration("duration", duration))
+			}
 		}()
 
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -361,7 +373,7 @@ func (pq *AnalysisPriorityQueue) ProcessDMLChanges() {
 
 		// Only update if we've seen a newer version
 		if newMaxVersion > lastFetchTimestamp {
-			statslogutil.StatsLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
+			queueSamplerLogger().Info("Updating last fetch timestamp", zap.Uint64("new_max_version", newMaxVersion))
 			pq.syncFields.lastDMLUpdateFetchTimestamp = newMaxVersion
 		}
 		return nil
@@ -389,12 +401,6 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return errors.Trace(err)
 	}
 	jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
-	// Check if the table is needed to be analyzed.
-	// Note: Unanalyzed tables will also be considered.
-	changePercent := jobFactory.CalculateChangePercentage(stats)
-	if changePercent == 0 {
-		return nil
-	}
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
@@ -440,7 +446,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 	}
 
 	tableInfo, ok := pq.statsHandle.TableInfoByID(is, stats.PhysicalID)
-	tableMeta := tableInfo.Meta()
 	if !ok {
 		statslogutil.StatsLogger().Warn(
 			"Table info not found for table id",
@@ -448,14 +453,7 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 		)
 		return nil
 	}
-	schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-	if !ok {
-		statslogutil.StatsLogger().Warn(
-			"Schema name not found for table id",
-			zap.Int64("tableID", stats.PhysicalID),
-		)
-		return nil
-	}
+	tableMeta := tableInfo.Meta()
 	partitionedTable := tableMeta.GetPartitionInfo()
 	if partitionedTable == nil {
 		// If the table is locked, we do not analyze it.
@@ -463,7 +461,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			return nil
 		}
 		job = jobFactory.CreateNonPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 		)
@@ -491,10 +488,8 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 				return nil
 			}
 			job = jobFactory.CreateStaticPartitionAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				partitionDef.ID,
-				partitionDef.Name.O,
 				stats,
 			)
 		} else {
@@ -525,7 +520,6 @@ func (pq *AnalysisPriorityQueue) tryCreateJob(
 			}
 			partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, filteredPartitionDefs)
 			job = jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-				schemaName.O,
 				tableMeta,
 				// Get global stats for dynamic partitioned table.
 				pq.statsHandle.GetTableStatsForAutoAnalyze(tableMeta),
@@ -563,17 +557,7 @@ func (pq *AnalysisPriorityQueue) tryUpdateJob(
 		partitionedTable := tableMeta.GetPartitionInfo()
 		partitionDefs := partitionedTable.Definitions
 		partitionStats := GetPartitionStats(pq.statsHandle, tableMeta, partitionDefs)
-		schemaName, ok := is.SchemaNameByTableID(tableMeta.ID)
-		if !ok {
-			statslogutil.StatsLogger().Warn(
-				"Schema name not found during updating job",
-				zap.Int64("tableID", stats.PhysicalID),
-				zap.String("job", oldJob.String()),
-			)
-			return nil
-		}
 		return jobFactory.CreateDynamicPartitionedTableAnalysisJob(
-			schemaName.O,
 			tableMeta,
 			stats,
 			partitionStats,
@@ -596,23 +580,27 @@ func (pq *AnalysisPriorityQueue) GetLastFetchTimestamp() uint64 {
 	return pq.syncFields.lastDMLUpdateFetchTimestamp
 }
 
-// RequeueFailedJobs requeues the failed jobs.
-func (pq *AnalysisPriorityQueue) RequeueFailedJobs() {
+// RequeueMustRetryJobs requeues the must retry jobs.
+func (pq *AnalysisPriorityQueue) RequeueMustRetryJobs() {
 	pq.syncFields.mu.Lock()
 	defer pq.syncFields.mu.Unlock()
 
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("Failed jobs requeued", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				queueSamplerLogger().Info("Must retry jobs requeued", zap.Duration("duration", duration))
+			}
 		}()
 
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		for tableID := range pq.syncFields.failedJobs {
-			delete(pq.syncFields.failedJobs, tableID)
+		for tableID := range pq.syncFields.mustRetryJobs {
+			// Note: Delete the job first to ensure it can be added back to the queue
+			delete(pq.syncFields.mustRetryJobs, tableID)
 			tblInfo, ok := pq.statsHandle.TableInfoByID(is, tableID)
 			if !ok {
-				statslogutil.StatsLogger().Warn("Table info not found during requeueing failed jobs", zap.Int64("tableID", tableID))
+				statslogutil.StatsLogger().Warn("Table info not found during requeueing must retry jobs", zap.Int64("tableID", tableID))
 				continue
 			}
 			err := pq.recreateAndPushJobForTable(sctx, tblInfo.Meta())
@@ -623,7 +611,7 @@ func (pq *AnalysisPriorityQueue) RequeueFailedJobs() {
 		}
 		return nil
 	}, statsutil.FlagWrapTxn); err != nil {
-		statslogutil.StatsLogger().Error("Failed to requeue failed jobs", zap.Error(err))
+		statslogutil.StatsLogger().Error("Failed to requeue must retry jobs", zap.Error(err))
 	}
 }
 
@@ -636,7 +624,10 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 	if err := statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		start := time.Now()
 		defer func() {
-			statslogutil.StatsLogger().Info("Last analysis duration refreshed", zap.Duration("duration", time.Since(start)))
+			duration := time.Since(start)
+			if duration > slowLogThreshold {
+				queueSamplerLogger().Info("Last analysis duration refreshed", zap.Duration("duration", duration))
+			}
 		}()
 		jobs := pq.syncFields.inner.list()
 		currentTs, err := statsutil.GetStartTS(sctx)
@@ -653,7 +644,8 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 					zap.Int64("tableID", job.GetTableID()),
 					zap.String("job", job.String()),
 				)
-				// TODO: Remove this after handling the DDL event.
+				// Delete the job from the queue since its table is missing. This is a safeguard -
+				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
 					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
@@ -661,6 +653,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 						zap.String("job", job.String()),
 					)
 				}
+				continue
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
@@ -707,6 +700,28 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	if job == nil {
 		return nil
 	}
+	// Skip the must retry jobs.
+	// Avoiding requeueing the must retry jobs before the next must retry job requeue interval.
+	// Otherwise, we may requeue the same job multiple times in a short time.
+	if _, ok := pq.syncFields.mustRetryJobs[job.GetTableID()]; ok {
+		return nil
+	}
+
+	// Skip the current running jobs.
+	// Safety:
+	// Let's say we have a job in the priority queue, and it is already running.
+	// Then we will not add the same job to the priority queue again. Otherwise, we will analyze the same table twice.
+	// If the job is finished, we will remove it from the running jobs.
+	// Then the next time we process the DML changes, we will add the job to the priority queue.(if it is still needed)
+	// In this process, we will not miss any DML changes of the table. Because when we try to delete the table from the current running jobs,
+	// we guarantee that the job is finished and the stats cache is updated.(The last step of the analysis job is to update the stats cache).
+	if _, ok := pq.syncFields.runningJobs[job.GetTableID()]; ok {
+		// Mark the job as must retry.
+		// Because potentially the job can be analyzed in the near future.
+		// For example, the table has new indexes added when the job is running.
+		pq.syncFields.mustRetryJobs[job.GetTableID()] = struct{}{}
+		return nil
+	}
 	// We apply a penalty to larger tables, which can potentially result in a negative weight.
 	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 	weight := pq.calculator.CalculateWeight(job)
@@ -718,23 +733,6 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 		)
 	}
 	job.SetWeight(weight)
-	// Skip the current running jobs.
-	// Safety:
-	// Let's say we have a job in the priority queue, and it is already running.
-	// Then we will not add the same job to the priority queue again. Otherwise, we will analyze the same table twice.
-	// If the job is finished, we will remove it from the running jobs.
-	// Then the next time we process the DML changes, we will add the job to the priority queue.(if it is still needed)
-	// In this process, we will not miss any DML changes of the table. Because when we try to delete the table from the current running jobs,
-	// we guarantee that the job is finished and the stats cache is updated.(The last step of the analysis job is to update the stats cache).
-	if _, ok := pq.syncFields.runningJobs[job.GetTableID()]; ok {
-		return nil
-	}
-	// Skip the failed jobs.
-	// Avoiding requeueing the failed jobs before the next failed job requeue interval.
-	// Otherwise, we may requeue the same job multiple times in a short time.
-	if _, ok := pq.syncFields.failedJobs[job.GetTableID()]; ok {
-		return nil
-	}
 	return pq.syncFields.inner.addOrUpdate(job)
 }
 
@@ -756,14 +754,29 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	job.RegisterSuccessHook(func(j AnalysisJob) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil
+		// check is expected when the job finishes after the switch.
+		if pq.syncFields.runningJobs == nil {
+			return
+		}
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
-	job.RegisterFailureHook(func(j AnalysisJob) {
+	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil check
+		// is expected when jobs finish after the switch. Failed jobs will be handled by the next
+		// initialization, so we can safely ignore them here.
+		if pq.syncFields.runningJobs == nil || pq.syncFields.mustRetryJobs == nil {
+			return
+		}
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
-		pq.syncFields.failedJobs[j.GetTableID()] = struct{}{}
+		if needRetry {
+			pq.syncFields.mustRetryJobs[j.GetTableID()] = struct{}{}
+		}
 	})
 	return job, nil
 }
@@ -803,6 +816,38 @@ func (pq *AnalysisPriorityQueue) Len() (int, error) {
 	return pq.syncFields.inner.len(), nil
 }
 
+// Snapshot returns a snapshot of all the jobs in the priority queue.
+func (pq *AnalysisPriorityQueue) Snapshot() (
+	snapshot statstypes.PriorityQueueSnapshot,
+	err error,
+) {
+	pq.syncFields.mu.RLock()
+	defer pq.syncFields.mu.RUnlock()
+	if !pq.syncFields.initialized {
+		return statstypes.PriorityQueueSnapshot{}, errors.New(notInitializedErrMsg)
+	}
+
+	currentJobs := pq.syncFields.inner.list()
+	mustRetryTables := make([]int64, 0, len(pq.syncFields.mustRetryJobs))
+	for tableID := range pq.syncFields.mustRetryJobs {
+		mustRetryTables = append(mustRetryTables, tableID)
+	}
+
+	jsonJobs := make([]statstypes.AnalysisJobJSON, len(currentJobs))
+	for i, job := range currentJobs {
+		jsonJobs[i] = job.AsJSON()
+	}
+	// Sort by the weight in descending order.
+	sort.Slice(jsonJobs, func(i, j int) bool {
+		return jsonJobs[i].Weight > jsonJobs[j].Weight
+	})
+
+	return statstypes.PriorityQueueSnapshot{
+		CurrentJobs:     jsonJobs,
+		MustRetryTables: mustRetryTables,
+	}, nil
+}
+
 // Close closes the priority queue.
 // Note: This function is thread-safe.
 func (pq *AnalysisPriorityQueue) Close() {
@@ -817,4 +862,14 @@ func (pq *AnalysisPriorityQueue) Close() {
 		pq.syncFields.cancel()
 	}
 	pq.wg.Wait()
+
+	// Reset the initialized flag to allow the priority queue to be closed and re-initialized.
+	pq.syncFields.initialized = false
+	// The rest fields will be reset when the priority queue is initialized.
+	// But we do it here for double safety.
+	pq.syncFields.inner = nil
+	pq.syncFields.runningJobs = nil
+	pq.syncFields.mustRetryJobs = nil
+	pq.syncFields.lastDMLUpdateFetchTimestamp = 0
+	pq.syncFields.cancel = nil
 }

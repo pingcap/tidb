@@ -317,6 +317,11 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
+// GetPriorityQueueSnapshot returns the stats priority queue snapshot.
+func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return sa.refresher.GetPriorityQueueSnapshot()
+}
+
 func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
@@ -331,9 +336,9 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
 		if intest.InTest {
 			sa.refresher.ProcessDMLChangesForTest()
-			sa.refresher.RequeueFailedJobsForTest()
+			sa.refresher.RequeueMustRetryJobsForTest()
 		}
-		analyzed := sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables(sctx)
 		// During the test, we need to wait for the auto analyze job to be finished.
 		if intest.InTest {
 			sa.refresher.WaitAutoAnalyzeFinishedForTest()

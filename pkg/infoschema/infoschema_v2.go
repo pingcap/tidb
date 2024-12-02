@@ -691,6 +691,31 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	})
 }
 
+// TableIsCached checks whether the table is cached.
+func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
+	if !tableIDIsValid(id) {
+		return false
+	}
+
+	itm, ok := is.searchTableItemByID(id)
+	if !ok {
+		return false
+	}
+
+	if isTableVirtual(id) {
+		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
+			schTbls := raw.(*schemaTables)
+			_, ok = schTbls.tables[itm.tableName.L]
+			return ok
+		}
+		return false
+	}
+
+	key := tableCacheKey{itm.tableID, itm.schemaVersion}
+	tbl, found := is.tableCache.Get(key)
+	return found && tbl != nil
+}
+
 // IsSpecialDB tells whether the database is a special database.
 func IsSpecialDB(dbName string) bool {
 	return dbName == util.InformationSchemaName.L ||
@@ -1403,7 +1428,7 @@ func (b *bundleInfoBuilder) updateInfoSchemaBundlesV2(is *infoschemaV2) {
 }
 
 func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
-	if len(b.updatePolicies) == 0 && len(b.updatePartitions) == 0 {
+	if len(b.updatePolicies) == 0 {
 		return
 	}
 
@@ -1414,14 +1439,6 @@ func (b *bundleInfoBuilder) completeUpdateTablesV2(is *infoschemaV2) {
 			if tblInfo.PlacementPolicyRef != nil {
 				if _, ok := b.updatePolicies[tblInfo.PlacementPolicyRef.ID]; ok {
 					b.markTableBundleShouldUpdate(tblInfo.ID)
-				}
-			}
-
-			if tblInfo.Partition != nil {
-				for _, par := range tblInfo.Partition.Definitions {
-					if _, ok := b.updatePartitions[par.ID]; ok {
-						b.markTableBundleShouldUpdate(tblInfo.ID)
-					}
 				}
 			}
 		}

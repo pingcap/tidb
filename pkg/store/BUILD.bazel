@@ -2,15 +2,23 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "store",
-    srcs = ["store.go"],
+    srcs = [
+        "etcd.go",
+        "store.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/store",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/pdpb",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//backoff",
+        "@org_golang_google_grpc//keepalive",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -20,12 +28,13 @@ go_test(
     timeout = "short",
     srcs = [
         "batch_coprocessor_test.go",
+        "etcd_test.go",
         "main_test.go",
         "store_test.go",
     ],
     embed = [":store"],
     flaky = True,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/domain",
         "//pkg/kv",

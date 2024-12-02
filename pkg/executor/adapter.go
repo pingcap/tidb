@@ -598,6 +598,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	if a.isSelectForUpdate {
 		if sctx.GetSessionVars().UseLowResolutionTSO() {
+			terror.Log(exec.Close(e))
 			return nil, errors.New("can not execute select for update statement when 'tidb_low_resolution_tso' is set")
 		}
 		// Special handle for "select for update statement" in pessimistic transaction.
@@ -614,6 +615,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	var txnStartTS uint64
 	txn, err := sctx.Txn(false)
 	if err != nil {
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 	if txn.Valid() {
@@ -657,7 +659,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
-		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
