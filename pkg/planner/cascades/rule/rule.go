@@ -28,7 +28,7 @@ type Rule interface {
 	ID() uint
 
 	// String implements the fmt.Stringer interface, used for rule tracing process.
-	String(writer util.IBufStrWriter)
+	String(writer util.StrBufferWriter)
 
 	// Pattern return the initialized pattern of a specific rule when it created.
 	Pattern() *pattern.Pattern
@@ -67,7 +67,7 @@ func (*BaseRule) ID() uint {
 }
 
 // String implements Rule interface
-func (r *BaseRule) String(writer util.IBufStrWriter) {
+func (r *BaseRule) String(writer util.StrBufferWriter) {
 	writer.WriteString(r.tp.String())
 }
 
