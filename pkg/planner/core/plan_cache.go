@@ -134,8 +134,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
 		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
 		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
-			logutil.BgLogger().Warn("schema version not match", zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
+			logutil.BgLogger().Warn("schema version not match", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.Uint64("tbl", tbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
 			schemaNotMatch = true
+		}
+		if newTbl.Meta().Name.L == "sbtest1" || newTbl.Meta().Name.L == "sbtest2" {
+			logutil.BgLogger().Warn("schema version check", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.Uint64("tbl", tbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
 		}
 		stmt.tbls[i] = newTbl
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision

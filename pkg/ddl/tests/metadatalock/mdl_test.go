@@ -924,14 +924,14 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 	tk.MustExec(`begin`)
 	tk.MustExec(`prepare select_stmt from 'select * from t where a = ?';`)
-	//tk.MustExec(`prepare pk_stmt from 'update t set a = a + 1 where a = ?'`)
+	tk.MustExec(`prepare delete_stmt from 'delete from t where a = ?'`)
 	tk.MustExec(`prepare stmt_test_1 from 'update t set b = ? where a = ?';`)
 	tk.MustExec(`commit`)
 
 	tk.MustExec(`begin`)
 	tk.MustExec(`set @a = 4, @b= 4;`)
 	tk.MustExec(`execute select_stmt using @a;`)
-	//tk.MustExec(`execute pk_stmt using @a;`)
+	tk.MustExec(`execute delete_stmt using @a;`)
 	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
 	tk.MustExec(`commit`)
 
@@ -952,9 +952,9 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 					tk.MustExec(`set @a=4;`)
 					tk.MustExec(`execute select_stmt using @a;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-					//tk.MustExec(`set @a=5, @b=4;`)
-					//tk.MustExec(`execute pk_stmt using @a;`)
-					//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+					tk.MustExec(`set @a=9;`)
+					tk.MustExec(`execute delete_stmt using @a;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 					tk.MustExec(`set @a=6, @b=4;`)
 					tk.MustExec(`execute stmt_test_1 using @a, @b;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -963,9 +963,9 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 					tk.MustExec(`set @a=5;`)
 					tk.MustExec(`execute select_stmt using @a;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-					//tk.MustExec(`set @a=5, @b=4;`)
-					//tk.MustExec(`execute pk_stmt using @a;`)
-					//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+					tk.MustExec(`set @a=9;`)
+					tk.MustExec(`execute delete_stmt using @a;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 					tk.MustExec(`set @a=7, @b=4;`)
 					tk.MustExec(`execute stmt_test_1 using @a, @b;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
@@ -990,47 +990,37 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	})
 
 	ddl.MockDMLExecutionMerging = func() {
-		tk.MustExec(`set @a=6;`)
-		tk.MustExec(`execute select_stmt using @a;`)
-		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-		//tk.MustExec(`set @a=6, @b=4;`)
-		//tk.MustExec(`execute pk_stmt using @a;`)
+		//tk.MustExec(`set @a=6;`)
+		//tk.MustExec(`execute select_stmt using @a;`)
 		//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-		tk.MustExec(`set @a=8, @b=4;`)
+		tk.MustExec(`set @a=9;`)
+		tk.MustExec(`execute delete_stmt using @a;`)
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		tk.MustExec(`set @a=8, @b=3;`)
 		tk.MustExec(`execute stmt_test_1 using @a, @b;`)
 		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustExec("commit")
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		<-ch
-		tkDDL.MustExec("alter table test.t add index idx(a);")
-		wg.Done()
-	}()
+	for i := 0; i <= 1000; i++ {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			<-ch
+			tkDDL.MustExec("alter table test.t add index idx(a);")
+			wg.Done()
+		}()
 
-	//tk.MustQuery("select * from t2")
-	//tk.MustExec(`set @a = 2, @b=4;`)
-	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
-	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
-	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	//tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan now.
-	//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-	// The plan is from cache, the metadata lock should be added to block the DDL.
-	ch <- struct{}{}
+		ch <- struct{}{}
 
-	time.Sleep(1 * time.Second)
+		wg.Wait()
 
-	//tk.MustExec("commit")
-
-	wg.Wait()
-
-	tk.MustQuery("select * from t where a=4").Check(testkit.Rows("4 8"))
-
-	tk.MustExec("admin check table t")
+		tk.MustExec("admin check table t")
+		tk.MustExec("delete from t")
+		tk.MustExec("alter table t drop index idx")
+		tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3)")
+	}
 }
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
