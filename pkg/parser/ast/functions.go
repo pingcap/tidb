@@ -327,7 +327,8 @@ const (
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
 
-	ToChar = "to_char"
+	ToChar     = "to_char"
+	DateToChar = "date_to_char"
 
 	// json functions
 	JSONType          = "json_type"
