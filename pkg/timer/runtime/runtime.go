@@ -18,11 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-<<<<<<< HEAD
-=======
-	"maps"
 	"slices"
->>>>>>> 69e8fdb60b5 (timer: make sure timer which has a max delay will be scheduled first (#57067))
 	"sync"
 	"time"
 
