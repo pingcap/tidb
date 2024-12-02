@@ -945,7 +945,7 @@ func (h SchemaHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		handler.WriteError(w, err)
 		return
 	}
-
+	return
 	// parse params
 	params := mux.Vars(req)
 
