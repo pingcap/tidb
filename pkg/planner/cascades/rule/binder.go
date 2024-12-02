@@ -198,7 +198,7 @@ func match(p *pattern.Pattern, gE *memo.GroupExpression) bool {
 // pinned G1, then iterate G2's equivalent expression to find the matched Join(e2) like we say, next we got
 // a concrete expression: Join(G1, Join(G3, G4)), then we can apply the join associativity rule to transform
 // the expression to Join(Join(G1, G3), G4) or other forms.
-func (b *Binder) Next() bool {
+func (b *Binder) Next() base.LogicalPlan {
 	var ok bool
 	for {
 		// when non-first time loop here, we should reset traceID back to -1.
@@ -218,10 +218,16 @@ func (b *Binder) Next() bool {
 			break
 		}
 	}
-	return ok
+	if ok {
+		return b.holder
+	}
+	return nil
 }
 
 // dfsMatch tries to match the pattern with the group expression and input groups recursively.
+// currently the LogicalPlan interface ref can point to concrete logical operator or group expression.
+// Note: the setChild function impl only affect logicalOp's and GE-embedded logicalOp's children setting,
+// not the group expression generic child group inputs.
 func (b *Binder) dfsMatch(p *pattern.Pattern, parentHolder base.LogicalPlan) bool {
 	gE := parentHolder.(*memo.GroupExpression)
 	// quick return for nil group expression, which may come from the upper pickGroupExpression exhaustion.
