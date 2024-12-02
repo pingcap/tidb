@@ -37,7 +37,11 @@ import (
 // If a field is not tagged, then it will be skipped.
 func GenHash64Equals4LogicalOps() ([]byte, error) {
 	var structures = []any{logicalop.LogicalJoin{}, logicalop.LogicalAggregation{}, logicalop.LogicalApply{},
-		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{}}
+		logicalop.LogicalExpand{}, logicalop.LogicalLimit{}, logicalop.LogicalMaxOneRow{}, logicalop.DataSource{},
+		logicalop.LogicalMemTable{}, logicalop.LogicalUnionAll{}, logicalop.LogicalPartitionUnionAll{}, logicalop.LogicalProjection{},
+		logicalop.LogicalSelection{}, logicalop.LogicalSequence{}, logicalop.LogicalShow{}, logicalop.LogicalShowDDLJobs{},
+		logicalop.LogicalSort{}, logicalop.LogicalTableDual{}, logicalop.LogicalTopN{}, logicalop.LogicalUnionScan{}, logicalop.LogicalWindow{},
+	}
 	c := new(cc)
 	c.write(codeGenHash64EqualsPrefix)
 	for _, s := range structures {
@@ -125,6 +129,32 @@ func logicalOpName2PlanCodecString(name string) string {
 		return "plancodec.TypeMaxOneRow"
 	case "DataSource":
 		return "plancodec.TypeDataSource"
+	case "LogicalMemTable":
+		return "plancodec.TypeMemTableScan"
+	case "LogicalUnionAll":
+		return "plancodec.TypeUnion"
+	case "LogicalPartitionUnionAll":
+		return "plancodec.TypePartitionUnion"
+	case "LogicalProjection":
+		return "plancodec.TypeProj"
+	case "LogicalSelection":
+		return "plancodec.TypeSel"
+	case "LogicalSequence":
+		return "plancodec.TypeSequence"
+	case "LogicalShow":
+		return "plancodec.TypeShow"
+	case "LogicalShowDDLJobs":
+		return "plancodec.TypeShowDDLJobs"
+	case "LogicalSort":
+		return "plancodec.TypeSort"
+	case "LogicalTableDual":
+		return "plancodec.TypeDual"
+	case "LogicalTopN":
+		return "plancodec.TypeTopN"
+	case "LogicalUnionScan":
+		return "plancodec.TypeUnionScan"
+	case "LogicalWindow":
+		return "plancodec.TypeWindow"
 	default:
 		return ""
 	}

@@ -252,27 +252,3 @@ func TestJobNeedGC(t *testing.T) {
 		}}}
 	require.True(t, ddl.JobNeedGC(job))
 }
-
-func TestUsingReorgCtx(t *testing.T) {
-	_, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	d := domain.DDL()
-
-	wg := util.WaitGroupWrapper{}
-	wg.Run(func() {
-		jobID := int64(1)
-		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
-			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
-			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
-		}
-	})
-	wg.Run(func() {
-		jobID := int64(1)
-		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
-			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
-			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
-		}
-	})
-	wg.Wait()
-}

@@ -1239,7 +1239,7 @@ func checkConstraintNamesNotExists(t *meta.Mutator, schemaID int64, constraints 
 	if len(constraints) == 0 {
 		return nil
 	}
-	tbInfos, err := t.ListTables(schemaID)
+	tbInfos, err := t.ListTables(context.Background(), schemaID)
 	if err != nil {
 		return err
 	}

@@ -67,6 +67,9 @@ func (t testHeapObject) RegisterSuccessHook(hook SuccessJobHook) {
 func (t testHeapObject) RegisterFailureHook(hook FailureJobHook) {
 	panic("implement me")
 }
+func (t testHeapObject) AsJSON() statstypes.AnalysisJobJSON {
+	panic("implement me")
+}
 func (t testHeapObject) String() string {
 	panic("implement me")
 }

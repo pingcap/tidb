@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type keyType int
@@ -48,7 +49,7 @@ type Manager interface {
 	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// GetEncodedPassword shows the encoded password for user.
-	GetEncodedPassword(user, host string) string
+	GetEncodedPassword(ctx context.Context, user, host string) string
 
 	// RequestVerification verifies user privilege for the request.
 	// If table is "", only check global/db scope privileges.
@@ -92,7 +93,7 @@ type Manager interface {
 	MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (string, string, bool)
 
 	// MatchUserResourceGroupName matches a user with specified resource group name
-	MatchUserResourceGroupName(resourceGroupName string) (string, bool)
+	MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (string, bool)
 
 	// DBIsVisible returns true is the database is visible to current user.
 	DBIsVisible(activeRole []*auth.RoleIdentity, db string) bool

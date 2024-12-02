@@ -238,8 +238,12 @@ func TestClearReorgIntermediateInfo(t *testing.T) {
 }
 
 func TestTTLDefaultJobInterval(t *testing.T) {
-	// test const `DefaultJobIntervalStr` and `DefaultJobInterval` are consistent.
-	d, err := duration.ParseDuration(DefaultJobIntervalStr)
+	// test default value of `DefaultTTLJobInterval` is valid.
+	d, err := duration.ParseDuration(DefaultTTLJobInterval)
 	require.NoError(t, err)
-	require.Equal(t, DefaultJobInterval, d)
+	require.Equal(t, 24*time.Hour, d)
+	// test default value of `OldDefaultTTLJobInterval` is valid.
+	d, err = duration.ParseDuration(OldDefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, d)
 }
