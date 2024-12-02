@@ -55,6 +55,34 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	return count, modifyCount, false, nil
 }
 
+// HistMetaFromStorageWithHighPriority reads the meta info of the histogram from the storage.
+func HistMetaFromStorageWithHighPriority(sctx sessionctx.Context, item *model.TableItemID, possibleColInfo *model.ColumnInfo) (*statistics.Histogram, *types.Datum, int64, int64, error) {
+	isIndex := 0
+	var tp *types.FieldType
+	if item.IsIndex {
+		isIndex = 1
+		tp = types.NewFieldType(mysql.TypeBlob)
+	} else {
+		tp = &possibleColInfo.FieldType
+	}
+	rows, _, err := util.ExecRows(sctx,
+		"select high_priority distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?",
+		item.TableID,
+		item.ID,
+		isIndex,
+	)
+	if err != nil {
+		return nil, nil, 0, 0, err
+	}
+	if len(rows) == 0 {
+		return nil, nil, 0, 0, nil
+	}
+	hist := statistics.NewHistogram(item.ID, rows[0].GetInt64(0), rows[0].GetInt64(2), rows[0].GetUint64(1), tp, chunk.InitialCapacity, rows[0].GetInt64(3))
+	hist.Correlation = rows[0].GetFloat64(5)
+	lastPos := rows[0].GetDatum(7, types.NewFieldType(mysql.TypeBlob))
+	return hist, &lastPos, rows[0].GetInt64(4), rows[0].GetInt64(6), nil
+}
+
 // HistogramFromStorage reads histogram from storage.
 func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
 	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)

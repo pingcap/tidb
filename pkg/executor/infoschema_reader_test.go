@@ -907,3 +907,29 @@ func newGetTiFlashSystemTableRequestMocker(t *testing.T) *getTiFlashSystemTableR
 		t:        t,
 	}
 }
+
+func TestIssue57345(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.tables where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.tables where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.partitions where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.partitions where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.statistics where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';").
+		Check(testkit.Rows())
+	tk.MustQuery("select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';").
+		Check(testkit.Rows())
+}
