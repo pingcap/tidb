@@ -7414,6 +7414,10 @@ func TestTrafficStmt(t *testing.T) {
 		require.Len(t, stmts, 1)
 		v, ok := stmts[0].(*ast.TrafficStmt)
 		require.True(t, ok)
+		switch v.OpType {
+		case ast.TrafficOpCapture, ast.TrafficOpReplay:
+			require.Equal(t, "/tmp", v.Dir)
+		}
 		sb.Reset()
 		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
 		err = v.Restore(ctx)
