@@ -7373,32 +7373,33 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, v.Analyze)
 }
 
-func TestTrafficReplayerStmt(t *testing.T) {
+func TestTrafficStmt(t *testing.T) {
 	table := []testCase{
-		{"traffic replayer capture output='/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC REPLAYER CAPTURE OUTPUT = '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
-		{"traffic replayer capture output '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC REPLAYER CAPTURE OUTPUT = '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
-		{"traffic replayer capture duration='1s' encryption_method='aes' output='/tmp'", true, "TRAFFIC REPLAYER CAPTURE DURATION = '1s' ENCRYPTION_METHOD = 'aes' OUTPUT = '/tmp'"},
-		{"traffic replayer capture duration='1m'", true, "TRAFFIC REPLAYER CAPTURE DURATION = '1m'"},
-		{"traffic replayer capture duration='1'", false, ""},
-		{"traffic replayer capture duration=1s", false, ""},
-		{"traffic replayer capture compress='true'", false, ""},
-		{"traffic replayer capture input='/tmp'", false, ""},
-		{"traffic replayer capture", false, ""},
-		{"traffic replayer replay input='/tmp' user='root' password='123456' speed=1.0", true, "TRAFFIC REPLAYER REPLAY INPUT = '/tmp' USERNAME = 'root' PASSWORD = '123456' SPEED = 1.0"},
-		{"traffic replayer replay input '/tmp' user 'root' password '123456' speed 1.0", true, "TRAFFIC REPLAYER REPLAY INPUT = '/tmp' USERNAME = 'root' PASSWORD = '123456' SPEED = 1.0"},
-		{"traffic replayer replay user='root' input='/tmp'", true, "TRAFFIC REPLAYER REPLAY USERNAME = 'root' INPUT = '/tmp'"},
-		{"traffic replayer replay speed=1", true, "TRAFFIC REPLAYER REPLAY SPEED = 1"},
-		{"traffic replayer replay speed=0.5", true, "TRAFFIC REPLAYER REPLAY SPEED = 0.5"},
-		{"traffic replayer replay speed=-1", false, ""},
-		{"traffic replayer replay", false, ""},
-		{"traffic replayer show jobs", true, "TRAFFIC REPLAYER SHOW JOBS"},
-		{"traffic replayer show jobs input='/tmp'", false, ""},
-		{"traffic replayer show", false, ""},
-		{"traffic replayer cancel jobs", true, "TRAFFIC REPLAYER CANCEL JOBS"},
-		{"traffic replayer cancel jobs input='/tmp'", false, ""},
-		{"traffic replayer cancel", false, ""},
-		{"traffic replayer test", false, ""},
-		{"traffic replayer", false, ""},
+		{"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' encryption_method='aes' duration='1s'", true, "TRAFFIC CAPTURE TO '/tmp' ENCRYPTION_METHOD = 'aes' DURATION = '1s'"},
+		{"traffic capture to '/tmp' duration='1m'", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1m'"},
+		{"traffic capture to '/tmp' duration='1'", false, ""},
+		{"traffic capture to '/tmp' duration=1s", false, ""},
+		{"traffic capture to '/tmp' compress='true'", false, ""},
+		{"traffic capture duration='1m'", false, ""},
+		{"traffic capture", false, ""},
+		{"traffic replay from '/tmp' user='root' password='123456' speed=1.0", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0"},
+		{"traffic replay from '/tmp' user 'root' password '123456' speed 1.0", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0"},
+		{"traffic replay from '/tmp' speed 1.0 user='root'", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1.0 USER = 'root'"},
+		{"traffic replay from '/tmp' speed=1", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1"},
+		{"traffic replay from '/tmp' speed=0.5", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 0.5"},
+		{"traffic replay from '/tmp' speed=-1", false, ""},
+		{"traffic replay speed=1", false, ""},
+		{"traffic replay", false, ""},
+		{"show traffic jobs", true, "SHOW TRAFFIC JOBS"},
+		{"show traffic jobs duration='1m'", false, ""},
+		{"show traffic", false, ""},
+		{"cancel traffic jobs", true, "CANCEL TRAFFIC JOBS"},
+		{"cancel traffic jobs duration='1m'", false, ""},
+		{"cancel traffic", false, ""},
+		{"traffic test", false, ""},
+		{"traffic", false, ""},
 	}
 
 	p := parser.New()
@@ -7411,7 +7412,7 @@ func TestTrafficReplayerStmt(t *testing.T) {
 		}
 		require.NoError(t, err, tbl.src)
 		require.Len(t, stmts, 1)
-		v, ok := stmts[0].(*ast.TrafficReplayerStmt)
+		v, ok := stmts[0].(*ast.TrafficStmt)
 		require.True(t, ok)
 		sb.Reset()
 		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
