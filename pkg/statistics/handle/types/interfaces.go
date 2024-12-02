@@ -147,7 +147,7 @@ type IndicatorsJSON struct {
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 // We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
-// Because the currently auto analyze' scheduling needs the whole information.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
