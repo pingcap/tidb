@@ -381,21 +381,25 @@ func TestShrinkScanWorkerTimeout(t *testing.T) {
 	isc := cache.NewInfoSchemaCache(time.Minute)
 	require.NoError(t, isc.Update(se))
 	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-1", store)
+
+	startBlockNotifyCh := make(chan struct{})
+	blockCancelCh := make(chan struct{})
+
 	workers := []ttlworker.Worker{}
 	for j := 0; j < 4; j++ {
 		scanWorker := ttlworker.NewMockScanWorker(t)
+		if j == 0 {
+			scanWorker.SetCtx(func(ctx context.Context) context.Context {
+				return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
+					startBlockNotifyCh <- struct{}{}
+					<-blockCancelCh
+				})
+			})
+		}
 		scanWorker.Start()
 		workers = append(workers, scanWorker)
 	}
 
-	startBlockNotifyCh := make(chan struct{})
-	blockCancelCh := make(chan struct{})
-	workers[0].(ttlworker.WorkerTestExt).SetCtx(func(ctx context.Context) context.Context {
-		return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
-			startBlockNotifyCh <- struct{}{}
-			<-blockCancelCh
-		})
-	})
 	m.SetScanWorkers4Test(workers)
 
 	m.RescheduleTasks(se, now)
