@@ -16,8 +16,8 @@ package join
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
@@ -30,8 +30,8 @@ type XFJoinToApply struct {
 
 // NewJoinToApply creates a new JoinToApply rule.
 func NewJoinToApply() *XFJoinToApply {
-	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly)
-	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandJoin, pattern.EngineTiDBOnly))
+	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineTiDBOnly)
+	pa.SetChildren(pattern2.NewPattern(pattern2.OperandAny, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineTiDBOnly))
 	return &XFJoinToApply{
 		BaseRule: rule.NewBaseRule(rule.XFJoinToApply, pa),
 	}

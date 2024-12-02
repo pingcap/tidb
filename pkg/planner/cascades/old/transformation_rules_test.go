@@ -16,6 +16,7 @@ package old
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )

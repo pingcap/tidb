@@ -16,8 +16,7 @@ package memo
 
 import (
 	"container/list"
-
-	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 )
 
 // ExprIter enumerates all the equivalent expressions in the Group according to

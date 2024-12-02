@@ -11,7 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/cascades/memo",
-        "//pkg/planner/pattern",
+        "//pkg/planner/cascades/pattern",
         "//pkg/sessionctx",
     ],
 )
@@ -26,9 +26,9 @@ go_test(
     deps = [
         "//pkg/parser/model",
         "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/pattern",
         "//pkg/planner/core",
         "//pkg/planner/core/operator/logicalop",
-        "//pkg/planner/pattern",
         "@com_github_stretchr_testify//require",
     ],
 )
