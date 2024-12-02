@@ -166,7 +166,7 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se)
+		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -284,7 +284,10 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		log.Info("[Compacted SST Restore] No SST files found for restoration.")
 		return nil
 	}
-	importModeSwitcher.SwitchToImportMode(ctx)
+	err := importModeSwitcher.GoSwitchToImportMode(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	defer func() {
 		switchErr := importModeSwitcher.SwitchToNormalMode(ctx)
 		if switchErr != nil {
@@ -298,11 +301,9 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	for _, i := range backupFileSets {
-		err := rc.sstRestoreManager.restorer.GoRestore(onProgress, []restore.BackupFileSet{i})
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return rc.sstRestoreManager.restorer.WaitUntilFinish()
 }

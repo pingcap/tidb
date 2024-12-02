@@ -30,11 +30,31 @@ import (
 type RestoreKeyType = int64
 type RestoreValueType struct {
 	// the file key of a range
-	RangeKey string
+	RangeKey string `json:"range-key,omitempty"`
+	// the file name, used for compacted restore
+	Name string `json:"name,omitempty"`
 }
 
-func (rv RestoreValueType) IdentKey() []byte {
-	return []byte(rv.RangeKey)
+type CheckpointItem struct {
+	tableID RestoreKeyType
+	// used for table full backup restore
+	rangeKey string
+	// used for table raw/txn/compacted SST restore
+	name string
+}
+
+func NewCheckpointRangeKeyItem(tableID RestoreKeyType, rangeKey string) *CheckpointItem {
+	return &CheckpointItem{
+		tableID:  tableID,
+		rangeKey: rangeKey,
+	}
+}
+
+func NewCheckpointFileItem(tableID RestoreKeyType, fileName string) *CheckpointItem {
+	return &CheckpointItem{
+		tableID: tableID,
+		name:    fileName,
+	}
 }
 
 func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType]) ([]byte, error) {
@@ -45,11 +65,12 @@ func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 	tick time.Duration,
 	retryDuration time.Duration,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		newTableCheckpointStorage(se, dbName),
 		nil, valueMarshalerForRestore)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, 0, retryDuration)
@@ -60,9 +81,10 @@ func StartCheckpointRestoreRunnerForTest(
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
 	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, SnapshotRestoreCheckpointDatabaseName),
+		newTableCheckpointStorage(se, dbName),
 		nil, valueMarshalerForRestore)
 
 	// for restore, no need to set lock
@@ -75,25 +97,33 @@ func StartCheckpointRunnerForRestore(
 func AppendRangesForRestore(
 	ctx context.Context,
 	r *CheckpointRunner[RestoreKeyType, RestoreValueType],
-	tableID RestoreKeyType,
-	rangeKey string,
+	c *CheckpointItem,
 ) error {
+	var group RestoreValueType
+	if len(c.rangeKey) != 0 {
+		group.RangeKey = c.rangeKey
+	} else if len(c.name) != 0 {
+		group.Name = c.name
+	} else {
+		return errors.New("either rangekey or name should be used in checkpoint append")
+	}
 	return r.Append(ctx, &CheckpointMessage[RestoreKeyType, RestoreValueType]{
-		GroupKey: tableID,
+		GroupKey: c.tableID,
 		Group: []RestoreValueType{
-			{RangeKey: rangeKey},
+			group,
 		},
 	})
 }
 
 // load the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
-func LoadCheckpointDataForSnapshotRestore[K KeyType, V ValueType](
+func LoadCheckpointDataForSstRestore[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	dbName string,
 	fn func(K, V),
 ) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, fn)
+	return selectCheckpointData(ctx, execCtx, dbName, fn)
 }
 
 func LoadCheckpointChecksumForRestore(
@@ -118,28 +148,33 @@ func LoadCheckpointMetadataForSnapshotRestore(
 	return m, err
 }
 
-func SaveCheckpointMetadataForSnapshotRestore(
+func SaveCheckpointMetadataForSstRestore(
 	ctx context.Context,
 	se glue.Session,
+	dbName string,
 	meta *CheckpointMetadataForSnapshotRestore,
 ) error {
-	err := initCheckpointTable(ctx, se, SnapshotRestoreCheckpointDatabaseName,
+	err := initCheckpointTable(ctx, se, dbName,
 		[]string{checkpointDataTableName, checkpointChecksumTableName})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return insertCheckpointMeta(ctx, se, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
+	if meta != nil {
+		return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
+	}
+	return nil
 }
 
-func ExistsSnapshotRestoreCheckpoint(
+func ExistsSstRestoreCheckpoint(
 	ctx context.Context,
 	dom *domain.Domain,
+	dbName string,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(SnapshotRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointMetaTableName))
 }
 
-func RemoveCheckpointDataForSnapshotRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
-	return dropCheckpointTables(ctx, dom, se, SnapshotRestoreCheckpointDatabaseName,
+func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {
+	return dropCheckpointTables(ctx, dom, se, dbName,
 		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
 }

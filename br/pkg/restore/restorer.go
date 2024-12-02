@@ -203,7 +203,16 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 					if err != nil {
 						return errors.Trace(err)
 					}
-					// TODO handle checkpoint
+					if s.checkpointRunner != nil {
+						// The checkpoint shows this ranges of files has been restored into
+						// the table corresponding to the table-id.
+						for _, f := range set.SSTFiles {
+							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
+								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								return errors.Trace(err)
+							}
+						}
+					}
 					return nil
 				})
 		}
@@ -302,7 +311,8 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner,
+							checkpoint.NewCheckpointRangeKeyItem(filesGroup.TableID, rangeKey)); err != nil {
 							return errors.Trace(err)
 						}
 					}
@@ -317,9 +327,11 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 	return m.ectx.Err()
 }
 
+// GetFileRangeKey is used to reduce the checkpoint number, because we combine the write cf/default cf into one restore file group.
+// during full restore, so we can reduce the checkpoint number with the common prefix of the file.
 func GetFileRangeKey(f string) string {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
+	// so we need to compare without the `_{cf}.sst` suffix
 	idx := strings.LastIndex(f, "_")
 	if idx < 0 {
 		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
