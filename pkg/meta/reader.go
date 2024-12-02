@@ -15,6 +15,8 @@
 package meta
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/structure"
@@ -25,7 +27,7 @@ type Reader interface {
 	GetDatabase(dbID int64) (*model.DBInfo, error)
 	ListDatabases() ([]*model.DBInfo, error)
 	GetTable(dbID int64, tableID int64) (*model.TableInfo, error)
-	ListTables(dbID int64) ([]*model.TableInfo, error)
+	ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error)
 	ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error)
 	IterTables(dbID int64, fn func(info *model.TableInfo) error) error
 	GetAutoIDAccessors(dbID, tableID int64) AutoIDAccessors
