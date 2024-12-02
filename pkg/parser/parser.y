@@ -15782,7 +15782,7 @@ PlanReplayerDumpOpt:
 
 /********************************************************************
  *
- * Traffic Replayer Statement
+ * Traffic Statement
  *
  * Examples:
  * TRAFFIC CAPTURE TO "/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
