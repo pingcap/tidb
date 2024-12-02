@@ -297,7 +297,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 	return matches
 }
 
-// IsSubsetOf check if the keys can match the needs of partition.
+// IsSubset check if the keys can match the needs of partition.
 func (p *PhysicalProperty) IsSubset(keys []*MPPPartitionColumn) bool {
 	if len(p.MPPPartitionCols) > len(keys) {
 		return false
