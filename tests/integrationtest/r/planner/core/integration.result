@@ -286,7 +286,7 @@ insert into t2 values(1,1),(2,2),(3,3),(4,4),(5,5);
 analyze table t1, t2;
 explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexJoin	2.00	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__integration.t2.a, inner key:planner__core__integration.t1.a, equal cond:eq(planner__core__integration.t2.a, planner__core__integration.t1.a)
+IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__integration.t2.a, inner key:planner__core__integration.t1.a, equal cond:eq(planner__core__integration.t2.a, planner__core__integration.t1.a)
 ├─TableReader(Build)	5.00	root		data:TableFullScan
 │ └─TableFullScan	5.00	cop[tikv]	table:t2	keep order:false
 └─IndexLookUp(Probe)	2.00	root		
@@ -3667,7 +3667,7 @@ Selection	1.67	root		gt(planner__core__integration.t1.b, 1)
 └─Batch_Point_Get	5.00	root	table:t1	handle:[10 20 30 40 50], keep order:false, desc:false
 explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
 id	estRows	task	access object	operator info
-HashJoin	6.24	root		inner join, left side:Selection, equal:[eq(planner__core__integration.t1.b, planner__core__integration.t2.c)]
+HashJoin	6.24	root		inner join, equal:[eq(planner__core__integration.t1.b, planner__core__integration.t2.c)]
 ├─Selection(Build)	5.00	root		not(isnull(planner__core__integration.t1.b))
 │ └─Batch_Point_Get	5.00	root	table:t1	handle:[10 20 30 40 50], keep order:false, desc:false
 └─TableReader(Probe)	9990.00	root		data:Selection
@@ -3683,7 +3683,7 @@ Level	Code	Message
 Warning	1105	Memory capacity of 10 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 explain format='brief' select * from t1 join t2 on t1.b = t2.c where t1.a in (10, 20, 30, 40, 50);
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		inner join, left side:TableReader, equal:[eq(planner__core__integration.t1.b, planner__core__integration.t2.c)]
+HashJoin	10000.00	root		inner join, equal:[eq(planner__core__integration.t1.b, planner__core__integration.t2.c)]
 ├─TableReader(Build)	8000.00	root		data:Selection
 │ └─Selection	8000.00	cop[tikv]		not(isnull(planner__core__integration.t2.c))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -3716,7 +3716,7 @@ Warning	1105	Memory capacity of 1000 bytes for 'tidb_opt_range_max_size' exceede
 set @@tidb_opt_range_max_size=0;
 explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-HashJoin	1.12	root		inner join, left side:IndexLookUp, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
+HashJoin	1.12	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
 ├─IndexLookUp(Build)	0.90	root		
 │ ├─IndexRangeScan(Build)	0.90	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa" "dd","aa" "dd"], ["aa" "ee","aa" "ee"], ["aa" "ff","aa" "ff"], ["bb" "dd","bb" "dd"], ["bb" "ee","bb" "ee"], ["bb" "ff","bb" "ff"], ["cc" "dd","cc" "dd"], ["cc" "ee","cc" "ee"], ["cc" "ff","cc" "ff"], keep order:false, stats:pseudo
 │ └─Selection(Probe)	0.90	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))
@@ -3727,7 +3727,7 @@ HashJoin	1.12	root		inner join, left side:IndexLookUp, equal:[eq(planner__core__
 set @@tidb_opt_range_max_size=1000;
 explain format='brief' select * from t1 join t2 on t1.c = t2.d where a in ('aaa', 'bbb', 'ccc') and b in ('ddd', 'eee', 'fff');
 id	estRows	task	access object	operator info
-HashJoin	0.11	root		inner join, left side:IndexLookUp, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
+HashJoin	0.11	root		inner join, equal:[eq(planner__core__integration.t1.c, planner__core__integration.t2.d)]
 ├─IndexLookUp(Build)	0.09	root		
 │ ├─IndexRangeScan(Build)	30.00	cop[tikv]	table:t1, index:idx_a_b(a, b)	range:["aa","aa"], ["bb","bb"], ["cc","cc"], keep order:false, stats:pseudo
 │ └─Selection(Probe)	0.09	cop[tikv]		in(planner__core__integration.t1.a, "aaa", "bbb", "ccc"), in(planner__core__integration.t1.b, "ddd", "eee", "fff"), not(isnull(planner__core__integration.t1.c))

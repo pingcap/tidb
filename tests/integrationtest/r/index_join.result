@@ -10,7 +10,7 @@ set session tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 Projection	5.00	root		index_join.t1.a, index_join.t1.b, index_join.t2.a, index_join.t2.b
-└─IndexJoin	5.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
+└─IndexJoin	5.00	root		inner join, inner:IndexLookUp, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(index_join.t2.a))
   │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
@@ -21,7 +21,7 @@ Projection	5.00	root		index_join.t1.a, index_join.t1.b, index_join.t2.a, index_j
 explain format = 'brief' select * from t1 join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 Projection	5.00	root		index_join.t1.a, index_join.t1.b, index_join.t2.a, index_join.t2.b
-└─HashJoin	5.00	root		inner join, left side:TableReader, equal:[eq(index_join.t2.a, index_join.t1.a)]
+└─HashJoin	5.00	root		inner join, equal:[eq(index_join.t2.a, index_join.t1.a)]
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(index_join.t2.a))
   │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
@@ -47,7 +47,7 @@ create table t1(a int not null, b int not null, key a(a));
 create table t2(a int not null, b int not null, key a(a));
 explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 where t1.a in (select t2.a from t2);
 id	estRows	task	access object	operator info
-IndexJoin	10000.00	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
+IndexJoin	10000.00	root		inner join, inner:IndexLookUp, outer key:index_join.t2.a, inner key:index_join.t1.a, equal cond:eq(index_join.t2.a, index_join.t1.a)
 ├─StreamAgg(Build)	8000.00	root		group by:index_join.t2.a, funcs:firstrow(index_join.t2.a)->index_join.t2.a
 │ └─IndexReader	10000.00	root		index:IndexFullScan
 │   └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:a(a)	keep order:true, stats:pseudo

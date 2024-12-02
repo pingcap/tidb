@@ -75,7 +75,7 @@ c_int	c_str	c_int	c_str
 explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
 Projection	1.25	root		executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t2.c_str
-└─HashJoin	1.25	root		inner join, left side:TableReader, equal:[eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int)], other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+└─HashJoin	1.25	root		inner join, equal:[eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int)], other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
   ├─TableReader(Build)	1.00	root		data:Selection
   │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
   │   └─TableFullScan	1.00	cop[tikv]	table:t2, partition:p0	keep order:false
@@ -94,7 +94,7 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'brief' select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
-IndexHashJoin	1.25	root		inner join, inner:TableReader, left side:PartitionUnion, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+IndexHashJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─PartitionUnion(Build)	9991.00	root		
 │ ├─TableReader	1.00	root		data:Selection
 │ │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
@@ -110,7 +110,7 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'brief' select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
-IndexJoin	1.25	root		inner join, inner:TableReader, left side:PartitionUnion, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─PartitionUnion(Build)	9991.00	root		
 │ ├─TableReader	1.00	root		data:Selection
 │ │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
@@ -133,7 +133,7 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
-MergeJoin	1.00	root		inner join, left side:TableReader, left key:executor__index_lookup_merge_join.t1.c_int, right key:executor__index_lookup_merge_join.t2.c_int, other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+MergeJoin	1.00	root		inner join, left key:executor__index_lookup_merge_join.t1.c_int, right key:executor__index_lookup_merge_join.t2.c_int, other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
 │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:true
@@ -148,7 +148,7 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'brief' select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
-IndexHashJoin	1.00	root		inner join, inner:TableReader, left side:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+IndexHashJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
 │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
@@ -160,7 +160,7 @@ c_int	c_str	c_int	c_str
 1	Alice	1	Bob
 explain format = 'brief' select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
 id	estRows	task	access object	operator info
-IndexJoin	1.00	root		inner join, inner:TableReader, left side:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+IndexJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
 │   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false

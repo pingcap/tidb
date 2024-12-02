@@ -23,7 +23,7 @@ Projection	5.00	root		Column#22
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#21
-    └─IndexJoin	2.50	root		inner join, inner:TableReader, left side:IndexReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
+    └─IndexJoin	2.50	root		inner join, inner:TableReader, outer key:subquery.t.a, inner key:subquery.t.a, equal cond:eq(subquery.t.a, subquery.t.a)
       ├─IndexReader(Build)	5.00	root		index:IndexRangeScan
       │ └─IndexRangeScan	5.00	cop[tikv]	table:s, index:idx(b, c, d)	range: decided by [eq(subquery.t.b, 1) eq(subquery.t.c, 1) eq(subquery.t.d, subquery.t.a)], keep order:false
       └─TableReader(Probe)	5.00	root		data:TableRangeScan
@@ -32,7 +32,7 @@ drop table if exists t;
 create table t(a int, b int, c int);
 explain format = 'brief' select a from t t1 where t1.a = (select max(t2.a) from t t2 where t1.b=t2.b and t1.c=t2.b);
 id	estRows	task	access object	operator info
-HashJoin	7992.00	root		inner join, left side:TableReader, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column#9)]
+HashJoin	7992.00	root		inner join, equal:[eq(subquery.t.b, subquery.t.b) eq(subquery.t.c, subquery.t.b) eq(subquery.t.a, Column#9)]
 ├─Selection(Build)	6393.60	root		not(isnull(Column#9))
 │ └─HashAgg	7992.00	root		group by:subquery.t.b, funcs:max(Column#10)->Column#9, funcs:firstrow(subquery.t.b)->subquery.t.b
 │   └─TableReader	7992.00	root		data:HashAgg

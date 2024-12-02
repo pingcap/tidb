@@ -65,7 +65,7 @@ Sort	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t.b, plan
 explain FORMAT='brief' select t1.a, t2.a from t t1, t t2 where t1.a=t2.a;
 id	estRows	task	access object	operator info
 Sort	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.a
-└─MergeJoin	12500.00	root		inner join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
+└─MergeJoin	12500.00	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -99,7 +99,7 @@ explain FORMAT='brief' insert into t select t1.a, t2.b, t1.c+t2.c from t t1, t t
 id	estRows	task	access object	operator info
 Insert	N/A	root		N/A
 └─Projection	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#10
-  └─MergeJoin	12500.00	root		inner join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
+  └─MergeJoin	12500.00	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -139,7 +139,7 @@ create table t2 (a int primary key, b int, c int, d int, key(b));
 explain FORMAT='brief' select * from t1 where t1.a in (select b from t2);
 id	estRows	task	access object	operator info
 Sort	9990.00	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
-└─MergeJoin	9990.00	root		inner join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.b
+└─MergeJoin	9990.00	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.b
   ├─StreamAgg(Build)	7992.00	root		group by:planner__core__casetest__rule__rule_result_reorder.t2.b, funcs:firstrow(planner__core__casetest__rule__rule_result_reorder.t2.b)->planner__core__casetest__rule__rule_result_reorder.t2.b
   │ └─IndexReader	7992.00	root		index:StreamAgg
   │   └─StreamAgg	7992.00	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t2.b, 
@@ -212,7 +212,7 @@ explain FORMAT='brief' select t1.* from t1, (select b from t2) tb where t1.b=tb.
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
 └─Sort	12487.50	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.b
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b)]
     ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
     │ └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	9990.00	root		data:Selection
@@ -228,7 +228,7 @@ set @@tidb_enable_outer_join_reorder=true;
 explain FORMAT='brief' select * from t1, t2 where t1.a = t2.a;
 id	estRows	task	access object	operator info
 Sort	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.a, planner__core__casetest__rule__rule_result_reorder.t2.b, planner__core__casetest__rule__rule_result_reorder.t2.c, planner__core__casetest__rule__rule_result_reorder.t2.d
-└─MergeJoin	12500.00	root		inner join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.a
+└─MergeJoin	12500.00	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.a
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -236,7 +236,7 @@ Sort	12500.00	root		planner__core__casetest__rule__rule_result_reorder.t1.a, pla
 explain FORMAT='brief' select * from t1, t2 where t1.a > t2.a and t1.b = t2.b and t1.c < t2.c;
 id	estRows	task	access object	operator info
 Sort	12475.01	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.a, planner__core__casetest__rule__rule_result_reorder.t2.b, planner__core__casetest__rule__rule_result_reorder.t2.c, planner__core__casetest__rule__rule_result_reorder.t2.d
-└─HashJoin	12475.01	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b)], other cond:gt(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a), lt(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c)
+└─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t2.b)], other cond:gt(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a), lt(planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t2.c)
   ├─TableReader(Build)	9980.01	root		data:Selection
   │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_result_reorder.t2.b)), not(isnull(planner__core__casetest__rule__rule_result_reorder.t2.c))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -255,7 +255,7 @@ explain FORMAT='brief' select t1.* from t1 join t2 on t1.a!=t2.a;
 id	estRows	task	access object	operator info
 Projection	100000000.00	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
 └─Sort	100000000.00	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d, planner__core__casetest__rule__rule_result_reorder.t2.a
-  └─HashJoin	100000000.00	root		CARTESIAN inner join, left side:TableReader, other cond:ne(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a)
+  └─HashJoin	100000000.00	root		CARTESIAN inner join, other cond:ne(planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t2.a)
     ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
     │ └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan

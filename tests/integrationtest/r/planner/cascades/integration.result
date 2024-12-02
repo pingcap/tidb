@@ -746,7 +746,7 @@ set session tidb_enable_cascades_planner = 1;
 explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a = t2.a and t1.a > 2;
 id	estRows	task	access object	operator info
 Projection	4166.67	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─MergeJoin	4166.67	root		inner join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+└─MergeJoin	4166.67	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
   ├─TableReader(Build)	3333.33	root		data:TableRangeScan
   │ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
   └─TableReader(Probe)	3333.33	root		data:TableRangeScan
@@ -757,7 +757,7 @@ a	b
 explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a > t2.a and t2.b > 200;
 id	estRows	task	access object	operator info
 Projection	80000000.00	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─HashJoin	80000000.00	root		CARTESIAN inner join, left side:TableReader, other cond:gt(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)
+└─HashJoin	80000000.00	root		CARTESIAN inner join, other cond:gt(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)
   ├─TableReader(Build)	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		gt(planner__cascades__integration.t2.b, 200)
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -796,7 +796,7 @@ a	b
 explain format = 'brief' select t1.a, t1.b from t1, t2 where t1.a = t2.a order by t1.a;
 id	estRows	task	access object	operator info
 Projection	12500.00	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─MergeJoin	12500.00	root		inner join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+└─MergeJoin	12500.00	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -808,7 +808,7 @@ a	b
 3	33
 explain format = 'brief' select * from t1 join t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-MergeJoin	12500.00	root		inner join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+MergeJoin	12500.00	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -820,7 +820,7 @@ a	b	a	b
 3	33	3	333
 explain format = 'brief' select * from t1 join t2 on t1.a = t2.a and t1.a > 2;
 id	estRows	task	access object	operator info
-MergeJoin	4166.67	root		inner join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+MergeJoin	4166.67	root		inner join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
 ├─TableReader(Build)	3333.33	root		data:TableRangeScan
 │ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
 └─TableReader(Probe)	3333.33	root		data:TableRangeScan

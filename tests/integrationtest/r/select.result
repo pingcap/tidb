@@ -402,7 +402,7 @@ create table t(a int, b int);
 explain format = 'brief' select a != any (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(select.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 0)), and(ne(Column#13, 0), if(isnull(select.t.a), <nil>, 1)))->Column#14
-└─HashJoin	10000.00	root		CARTESIAN inner join, left side:TableReader
+└─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
   │ └─Projection	10000.00	root		select.t.a->Column#16, select.t.a->Column#17, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
@@ -412,7 +412,7 @@ Projection	10000.00	root		and(or(or(gt(Column#11, 1), ne(select.t.a, Column#10))
 explain format = 'brief' select a = all (select a from t t2) from t t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		or(and(and(le(Column#11, 1), eq(select.t.a, Column#10)), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(select.t.a), <nil>, 0)))->Column#14
-└─HashJoin	10000.00	root		CARTESIAN inner join, left side:TableReader
+└─HashJoin	10000.00	root		CARTESIAN inner join
   ├─StreamAgg(Build)	1.00	root		funcs:max(Column#16)->Column#10, funcs:count(distinct Column#17)->Column#11, funcs:sum(Column#18)->Column#12, funcs:count(1)->Column#13
   │ └─Projection	10000.00	root		select.t.a->Column#16, select.t.a->Column#17, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#18
   │   └─TableReader	10000.00	root		data:TableFullScan
@@ -556,7 +556,7 @@ explain format = 'brief' select * from t2 left join (t1 left join t3 on t1.a=t3.
 id	estRows	task	access object	operator info
 HashJoin	4.00	root		left outer join, left side:TableReader, equal:[eq(select.t2.a, select.t3.a)]
 ├─Projection(Build)	4.00	root		select.t1.a, select.t1.b, select.t3.a, select.t3.b
-│ └─HashJoin	4.00	root		inner join, left side:TableReader, equal:[eq(select.t3.a, select.t1.a)]
+│ └─HashJoin	4.00	root		inner join, equal:[eq(select.t3.a, select.t1.a)]
 │   ├─TableReader(Build)	2.00	root		data:Selection
 │   │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
 │   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -569,7 +569,7 @@ explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a join t3 on t
 id	estRows	task	access object	operator info
 Projection	4.00	root		select.t2.a, select.t2.b, select.t1.a, select.t1.b, select.t3.a, select.t3.b
 └─HashJoin	4.00	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t1.a)]
-  ├─HashJoin(Build)	2.00	root		inner join, left side:TableReader, equal:[eq(select.t3.b, select.t2.b)]
+  ├─HashJoin(Build)	2.00	root		inner join, equal:[eq(select.t3.b, select.t2.b)]
   │ ├─TableReader(Build)	2.00	root		data:Selection
   │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.b))
   │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -583,7 +583,7 @@ explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a join t3 on 
 id	estRows	task	access object	operator info
 Projection	4.00	root		select.t1.a, select.t1.b, select.t2.a, select.t2.b, select.t3.a, select.t3.b
 └─HashJoin	4.00	root		right outer join, left side:TableReader, equal:[eq(select.t1.a, select.t2.a)]
-  ├─HashJoin(Build)	2.00	root		inner join, left side:TableReader, equal:[eq(select.t3.b, select.t2.b)]
+  ├─HashJoin(Build)	2.00	root		inner join, equal:[eq(select.t3.b, select.t2.b)]
   │ ├─TableReader(Build)	2.00	root		data:Selection
   │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.b))
   │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -597,7 +597,7 @@ explain format = 'brief' select * from t2 right join t3 on t3.a=t2.a right join 
 id	estRows	task	access object	operator info
 HashJoin	4.00	root		right outer join, left side:Projection, equal:[eq(select.t2.a, select.t1.a)]
 ├─Projection(Build)	2.00	root		select.t2.a, select.t2.b, select.t3.a, select.t3.b
-│ └─HashJoin	2.00	root		inner join, left side:TableReader, equal:[eq(select.t3.a, select.t2.a)]
+│ └─HashJoin	2.00	root		inner join, equal:[eq(select.t3.a, select.t2.a)]
 │   ├─TableReader(Build)	2.00	root		data:Selection
 │   │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
 │   │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -609,7 +609,7 @@ HashJoin	4.00	root		right outer join, left side:Projection, equal:[eq(select.t2.
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t2.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	4.00	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, select.t4.a)]
-├─HashJoin(Build)	2.50	root		inner join, left side:TableReader, equal:[eq(select.t3.a, select.t4.a)]
+├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
 │ ├─TableReader(Build)	2.00	root		data:Selection
 │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
 │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -641,7 +641,7 @@ HashJoin	4.00	root		left outer join, left side:HashJoin, equal:[eq(select.t2.a, 
 explain format = 'brief' select * from (t1 left join t2 on t1.a=t2.a) left join (t3 left join t4 on t3.a=t4.a) on t1.a=t4.a;
 id	estRows	task	access object	operator info
 HashJoin	4.00	root		left outer join, left side:HashJoin, equal:[eq(select.t1.a, select.t4.a)]
-├─HashJoin(Build)	2.50	root		inner join, left side:TableReader, equal:[eq(select.t3.a, select.t4.a)]
+├─HashJoin(Build)	2.50	root		inner join, equal:[eq(select.t3.a, select.t4.a)]
 │ ├─TableReader(Build)	2.00	root		data:Selection
 │ │ └─Selection	2.00	cop[tikv]		not(isnull(select.t3.a))
 │ │   └─TableFullScan	2.00	cop[tikv]	table:t3	keep order:false
@@ -682,7 +682,7 @@ id
 2
 EXPLAIN SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left side:TableReader_28, left key:select.t1.id, right key:select.t2.id
+MergeJoin_6	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
 ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
 │ └─TableFullScan_29	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
@@ -692,7 +692,7 @@ id
 2
 EXPLAIN SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id	estRows	task	access object	operator info
-MergeJoin_6	12500.00	root		inner join, left side:TableReader_28, left key:select.t2.id, right key:select.t1.id
+MergeJoin_6	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
 ├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
 │ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 └─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27

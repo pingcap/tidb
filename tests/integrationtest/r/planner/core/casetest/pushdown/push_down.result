@@ -169,7 +169,7 @@ StreamAgg	1.00	root		funcs:sum(Column#16)->Column#14
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		inner join, left side:Projection, equal:[eq(Column#13, Column#26)]
+HashJoin	10000.00	root		inner join, equal:[eq(Column#13, Column#26)]
 ├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
 │ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
@@ -180,7 +180,7 @@ HashJoin	10000.00	root		inner join, left side:Projection, equal:[eq(Column#13, C
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select * from t join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
+HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
 ├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
 │ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
@@ -209,7 +209,7 @@ HashJoin	12487.50	root		right outer join, left side:TableReader, equal:[eq(plann
 desc format = 'brief' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		Column#26, Column#13
-└─HashJoin	10000.00	root		inner join, left side:Projection, equal:[eq(Column#13, Column#26)]
+└─HashJoin	10000.00	root		inner join, equal:[eq(Column#13, Column#26)]
   ├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#26
   │ └─TableReader	8000.00	root		data:Selection
   │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
@@ -258,7 +258,7 @@ id	estRows	task	access object	operator info
 Projection_14	6.40	root		1->Column#10, Column#9
 └─Projection_15	6.40	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column#9
   └─HashAgg_16	6.40	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
-    └─HashJoin_19	10.00	root		inner join, left side:Selection_20, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#13)]
+    └─HashJoin_19	10.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#13)]
       ├─Selection_20(Build)	8.00	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
       │ └─IndexMerge_27	10.00	root		type: union
       │   ├─Selection_25(Build)	0.00	cop[tikv]		

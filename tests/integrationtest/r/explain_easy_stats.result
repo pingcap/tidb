@@ -65,7 +65,7 @@ Delete	N/A	root		N/A
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	1985.00	root		Column#7
-└─HashJoin	1985.00	root		inner join, left side:TableReader, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
+└─HashJoin	1985.00	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
   ├─HashAgg(Build)	1985.00	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#8, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
   │ └─TableReader	1985.00	root		data:Selection
   │   └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
@@ -90,7 +90,7 @@ Selection	0.50	root		gt(explain_easy_stats.t1.c2, 1)
 └─Point_Get	1.00	root	table:t1	handle:1
 explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
-HashJoin	1985.00	root		inner join, left side:TableReader, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
+HashJoin	1985.00	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
 ├─HashAgg(Build)	1985.00	root		group by:explain_easy_stats.t2.c2, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
 │ └─TableReader	1985.00	root		data:Selection
 │   └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))

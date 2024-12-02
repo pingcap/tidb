@@ -536,7 +536,7 @@ analyze table t1 all columns;
 analyze table t2 all columns;
 explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
 id	estRows	task	access object	operator info
-IndexJoin	1.25	root		inner join, inner:TableReader, left side:HashAgg, outer key:executor__index_lookup_join.t2.prefiller, inner key:executor__index_lookup_join.t1.id, equal cond:eq(executor__index_lookup_join.t2.prefiller, executor__index_lookup_join.t1.id)
+IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_join.t2.prefiller, inner key:executor__index_lookup_join.t1.id, equal cond:eq(executor__index_lookup_join.t2.prefiller, executor__index_lookup_join.t1.id)
 ├─HashAgg(Build)	1.00	root		group by:executor__index_lookup_join.t2.prefiller, funcs:firstrow(executor__index_lookup_join.t2.prefiller)->executor__index_lookup_join.t2.prefiller
 │ └─TableReader	1.00	root		data:HashAgg
 │   └─HashAgg	1.00	cop[tikv]		group by:executor__index_lookup_join.t2.prefiller, 

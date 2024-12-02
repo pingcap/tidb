@@ -121,7 +121,7 @@ Projection	1.00	root		explain_complex.st.id, explain_complex.dd.id, explain_comp
 └─Limit	1.00	root		offset:0, count:2500
   └─HashAgg	1.00	root		group by:explain_complex.dd.dic, explain_complex.st.aid, funcs:firstrow(explain_complex.st.id)->explain_complex.st.id, funcs:firstrow(explain_complex.st.aid)->explain_complex.st.aid, funcs:firstrow(explain_complex.st.cm)->explain_complex.st.cm, funcs:firstrow(explain_complex.st.p1)->explain_complex.st.p1, funcs:firstrow(explain_complex.st.p2)->explain_complex.st.p2, funcs:firstrow(explain_complex.st.p3)->explain_complex.st.p3, funcs:firstrow(explain_complex.st.p4)->explain_complex.st.p4, funcs:firstrow(explain_complex.st.p5)->explain_complex.st.p5, funcs:firstrow(explain_complex.st.p6_md5)->explain_complex.st.p6_md5, funcs:firstrow(explain_complex.st.p7_md5)->explain_complex.st.p7_md5, funcs:firstrow(explain_complex.st.ext)->explain_complex.st.ext, funcs:firstrow(explain_complex.st.t)->explain_complex.st.t, funcs:firstrow(explain_complex.dd.id)->explain_complex.dd.id, funcs:firstrow(explain_complex.dd.dic)->explain_complex.dd.dic, funcs:firstrow(explain_complex.dd.ip)->explain_complex.dd.ip, funcs:firstrow(explain_complex.dd.t)->explain_complex.dd.t
     └─Projection	0.00	root		explain_complex.st.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext, explain_complex.st.t, explain_complex.dd.id, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t
-      └─HashJoin	0.00	root		inner join, left side:IndexLookUp, equal:[eq(explain_complex.dd.aid, explain_complex.st.aid) eq(explain_complex.dd.ip, explain_complex.st.ip)], other cond:gt(explain_complex.dd.t, explain_complex.st.t)
+      └─HashJoin	0.00	root		inner join, equal:[eq(explain_complex.dd.aid, explain_complex.st.aid) eq(explain_complex.dd.ip, explain_complex.st.ip)], other cond:gt(explain_complex.dd.t, explain_complex.st.t)
         ├─IndexLookUp(Build)	0.00	root		
         │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:dd, index:t(t)	range:(1478143908,+inf], keep order:false, stats:pseudo
         │ └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.dd.bm, 0), eq(explain_complex.dd.pt, "android"), not(isnull(explain_complex.dd.ip))
@@ -134,7 +134,7 @@ explain format = 'brief' select gad.id as gid,sdk.id as sid,gad.aid as aid,gad.c
 id	estRows	task	access object	operator info
 Projection	0.00	root		explain_complex.st.id, explain_complex.dd.id, explain_complex.st.aid, explain_complex.st.cm, explain_complex.dd.dic, explain_complex.dd.ip, explain_complex.dd.t, explain_complex.st.p1, explain_complex.st.p2, explain_complex.st.p3, explain_complex.st.p4, explain_complex.st.p5, explain_complex.st.p6_md5, explain_complex.st.p7_md5, explain_complex.st.ext
 └─Limit	0.00	root		offset:0, count:3000
-  └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:explain_complex.st.aid, inner key:explain_complex.dd.aid, equal cond:eq(explain_complex.st.aid, explain_complex.dd.aid), eq(explain_complex.st.dic, explain_complex.dd.mac), other cond:lt(explain_complex.st.t, explain_complex.dd.t)
+  └─IndexJoin	0.00	root		inner join, inner:IndexLookUp, outer key:explain_complex.st.aid, inner key:explain_complex.dd.aid, equal cond:eq(explain_complex.st.aid, explain_complex.dd.aid), eq(explain_complex.st.dic, explain_complex.dd.mac), other cond:lt(explain_complex.st.t, explain_complex.dd.t)
     ├─IndexLookUp(Build)	0.00	root		
     │ ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:gad, index:t(t)	range:(1477971479,+inf], keep order:false, stats:pseudo
     │ └─Selection(Probe)	0.00	cop[tikv]		eq(explain_complex.st.bm, 0), eq(explain_complex.st.dit, "mac"), eq(explain_complex.st.pt, "ios"), not(isnull(explain_complex.st.dic))
@@ -155,7 +155,7 @@ explain format = 'brief' select dt.id as id, dt.aid as aid, dt.pt as pt, dt.dic 
 id	estRows	task	access object	operator info
 Projection	0.01	root		explain_complex.dt.id, explain_complex.dt.aid, explain_complex.dt.pt, explain_complex.dt.dic, explain_complex.dt.cm, explain_complex.rr.gid, explain_complex.rr.acd, explain_complex.rr.t, explain_complex.dt.p1, explain_complex.dt.p2, explain_complex.dt.p3, explain_complex.dt.p4, explain_complex.dt.p5, explain_complex.dt.p6_md5, explain_complex.dt.p7_md5
 └─Limit	0.01	root		offset:0, count:2000
-  └─IndexJoin	0.01	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
+  └─IndexJoin	0.01	root		inner join, inner:IndexLookUp, outer key:explain_complex.rr.aid, explain_complex.rr.dic, inner key:explain_complex.dt.aid, explain_complex.dt.dic, equal cond:eq(explain_complex.rr.aid, explain_complex.dt.aid), eq(explain_complex.rr.dic, explain_complex.dt.dic)
     ├─TableReader(Build)	3.33	root		data:Selection
     │ └─Selection	3.33	cop[tikv]		eq(explain_complex.rr.pt, "ios"), gt(explain_complex.rr.t, 1478185592)
     │   └─TableFullScan	10000.00	cop[tikv]	table:rr	keep order:false, stats:pseudo

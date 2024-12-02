@@ -2,7 +2,7 @@ drop table if exists t;
 create table t (v int);
 explain format = 'brief' select * from t t1, t t2;
 id	estRows	task	access object	operator info
-HashJoin	100000000.00	root		CARTESIAN inner join, left side:TableReader
+HashJoin	100000000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -25,7 +25,7 @@ HashJoin	8000.00	root		CARTESIAN semi join, left side:TableReader, other cond:in
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v;
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(executor__explain.t.v, executor__explain.t.v)]
+HashJoin	12487.50	root		inner join, equal:[eq(executor__explain.t.v, executor__explain.t.v)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -85,7 +85,7 @@ KEY f (f)
 explain format='brief' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
 id	estRows	task	access object	operator info
 Projection	12500.00	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f
-└─HashJoin	12500.00	root		inner join, left side:TableReader, equal:[eq(executor__explain.tt123.e, Column#15)]
+└─HashJoin	12500.00	root		inner join, equal:[eq(executor__explain.tt123.e, Column#15)]
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─Projection(Probe)	10000.00	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column#15
@@ -348,8 +348,8 @@ Update_17	N/A	root		N/A
   └─Selection_29	8.00	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#22, 0))
     └─HashJoin_32	10.00	root		left outer join, left side:IndexLookUp_84, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg_85(Build)	12.50	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
-      │ └─IndexJoin_92	15.62	root		inner join, inner:IndexReader_91, left side:IndexHashJoin_132, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
-      │   ├─IndexHashJoin_132(Build)	12.50	root		inner join, inner:IndexLookUp_129, left side:Projection_160, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
+      │ └─IndexJoin_92	15.62	root		inner join, inner:IndexReader_91, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
+      │   ├─IndexHashJoin_132(Build)	12.50	root		inner join, inner:IndexLookUp_129, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
       │   │ ├─Projection_160(Build)	10.00	root		executor__explain.t1.id2
       │   │ │ └─IndexLookUp_164	10.00	root		
       │   │ │   ├─IndexRangeScan_162(Build)	10.00	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
@@ -368,7 +368,7 @@ create table t (a int, b int, index (a));
 insert into t values (1, 1);
 explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-HashJoin_8	100.00	0	root		<execution_info>	CARTESIAN inner join, left side:TableReader_12	<memory>	<disk>
+HashJoin_8	100.00	0	root		<execution_info>	CARTESIAN inner join	<memory>	<disk>
 ├─IndexLookUp_15(Build)	10.00	0	root		<execution_info>		<memory>	<disk>
 │ ├─IndexRangeScan_13(Build)	10.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range:[2333,2333], keep order:false, stats:pseudo	<memory>	<disk>
 │ └─TableRowIDScan_14(Probe)	10.00	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>

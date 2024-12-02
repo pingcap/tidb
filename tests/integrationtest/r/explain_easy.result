@@ -64,7 +64,7 @@ Delete	N/A	root		N/A
 explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
-└─HashJoin	9990.00	root		inner join, left side:TableReader, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
+└─HashJoin	9990.00	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
   ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
   │ └─TableReader	7992.00	root		data:HashAgg
   │   └─HashAgg	7992.00	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#9
@@ -99,7 +99,7 @@ StreamAgg	1.00	root		funcs:sum(Column#13)->Column#11
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select c1 from t1 where c1 in (select c2 from t2);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		inner join, left side:TableReader, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
+HashJoin	9990.00	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
 ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
 │ └─TableReader	9990.00	root		data:Selection
 │   └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t2.c2))
@@ -323,7 +323,7 @@ Projection	10000.00	root		Column#17
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:count(1)->Column#16
-    └─MergeJoin	125000.00	root		inner join, left side:TableReader, left key:explain_easy.t.a, right key:explain_easy.t.a
+    └─MergeJoin	125000.00	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
       ├─TableReader(Build)	10000.00	root		data:TableRangeScan
       │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range: decided by [eq(explain_easy.t.a, explain_easy.t.a)], keep order:true, stats:pseudo
       └─TableReader(Probe)	10000.00	root		data:TableRangeScan
@@ -335,7 +335,7 @@ Projection	10000.00	root		Column#17
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:count(1)->Column#16
-    └─IndexJoin	125000.00	root		inner join, inner:TableReader, left side:IndexReader, outer key:explain_easy.t.a, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.a, explain_easy.t.a)
+    └─IndexJoin	125000.00	root		inner join, inner:TableReader, outer key:explain_easy.t.a, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.a, explain_easy.t.a)
       ├─IndexReader(Build)	100000.00	root		index:IndexRangeScan
       │ └─IndexRangeScan	100000.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(explain_easy.t.b, explain_easy.t.a)], keep order:false, stats:pseudo
       └─TableReader(Probe)	100000.00	root		data:TableRangeScan
@@ -347,7 +347,7 @@ Projection	10000.00	root		Column#17
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:count(1)->Column#16
-    └─IndexJoin	124875.00	root		inner join, inner:TableReader, left side:IndexLookUp, outer key:explain_easy.t.c, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.c, explain_easy.t.a)
+    └─IndexJoin	124875.00	root		inner join, inner:TableReader, outer key:explain_easy.t.c, inner key:explain_easy.t.a, equal cond:eq(explain_easy.t.c, explain_easy.t.a)
       ├─IndexLookUp(Build)	99900.00	root		
       │ ├─IndexRangeScan(Build)	100000.00	cop[tikv]	table:s, index:idx(b)	range: decided by [eq(explain_easy.t.b, explain_easy.t.a)], keep order:false, stats:pseudo
       │ └─Selection(Probe)	99900.00	cop[tikv]		not(isnull(explain_easy.t.c))
@@ -363,7 +363,7 @@ Projection	5.00	root		Column#17
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#16
-    └─MergeJoin	12.00	root		inner join, left side:IndexReader, left key:explain_easy.t.a, right key:explain_easy.t.a
+    └─MergeJoin	12.00	root		inner join, left key:explain_easy.t.a, right key:explain_easy.t.a
       ├─TableReader(Build)	20.00	root		data:Selection
       │ └─Selection	20.00	cop[tikv]		eq(3, explain_easy.t.a)
       │   └─TableFullScan	25.00	cop[tikv]	table:t1	keep order:true
@@ -438,7 +438,7 @@ TableDual	0.00	root		rows:0
 explain format = 'brief' select * from t t1 join t t2 where t1.b = t2.b and t2.b is null;
 id	estRows	task	access object	operator info
 Projection	0.00	root		explain_easy.t.a, explain_easy.t.b, explain_easy.t.a, explain_easy.t.b
-└─HashJoin	0.00	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
+└─HashJoin	0.00	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
   ├─TableReader(Build)	0.00	root		data:Selection
   │ └─Selection	0.00	cop[tikv]		isnull(explain_easy.t.b), not(isnull(explain_easy.t.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -582,7 +582,7 @@ HashJoin	8000.00	root		right outer join, left side:TableReader, equal:[eq(explai
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
-HashJoin	3333.33	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
+HashJoin	3333.33	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	2666.67	root		data:Selection
 │ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
@@ -597,7 +597,7 @@ Projection	10000.00	root		Column#22
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	10000.00	root		funcs:count(Column#25)->Column#21
-    └─HashJoin	99900.00	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
+    └─HashJoin	99900.00	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
       ├─HashAgg(Build)	79920.00	root		group by:explain_easy.t.a, funcs:count(Column#26)->Column#25, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
       │ └─TableReader	79920.00	root		data:HashAgg
       │   └─HashAgg	79920.00	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column#26
@@ -631,7 +631,7 @@ Projection	10000.00	root		Column#22
   │ └─TableReader	10000.00	root		data:TableFullScan
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─HashAgg(Probe)	10000.00	root		funcs:count(Column#25)->Column#21
-    └─HashJoin	99900.00	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
+    └─HashJoin	99900.00	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
       ├─HashAgg(Build)	79920.00	root		group by:explain_easy.t.a, funcs:count(Column#26)->Column#25, funcs:firstrow(explain_easy.t.a)->explain_easy.t.a
       │ └─TableReader	79920.00	root		data:HashAgg
       │   └─HashAgg	79920.00	cop[tikv]		group by:explain_easy.t.a, funcs:count(1)->Column#26
@@ -863,7 +863,7 @@ explain format = 'brief' select sum(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -874,7 +874,7 @@ explain format = 'brief' select sum(t1.b) from t t1 join t t2 on t1.b=t2.b;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -885,7 +885,7 @@ explain format = 'brief' select sum(t1.c) from t t1 join t t2 on t1.c=t2.c;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.c))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -896,7 +896,7 @@ explain format = 'brief' select sum(t1.d) from t t1 join t t2 on t1.d=t2.d;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.d))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -907,7 +907,7 @@ explain format = 'brief' select sum(t1.e) from t t1 join t t2 on t1.e=t2.e;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:sum(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.e))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -918,7 +918,7 @@ explain format = 'brief' select avg(t1.a) from t t1 join t t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.a, decimal(3,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.a, explain_easy.t.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -929,7 +929,7 @@ explain format = 'brief' select avg(t1.b) from t t1 join t t2 on t1.b=t2.b;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.b, decimal(5,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.b, explain_easy.t.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -940,7 +940,7 @@ explain format = 'brief' select avg(t1.c) from t t1 join t t2 on t1.c=t2.c;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.c, decimal(8,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.c, explain_easy.t.c)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.c))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -951,7 +951,7 @@ explain format = 'brief' select avg(t1.d) from t t1 join t t2 on t1.d=t2.d;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.d, decimal(10,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.d, explain_easy.t.d)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.d))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -962,7 +962,7 @@ explain format = 'brief' select avg(t1.e) from t t1 join t t2 on t1.e=t2.e;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:avg(Column#14)->Column#13
 └─Projection	12487.50	root		cast(explain_easy.t.e, decimal(20,0) BINARY)->Column#14
-  └─HashJoin	12487.50	root		inner join, left side:TableReader, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
+  └─HashJoin	12487.50	root		inner join, equal:[eq(explain_easy.t.e, explain_easy.t.e)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t.e))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

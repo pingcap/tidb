@@ -45,7 +45,7 @@ col1	col1
 explain format='brief' select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
 id	estRows	task	access object	operator info
 HashAgg	2866.67	root		group by:executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1
-└─HashJoin	4479.17	root		inner join, left side:TableReader, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
+└─HashJoin	4479.17	root		inner join, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
   ├─TableReader(Build)	3583.33	root	partition:all	data:Selection
   │ └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -59,7 +59,7 @@ col1	col1
 explain format='brief' select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807;
 id	estRows	task	access object	operator info
 HashAgg	2866.67	root		group by:executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1, funcs:firstrow(executor__partition__issues.uk_hp16726.col1)->executor__partition__issues.uk_hp16726.col1
-└─HashJoin	4479.17	root		inner join, left side:TableReader, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
+└─HashJoin	4479.17	root		inner join, equal:[eq(executor__partition__issues.uk_hp16726.col1, executor__partition__issues.uk_hp16726.col1)]
   ├─TableReader(Build)	3583.33	root	partition:all	data:Selection
   │ └─Selection	3583.33	cop[tikv]		gt(executor__partition__issues.uk_hp16726.col1, -9223372036854775808), ne(executor__partition__issues.uk_hp16726.col1, 9223372036854775807), not(isnull(executor__partition__issues.uk_hp16726.col1))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -265,7 +265,7 @@ join t on c.txt_account_id = t.txn_account_id
 and t.broker = '0009'
 and c.occur_trade_date = '2022-11-17';
 id	estRows	task	access object	operator info
-IndexJoin_22	1.00	root		inner join, inner:TableReader_21, left side:TableReader_21, outer key:executor__partition__issues.t.txn_account_id, inner key:executor__partition__issues.c.txt_account_id, equal cond:eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+IndexJoin_22	1.00	root		inner join, inner:TableReader_21, outer key:executor__partition__issues.t.txn_account_id, inner key:executor__partition__issues.c.txt_account_id, equal cond:eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
 ├─TableReader_27(Build)	1.00	root		data:Selection_26
 │ └─Selection_26	1.00	cop[tikv]		eq(executor__partition__issues.t.broker, "0009")
 │   └─TableFullScan_25	1.00	cop[tikv]	table:t	keep order:false
@@ -302,7 +302,7 @@ join t on c.txt_account_id = t.txn_account_id
 and t.broker = '0009'
 and c.occur_trade_date = '2022-11-17' and c.serial_id = t.serial_id;
 id	estRows	task	access object	operator info
-IndexJoin_20	0.80	root		inner join, inner:TableReader_19, left side:TableReader_19, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+IndexJoin_20	0.80	root		inner join, inner:TableReader_19, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
 ├─TableReader_25(Build)	0.80	root		data:Selection_24
 │ └─Selection_24	0.80	cop[tikv]		eq(executor__partition__issues.t.broker, "0009"), not(isnull(executor__partition__issues.t.serial_id))
 │   └─TableFullScan_23	1.00	cop[tikv]	table:t	keep order:false, stats:partial[serial_id:missing]

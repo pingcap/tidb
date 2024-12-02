@@ -8,7 +8,7 @@ set @@tidb_index_lookup_join_concurrency=1;
 set @@tidb_index_join_batch_size=32;
 desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 id	estRows	task	access object	operator info
-IndexHashJoin	12487.50	root		inner join, inner:IndexReader, left side:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a)
+IndexHashJoin	12487.50	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a)
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
 │ └─IndexFullScan	9990.00	cop[tikv]	table:t, index:a(a)	keep order:true, stats:pseudo
 └─IndexReader(Probe)	12487.50	root		index:Selection
@@ -235,7 +235,7 @@ analyze table s all columns;
 desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
-└─IndexJoin	64.00	root		inner join, inner:IndexReader, left side:TableReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+└─IndexJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─TableReader(Build)	64.00	root		data:Selection
   │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
   │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false
@@ -252,7 +252,7 @@ count(*)
 desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
-└─MergeJoin	64.00	root		inner join, left side:TableReader, left key:executor__jointest__hash_join.t.a, right key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+└─MergeJoin	64.00	root		inner join, left key:executor__jointest__hash_join.t.a, right key:executor__jointest__hash_join.s.a, other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─IndexReader(Build)	64.00	root		index:Selection
   │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.s.b))
   │   └─IndexFullScan	64.00	cop[tikv]	table:s, index:idx(a, b)	keep order:true
@@ -269,7 +269,7 @@ count(*)
 desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#6
-└─IndexHashJoin	64.00	root		inner join, inner:IndexReader, left side:TableReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
+└─IndexHashJoin	64.00	root		inner join, inner:IndexReader, outer key:executor__jointest__hash_join.t.a, inner key:executor__jointest__hash_join.s.a, equal cond:eq(executor__jointest__hash_join.t.a, executor__jointest__hash_join.s.a), other cond:lt(executor__jointest__hash_join.s.b, executor__jointest__hash_join.t.b)
   ├─TableReader(Build)	64.00	root		data:Selection
   │ └─Selection	64.00	cop[tikv]		not(isnull(executor__jointest__hash_join.t.b))
   │   └─TableFullScan	64.00	cop[tikv]	table:t	keep order:false

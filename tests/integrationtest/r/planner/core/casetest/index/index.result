@@ -8,7 +8,7 @@ insert into t2 values(1,1,1),(1,2,1);
 analyze table t1,t2 all columns;
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c;
 id	estRows	task	access object	operator info
-IndexJoin	2.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
+IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
 ├─TableReader(Build)	1.00	root		data:TableFullScan
 │ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
 └─IndexLookUp(Probe)	2.00	root		
@@ -16,7 +16,7 @@ IndexJoin	2.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c <= t2.b;
 id	estRows	task	access object	operator info
-IndexJoin	2.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), other cond:le(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.b)
+IndexJoin	2.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), other cond:le(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.b)
 ├─TableReader(Build)	1.00	root		data:TableFullScan
 │ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
 └─IndexLookUp(Probe)	2.00	root		
@@ -24,7 +24,7 @@ IndexJoin	2.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer
   └─TableRowIDScan(Probe)	2.00	cop[tikv]	table:t2	keep order:false
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t2.b = 1;
 id	estRows	task	access object	operator info
-IndexJoin	1.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a)
+IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a)
 ├─TableReader(Build)	1.00	root		data:TableFullScan
 │ └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:false
 └─IndexLookUp(Probe)	1.00	root		
@@ -165,7 +165,7 @@ create table t3(a int, b int, c int);
 create table t4(a int, b int, c int, primary key (a, b) clustered);
 desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.b;
 id	estRows	task	access object	operator info
-IndexJoin	12487.50	root		inner join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
+IndexJoin	12487.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t1.a, inner key:planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
 │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_t1_b(b)	keep order:false, stats:pseudo
 └─TableReader(Probe)	9980.01	root		data:Selection
@@ -173,7 +173,7 @@ IndexJoin	12487.50	root		inner join, inner:TableReader, left side:IndexReader, o
     └─TableRangeScan	9990.00	cop[tikv]	table:t2	range: decided by [planner__core__casetest__index__index.t1.a], keep order:false, stats:pseudo
 desc format = 'brief' select /*+ TIDB_INLJ(t2)*/ * from t1, t2 where t1.a = t2.a and t1.b = t2.a and t1.b = t2.b;
 id	estRows	task	access object	operator info
-IndexJoin	12487.50	root		inner join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, inner key:planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
+IndexJoin	12487.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t1.b, inner key:planner__core__casetest__index__index.t2.a, planner__core__casetest__index__index.t2.a, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b)
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
 │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:idx_t1_b(b)	keep order:false, stats:pseudo
 └─TableReader(Probe)	9980.01	root		data:Selection
@@ -182,7 +182,7 @@ IndexJoin	12487.50	root		inner join, inner:TableReader, left side:IndexReader, o
 desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.a = t4.a where t4.b = 1;
 id	estRows	task	access object	operator info
 Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t3.c, planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t4.c
-└─IndexJoin	12.50	root		inner join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__index__index.t3.a, inner key:planner__core__casetest__index__index.t4.a, equal cond:eq(planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t4.a)
+└─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t3.a, inner key:planner__core__casetest__index__index.t4.a, equal cond:eq(planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t4.a)
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -192,7 +192,7 @@ Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core
 desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;
 id	estRows	task	access object	operator info
 Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t3.c, planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t4.c
-└─IndexJoin	12.50	root		inner join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__index__index.t3.b, inner key:planner__core__casetest__index__index.t4.b, equal cond:eq(planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t4.b)
+└─IndexJoin	12.50	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t3.b, inner key:planner__core__casetest__index__index.t4.b, equal cond:eq(planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t4.b)
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -208,7 +208,7 @@ insert into t2 values(1,1,1),(1,1,2),(1,1,3);
 analyze table t1, t2 all columns;
 explain format = 'brief' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c;
 id	estRows	task	access object	operator info
-IndexJoin	3.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__index__index.t1.c, inner key:planner__core__casetest__index__index.t2.c, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
+IndexJoin	3.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t1.c, inner key:planner__core__casetest__index__index.t2.c, equal cond:eq(planner__core__casetest__index__index.t1.a, planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t1.c, planner__core__casetest__index__index.t2.c)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
 └─IndexLookUp(Probe)	3.00	root		
@@ -265,7 +265,7 @@ insert into t values (1,"111",1.1,11), (2,"222",2.2,12), (3,"333",3.3,13);
 analyze table t;
 explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexJoin	3.00	root		inner join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
+IndexJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
 └─TableReader(Probe)	3.00	root		data:TableRangeScan
@@ -277,7 +277,7 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_merge_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-MergeJoin	3.00	root		inner join, left side:TableReader, left key:planner__core__casetest__index__index.t.a, right key:planner__core__casetest__index__index.t.a
+MergeJoin	3.00	root		inner join, left key:planner__core__casetest__index__index.t.a, right key:planner__core__casetest__index__index.t.a
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t2	keep order:true
 └─TableReader(Probe)	3.00	root		data:TableFullScan
@@ -289,7 +289,7 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_hash_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a;
 id	estRows	task	access object	operator info
-IndexHashJoin	3.00	root		inner join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
+IndexHashJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, inner key:planner__core__casetest__index__index.t.a, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
 └─TableReader(Probe)	3.00	root		data:TableRangeScan
@@ -301,7 +301,7 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.b = t2.b;
 id	estRows	task	access object	operator info
-IndexJoin	3.00	root		inner join, inner:TableReader, left side:TableReader, outer key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, inner key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a), eq(planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.b)
+IndexJoin	3.00	root		inner join, inner:TableReader, outer key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, inner key:planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.b, equal cond:eq(planner__core__casetest__index__index.t.a, planner__core__casetest__index__index.t.a), eq(planner__core__casetest__index__index.t.b, planner__core__casetest__index__index.t.b)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
 └─TableReader(Probe)	3.00	root		data:TableRangeScan
@@ -313,7 +313,7 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_join(t1, t2) */ * from t t1 join t t2 on t1.c = t2.c;
 id	estRows	task	access object	operator info
-IndexJoin	3.00	root		inner join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__index__index.t.c, inner key:planner__core__casetest__index__index.t.c, equal cond:eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)
+IndexJoin	3.00	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t.c, inner key:planner__core__casetest__index__index.t.c, equal cond:eq(planner__core__casetest__index__index.t.c, planner__core__casetest__index__index.t.c)
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t.c))
 │   └─TableFullScan	3.00	cop[tikv]	table:t1	keep order:false
@@ -366,7 +366,7 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
@@ -385,7 +385,7 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
@@ -403,7 +403,7 @@ explain format=brief select * from t2 where c1 < all(select /*+ use_index_merge(
 id	estRows	task	access object	operator info
 Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
 └─Projection	10000.00	root		planner__core__casetest__index__index.t2.c1, planner__core__casetest__index__index.t2.c2, planner__core__casetest__index__index.t2.c3
-  └─Apply	10000.00	root		CARTESIAN inner join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
+  └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
@@ -421,7 +421,7 @@ c1	c2	c3
 explain format=brief select c_int from tt1 where c_decimal < all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt1.c_int = tt2.c_int and tt1.c_datetime > tt2.c_datetime and tt2.c_decimal = 9.060 or tt2.c_str <= 'interesting shtern' and tt1.c_int = tt2.c_int) order by 1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	10000.00	root		CARTESIAN inner join, left side:TableReader, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:min(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
@@ -441,7 +441,7 @@ c_int
 explain format=brief select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
-└─Apply	10000.00	root		CARTESIAN inner join, left side:TableReader, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
+└─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(gt(planner__core__casetest__index__index.tt1.c_decimal, Column#9), if(ne(Column#10, 0), NULL, 1)), or(eq(Column#11, 0), if(isnull(planner__core__casetest__index__index.tt1.c_decimal), NULL, 0)))
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
@@ -466,7 +466,7 @@ create table t2(e int, f int, g varchar(10), h varchar(10));
 set @@tidb_opt_range_max_size = 0;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	estRows	task	access object	operator info
-IndexJoin	0.50	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t2.g, inner key:planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.d, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t2.g, inner key:planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t1.d, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -480,7 +480,7 @@ Level	Code	Message
 set @@tidb_opt_range_max_size = 2900;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	estRows	task	access object	operator info
-IndexJoin	0.50	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -495,7 +495,7 @@ Warning	1105	Memory capacity of 2900 bytes for 'tidb_opt_range_max_size' exceede
 set @@tidb_opt_range_max_size = 2300;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	estRows	task	access object	operator info
-IndexJoin	0.50	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
+IndexJoin	0.50	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.b, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.b), eq(planner__core__casetest__index__index.t2.g, planner__core__casetest__index__index.t1.d)
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.g))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -510,7 +510,7 @@ Warning	1105	Memory capacity of 2300 bytes for 'tidb_opt_range_max_size' exceede
 set @@tidb_opt_range_max_size = 700;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.b = t2.e and t1.d = t2.g where t1.a in (1, 3) and t1.c in ('aaa', 'bbb');
 id	estRows	task	access object	operator info
-HashJoin	0.05	root		inner join, left side:IndexLookUp, equal:[eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g)]
+HashJoin	0.05	root		inner join, equal:[eq(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.e) eq(planner__core__casetest__index__index.t1.d, planner__core__casetest__index__index.t2.g)]
 ├─IndexLookUp(Build)	0.04	root		
 │ ├─Selection(Build)	19.96	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.b)), not(isnull(planner__core__casetest__index__index.t1.d))
 │ │ └─IndexRangeScan	20.00	cop[tikv]	table:t1, index:idx_a_b_c_d(a, b, c, d)	range:[1,1], [3,3], keep order:false, stats:pseudo
@@ -526,7 +526,7 @@ Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapp
 set @@tidb_opt_range_max_size = 0;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10;
 id	estRows	task	access object	operator info
-IndexJoin	312.19	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
+IndexJoin	312.19	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -539,7 +539,7 @@ Level	Code	Message
 set @@tidb_opt_range_max_size = 300;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > 1 and t1.b < 10;
 id	estRows	task	access object	operator info
-IndexJoin	312.19	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
+IndexJoin	312.19	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a)
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -553,7 +553,7 @@ Warning	1105	Memory capacity of 300 bytes for 'tidb_opt_range_max_size' exceeded
 set @@tidb_opt_range_max_size = 0;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10;
 id	estRows	task	access object	operator info
-IndexJoin	12475.01	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
+IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -566,7 +566,7 @@ Level	Code	Message
 set @@tidb_opt_range_max_size = 300;
 explain format='brief' select /*+ inl_join(t1) */ * from t1 join t2 on t1.a = t2.e where t1.b > t2.f and t1.b < t2.f + 10;
 id	estRows	task	access object	operator info
-IndexJoin	12475.01	root		inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
+IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__index__index.t2.e, inner key:planner__core__casetest__index__index.t1.a, equal cond:eq(planner__core__casetest__index__index.t2.e, planner__core__casetest__index__index.t1.a), other cond:gt(planner__core__casetest__index__index.t1.b, planner__core__casetest__index__index.t2.f), lt(planner__core__casetest__index__index.t1.b, plus(planner__core__casetest__index__index.t2.f, 10))
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__index__index.t2.e)), not(isnull(planner__core__casetest__index__index.t2.f))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -814,7 +814,7 @@ CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` bi
 CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
 EXPLAIN format='brief' SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));
 id	estRows	task	access object	operator info
-HashJoin	12.50	root		inner join, left side:TableReader, equal:[eq(planner__core__casetest__index__index.t2.d, planner__core__casetest__index__index.t1.a)]
+HashJoin	12.50	root		inner join, equal:[eq(planner__core__casetest__index__index.t2.d, planner__core__casetest__index__index.t1.a)]
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__index__index.t2.d, "")
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

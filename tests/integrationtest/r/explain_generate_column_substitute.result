@@ -580,7 +580,7 @@ delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_d
 desc format='brief' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		explain_generate_column_substitute.t2.c_enum
-└─HashJoin	10000.00	root		inner join, left side:IndexReader, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
+└─HashJoin	10000.00	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
   ├─Selection(Build)	8000.00	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
   │ └─Projection	10000.00	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
   │   └─UnionScan	10000.00	root		
@@ -610,7 +610,7 @@ create table t1 (c_int int, c_decimal decimal(12, 6), primary key (c_int) nonclu
 create table t2 like t1;
 explain format = 'brief' select /*+ agg_to_cop() */ * from t1 where c_decimal in (select c_decimal from t2 where t2.c_int + 1 = 8 + 1);
 id	estRows	task	access object	operator info
-HashJoin	9.99	root		inner join, left side:HashAgg, equal:[eq(explain_generate_column_substitute.t2.c_decimal, explain_generate_column_substitute.t1.c_decimal)]
+HashJoin	9.99	root		inner join, equal:[eq(explain_generate_column_substitute.t2.c_decimal, explain_generate_column_substitute.t1.c_decimal)]
 ├─HashAgg(Build)	7.99	root		group by:explain_generate_column_substitute.t2.c_decimal, funcs:firstrow(explain_generate_column_substitute.t2.c_decimal)->explain_generate_column_substitute.t2.c_decimal
 │ └─IndexLookUp	7.99	root		
 │   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t2, index:expression_index(`c_int` + 1)	range:[9,9], keep order:false, stats:pseudo

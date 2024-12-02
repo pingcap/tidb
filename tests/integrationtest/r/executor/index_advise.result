@@ -29,7 +29,7 @@ and b.pnbrn_cnaps = a.pnbrn_cnaps
 and b.txn_accno = a.new_accno;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─IndexJoin	12.50	root		inner join, inner:IndexReader, left side:TableReader, outer key:executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t2.txn_accno, inner key:executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t1.new_accno, equal cond:eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps), eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)
+└─IndexJoin	12.50	root		inner join, inner:IndexReader, outer key:executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t2.txn_accno, inner key:executor__index_advise.t1.pnbrn_cnaps, executor__index_advise.t1.new_accno, equal cond:eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps), eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)
   ├─TableReader(Build)	10.00	root		data:Selection
   │ └─Selection	10.00	cop[tikv]		eq(executor__index_advise.t2.txn_dt, 2022-12-01)
   │   └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
@@ -52,7 +52,7 @@ and b.pnbrn_cnaps = a.pnbrn_cnaps
 and b.txn_accno = a.new_accno;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─HashJoin	12.50	root		inner join, left side:TableReader, equal:[eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps) eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)]
+└─HashJoin	12.50	root		inner join, equal:[eq(executor__index_advise.t2.pnbrn_cnaps, executor__index_advise.t1.pnbrn_cnaps) eq(executor__index_advise.t2.txn_accno, executor__index_advise.t1.new_accno)]
   ├─IndexReader(Build)	10.00	root		index:IndexRangeScan
   │ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:PRIMARY(pnbrn_cnaps, new_accno)	range:["40001","40001"], keep order:false, stats:pseudo
   └─TableReader(Probe)	10.00	root		data:Selection
@@ -116,7 +116,7 @@ instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_
 end
 ) != '01';
 id	estRows	task	access object	operator info
-HashJoin	104.17	root		inner join, left side:TableReader, equal:[eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid) eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr) eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)]
+HashJoin	104.17	root		inner join, equal:[eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid) eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr) eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)]
 ├─TableReader(Build)	83.33	root		data:Selection
 │ └─Selection	83.33	cop[tikv]		ge(executor__index_advise.tbl_miss.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_miss.txn_dt))
 │   └─TableRangeScan	250.00	cop[tikv]	table:mis	range:[1,10000], keep order:false, stats:pseudo
@@ -144,7 +144,7 @@ instr(concat_ws('',src.expd_inf,'~~'),'~~a4') + 4, length(concat_ws('',src.expd_
 end
 ) != '01';
 id	estRows	task	access object	operator info
-IndexJoin	104.17	root		inner join, inner:Selection, left side:TableReader, outer key:executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_miss.rvrs_idr, inner key:executor__index_advise.tbl_src.uuid, executor__index_advise.tbl_src.rvrs_idr, equal cond:eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid), eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr), eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)
+IndexJoin	104.17	root		inner join, inner:Selection, outer key:executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_miss.rvrs_idr, inner key:executor__index_advise.tbl_src.uuid, executor__index_advise.tbl_src.rvrs_idr, equal cond:eq(executor__index_advise.tbl_miss.perip_sys_uuid, executor__index_advise.tbl_src.uuid), eq(executor__index_advise.tbl_miss.rvrs_idr, executor__index_advise.tbl_src.rvrs_idr), eq(executor__index_advise.tbl_miss.txn_dt, executor__index_advise.tbl_src.txn_dt)
 ├─TableReader(Build)	83.33	root		data:Selection
 │ └─Selection	83.33	cop[tikv]		ge(executor__index_advise.tbl_miss.txn_dt, 2022-12-01), not(isnull(executor__index_advise.tbl_miss.txn_dt))
 │   └─TableRangeScan	250.00	cop[tikv]	table:mis	range:[1,10000], keep order:false, stats:pseudo

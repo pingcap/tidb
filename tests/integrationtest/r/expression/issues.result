@@ -531,7 +531,7 @@ insert into t2 value (1,2,date'2020-05-08');
 explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─IndexJoin	0.03	root		inner join, inner:Selection, left side:TableReader, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
+└─IndexJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
   ├─TableReader(Build)	0.02	root		data:Selection
   │ └─Selection	0.02	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -3184,7 +3184,7 @@ id	estRows	task	access object	operator info
 Projection	8.00	root		test.ast.i, Column#32
 └─HashAgg	8.00	root		group by:Column#35, funcs:group_concat(Column#34 order by Column#34 separator "; ")->Column#32, funcs:firstrow(Column#35)->test.ast.i
   └─Projection	100.00	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, test.ast.i->Column#35
-    └─HashJoin	100.00	root		CARTESIAN inner join, left side:TableReader
+    └─HashJoin	100.00	root		CARTESIAN inner join
       ├─TableReader(Build)	10.00	root		data:Selection
       │ └─Selection	10.00	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
       │   └─TableFullScan	10000.00	cop[tikv]	table:a	keep order:false, stats:pseudo
