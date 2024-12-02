@@ -1433,21 +1433,23 @@ create table t(
 			require.NoError(t, err)
 			p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
 			require.NoError(t, err)
-			selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-			tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
-			require.NotNil(t, selection)
-			conds := make([]expression.Expression, len(selection.Conditions))
-			for i, cond := range selection.Conditions {
-				conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+			if _, ok := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalTableDual); !ok {
+				selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
+				tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+				require.NotNil(t, selection)
+				conds := make([]expression.Expression, len(selection.Conditions))
+				for i, cond := range selection.Conditions {
+					conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+				}
+				cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
+				require.NotNil(t, cols)
+				res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
+				require.NoError(t, err)
+				require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
+				require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
+				got := fmt.Sprintf("%v", res.Ranges)
+				require.Equal(t, tt.resultStr, got)
 			}
-			cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[tt.indexPos])
-			require.NotNil(t, cols)
-			res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, cols, lengths, 0)
-			require.NoError(t, err)
-			require.Equal(t, tt.accessConds, expression.StringifyExpressionsWithCtx(ectx, res.AccessConds))
-			require.Equal(t, tt.filterConds, expression.StringifyExpressionsWithCtx(ectx, res.RemainedConds))
-			got := fmt.Sprintf("%v", res.Ranges)
-			require.Equal(t, tt.resultStr, got)
 		})
 	}
 }
