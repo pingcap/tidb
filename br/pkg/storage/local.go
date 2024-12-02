@@ -124,17 +124,6 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 	}
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.WalkDir(base, func(path string, f os.DirEntry, err error) error {
-		if os.IsNotExist(err) {
-			if !opt.IncludeTombstone {
-				return nil
-			}
-			// We should return to the caller relative path.
-			path, _ = filepath.Rel(l.base, path)
-			if !strings.HasPrefix(path, opt.ObjPrefix) {
-				return nil
-			}
-			return fn(path, TombstoneSize)
-		}
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -157,6 +146,21 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			return nil
 		}
 
+		// Check whether the file exists...
+		// If not, should follow the configuration `IncludeTombstone`.
+		_, err = os.Lstat(filepath.Join(l.base, path))
+		if err != nil {
+			if os.IsNotExist(err) {
+				if !opt.IncludeTombstone {
+					return nil
+				}
+				return fn(path, TombstoneSize)
+			}
+			return err
+		}
+
+		// Keep the behavior with past: ignore errors happen during reading stats from symlinks and return zero...
+		// NOTE: For now `WalkDir` emits broken symlinks but ignores deleted files by default... Can we make it better?
 		stat, err := os.Stat(filepath.Join(l.base, path))
 		if err != nil {
 			// error may happen because of file deleted after walk started, or other errors
