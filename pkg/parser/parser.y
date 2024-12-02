@@ -734,7 +734,6 @@ import (
 	groupConcat           "GROUP_CONCAT"
 	high                  "HIGH"
 	inplace               "INPLACE"
-	input                 "INPUT"
 	instant               "INSTANT"
 	internal              "INTERNAL"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
@@ -756,7 +755,6 @@ import (
 	next_row_id           "NEXT_ROW_ID"
 	now                   "NOW"
 	optRuleBlacklist      "OPT_RULE_BLACKLIST"
-	output                "OUTPUT"
 	placement             "PLACEMENT"
 	planCache             "PLAN_CACHE"
 	plan                  "PLAN"
@@ -1071,7 +1069,7 @@ import (
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
-	TrafficStmt                "Traffic capture/replay/cancel/show statement"
+	TrafficStmt                "Traffic capture/replay statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -7194,14 +7192,12 @@ NotKeywordToken:
 |	"GROUP_CONCAT"
 |	"HNSW"
 |	"INPLACE"
-|	"INPUT"
 |	"INSTANT"
 |	"INTERNAL"
 |	"LOG"
 |	"MIN"
 |	"MAX"
 |	"NOW"
-|	"OUTPUT"
 |	"RECENT"
 |	"REPLAY"
 |	"REPLAYER"
@@ -15789,43 +15785,43 @@ PlanReplayerDumpOpt:
  * Traffic Replayer Statement
  *
  * Examples:
- * TRAFFIC REPLAYER CAPTURE OUTPUT="/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
- * TRAFFIC REPLAYER REPLAY USER="u1" PASSWORD="123456" INPUT="/tmp/traffic" SPEED=1.0
- * TRAFFIC REPLAYER SHOW JOBS
- * TRAFFIC REPLAYER CANCEL JOBS
+ * TRAFFIC CAPTURE TO "/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
+ * TRAFFIC REPLAY FROM "/tmp/traffic" USER="u1" PASSWORD="123456" SPEED=1.0
  *******************************************************************/
 TrafficStmt:
-	"TRAFFIC" "REPLAYER" "CAPTURE" TrafficCaptureOptList
+	"TRAFFIC" "CAPTURE" "TO" stringLit TrafficCaptureOptList
 	{
-		x := &ast.TrafficReplayerStmt{
+		x := &ast.TrafficStmt{
 			OpType: ast.TrafficOpCapture,
+			Dir:    $4,
 		}
-		if $4 != nil {
-			x.Options = $4.([]*ast.TrafficOption)
+		if $5 != nil {
+			x.Options = $5.([]*ast.TrafficOption)
 		}
 
 		$$ = x
 	}
-|	"TRAFFIC" "REPLAYER" "REPLAY" TrafficReplayOptList
+|	"TRAFFIC" "REPLAY" "FROM" stringLit TrafficReplayOptList
 	{
-		x := &ast.TrafficReplayerStmt{
+		x := &ast.TrafficStmt{
 			OpType: ast.TrafficOpReplay,
+			Dir:    $4,
 		}
-		if $4 != nil {
-			x.Options = $4.([]*ast.TrafficOption)
+		if $5 != nil {
+			x.Options = $5.([]*ast.TrafficOption)
 		}
 
 		$$ = x
 	}
-|	"TRAFFIC" "REPLAYER" "SHOW" "JOBS"
+|	"SHOW" "TRAFFIC" "JOBS"
 	{
-		$$ = &ast.TrafficReplayerStmt{
+		$$ = &ast.TrafficStmt{
 			OpType: ast.TrafficOpShow,
 		}
 	}
-|	"TRAFFIC" "REPLAYER" "CANCEL" "JOBS"
+|	"CANCEL" "TRAFFIC" "JOBS"
 	{
-		$$ = &ast.TrafficReplayerStmt{
+		$$ = &ast.TrafficStmt{
 			OpType: ast.TrafficOpCancel,
 		}
 	}
@@ -15841,11 +15837,7 @@ TrafficCaptureOptList:
 	}
 
 TrafficCaptureOpt:
-	"OUTPUT" EqOpt stringLit
-	{
-		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionOutput, StrValue: $3}
-	}
-|	"DURATION" EqOpt stringLit
+	"DURATION" EqOpt stringLit
 	{
 		_, err := time.ParseDuration($3)
 		if err != nil {
@@ -15874,11 +15866,7 @@ TrafficReplayOptList:
 	}
 
 TrafficReplayOpt:
-	"INPUT" EqOpt stringLit
-	{
-		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionInput, StrValue: $3}
-	}
-|	"USER" EqOpt stringLit
+	"USER" EqOpt stringLit
 	{
 		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionUsername, StrValue: $3}
 	}
