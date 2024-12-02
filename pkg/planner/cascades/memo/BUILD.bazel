@@ -13,8 +13,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/pattern",
         "//pkg/planner/core/base",
-        "//pkg/planner/pattern",
         "//pkg/planner/property",
         "//pkg/sessionctx",
         "//pkg/util/intest",

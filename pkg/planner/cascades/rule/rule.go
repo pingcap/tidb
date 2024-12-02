@@ -16,7 +16,7 @@ package rule
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
