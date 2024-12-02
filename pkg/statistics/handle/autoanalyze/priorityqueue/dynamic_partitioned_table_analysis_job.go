@@ -202,7 +202,6 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
-OnlyPickOneIndex:
 	for indexName, partitionNames := range j.PartitionIndexes {
 		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
@@ -219,11 +218,11 @@ OnlyPickOneIndex:
 			params := append([]any{j.TableSchema, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-			// Halt execution after analyzing one index.
-			// This is because analyzing a single index also analyzes all other indexes and columns.
-			// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
-			break OnlyPickOneIndex
 		}
+		// Halt execution after analyzing one index.
+		// This is because analyzing a single index also analyzes all other indexes and columns.
+		// Therefore, to avoid redundancy, we prevent multiple analyses of the same partition.
+		break
 	}
 }
 

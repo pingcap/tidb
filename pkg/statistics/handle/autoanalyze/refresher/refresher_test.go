@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -31,9 +30,9 @@ import (
 )
 
 func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -83,9 +82,9 @@ func TestSkipAnalyzeTableWhenAutoAnalyzeRatioIsZero(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -103,9 +102,9 @@ func TestIgnoreNilOrPseudoStatsOfPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -123,9 +122,9 @@ func TestIgnoreNilOrPseudoStatsOfNonPartitionedTable(t *testing.T) {
 }
 
 func TestIgnoreTinyTable(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 10
+	statistics.AutoAnalyzeMinCnt = 10
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -167,9 +166,9 @@ func TestIgnoreTinyTable(t *testing.T) {
 }
 
 func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -321,11 +320,11 @@ func insertFailedJobForPartitionWithStartTime(
 }
 
 func TestRebuildTableAnalysisJobQueue(t *testing.T) {
-	old := exec.AutoAnalyzeMinCnt
+	old := statistics.AutoAnalyzeMinCnt
 	defer func() {
-		exec.AutoAnalyzeMinCnt = old
+		statistics.AutoAnalyzeMinCnt = old
 	}()
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -400,7 +399,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 			tblStats: &statistics.Table{
 				HistColl: statistics.HistColl{
 					Pseudo:        false,
-					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					Columns:       unanalyzedColumns,
 					Indices:       unanalyzedIndices,
 				},
@@ -414,10 +413,10 @@ func TestCalculateChangePercentage(t *testing.T) {
 			tblStats: &statistics.Table{
 				HistColl: statistics.HistColl{
 					Pseudo:        false,
-					RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+					RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					Columns:       analyzedColumns,
 					Indices:       analyzedIndices,
-					ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
+					ModifyCount:   (statistics.AutoAnalyzeMinCnt + 1) * 2,
 				},
 				ColAndIdxExistenceMap: bothAnalyzedMap,
 				LastAnalyzeVersion:    1,
@@ -585,7 +584,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -595,7 +594,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 					},
 					ColAndIdxExistenceMap: unanalyzedMap,
 				},
@@ -643,8 +642,8 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
-						ModifyCount:   (exec.AutoAnalyzeMinCnt + 1) * 2,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
+						ModifyCount:   (statistics.AutoAnalyzeMinCnt + 1) * 2,
 						Columns: map[int64]*statistics.Column{
 							1: {
 								StatsVer: 2,
@@ -670,7 +669,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 						ModifyCount:   0,
 						Columns: map[int64]*statistics.Column{
 							1: {
@@ -735,7 +734,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 						ModifyCount:   0,
 						Columns: map[int64]*statistics.Column{
 							1: {
@@ -762,7 +761,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				}: {
 					HistColl: statistics.HistColl{
 						Pseudo:        false,
-						RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+						RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 						ModifyCount:   0,
 						Columns: map[int64]*statistics.Column{
 							1: {
@@ -856,7 +855,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		}: {
 			HistColl: statistics.HistColl{
 				Pseudo:        false,
-				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 				ModifyCount:   0,
 				Indices:       map[int64]*statistics.Index{},
 			},
@@ -868,7 +867,7 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 		}: {
 			HistColl: statistics.HistColl{
 				Pseudo:        false,
-				RealtimeCount: exec.AutoAnalyzeMinCnt + 1,
+				RealtimeCount: statistics.AutoAnalyzeMinCnt + 1,
 				ModifyCount:   0,
 				Indices: map[int64]*statistics.Index{
 					2: {

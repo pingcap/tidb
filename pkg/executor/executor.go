@@ -1332,6 +1332,7 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+	columnSwapHelper      *chunk.ColumnSwapHelper
 
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
@@ -1393,10 +1394,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.cursor += batchSize
 
 	if e.columnIdxsUsedByChild != nil {
-		for i, childIdx := range e.columnIdxsUsedByChild {
-			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
-				return err
-			}
+		err = e.columnSwapHelper.SwapColumns(e.childResult, req)
+		if err != nil {
+			return err
 		}
 	} else {
 		req.SwapColumns(e.childResult)
