@@ -1792,6 +1792,18 @@ func TestInstr(t *testing.T) {
 		{[]any{"foobar", nil}, nil},
 		{[]any{nil, "foobar"}, nil},
 		{[]any{nil, nil}, nil},
+
+		{[]any{"aaaa", "aa", -4, 1}, 1},
+		{[]any{"aaaa", "aa", -4, 2}, 0},
+		{[]any{"aaaa", "aa", -1, 2}, 2},
+		{[]any{"aaaa", "aa", -1, 1}, 3},
+		{[]any{"aaaa", "aa", 0, 1}, 0},
+		{[]any{"aaaa", "aa", 2, 1}, 2},
+		{[]any{"中文和中文", "中文", 2, 1}, 4},
+		{[]any{"中文和中文", "中文", -2, 2}, 1},
+		{[]any{"中文和中文", "中文", -1, 1}, 4},
+		{[]any{"中文和中文", "中文", -3, 1}, 1},
+		{[]any{"中文和中文", "中文", -1, 3}, 0},
 	}
 
 	Dtbl := tblToDtbl(tbl)
