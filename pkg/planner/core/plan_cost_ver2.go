@@ -162,8 +162,10 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp {
-		// Apply cost penalty for full scans that carry high risk of underestimation
+	} else if !p.isChildOfIndexLookUp && p.Table.Partition == nil {
+		// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
+		// that are the child of an index scan or partition tables - since partition tables do not
+		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
 		sessionVars := p.SCtx().GetSessionVars()
 		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 		tblColHists := p.tblColHists
