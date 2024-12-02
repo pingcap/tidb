@@ -163,7 +163,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ TIDB_SMJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
-			fmt.Sprintf(`MergeJoin 4150.01 root  inner join, left side:Sort, left key:test.%s.a, right key:test.%s.a`, t1, t2),
+			fmt.Sprintf(`MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`├─Sort(Build) 3320.01 root  test.%s.a`, t2),
 			`│ └─TableReader 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│   └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),

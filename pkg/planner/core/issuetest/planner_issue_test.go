@@ -103,7 +103,7 @@ func TestIssue54535(t *testing.T) {
 	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
 		Check(testkit.Rows(
 			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
-			"└─IndexJoin_16 9990.00 root  inner join, inner:HashAgg_14, left side:TableReader_43, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
+			"└─IndexJoin_16 9990.00 root  inner join, inner:HashAgg_14, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
 			"  ├─TableReader_43(Build) 9990.00 root  data:Selection_42",
 			"  │ └─Selection_42 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
 			"  │   └─TableFullScan_41 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",

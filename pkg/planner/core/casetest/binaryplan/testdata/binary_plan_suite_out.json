@@ -128,7 +128,7 @@
                     "act_rows": 8,
                     "task_type": 1,
                     "store_type": 1,
-                    "operator_info": "CARTESIAN inner join, left side:IndexReader_15"
+                    "operator_info": "CARTESIAN inner join"
                   }
                 ],
                 "cost": 999128387.6317058,
@@ -287,7 +287,7 @@
             "est_rows": 12487.5,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "inner join, left side:TableReader_37, equal:[eq(test.t.a, test.t2.a)]"
+            "operator_info": "inner join, equal:[eq(test.t.a, test.t2.a)]"
           },
           "with_runtime_stats": true
         }

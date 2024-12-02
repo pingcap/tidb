@@ -581,7 +581,7 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 	} else {
 		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
 	}
-	explainJoinLeftSide(buffer, normalized, p.Children()[0])
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(", outer key:")
 		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
@@ -657,7 +657,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, normalized, p.Children()[0])
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
@@ -729,12 +729,14 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
-func explainJoinLeftSide(buffer *strings.Builder, normalized bool, leftSide base.PhysicalPlan) {
-	buffer.WriteString(", left side:")
-	if normalized {
-		buffer.WriteString(leftSide.TP())
-	} else {
-		buffer.WriteString(leftSide.ExplainID().String())
+func explainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized bool, leftSide base.PhysicalPlan) {
+	if !isInnerJoin {
+		buffer.WriteString(", left side:")
+		if normalized {
+			buffer.WriteString(leftSide.TP())
+		} else {
+			buffer.WriteString(leftSide.ExplainID().String())
+		}
 	}
 }
 
@@ -754,7 +756,7 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	buffer := new(strings.Builder)
 	buffer.WriteString(p.JoinType.String())
-	explainJoinLeftSide(buffer, normalized, p.Children()[0])
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))

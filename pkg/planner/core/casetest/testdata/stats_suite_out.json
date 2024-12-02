@@ -143,7 +143,7 @@
       {
         "SQL": "select * from t1, t2 where t1.a = t2.a and t1.b = t2.b",
         "Plan": [
-          "MergeJoin 4.00 root  inner join, left side:IndexReader, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
+          "MergeJoin 4.00 root  inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b",
           "├─IndexReader(Build) 9.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9.00 cop[tikv] table:t2, index:a(a, b) keep order:true",
           "└─IndexReader(Probe) 4.00 root  index:IndexFullScan",

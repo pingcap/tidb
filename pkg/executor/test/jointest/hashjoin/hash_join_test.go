@@ -282,7 +282,7 @@ func TestInlineProjection4HashJoinIssue15316(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN_BUILD(T) */ T.a,T.a,T.c from S join T on T.a = S.a where S.b<T.b order by T.a,T.c;").Check(testkit.Rows(
 		"Projection 12487.50 root  test.t.a, test.t.a, test.t.c",
 		"└─Sort 12487.50 root  test.t.a, test.t.c",
-		"  └─HashJoin 12487.50 root  inner join, left side:TableReader, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
+		"  └─HashJoin 12487.50 root  inner join, equal:[eq(test.s.a, test.t.a)], other cond:lt(test.s.b, test.t.b)",
 		"    ├─TableReader(Build) 9990.00 root  data:Selection",
 		"    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.b))",
 		"    │   └─TableFullScan 10000.00 cop[tikv] table:T keep order:false, stats:pseudo",
