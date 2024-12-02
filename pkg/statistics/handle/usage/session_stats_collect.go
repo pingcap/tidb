@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -129,8 +130,13 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 // For a partitioned table, we will update its global-stats as well.
 func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVersion := uint64(0)
+	isLocked := false
 	defer func() {
-		if err == nil && statsVersion != 0 {
+		// Only record the historical stats meta when the table is not locked because all stats meta are stored in the locked table.
+		if err == nil && statsVersion != 0 && !isLocked {
+			failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+				panic("panic when record historical stats meta")
+			})
 			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
 		}
 	}()
@@ -171,6 +177,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 				isPartitionLocked = true
 			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
+			isLocked = tableOrPartitionLocked
 			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
@@ -201,6 +208,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
+			isLocked = isTableLocked
 			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, isTableLocked); err != nil {
 				return err
