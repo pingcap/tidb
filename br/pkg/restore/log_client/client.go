@@ -34,6 +34,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
@@ -545,13 +546,29 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
-func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
+type LockedMigrations struct {
+	Migs     []*backup.Migration
+	ReadLock storage.RemoteLock
+}
+
+func (rc *LogClient) GetMigrations(ctx context.Context) (*LockedMigrations, error) {
 	ext := stream.MigrationExtension(rc.storage)
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return migs.ListAll(), nil
+
+	ms := migs.ListAll()
+	readLock, err := ext.GetReadLock(ctx, "restore stream")
+	if err != nil {
+		return nil, err
+	}
+
+	lms := &LockedMigrations{
+		Migs:     ms,
+		ReadLock: readLock,
+	}
+	return lms, nil
 }
 
 func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,

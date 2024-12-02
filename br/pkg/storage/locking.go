@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -18,6 +19,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -251,6 +253,35 @@ func writeLockName(path string) string {
 func newReadLockName(path string) string {
 	readID := rand.Int63()
 	return fmt.Sprintf("%s.READ.%016x", path, readID)
+}
+
+type Locker = func(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error)
+
+func LockWith(ctx context.Context, locker Locker, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+	const JitterMs = 5000
+
+	retry := utils.InitialRetryState(math.MaxInt, 1*time.Second, 60*time.Second)
+	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
+	for {
+		lock, err = locker(ctx, storage, path, hint)
+		if err == nil {
+			return lock, nil
+		}
+		retryAfter := retry.ExponentialBackoff() + jitter
+		log.Info(
+			"Encountered lock, will retry then.",
+			logutil.ShortError(err),
+			zap.String("path", path),
+			zap.Duration("retry-after", retryAfter),
+		)
+
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(retryAfter):
+		}
+	}
 }
 
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {

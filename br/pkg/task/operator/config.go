@@ -180,3 +180,14 @@ func (cfg *MigrateToConfig) Verify() error {
 	}
 	return nil
 }
+
+type ForceFlushConfig struct {
+	task.Config
+}
+
+func DefineFlagsForForceFlushConfig(f *pflag.FlagSet) {
+}
+
+func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	return cfg.Config.ParseFromFlags(flags)
+}

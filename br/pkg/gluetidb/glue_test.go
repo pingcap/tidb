@@ -92,9 +92,9 @@ func TestTheSessionIsoation(t *testing.T) {
 		},
 	}
 	for _, pinfo := range polices {
-		before := glueSe.(*TiDBSession).Se.GetInfoSchema().SchemaMetaVersion()
+		before := glueSe.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
 		req.NoError(glueSe.CreatePlacementPolicy(ctx, pinfo))
-		after := glueSe.(*TiDBSession).Se.GetInfoSchema().SchemaMetaVersion()
+		after := glueSe.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
 		req.Greater(after, before)
 	}
 	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{

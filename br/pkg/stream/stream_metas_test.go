@@ -2584,7 +2584,7 @@ func TestBasicMigration(t *testing.T) {
 	requireMigrationsEqual(t, resE, res)
 
 	ctx := context.Background()
-	mg := est.MigrateTo(ctx, res)
+	mg := est.migrateTo(ctx, res)
 
 	newBaseE := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(0, 42), sp(42, 18))))
 	require.Empty(t, mg.Warnings)
@@ -2600,7 +2600,7 @@ func TestBasicMigration(t *testing.T) {
 
 	delRem := mig(mLogDel("00002.meta", spans("00001.log", 1024, sp(60, 1024-60))))
 	newNewBase := MergeMigrations(mg.NewBase, delRem)
-	mg = est.MigrateTo(ctx, newNewBase)
+	mg = est.migrateTo(ctx, newNewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig())
 }
@@ -2711,7 +2711,7 @@ func TestRemoveCompaction(t *testing.T) {
 		mTruncatedTo(30),
 	))
 
-	mg := est.MigrateTo(ctx, merged)
+	mg := est.migrateTo(ctx, merged)
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(cDir(1), aDir(1), 10, 40),
 		mCompaction(cDir(2), aDir(2), 35, 50),
@@ -2771,7 +2771,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/local_delete_file_err", `1*return("this disk will never forget")`))
 	est := MigrationExtension(s)
-	mg := est.MigrateTo(ctx, mig1)
+	mg := est.migrateTo(ctx, mig1)
 	require.Len(t, mg.Warnings, 1)
 	require.Error(t, mg.Warnings[0], "this disk will never forget")
 	requireMigrationsEqual(t, mg.NewBase, mig(
@@ -2780,7 +2780,7 @@ func TestRetryRemoveCompaction(t *testing.T) {
 		mDstrPfx(cDir(1), aDir(1)),
 	))
 
-	mg = est.MigrateTo(ctx, mg.NewBase)
+	mg = est.migrateTo(ctx, mg.NewBase)
 	require.Empty(t, mg.Warnings)
 	requireMigrationsEqual(t, mg.NewBase, mig(
 		mCompaction(placeholder(cDir(2)), placeholder(aDir(2)), 28, 32),
@@ -2817,7 +2817,7 @@ func TestWithSimpleTruncate(t *testing.T) {
 	est := MigrationExtension(s)
 	m := mig(mTruncatedTo(65))
 	var res MigratedTo
-	effs := est.DryRun(func(me MigrationExt) { res = me.MigrateTo(ctx, m) })
+	effs := est.DryRun(func(me MigrationExt) { res = me.migrateTo(ctx, m) })
 
 	require.Empty(t, res.Warnings)
 	for _, eff := range effs {

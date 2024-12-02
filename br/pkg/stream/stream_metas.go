@@ -571,6 +571,11 @@ type Migrations struct {
 	Layers []*OrderedMigration `json:"layers"`
 }
 
+// GetReadLock locks the storage and make sure there won't be other one modify this backup.
+func (m *MigrationExt) GetReadLock(ctx context.Context, hint string) (storage.RemoteLock, error) {
+	return storage.LockWith(ctx, storage.TryLockRemoteRead, m.s, lockPrefix, hint)
+}
+
 // OrderedMigration is a migration with its path and sequence number.
 type OrderedMigration struct {
 	SeqNum  int          `json:"seq_num"`
@@ -661,7 +666,7 @@ func (m MigrationExt) DryRun(f func(MigrationExt)) []storage.Effect {
 }
 
 func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (int, error) {
-	lock, err := storage.TryLockRemoteWrite(ctx, m.s, lockPrefix, "AppendMigration")
+	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
 	if err != nil {
 		return 0, err
 	}
@@ -752,7 +757,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	targetSpec int,
 	opts ...MergeAndMigrateToOpt,
 ) (result MergeAndMigratedTo) {
-	lock, err := storage.TryLockRemoteWrite(ctx, m.s, lockPrefix, "AppendMigration")
+	lock, err := storage.LockWith(ctx, storage.TryLockRemoteWrite, m.s, lockPrefix, "AppendMigration")
 	if err != nil {
 		result.MigratedTo = MigratedTo{
 			Warnings: []error{
@@ -838,7 +843,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 			}
 		}
 	}
-	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
+	result.MigratedTo = m.migrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
 
 	// Put the final BASE.
 	err = m.writeBase(ctx, result.MigratedTo.NewBase)
@@ -848,7 +853,7 @@ func (m MigrationExt) MergeAndMigrateTo(
 	return
 }
 
-type MigrateToOpt func(*migToOpt)
+type migrateToOpt func(*migToOpt)
 
 type migToOpt struct {
 	skipTruncateLog bool
@@ -858,17 +863,17 @@ func MTSkipTruncateLog(o *migToOpt) {
 	o.skipTruncateLog = true
 }
 
-func MTMaybeSkipTruncateLog(cond bool) MigrateToOpt {
+func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 	if cond {
 		return MTSkipTruncateLog
 	}
 	return func(*migToOpt) {}
 }
 
-// MigrateTo migrates to a migration.
+// migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
 // to the new BASE, which can be retryed then.
-func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...MigrateToOpt) MigratedTo {
+func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
 		o(&opt)

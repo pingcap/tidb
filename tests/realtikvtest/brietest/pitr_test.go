@@ -8,18 +8,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/br/pkg/task/operator"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 )
 
 type TestKitGlue struct {
@@ -137,6 +142,8 @@ func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.Strea
 		cfg.Storage = "local://" + kit.base + "/incr"
 		cfg.TaskName = taskName
 		cfg.EndTS = math.MaxUint64
+		cfg.TableFilter = filter.All()
+		cfg.FilterStr = []string{"*.*"}
 		extConfig(&cfg)
 		err := task.RunStreamStart(ctx, kit.Glue(), "stream start[intest]", &cfg)
 		return err
@@ -173,6 +180,27 @@ func (kit *LogBackupKit) mustExec(f func(context.Context) error) {
 	require.NoError(kit.t, err)
 }
 
+func (kit *LogBackupKit) forceFlush() {
+	kit.mustExec(func(ctx context.Context) error {
+		cfg := task.DefaultConfig()
+		cfg.PD = append(cfg.PD, config.GetGlobalConfig().Path)
+		return operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
+			Config: cfg,
+		})
+	})
+}
+
+func (kit *LogBackupKit) forceFlushAndWait(taskName string) {
+	ts := kit.TSO()
+	kit.forceFlush()
+	require.Eventually(kit.t, func() bool {
+		ckpt := kit.CheckpointTSOf(taskName)
+		log.Info("checkpoint", zap.Uint64("checkpoint", ckpt), zap.Uint64("ts", ts))
+		return ckpt >= ts
+	}, 21*time.Second, 1*time.Second)
+	time.Sleep(6 * time.Second) // Wait the storage checkpoint uploaded...
+}
+
 func createSimpleTableWithData(kit *LogBackupKit) {
 	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTs test.%s", kit.t.Name()))
 	kit.tk.MustExec(fmt.Sprintf("CREATE TABLE test.%s(t text)", kit.t.Name()))
@@ -204,11 +232,7 @@ func TestPiTR(t *testing.T) {
 
 	insertSimpleIncreaseData(kit)
 
-	ts = kit.TSO()
-	require.Eventually(t, func() bool {
-		return kit.CheckpointTSOf(taskName) >= ts
-	}, 300*time.Second, 10*time.Second)
-
+	kit.forceFlushAndWait(taskName)
 	cleanSimpleData(kit)
 
 	kit.StopTaskIfExists(taskName)
@@ -236,11 +260,7 @@ func TestPiTRAndBackup(t *testing.T) {
 	})
 	kit.RunFullRestore(func(rc *task.RestoreConfig) {})
 
-	ts = kit.TSO()
-	require.Eventually(t, func() bool {
-		return kit.CheckpointTSOf(taskName) >= ts
-	}, 300*time.Second, 10*time.Second)
-
+	kit.forceFlushAndWait(taskName)
 	cleanSimpleData(kit)
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
 		rc.FullBackupStorage = "local://" + kit.base + "/full2"

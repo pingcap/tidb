@@ -61,6 +61,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -1390,7 +1391,8 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	client.BuildMigrations(migs)
+	client.BuildMigrations(migs.Migs)
+	defer cleanUpWithRetErr(&err, migs.ReadLock.Unlock)
 
 	// get full backup meta storage to generate rewrite rules.
 	fullBackupStorage, err := parseFullBackupTablesStorage(cfg)
@@ -1915,4 +1917,13 @@ func checkPiTRTaskInfo(
 	}
 
 	return checkInfo, nil
+}
+
+func cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	err := f(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(*errOut, err)
+	}
 }
