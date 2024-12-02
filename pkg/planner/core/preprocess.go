@@ -1945,7 +1945,7 @@ type aliasChecker struct{}
 func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
-		var aliases []*pmodel.CIStr
+		var aliases []*model.CIStr
 		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
 			tableRefs := deleteStmt.TableRefs.TableRefs
 			if val := getTableRefsAlias(tableRefs.Left); val != nil {
@@ -1974,7 +1974,7 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *model.CIStr {
 	switch v := tableRefs.(type) {
 	case *ast.Join:
 		if v.Left != nil {
