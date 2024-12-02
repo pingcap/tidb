@@ -1906,7 +1906,6 @@ func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
 	if exist {
 		return nil
 	}
-
 	var data immutable
 	userList, err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {
