@@ -15,11 +15,11 @@
 package memo
 
 import (
-	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/stretchr/testify/require"
@@ -49,28 +49,28 @@ func TestNewExprIterFromGroupElem(t *testing.T) {
 	expr.Children = append(expr.Children, g1)
 	g2 := NewGroupWithSchema(expr, schema)
 
-	pat := pattern2.BuildPattern(pattern2.OperandJoin, pattern2.EngineAll,
-		pattern2.BuildPattern(pattern2.OperandProjection, pattern2.EngineAll),
-		pattern2.BuildPattern(pattern2.OperandSelection, pattern2.EngineAll))
+	pat := pattern.BuildPattern(pattern.OperandJoin, pattern.EngineAll,
+		pattern.BuildPattern(pattern.OperandProjection, pattern.EngineAll),
+		pattern.BuildPattern(pattern.OperandSelection, pattern.EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pat)
 
 	require.NotNil(t, iter)
 	require.Nil(t, iter.Group)
 	require.Equal(t, g2.Equivalents.Front(), iter.Element)
 	require.True(t, iter.matched)
-	require.Equal(t, pattern2.OperandJoin, iter.Operand)
+	require.Equal(t, pattern.OperandJoin, iter.Operand)
 	require.Len(t, iter.Children, 2)
 
 	require.Equal(t, g0, iter.Children[0].Group)
-	require.Equal(t, g0.GetFirstElem(pattern2.OperandProjection), iter.Children[0].Element)
+	require.Equal(t, g0.GetFirstElem(pattern.OperandProjection), iter.Children[0].Element)
 	require.True(t, iter.Children[0].matched)
-	require.Equal(t, pattern2.OperandProjection, iter.Children[0].Operand)
+	require.Equal(t, pattern.OperandProjection, iter.Children[0].Operand)
 	require.Len(t, iter.Children[0].Children, 0)
 
 	require.Equal(t, g1, iter.Children[1].Group)
-	require.Equal(t, g1.GetFirstElem(pattern2.OperandSelection), iter.Children[1].Element)
+	require.Equal(t, g1.GetFirstElem(pattern.OperandSelection), iter.Children[1].Element)
 	require.True(t, iter.Children[1].matched)
-	require.Equal(t, pattern2.OperandSelection, iter.Children[1].Operand)
+	require.Equal(t, pattern.OperandSelection, iter.Children[1].Operand)
 	require.Len(t, iter.Children[0].Children, 0)
 }
 
@@ -99,9 +99,9 @@ func TestExprIterNext(t *testing.T) {
 	expr.Children = append(expr.Children, g1)
 	g2 := NewGroupWithSchema(expr, schema)
 
-	pat := pattern2.BuildPattern(pattern2.OperandJoin, pattern2.EngineAll,
-		pattern2.BuildPattern(pattern2.OperandProjection, pattern2.EngineAll),
-		pattern2.BuildPattern(pattern2.OperandSelection, pattern2.EngineAll))
+	pat := pattern.BuildPattern(pattern.OperandJoin, pattern.EngineAll,
+		pattern.BuildPattern(pattern.OperandProjection, pattern.EngineAll),
+		pattern.BuildPattern(pattern.OperandSelection, pattern.EngineAll))
 	iter := NewExprIterFromGroupElem(g2.Equivalents.Front(), pat)
 	require.NotNil(t, iter)
 
@@ -110,17 +110,17 @@ func TestExprIterNext(t *testing.T) {
 		count++
 		require.Nil(t, iter.Group)
 		require.True(t, iter.matched)
-		require.Equal(t, pattern2.OperandJoin, iter.Operand)
+		require.Equal(t, pattern.OperandJoin, iter.Operand)
 		require.Len(t, iter.Children, 2)
 
 		require.Equal(t, g0, iter.Children[0].Group)
 		require.True(t, iter.Children[0].matched)
-		require.Equal(t, pattern2.OperandProjection, iter.Children[0].Operand)
+		require.Equal(t, pattern.OperandProjection, iter.Children[0].Operand)
 		require.Len(t, iter.Children[0].Children, 0)
 
 		require.Equal(t, g1, iter.Children[1].Group)
 		require.True(t, iter.Children[1].matched)
-		require.Equal(t, pattern2.OperandSelection, iter.Children[1].Operand)
+		require.Equal(t, pattern.OperandSelection, iter.Children[1].Operand)
 		require.Len(t, iter.Children[1].Children, 0)
 	}
 
@@ -168,10 +168,10 @@ func TestExprIterReset(t *testing.T) {
 	sel3.Children = append(sel3.Children, g2)
 
 	// create a pattern: join(proj, sel(limit))
-	lhsPattern := pattern2.BuildPattern(pattern2.OperandProjection, pattern2.EngineAll)
-	rhsPattern := pattern2.BuildPattern(pattern2.OperandSelection, pattern2.EngineAll,
-		pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineAll))
-	pat := pattern2.BuildPattern(pattern2.OperandJoin, pattern2.EngineAll, lhsPattern, rhsPattern)
+	lhsPattern := pattern.BuildPattern(pattern.OperandProjection, pattern.EngineAll)
+	rhsPattern := pattern.BuildPattern(pattern.OperandSelection, pattern.EngineAll,
+		pattern.BuildPattern(pattern.OperandLimit, pattern.EngineAll))
+	pat := pattern.BuildPattern(pattern.OperandJoin, pattern.EngineAll, lhsPattern, rhsPattern)
 
 	// create expression iterator for the pattern on join
 	iter := NewExprIterFromGroupElem(g3.Equivalents.Front(), pat)
@@ -182,22 +182,22 @@ func TestExprIterReset(t *testing.T) {
 		count++
 		require.Nil(t, iter.Group)
 		require.True(t, iter.matched)
-		require.Equal(t, pattern2.OperandJoin, iter.Operand)
+		require.Equal(t, pattern.OperandJoin, iter.Operand)
 		require.Len(t, iter.Children, 2)
 
 		require.Equal(t, g0, iter.Children[0].Group)
 		require.True(t, iter.Children[0].matched)
-		require.Equal(t, pattern2.OperandProjection, iter.Children[0].Operand)
+		require.Equal(t, pattern.OperandProjection, iter.Children[0].Operand)
 		require.Len(t, iter.Children[0].Children, 0)
 
 		require.Equal(t, g1, iter.Children[1].Group)
 		require.True(t, iter.Children[1].matched)
-		require.Equal(t, pattern2.OperandSelection, iter.Children[1].Operand)
+		require.Equal(t, pattern.OperandSelection, iter.Children[1].Operand)
 		require.Len(t, iter.Children[1].Children, 1)
 
 		require.Equal(t, g2, iter.Children[1].Children[0].Group)
 		require.True(t, iter.Children[1].Children[0].matched)
-		require.Equal(t, pattern2.OperandLimit, iter.Children[1].Children[0].Operand)
+		require.Equal(t, pattern.OperandLimit, iter.Children[1].Children[0].Operand)
 		require.Len(t, iter.Children[1].Children[0].Children, 0)
 	}
 
@@ -212,19 +212,19 @@ func TestExprIterWithEngineType(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	g1 := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern2.EngineTiFlash)
+	g1 := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern.EngineTiFlash)
 	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 1}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
 	g1.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 
-	g2 := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern2.EngineTiKV)
+	g2 := NewGroupWithSchema(NewGroupExpr(logicalop.LogicalSelection{Conditions: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)), schema).SetEngineType(pattern.EngineTiKV)
 	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 2}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 
 	flashGather := NewGroupExpr(logicalop.TiKVSingleGather{}.Init(ctx, 0))
 	flashGather.Children = append(flashGather.Children, g1)
-	g3 := NewGroupWithSchema(flashGather, schema).SetEngineType(pattern2.EngineTiDB)
+	g3 := NewGroupWithSchema(flashGather, schema).SetEngineType(pattern.EngineTiDB)
 
 	tikvGather := NewGroupExpr(logicalop.TiKVSingleGather{}.Init(ctx, 0))
 	tikvGather.Children = append(tikvGather.Children, g2)
@@ -232,7 +232,7 @@ func TestExprIterWithEngineType(t *testing.T) {
 
 	join := NewGroupExpr(logicalop.LogicalJoin{}.Init(ctx, 0))
 	join.Children = append(join.Children, g3, g3)
-	g4 := NewGroupWithSchema(join, schema).SetEngineType(pattern2.EngineTiDB)
+	g4 := NewGroupWithSchema(join, schema).SetEngineType(pattern.EngineTiDB)
 
 	// The Groups look like this:
 	// Group 4
@@ -251,62 +251,62 @@ func TestExprIterWithEngineType(t *testing.T) {
 	//     Limit
 	//     Limit
 
-	p0 := pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOnly))
+	p0 := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOnly))
 	require.Equal(t, 2, countMatchedIter(g3, p0))
-	p1 := pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiFlashOnly))
+	p1 := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiFlashOnly))
 	require.Equal(t, 2, countMatchedIter(g3, p1))
-	p2 := pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOrTiFlash))
+	p2 := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOrTiFlash))
 	require.Equal(t, 4, countMatchedIter(g3, p2))
-	p3 := pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandSelection, pattern2.EngineTiFlashOnly))
+	p3 := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandSelection, pattern.EngineTiFlashOnly))
 	require.Equal(t, 1, countMatchedIter(g3, p3))
-	p4 := pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandProjection, pattern2.EngineTiKVOnly))
+	p4 := pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandProjection, pattern.EngineTiKVOnly))
 	require.Equal(t, 1, countMatchedIter(g3, p4))
-	p5 := pattern2.BuildPattern(
-		pattern2.OperandJoin,
-		pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOnly)),
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOnly)),
+	p5 := pattern.BuildPattern(
+		pattern.OperandJoin,
+		pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOnly)),
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOnly)),
 	)
 	require.Equal(t, 4, countMatchedIter(g4, p5))
-	p6 := pattern2.BuildPattern(
-		pattern2.OperandJoin,
-		pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiFlashOnly)),
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOnly)),
+	p6 := pattern.BuildPattern(
+		pattern.OperandJoin,
+		pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiFlashOnly)),
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOnly)),
 	)
 	require.Equal(t, 4, countMatchedIter(g4, p6))
-	p7 := pattern2.BuildPattern(
-		pattern2.OperandJoin,
-		pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOrTiFlash)),
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly,
-			pattern2.BuildPattern(pattern2.OperandLimit, pattern2.EngineTiKVOrTiFlash)),
+	p7 := pattern.BuildPattern(
+		pattern.OperandJoin,
+		pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOrTiFlash)),
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly,
+			pattern.BuildPattern(pattern.OperandLimit, pattern.EngineTiKVOrTiFlash)),
 	)
 	require.Equal(t, 16, countMatchedIter(g4, p7))
 
 	// This is not a test case for EngineType. This case is to test
 	// the Pattern without a leaf AnyOperand. It is more efficient to
 	// test it here.
-	p8 := pattern2.BuildPattern(
-		pattern2.OperandJoin,
-		pattern2.EngineTiDBOnly,
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly),
-		pattern2.BuildPattern(pattern2.OperandTiKVSingleGather, pattern2.EngineTiDBOnly),
+	p8 := pattern.BuildPattern(
+		pattern.OperandJoin,
+		pattern.EngineTiDBOnly,
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly),
+		pattern.BuildPattern(pattern.OperandTiKVSingleGather, pattern.EngineTiDBOnly),
 	)
 	require.Equal(t, 4, countMatchedIter(g4, p8))
 }
 
-func countMatchedIter(group *Group, pattern *pattern2.Pattern) int {
+func countMatchedIter(group *Group, pattern *pattern.Pattern) int {
 	count := 0
 	for elem := group.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		iter := NewExprIterFromGroupElem(elem, pattern)

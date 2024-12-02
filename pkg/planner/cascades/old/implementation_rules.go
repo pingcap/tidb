@@ -15,10 +15,10 @@
 package old
 
 import (
-	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	impl "github.com/pingcap/tidb/pkg/planner/implementation"
@@ -36,59 +36,59 @@ type ImplementationRule interface {
 	OnImplement(expr *memo.GroupExpr, reqProp *property.PhysicalProperty) ([]memo.Implementation, error)
 }
 
-var defaultImplementationMap = map[pattern2.Operand][]ImplementationRule{
-	pattern2.OperandTableDual: {
+var defaultImplementationMap = map[pattern.Operand][]ImplementationRule{
+	pattern.OperandTableDual: {
 		&ImplTableDual{},
 	},
-	pattern2.OperandMemTableScan: {
+	pattern.OperandMemTableScan: {
 		&ImplMemTableScan{},
 	},
-	pattern2.OperandProjection: {
+	pattern.OperandProjection: {
 		&ImplProjection{},
 	},
-	pattern2.OperandTableScan: {
+	pattern.OperandTableScan: {
 		&ImplTableScan{},
 	},
-	pattern2.OperandIndexScan: {
+	pattern.OperandIndexScan: {
 		&ImplIndexScan{},
 	},
-	pattern2.OperandTiKVSingleGather: {
+	pattern.OperandTiKVSingleGather: {
 		&ImplTiKVSingleReadGather{},
 	},
-	pattern2.OperandShow: {
+	pattern.OperandShow: {
 		&ImplShow{},
 	},
-	pattern2.OperandSelection: {
+	pattern.OperandSelection: {
 		&ImplSelection{},
 	},
-	pattern2.OperandSort: {
+	pattern.OperandSort: {
 		&ImplSort{},
 	},
-	pattern2.OperandAggregation: {
+	pattern.OperandAggregation: {
 		&ImplHashAgg{},
 	},
-	pattern2.OperandLimit: {
+	pattern.OperandLimit: {
 		&ImplLimit{},
 	},
-	pattern2.OperandTopN: {
+	pattern.OperandTopN: {
 		&ImplTopN{},
 		&ImplTopNAsLimit{},
 	},
-	pattern2.OperandJoin: {
+	pattern.OperandJoin: {
 		&ImplHashJoinBuildLeft{},
 		&ImplHashJoinBuildRight{},
 		&ImplMergeJoin{},
 	},
-	pattern2.OperandUnionAll: {
+	pattern.OperandUnionAll: {
 		&ImplUnionAll{},
 	},
-	pattern2.OperandApply: {
+	pattern.OperandApply: {
 		&ImplApply{},
 	},
-	pattern2.OperandMaxOneRow: {
+	pattern.OperandMaxOneRow: {
 		&ImplMaxOneRow{},
 	},
-	pattern2.OperandWindow: {
+	pattern.OperandWindow: {
 		&ImplWindow{},
 	},
 }
@@ -273,9 +273,9 @@ func (*ImplSelection) OnImplement(expr *memo.GroupExpr, reqProp *property.Physic
 		Conditions: logicalSel.Conditions,
 	}.Init(logicalSel.SCtx(), expr.Group.Prop.Stats.ScaleByExpectCnt(reqProp.ExpectedCnt), logicalSel.QueryBlockOffset(), reqProp.CloneEssentialFields())
 	switch expr.Group.EngineType {
-	case pattern2.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBSelectionImpl(physicalSel)}, nil
-	case pattern2.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVSelectionImpl(physicalSel)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for Selection.", expr.Group.EngineType.String())
@@ -334,9 +334,9 @@ func (*ImplHashAgg) OnImplement(expr *memo.GroupExpr, reqProp *property.Physical
 	)
 	hashAgg.SetSchema(expr.Group.Prop.Schema.Clone())
 	switch expr.Group.EngineType {
-	case pattern2.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBHashAggImpl(hashAgg)}, nil
-	case pattern2.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVHashAggImpl(hashAgg)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for HashAggregation.", expr.Group.EngineType.String())
@@ -373,7 +373,7 @@ type ImplTopN struct {
 // Match implements ImplementationRule Match interface.
 func (*ImplTopN) Match(expr *memo.GroupExpr, prop *property.PhysicalProperty) (matched bool) {
 	topN := expr.ExprNode.(*logicalop.LogicalTopN)
-	if expr.Group.EngineType != pattern2.EngineTiDB {
+	if expr.Group.EngineType != pattern.EngineTiDB {
 		return prop.IsSortItemEmpty()
 	}
 	return plannercore.MatchItems(prop, topN.ByItems)
@@ -389,9 +389,9 @@ func (*ImplTopN) OnImplement(expr *memo.GroupExpr, _ *property.PhysicalProperty)
 		Offset:  lt.Offset,
 	}.Init(lt.SCtx(), expr.Group.Prop.Stats, lt.QueryBlockOffset(), resultProp)
 	switch expr.Group.EngineType {
-	case pattern2.EngineTiDB:
+	case pattern.EngineTiDB:
 		return []memo.Implementation{impl.NewTiDBTopNImpl(topN)}, nil
-	case pattern2.EngineTiKV:
+	case pattern.EngineTiKV:
 		return []memo.Implementation{impl.NewTiKVTopNImpl(topN)}, nil
 	default:
 		return nil, plannererrors.ErrInternal.GenWithStack("Unsupported EngineType '%s' for TopN.", expr.Group.EngineType.String())

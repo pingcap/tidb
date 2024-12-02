@@ -16,7 +16,6 @@ package old
 
 import (
 	"context"
-	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"math"
 	"testing"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -122,8 +122,8 @@ func TestPreparePossibleProperties(t *testing.T) {
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
-	optimizer.ResetTransformationRules(map[pattern2.Operand][]Transformation{
-		pattern2.OperandDataSource: {
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandDataSource: {
 			NewRuleEnumeratePaths(),
 		},
 	})
@@ -219,9 +219,9 @@ func TestAppliedRuleSet(t *testing.T) {
 	optimizer := NewOptimizer()
 
 	rule := fakeTransformation{}
-	rule.pattern = pattern2.NewPattern(pattern2.OperandProjection, pattern2.EngineAll)
-	optimizer.ResetTransformationRules(map[pattern2.Operand][]Transformation{
-		pattern2.OperandProjection: {
+	rule.pattern = pattern.NewPattern(pattern.OperandProjection, pattern.EngineAll)
+	optimizer.ResetTransformationRules(map[pattern.Operand][]Transformation{
+		pattern.OperandProjection: {
 			&rule,
 		},
 	})

@@ -17,9 +17,9 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	// import core pkg first to call its init func.
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -51,13 +51,13 @@ func (m *ExploreMark) Explored(round int) bool {
 type Group struct {
 	Equivalents *list.List
 
-	FirstExpr    map[pattern2.Operand]*list.Element
+	FirstExpr    map[pattern.Operand]*list.Element
 	Fingerprints map[string]*list.Element
 
 	ImplMap map[string]Implementation
 	Prop    *property.LogicalProperty
 
-	EngineType pattern2.EngineType
+	EngineType pattern.EngineType
 
 	SelfFingerprint string
 
@@ -78,17 +78,17 @@ func NewGroupWithSchema(e *GroupExpr, s *expression.Schema) *Group {
 	g := &Group{
 		Equivalents:  list.New(),
 		Fingerprints: make(map[string]*list.Element),
-		FirstExpr:    make(map[pattern2.Operand]*list.Element),
+		FirstExpr:    make(map[pattern.Operand]*list.Element),
 		ImplMap:      make(map[string]Implementation),
 		Prop:         prop,
-		EngineType:   pattern2.EngineTiDB,
+		EngineType:   pattern.EngineTiDB,
 	}
 	g.Insert(e)
 	return g
 }
 
 // SetEngineType sets the engine type of the group.
-func (g *Group) SetEngineType(e pattern2.EngineType) *Group {
+func (g *Group) SetEngineType(e pattern.EngineType) *Group {
 	g.EngineType = e
 	return g
 }
@@ -107,7 +107,7 @@ func (g *Group) Insert(e *GroupExpr) bool {
 		return false
 	}
 
-	operand := pattern2.GetOperand(e.ExprNode)
+	operand := pattern.GetOperand(e.ExprNode)
 	var newEquiv *list.Element
 	mark, hasMark := g.FirstExpr[operand]
 	if hasMark {
@@ -129,12 +129,12 @@ func (g *Group) Delete(e *GroupExpr) {
 		return // Can not find the target GroupExpr.
 	}
 
-	operand := pattern2.GetOperand(equiv.Value.(*GroupExpr).ExprNode)
+	operand := pattern.GetOperand(equiv.Value.(*GroupExpr).ExprNode)
 	if g.FirstExpr[operand] == equiv {
 		// The target GroupExpr is the first Element of the same Operand.
 		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
 		nextElem := equiv.Next()
-		if nextElem != nil && pattern2.GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
+		if nextElem != nil && pattern.GetOperand(nextElem.Value.(*GroupExpr).ExprNode) == operand {
 			g.FirstExpr[operand] = nextElem
 		} else {
 			// There is no more GroupExpr of the Operand, so we should
@@ -152,7 +152,7 @@ func (g *Group) Delete(e *GroupExpr) {
 func (g *Group) DeleteAll() {
 	g.Equivalents = list.New()
 	g.Fingerprints = make(map[string]*list.Element)
-	g.FirstExpr = make(map[pattern2.Operand]*list.Element)
+	g.FirstExpr = make(map[pattern.Operand]*list.Element)
 	g.SelfFingerprint = ""
 }
 
@@ -164,8 +164,8 @@ func (g *Group) Exists(e *GroupExpr) bool {
 
 // GetFirstElem returns the first Group expression which matches the Operand.
 // Return a nil pointer if there isn't.
-func (g *Group) GetFirstElem(operand pattern2.Operand) *list.Element {
-	if operand == pattern2.OperandAny {
+func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
+	if operand == pattern.OperandAny {
 		return g.Equivalents.Front()
 	}
 	return g.FirstExpr[operand]

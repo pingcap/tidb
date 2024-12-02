@@ -17,11 +17,11 @@ package rule
 import (
 	"bufio"
 	"bytes"
-	pattern2 "github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"testing"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/stretchr/testify/require"
@@ -48,8 +48,8 @@ func TestBinderSuccess(t *testing.T) {
 		cnt++
 	}
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll))
 
 	// bind the pattern to the memo.
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
@@ -73,8 +73,8 @@ func TestBinderFail(t *testing.T) {
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
 
 	// specify one child is from tiflash while the other is from tikv
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandProjection, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandProjection, pattern.EngineAll))
 
 	// bind the pattern to the memo.
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
@@ -91,9 +91,9 @@ func TestBinderFail(t *testing.T) {
 	p1 := logicalop.LogicalProjection{}.Init(ctx, 0)
 	p1.SetChildren(s1)
 
-	p2 := pattern2.NewPattern(pattern2.OperandLimit, pattern2.EngineAll)
-	p2.SetChildren(pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll))
-	pa = pattern2.NewPattern(pattern2.OperandProjection, pattern2.EngineAll)
+	p2 := pattern.NewPattern(pattern.OperandLimit, pattern.EngineAll)
+	p2.SetChildren(pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll))
+	pa = pattern.NewPattern(pattern.OperandProjection, pattern.EngineAll)
 	pa.SetChildren(p2)
 	binder = NewBinder(pa, rootGE)
 	b.Reset()
@@ -129,10 +129,10 @@ func TestBinderTopNode(t *testing.T) {
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
 
 	// single level pattern, no children.
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
 }
 
 func TestBinderOneNode(t *testing.T) {
@@ -144,10 +144,10 @@ func TestBinderOneNode(t *testing.T) {
 	require.Equal(t, 1, mm.GetGroups().Len())
 	require.Equal(t, 1, len(mm.GetGroupID2Group()))
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
 	binder := NewBinder(pa, mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression))
 	require.True(t, binder.Next())
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
 }
 
 func TestBinderSubTreeMatch(t *testing.T) {
@@ -170,8 +170,8 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	require.Equal(t, 7, mm.GetGroups().Len())
 	require.Equal(t, 7, len(mm.GetGroupID2Group()))
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll), pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll))
 
 	// bind the pattern to the memo.
 	rootGE := mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
@@ -182,8 +182,8 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	require.True(t, binder.holder.Subs[1].Cur.GetLogicalPlan() == join2)
 	require.False(t, binder.Next())
 
-	pa2 := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa2.SetChildren(pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll))
+	pa2 := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa2.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll))
 	binder = NewBinder(pa2, rootGE)
 	// we couldn't bind the pattern to the subtree of join3, because the root group expression is pinned.
 	// the top-down iteration across all the tree nodes is the responsibility of the caller.
@@ -215,8 +215,8 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
@@ -227,10 +227,10 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
@@ -238,10 +238,10 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴               ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
@@ -249,10 +249,10 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//        ▴        ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
@@ -260,10 +260,10 @@ func TestBinderMultiNext(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴           ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t4", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	buf.Flush()
@@ -308,8 +308,8 @@ func TestBinderAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandDataSource, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandAny, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandDataSource, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
@@ -320,10 +320,10 @@ func TestBinderAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.True(t, binder.Next())
@@ -331,10 +331,10 @@ func TestBinderAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//         ▴       ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t3", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())
@@ -389,8 +389,8 @@ func TestBinderMultiAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 
-	pa := pattern2.NewPattern(pattern2.OperandJoin, pattern2.EngineAll)
-	pa.SetChildren(pattern2.NewPattern(pattern2.OperandAny, pattern2.EngineAll), pattern2.NewPattern(pattern2.OperandAny, pattern2.EngineAll))
+	pa := pattern.NewPattern(pattern.OperandJoin, pattern.EngineAll)
+	pa.SetChildren(pattern.NewPattern(pattern.OperandAny, pattern.EngineAll), pattern.NewPattern(pattern.OperandAny, pattern.EngineAll))
 	binder := NewBinder(pa, gE)
 	b := bytes.Buffer{}
 	buf := bufio.NewWriter(&b)
@@ -401,10 +401,10 @@ func TestBinderMultiAny(t *testing.T) {
 	//         /    \
 	//  G2{t1,t3}   G3{t2,t4}
 	//     ▴           ▴
-	require.Equal(t, pattern2.OperandJoin, pattern2.GetOperand(binder.holder.Cur.GetLogicalPlan()))
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandJoin, pattern.GetOperand(binder.holder.Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[0].Cur.GetLogicalPlan()))
 	require.Equal(t, "t1", binder.holder.Subs[0].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
-	require.Equal(t, pattern2.OperandDataSource, pattern2.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
+	require.Equal(t, pattern.OperandDataSource, pattern.GetOperand(binder.holder.Subs[1].Cur.GetLogicalPlan()))
 	require.Equal(t, "t2", binder.holder.Subs[1].Cur.GetLogicalPlan().(*logicalop.DataSource).TableAsName.L)
 
 	require.False(t, binder.Next())

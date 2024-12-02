@@ -17,10 +17,10 @@ package rule
 import (
 	"container/list"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 )
 
 // Document
