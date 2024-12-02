@@ -922,8 +922,8 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	return count > 0, nil
 }
 
-// CheckIfSeqExists use sql to check whether sequence exists
-func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+// checkIfSeqExists use sql to check whether sequence exists
+func checkIfSeqExists(db *sql.Conn) (bool, error) {
 	var count int
 	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
 	row := db.QueryRowContext(context.Background(), query)
