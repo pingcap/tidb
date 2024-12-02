@@ -189,7 +189,7 @@ WHERE
     ) 
 ORDER BY IF(ISNULL(`col_14`),0,1),`col_14`;
 
-# Test semi join
+# Test semi and anti semi join
 drop table if exists t1;
 drop table if exists t2;
 create table t1 (col0 int, col1 int);
@@ -197,6 +197,9 @@ create table t2 (col0 int, col1 int);
 insert into t1 values (null, 3), (null, 5), (null, null), (1, 1), (1, 2), (1, null), (2, 1), (2, 2), (2, null), (3, 1), (3, 2), (3, 4), (3, null);
 insert into t2 values (null, 3), (null, 4), (null, null), (1, 1), (3, 1), (3, 3), (3, null), (4, null), (4, 1), (4, 2), (4, 10);
 
+select * from t1 where col1 not in (select col1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
 select * from t1 where col1 in (select col1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
 select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
+select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;
 select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;
+select * from t1 where not exists (select 1 from t2 where t1.col0 = t2.col0 and t1.col1 > t2.col1) order by t1.col0, t1.col1;

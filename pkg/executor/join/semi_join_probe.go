@@ -24,9 +24,6 @@ import (
 
 type semiJoinProbe struct {
 	baseSemiJoin
-
-	// Used for right side build without other condition
-	offsets []int
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
@@ -319,26 +316,6 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 
 	s.generateResultChkForRightBuildNoOtherCondition(chk)
 	return
-}
-
-func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk *chunk.Chunk) {
-	if len(s.offsets) == 0 {
-		return
-	}
-
-	for index, colIndex := range s.lUsed {
-		srcCol := s.currentChunk.Column(colIndex)
-		dstCol := resultChk.Column(index)
-		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, nil, 0, len(s.offsets), func(i int) int {
-			return s.offsets[i]
-		})
-	}
-
-	if len(s.lUsed) == 0 {
-		resultChk.SetNumVirtualRows(resultChk.NumRows() + len(s.offsets))
-	} else {
-		resultChk.SetNumVirtualRows(resultChk.NumRows())
-	}
 }
 
 func (s *semiJoinProbe) IsCurrentChunkProbeDone() bool {
