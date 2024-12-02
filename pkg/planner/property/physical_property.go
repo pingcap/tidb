@@ -297,6 +297,28 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 	return matches
 }
 
+// IsSubsetOf check if the keys can match the needs of partition.
+func (p *PhysicalProperty) IsSubset(keys []*MPPPartitionColumn) bool {
+	if len(p.MPPPartitionCols) > len(keys) {
+		return false
+	}
+	matches := make([]int, 0, len(keys))
+	for _, partCol := range p.MPPPartitionCols {
+		found := false
+		for i, key := range keys {
+			if partCol.Equal(key) {
+				found = true
+				matches = append(matches, i)
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // AllColsFromSchema checks whether all the columns needed by this physical
 // property can be found in the given schema.
 func (p *PhysicalProperty) AllColsFromSchema(schema *expression.Schema) bool {
