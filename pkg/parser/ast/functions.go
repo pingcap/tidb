@@ -189,6 +189,8 @@ const (
 	TiDBParseTso         = "tidb_parse_tso"
 	TiDBParseTsoLogical  = "tidb_parse_tso_logical"
 	TiDBCurrentTso       = "tidb_current_tso"
+	// oracle time functions
+	MonthsBetween = "months_between"
 
 	// string functions
 	ASCII           = "ascii"

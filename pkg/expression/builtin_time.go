@@ -6950,3 +6950,49 @@ func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
 }
+
+type monthsBetweenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *monthsBetweenFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETDatetime, types.ETDatetime)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinMonthsBetweenSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinMonthsBetweenSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinMonthsBetweenSig.
+// See https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/MONTHS_BETWEEN.html
+func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	lhs, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	rhs, isNull, err := b.args[1].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
+		if invalidLHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs.String()))
+		}
+		if invalidRHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs.String()))
+		}
+		return 0, true, err
+	}
+	unit := "MONTH"
+	integerMonth := float64(types.TimestampDiff(unit, rhs, lhs))
+	decimalMonth := float64(lhs.Day()-rhs.Day()) / 31
+	return integerMonth + decimalMonth, false, nil
+}
