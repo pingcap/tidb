@@ -1429,7 +1429,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			restoreCtx.WriteKeyWord("TTL_JOB_INTERVAL")
 			restoreCtx.WritePlain("=")
 			if len(tableInfo.TTLInfo.JobInterval) == 0 {
-				restoreCtx.WriteString(model.DefaultJobIntervalStr)
+				// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+				// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+				// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+				restoreCtx.WriteString(model.OldDefaultTTLJobInterval)
 			} else {
 				restoreCtx.WriteString(tableInfo.TTLInfo.JobInterval)
 			}

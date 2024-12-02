@@ -156,7 +156,7 @@ func (path *AccessPath) IsTiKVTablePath() bool {
 
 // IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
 func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
-	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiFlash
+	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.

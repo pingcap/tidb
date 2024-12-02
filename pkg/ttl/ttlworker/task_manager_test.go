@@ -56,6 +56,16 @@ func (m *taskManager) RescheduleTasks(se session.Session, now time.Time) {
 	m.rescheduleTasks(se, now)
 }
 
+// ResizeScanWorkers is an exported version of resizeScanWorkers
+func (m *taskManager) ResizeScanWorkers(count int) error {
+	return m.resizeScanWorkers(count)
+}
+
+// ResizeDelWorkers is an exported version of resizeDeleteWorkers
+func (m *taskManager) ResizeDelWorkers(count int) error {
+	return m.resizeDelWorkers(count)
+}
+
 // ReportMetrics is an exported version of reportMetrics
 func (m *taskManager) ReportMetrics() {
 	m.reportMetrics()
@@ -79,6 +89,11 @@ func (m *taskManager) MeetTTLRunningTasks(count int, taskStatus cache.TaskStatus
 // ReportTaskFinished is an exported version of reportTaskFinished
 func (m *taskManager) ReportTaskFinished(se session.Session, now time.Time, task *runningScanTask) error {
 	return m.reportTaskFinished(se, now, task)
+}
+
+// GetScanWorkers returns the scan workers of the task manager.
+func (m *taskManager) GetScanWorkers() []worker {
+	return m.scanWorkers
 }
 
 // SetResult sets the result of the task

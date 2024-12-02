@@ -180,7 +180,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 			return ver, errors.Trace(err)
 		}
 		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(job.SchemaID)
+		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -205,7 +205,7 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	case model.StateDeleteOnly:
 		dbInfo.State = model.StateNone
 		var tables []*model.TableInfo
-		tables, err = metaMut.ListTables(job.SchemaID)
+		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -294,7 +294,7 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 			sid := recoverSchemaInfo.DBInfo.ID
 			snap := w.store.GetSnapshot(kv.NewVersion(recoverSchemaInfo.SnapshotTS))
 			snapMeta := meta.NewReader(snap)
-			tables, err2 := snapMeta.ListTables(sid)
+			tables, err2 := snapMeta.ListTables(jobCtx.stepCtx, sid)
 			if err2 != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err2)
