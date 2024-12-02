@@ -33,11 +33,7 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 5,
-=======
-    shard_count = 7,
->>>>>>> d0de86be941 (statistics: rightly deal with timout when to send sync load (#57712))
+    shard_count = 6,
     deps = [
         ":syncload",
         "//pkg/config",
