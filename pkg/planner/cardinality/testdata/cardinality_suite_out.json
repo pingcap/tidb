@@ -4112,7 +4112,7 @@
         "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
         "Result": [
           "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
           "  ├─TableReader(Build) 1000.00 root  data:Selection",
           "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -4131,7 +4131,7 @@
         "Query": "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
         "Result": [
           "Projection 2000.00 root  test.t.a, test.t.b, test.t.a, test.t.b",
-          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
+          "└─IndexJoin 2000.00 root  inner join, inner:IndexLookUp, left side:IndexLookUp, outer key:test.t.a, inner key:test.t.b, equal cond:eq(test.t.a, test.t.b)",
           "  ├─TableReader(Build) 1000.00 root  data:Selection",
           "  │ └─Selection 1000.00 cop[tikv]  lt(test.t.a, 1), not(isnull(test.t.a))",
           "  │   └─TableFullScan 500000.00 cop[tikv] table:t keep order:false, stats:pseudo",
