@@ -4167,3 +4167,35 @@ func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
 	}
 	return mp
 }
+
+type toCharFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	// TO_CHAR(datetime, fmt)
+	if len(args) == 2 {
+		if args[0].GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeDatetime {
+			return nil, errors.Errorf("First argument should be datetime")
+		}
+		bc := dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}}
+		return bc.getFunction(ctx, args)
+	}
+
+	// TO_CHAR(num)
+	if len(args) != 1 {
+		return nil, errors.Errorf("Wronr number of arguments for to_char(number)")
+	}
+
+	tp := types.NewFieldType(mysql.TypeVarString)
+	tp.SetFlen(types.UnspecifiedLength)
+	tp.SetCharset(charset.CharsetUTF8MB4)
+	tp.SetCollate("utf8mb4_general_ci")
+
+	fc := &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
+	return fc.getFunction(ctx, args)
+}
