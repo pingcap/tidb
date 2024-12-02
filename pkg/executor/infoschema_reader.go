@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -212,7 +211,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx)
+			err = e.setDataFromPlanCache(ctx, sctx, false)
+		case infoschema.ClusterTableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx, true)
 		}
 		if err != nil {
 			return nil, err
@@ -730,6 +731,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -746,7 +760,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -821,6 +835,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
 		}
 	}
 	e.rows = rows
@@ -1188,6 +1205,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
@@ -3904,7 +3925,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
@@ -3921,17 +3942,23 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 		row = append(row, types.NewStringDatum(pcv.OptimizerEnvHash))
 		row = append(row, types.NewStringDatum(pcv.ParseValues))
 		row = append(row, types.NewIntDatum(pcv.Memory))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.Executions)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.ProcessedKeys)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.TotalKeys)))
-		row = append(row, types.NewIntDatum(atomic.LoadInt64(&pcv.SumLatency)))
+		exec, procKeys, totKeys, sumLat, lastTime := pcv.RuntimeInfo()
+		row = append(row, types.NewIntDatum(exec))
+		row = append(row, types.NewIntDatum(procKeys))
+		row = append(row, types.NewIntDatum(totKeys))
+		row = append(row, types.NewIntDatum(sumLat))
 		row = append(row, types.NewTimeDatum(
 			types.NewTime(types.FromGoTime(pcv.LoadTime), mysql.TypeTimestamp, types.DefaultFsp)))
-		unixTime := atomic.LoadInt64(&pcv.LastUsedTimeInUnix)
 		row = append(row, types.NewTimeDatum(
-			types.NewTime(types.FromGoTime(time.Unix(unixTime, 0)), mysql.TypeTimestamp, types.DefaultFsp)))
+			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
 
 		rows = append(rows, row)
+	}
+
+	if cluster {
+		if rows, err = infoschema.AppendHostInfoToRows(sctx, rows); err != nil {
+			return err
+		}
 	}
 
 	e.rows = rows

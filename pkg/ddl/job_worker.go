@@ -859,7 +859,7 @@ func (w *worker) runOneJobStep(
 							logutil.DDLLogger().Info("job is paused",
 								zap.Int64("job_id", job.ID),
 								zap.Stringer("state", latestJob.State))
-							cancelStep(dbterror.ErrPausedDDLJob)
+							cancelStep(dbterror.ErrPausedDDLJob.FastGenByArgs(job.ID))
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return

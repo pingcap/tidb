@@ -236,7 +236,7 @@ func newExecutorStats(stmtCtx *stmtctx.StatementContext, id int) executorStats {
 
 	if stmtCtx.RuntimeStatsColl != nil {
 		if id > 0 {
-			e.runtimeStats = stmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(id)
+			e.runtimeStats = stmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(id, true)
 		}
 	}
 
@@ -338,7 +338,7 @@ func (e *BaseExecutorV2) BuildNewBaseExecutorV2(stmtRuntimeStatsColl *execdetail
 	newExecutorStats := e.executorStats
 	if stmtRuntimeStatsColl != nil {
 		if id > 0 {
-			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id)
+			newExecutorStats.runtimeStats = stmtRuntimeStatsColl.GetBasicRuntimeStats(id, true)
 		}
 	}
 

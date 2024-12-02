@@ -64,13 +64,14 @@ import (
 )
 
 const (
-	flagYes              = "yes"
-	flagUntil            = "until"
-	flagStreamJSONOutput = "json"
-	flagStreamTaskName   = "task-name"
-	flagStreamStartTS    = "start-ts"
-	flagStreamEndTS      = "end-ts"
-	flagGCSafePointTTS   = "gc-ttl"
+	flagYes                = "yes"
+	flagCleanUpCompactions = "clean-up-compactions"
+	flagUntil              = "until"
+	flagStreamJSONOutput   = "json"
+	flagStreamTaskName     = "task-name"
+	flagStreamStartTS      = "start-ts"
+	flagStreamEndTS        = "end-ts"
+	flagGCSafePointTTS     = "gc-ttl"
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
@@ -119,9 +120,10 @@ type StreamConfig struct {
 	SafePointTTL int64 `json:"safe-point-ttl" toml:"safe-point-ttl"`
 
 	// Spec for the command `truncate`, we should truncate the until when?
-	Until      uint64 `json:"until" toml:"until"`
-	DryRun     bool   `json:"dry-run" toml:"dry-run"`
-	SkipPrompt bool   `json:"skip-prompt" toml:"skip-prompt"`
+	Until              uint64 `json:"until" toml:"until"`
+	DryRun             bool   `json:"dry-run" toml:"dry-run"`
+	SkipPrompt         bool   `json:"skip-prompt" toml:"skip-prompt"`
+	CleanUpCompactions bool   `json:"clean-up-compactions" toml:"clean-up-compactions"`
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
@@ -184,6 +186,7 @@ func DefineStreamTruncateLogFlags(flags *pflag.FlagSet) {
 		"(support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'.)")
 	flags.Bool(flagDryRun, false, "Run the command but don't really delete the files.")
 	flags.BoolP(flagYes, "y", false, "Skip all prompts and always execute the command.")
+	flags.Bool(flagCleanUpCompactions, false, "Clean up compaction files. Including the compacted log files and expired SST files.")
 }
 
 func (cfg *StreamConfig) ParseStreamStatusFromFlags(flags *pflag.FlagSet) error {
@@ -212,6 +215,9 @@ func (cfg *StreamConfig) ParseStreamTruncateFromFlags(flags *pflag.FlagSet) erro
 		return errors.Trace(err)
 	}
 	if cfg.DryRun, err = flags.GetBool(flagDryRun); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.CleanUpCompactions, err = flags.GetBool(flagCleanUpCompactions); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1039,7 +1045,34 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		}
 	}
 
-	readMetaDone := console.ShowTask("Reading log backup metadata... ", glue.WithTimeCost())
+	if cfg.CleanUpCompactions {
+		est := stream.MigerationExtension(extStorage)
+		est.Hooks = stream.NewProgressBarHooks(console)
+		newSN := math.MaxInt
+		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+			console.Println("We are going to do the following: ")
+			tbl := console.CreateTable()
+			stream.AddMigrationToTable(m, tbl)
+			tbl.Print()
+			return console.PromptBool("Continue? ")
+		})
+		optAppend := stream.MMOptAppendPhantomMigration(backuppb.Migration{TruncatedTo: cfg.Until})
+		opts := []stream.MergeAndMigrateToOpt{optPrompt, optAppend, stream.MMOptAlwaysRunTruncate()}
+		var res stream.MergeAndMigratedTo
+		if cfg.DryRun {
+			est.DryRun(func(me stream.MigrationExt) {
+				res = me.MergeAndMigrateTo(ctx, newSN, opts...)
+			})
+		} else {
+			res = est.MergeAndMigrateTo(ctx, newSN, opts...)
+		}
+		if len(res.Warnings) > 0 {
+			glue.PrintList(console, "the following errors happened", res.Warnings, 10)
+		}
+		return nil
+	}
+
+	readMetaDone := console.ShowTask("Reading Metadata... ", glue.WithTimeCost())
 	metas := stream.StreamMetadataSet{
 		MetadataDownloadBatchSize: cfg.MetadataDownloadBatchSize,
 		Helper:                    stream.NewMetadataHelper(),

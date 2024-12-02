@@ -347,6 +347,13 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
+func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
+	terror.Log(h.ensureActiveUser(user))
+	terror.Log(h.ensureActiveUser(role.Username))
+	mysqlPrivilege := h.Get()
+	return mysqlPrivilege.FindRole(user, host, role)
+}
+
 // LoadAll loads the tables from database to memory.
 func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	err := p.LoadUserTable(ctx)
@@ -412,118 +419,162 @@ func (p *MySQLPrivilege) LoadAll(ctx sqlexec.RestrictedSQLExecutor) error {
 	return nil
 }
 
-func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) error {
-	err := p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+func findUserAndAllRoles(all map[string]struct{}, roleGraph map[string]roleGraphEdgesTable) {
+	for {
+		before := len(all)
+
+		for userHost, value := range roleGraph {
+			user, _, found := strings.Cut(userHost, "@")
+			if !found {
+				// this should never happen
+				continue
+			}
+			if _, ok := all[user]; ok {
+				// If a user is in map, all its role should also added
+				for _, role := range value.roleList {
+					all[role.Username] = struct{}{}
+				}
+			}
+		}
+
+		// loop until the map does not expand
+		after := len(all)
+		if before == after {
+			break
+		}
+	}
+}
+
+func (p *immutable) loadSomeUsers(ctx sqlexec.RestrictedSQLExecutor, userList ...string) ([]string, error) {
+	// Load the full role edge table first.
+	p.roleGraph = make(map[string]roleGraphEdgesTable)
+	err := p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
+	}
+
+	// Including the user list and also their roles
+	extendedUserList := make(map[string]struct{}, len(userList))
+	for _, user := range userList {
+		extendedUserList[user] = struct{}{}
+	}
+	findUserAndAllRoles(extendedUserList, p.roleGraph)
+	// Re-generate the user list.
+	userList = userList[:0]
+	for user := range extendedUserList {
+		userList = append(userList, user)
+	}
+
+	err = p.loadTable(ctx, sqlLoadUserTable, p.decodeUserTableRow, userList...)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadGlobalPrivTable, p.decodeGlobalPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadGlobalGrantsTable, p.decodeGlobalGrantsTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadDBTable, p.decodeDBTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadTablePrivTable, p.decodeTablesPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadDefaultRoles, p.decodeDefaultRoleTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	err = p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow, userList...)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
-	p.roleGraph = make(map[string]roleGraphEdgesTable)
-	err = p.loadTable(ctx, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
-}
-
-func dedupSortedKeepLast[S ~[]E, E any](s S, eq func(a, b E) bool) S {
-	skip := 0
-	for i := 1; i < len(s); i++ {
-		if eq(s[i], s[i-1]) {
-			skip++
-		}
-		s[i-skip] = s[i]
-	}
-	s = s[:len(s)-skip]
-	return s
+	return userList, nil
 }
 
 // merge construct a new MySQLPrivilege by merging the data of the two objects;.
-func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
+func (p *MySQLPrivilege) merge(diff *immutable, userList []string) *MySQLPrivilege {
 	var ret MySQLPrivilege
 	ret.user = make([]UserRecord, 0, len(p.user)+len(diff.user))
-	ret.user = append(ret.user, p.user...)
+	for _, v := range p.user {
+		if !slices.ContainsFunc(userList, func(usr string) bool { return usr == v.User }) {
+			ret.user = append(ret.user, v)
+		}
+	}
 	ret.user = append(ret.user, diff.user...)
-
-	// sort and dedup
-	slices.SortStableFunc(ret.user, compareUserRecord)
-	ret.user = dedupSortedKeepLast(ret.user, func(x, y UserRecord) bool { return x.User == y.User && x.Host == y.Host })
+	slices.SortFunc(ret.user, compareUserRecord)
 	ret.buildUserMap()
 
 	ret.db = make([]dbRecord, 0, len(p.db)+len(diff.db))
-	ret.db = append(ret.db, p.db...)
+	for _, v := range p.db {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.db = append(ret.db, v)
+		}
+	}
 	ret.db = append(ret.db, diff.db...)
+	slices.SortFunc(ret.db, compareDBRecord)
 	ret.buildDBMap()
 
 	ret.tablesPriv = make([]tablesPrivRecord, 0, len(p.tablesPriv)+len(diff.tablesPriv))
-	ret.tablesPriv = append(ret.tablesPriv, p.tablesPriv...)
+	for _, v := range p.tablesPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.tablesPriv = append(ret.tablesPriv, v)
+		}
+	}
 	ret.tablesPriv = append(ret.tablesPriv, diff.tablesPriv...)
+	slices.SortFunc(ret.tablesPriv, compareTablesPrivRecord)
 	ret.buildTablesPrivMap()
 
 	ret.columnsPriv = make([]columnsPrivRecord, 0, len(p.columnsPriv)+len(diff.columnsPriv))
-	ret.columnsPriv = append(ret.columnsPriv, p.columnsPriv...)
+	for _, v := range p.columnsPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.columnsPriv = append(ret.columnsPriv, v)
+		}
+	}
 	ret.columnsPriv = append(ret.columnsPriv, diff.columnsPriv...)
-	slices.SortStableFunc(ret.columnsPriv, compareColumnsPrivRecord)
-	ret.columnsPriv = dedupSortedKeepLast(ret.columnsPriv, func(x, y columnsPrivRecord) bool {
-		return x.Host == y.Host && x.User == y.User &&
-			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
-	})
+	slices.SortFunc(ret.columnsPriv, compareColumnsPrivRecord)
 
 	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
-	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
+	for _, v := range p.defaultRoles {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.defaultRoles = append(ret.defaultRoles, v)
+		}
+	}
 	ret.defaultRoles = append(ret.defaultRoles, diff.defaultRoles...)
-	slices.SortStableFunc(ret.defaultRoles, compareDefaultRoleRecord)
-	ret.defaultRoles = dedupSortedKeepLast(ret.defaultRoles, func(x, y defaultRoleRecord) bool {
-		return x.Host == y.Host && x.User == y.User
-	})
+	slices.SortFunc(ret.defaultRoles, compareDefaultRoleRecord)
 
 	ret.dynamicPriv = make([]dynamicPrivRecord, 0, len(p.dynamicPriv)+len(diff.dynamicPriv))
-	ret.dynamicPriv = append(ret.dynamicPriv, p.dynamicPriv...)
+	for _, v := range p.dynamicPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.dynamicPriv = append(ret.dynamicPriv, v)
+		}
+	}
 	ret.dynamicPriv = append(ret.dynamicPriv, diff.dynamicPriv...)
+	slices.SortFunc(ret.dynamicPriv, compareDynamicPrivRecord)
 	ret.buildDynamicMap()
 
 	ret.globalPriv = make([]globalPrivRecord, 0, len(p.globalPriv)+len(diff.globalPriv))
-	ret.globalPriv = append(ret.globalPriv, p.globalPriv...)
+	for _, v := range p.globalPriv {
+		if !slices.ContainsFunc(userList, func(user string) bool { return user == v.User }) {
+			ret.globalPriv = append(ret.globalPriv, v)
+		}
+	}
 	ret.globalPriv = append(ret.globalPriv, diff.globalPriv...)
-	slices.SortStableFunc(ret.globalPriv, compareGlobalPrivRecord)
-	ret.globalPriv = dedupSortedKeepLast(ret.globalPriv, func(x, y globalPrivRecord) bool {
-		return x.Host == y.Host && x.User == y.User
-	})
+	slices.SortFunc(ret.globalPriv, compareGlobalPrivRecord)
 	ret.buildGlobalMap()
 
 	ret.roleGraph = diff.roleGraph
-
 	return &ret
 }
 
@@ -591,6 +642,10 @@ func compareDefaultRoleRecord(x, y defaultRoleRecord) int {
 }
 
 func compareGlobalPrivRecord(x, y globalPrivRecord) int {
+	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+}
+
+func compareDynamicPrivRecord(x, y dynamicPrivRecord) int {
 	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
 }
 
@@ -711,7 +766,26 @@ func (p *MySQLPrivilege) LoadDBTable(ctx sqlexec.RestrictedSQLExecutor) error {
 }
 
 func compareDBRecord(x, y dbRecord) int {
-	return compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	ret := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if ret != 0 {
+		return ret
+	}
+
+	return strings.Compare(x.DB, y.DB)
+}
+
+func compareTablesPrivRecord(x, y tablesPrivRecord) int {
+	ret := compareBaseRecord(&x.baseRecord, &y.baseRecord)
+	if ret != 0 {
+		return ret
+	}
+
+	ret = strings.Compare(x.DB, y.DB)
+	if ret != 0 {
+		return ret
+	}
+
+	return strings.Compare(x.TableName, y.TableName)
 }
 
 func (p *MySQLPrivilege) buildDBMap() {
@@ -1187,17 +1261,6 @@ func (p *MySQLPrivilege) matchIdentity(sctx sqlexec.RestrictedSQLExecutor, user,
 					return record
 				}
 			}
-		}
-	}
-	return nil
-}
-
-// matchResoureGroup finds an identity to match resource group.
-func (p *MySQLPrivilege) matchResoureGroup(resourceGroupName string) *UserRecord {
-	for i := 0; i < len(p.user); i++ {
-		record := &p.user[i]
-		if record.ResourceGroup == resourceGroupName {
-			return record
 		}
 	}
 	return nil
@@ -1840,21 +1903,26 @@ func (h *Handle) ensureActiveUser(user string) error {
 	}
 
 	var data immutable
-	err := data.loadSomeUsers(h.sctx, user)
+	userList, err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	h.merge(&data, userList)
+	return nil
+}
+
+func (h *Handle) merge(data *immutable, userList []string) {
 	for {
 		old := h.Get()
-		swapped := h.priv.CompareAndSwap(old, old.merge(&data))
+		swapped := h.priv.CompareAndSwap(old, old.merge(data, userList))
 		if swapped {
 			break
 		}
 	}
-	h.activeUsers.Store(user, struct{}{})
-
-	return nil
+	for _, user := range userList {
+		h.activeUsers.Store(user, struct{}{})
+	}
 }
 
 // Get the MySQLPrivilege for read.
@@ -1862,14 +1930,41 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// Update loads all the privilege info from kv storage.
-func (h *Handle) Update() error {
-	var priv MySQLPrivilege
-	err := priv.LoadAll(h.sctx)
+// UpdateAll loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	userList := make([]string, 0, 20)
+	h.activeUsers.Range(func(key, _ any) bool {
+		userList = append(userList, key.(string))
+		return true
+	})
+
+	var priv immutable
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
 	if err != nil {
 		return err
 	}
+	h.merge(&priv, userList)
+	return nil
+}
 
-	h.priv.Store(&priv)
+// Update loads the privilege info from kv storage for the list of users.
+func (h *Handle) Update(userList []string) error {
+	needReload := false
+	for _, user := range userList {
+		if _, ok := h.activeUsers.Load(user); ok {
+			needReload = true
+			break
+		}
+	}
+	if !needReload {
+		return nil
+	}
+
+	var priv immutable
+	userList, err := priv.loadSomeUsers(h.sctx, userList...)
+	if err != nil {
+		return err
+	}
+	h.merge(&priv, userList)
 	return nil
 }

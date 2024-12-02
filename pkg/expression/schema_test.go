@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -61,8 +62,9 @@ func TestSchemaClone(t *testing.T) {
 
 	clonedSchema := schema.Clone()
 	require.Equal(t, schema.String(), clonedSchema.String())
-	require.NotSame(t, schema.Keys, clonedSchema.Keys)
-	require.NotSame(t, schema.UniqueKeys, clonedSchema.UniqueKeys)
+
+	require.NotSame(t, unsafe.SliceData(schema.Keys), unsafe.SliceData(clonedSchema.Keys))
+	require.NotSame(t, unsafe.SliceData(schema.UniqueKeys), unsafe.SliceData(clonedSchema.UniqueKeys))
 }
 
 func TestSchemaString(t *testing.T) {
