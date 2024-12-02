@@ -366,6 +366,7 @@ func (p *UserPrivileges) GetAuthPlugin(ctx context.Context, user, host string) (
 		return mysql.AuthNativePassword, nil
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
