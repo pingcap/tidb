@@ -12,11 +12,12 @@ go_test(
         "framework_scope_test.go",
         "framework_test.go",
         "main_test.go",
+        "modify_test.go",
         "resource_control_test.go",
     ],
     flaky = True,
     race = "off",
-    shard_count = 22,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
