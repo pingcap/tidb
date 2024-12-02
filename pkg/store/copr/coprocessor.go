@@ -679,7 +679,6 @@ type copIterator struct {
 	concurrency          int
 	smallTaskConcurrency int
 	liteWorker           *liteCopIteratorWorker
-	ctxForLite           context.Context
 	finishCh             chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
@@ -965,17 +964,7 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 	for {
 		select {
 		case resp, ok = <-respCh:
-			if it.memTracker != nil && resp != nil {
-				consumed := resp.MemSize()
-				failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-					if val.(bool) {
-						if resp != finCopResp {
-							consumed = MockResponseSizeForTest
-						}
-					}
-				})
-				it.memTracker.Consume(-consumed)
-			}
+			memTrackerConsumeResp(it.memTracker, resp)
 			return
 		case <-it.finishCh:
 			exit = true
@@ -988,6 +977,20 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			exit = true
 			return
 		}
+	}
+}
+
+func memTrackerConsumeResp(memTracker *memory.Tracker, resp *copResponse) {
+	if memTracker != nil && resp != nil {
+		consumed := resp.MemSize()
+		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+			if val.(bool) {
+				if resp != finCopResp {
+					consumed = MockResponseSizeForTest
+				}
+			}
+		})
+		memTracker.Consume(-consumed)
 	}
 }
 
@@ -1092,18 +1095,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 			return nil, nil
 		}
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
-		if it.memTracker != nil {
-			consumed := resp.MemSize()
-			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-				if val.(bool) {
-					if resp != finCopResp {
-						consumed = MockResponseSizeForTest
-					}
-				}
-			})
-			it.memTracker.Consume(-consumed)
-		}
-		//it.actionOnExceed.destroyTokenIfNeeded(func() {})
+		memTrackerConsumeResp(it.memTracker, resp)
 	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
@@ -1154,9 +1146,6 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 func (it *copIterator) liteSendReq() (resp *copResponse) {
-	if len(it.tasks) == 0 {
-		return nil
-	}
 	defer func() {
 		r := recover()
 		if r != nil {
