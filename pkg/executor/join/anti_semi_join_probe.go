@@ -151,13 +151,6 @@ func (a *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *s
 		return false, joinResult
 	}
 
-	isInCompleteChunk := joinedChk.IsInCompleteChunk()
-	// in case that virtual rows is not maintained correctly
-	joinedChk.SetNumVirtualRows(joinedChk.NumRows())
-	// always set in complete chunk during probe
-	joinedChk.SetInCompleteChunk(true)
-	defer joinedChk.SetInCompleteChunk(isInCompleteChunk)
-
 	hasOtherCondition := a.ctx.hasOtherCondition()
 	if a.isLeftSideBuild {
 		if hasOtherCondition {
