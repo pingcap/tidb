@@ -830,8 +830,8 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	col, ok := t.columns[id]
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
+	col, ok := t.columns[id]
 	if !ok {
 		// If The column have no stats object in memory. We need to check it by existence map.
 		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
