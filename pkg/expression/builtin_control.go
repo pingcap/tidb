@@ -905,6 +905,47 @@ func (b *builtinIfVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk
 	return b.args[2].EvalVectorFloat32(ctx, row)
 }
 
+type NvlFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	lhs, _ := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
+	retTp := lhs
+	evalTps := retTp.EvalType()
+
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
+	if err != nil {
+		return nil, err
+	}
+	bf.tp = retTp
+
+	switch evalTps {
+	case types.ETInt:
+		sig = &builtinIfNullIntSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
+	case types.ETReal:
+		sig = &builtinIfNullRealSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
+	case types.ETDecimal:
+		sig = &builtinIfNullDecimalSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
+	case types.ETString:
+		sig = &builtinIfNullStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
+	case types.ETDatetime, types.ETTimestamp:
+		sig = &builtinIfNullTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
+	default:
+		return nil, errors.Errorf("%s is not supported for nvl()", evalTps)
+	}
+	return sig, nil
+}
+
 type ifNullFunctionClass struct {
 	baseFunctionClass
 }

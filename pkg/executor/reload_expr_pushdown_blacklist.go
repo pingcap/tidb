@@ -288,6 +288,7 @@ var funcName2Alias = map[string]string{
 	"user":                       ast.User,
 	"if":                         ast.If,
 	"ifnull":                     ast.Ifnull,
+	"nvl":                        ast.Nvl,
 	"nullif":                     ast.Nullif,
 	"any_value":                  ast.AnyValue,
 	"default_func":               ast.DefaultFunc,

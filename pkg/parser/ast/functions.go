@@ -274,6 +274,7 @@ const (
 	// control functions
 	If     = "if"
 	Ifnull = "ifnull"
+	Nvl    = "nvl"
 	Nullif = "nullif"
 
 	// miscellaneous functions
