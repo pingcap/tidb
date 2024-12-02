@@ -138,7 +138,11 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			schemaNotMatch = true
 		}
 		if newTbl.Meta().Name.L == "sbtest1" || newTbl.Meta().Name.L == "sbtest2" {
-			logutil.BgLogger().Warn("schema version check", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.Uint64("tbl", tbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
+			if tbl == nil {
+				logutil.BgLogger().Warn("schema version check", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
+			} else {
+				logutil.BgLogger().Warn("schema version check", zap.Uint64("session ID", sctx.GetSessionVars().ConnectionID), zap.Int64("tableID", stmt.tbls[i].Meta().ID), zap.Uint64("oldRevision", stmt.tbls[i].Meta().Revision), zap.Uint64("newRevision", newTbl.Meta().Revision), zap.Uint64("tbl", tbl.Meta().Revision), zap.String("query", stmtAst.Stmt.OriginalText()))
+			}
 		}
 		stmt.tbls[i] = newTbl
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
