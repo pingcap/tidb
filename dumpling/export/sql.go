@@ -381,7 +381,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	switch listType {
 	case listTableByInfoSchema:
 		for _, schema := range databaseNames {
-			query := fmt.Sprintf("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND %s", strings.Join(tableTypeConditions, " OR "))
+			query := fmt.Sprintf("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND (%s)", strings.Join(tableTypeConditions, " OR "))
 			dbTables[schema] = make([]*TableInfo, 0)
 			if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
 				var (
