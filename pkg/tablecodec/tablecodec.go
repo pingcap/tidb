@@ -325,14 +325,16 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (kv.Handle, error) {
-	if len(key) < RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
-		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", key)
+	tempKey := rowcodec.RemoveKeyspacePrefix(key)
+
+	if len(tempKey) < RecordRowKeyLen || !hasTablePrefix(tempKey) || !hasRecordPrefixSep(tempKey[prefixLen-2:]) {
+		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", tempKey)
 	}
-	if len(key) == RecordRowKeyLen {
-		u := binary.BigEndian.Uint64(key[prefixLen:])
+	if len(tempKey) == RecordRowKeyLen {
+		u := binary.BigEndian.Uint64(tempKey[prefixLen:])
 		return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
 	}
-	return kv.NewCommonHandle(key[prefixLen:])
+	return kv.NewCommonHandle(tempKey[prefixLen:])
 }
 
 // EncodeValue encodes a go value to bytes.

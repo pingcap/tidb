@@ -1191,7 +1191,8 @@ func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutatio
 		}
 		lock.Op = uint8(kvrpcpb.Op_Put)
 	}
-	if rowcodec.IsRowKey(m.Key) && lock.Op == uint8(kvrpcpb.Op_Put) {
+	tempKey := rowcodec.RemoveKeyspacePrefix(m.Key)
+	if rowcodec.IsRowKey(tempKey) && lock.Op == uint8(kvrpcpb.Op_Put) {
 		if !rowcodec.IsNewFormat(m.Value) {
 			reqCtx.buf, err = encodeFromOldRow(m.Value, reqCtx.buf)
 			if err != nil {

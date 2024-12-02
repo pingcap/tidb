@@ -49,6 +49,9 @@ type pdClient struct {
 	// After using PD http client, we should impl mock PD service discovery
 	// which needs PD server HTTP address.
 	addrs []string
+
+	keyspaceNameMap map[string]keyspacepb.KeyspaceMeta
+	keyspaceIDMap   map[uint32]keyspacepb.KeyspaceMeta
 }
 
 func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
@@ -58,6 +61,8 @@ func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
+		keyspaceNameMap:       make(map[string]keyspacepb.KeyspaceMeta),
+		keyspaceIDMap:         make(map[uint32]keyspacepb.KeyspaceMeta),
 	}
 }
 
@@ -306,7 +311,11 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
-	return nil, nil
+	keyspaceMeta := keyspacepb.KeyspaceMeta{}
+	keyspaceMeta.Id = 2
+	keyspaceMeta.Name = "test_ks_name2"
+	keyspaceMeta.State = keyspacepb.KeyspaceState_ENABLED
+	return &keyspaceMeta, nil
 }
 
 // WatchKeyspaces watches keyspace meta changes.
