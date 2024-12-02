@@ -462,9 +462,9 @@ func TestPartialStatsInExplain(t *testing.T) {
 	defer func() {
 		dom.StatsHandle().SetLease(oriLease)
 	}()
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table t2")
-	tk.MustExec("analyze table tp")
+	tk.MustExec("analyze table tp all columns")
 	tk.RequireNoError(dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustQuery("explain select * from tp where a = 1")
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
