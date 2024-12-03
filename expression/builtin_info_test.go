@@ -99,7 +99,7 @@ func TestCurrentUser(t *testing.T) {
 func TestCurrentResourceGroup(t *testing.T) {
 	ctx := mock.NewContext()
 	sessionVars := ctx.GetSessionVars()
-	sessionVars.ResourceGroupName = "rg1"
+	sessionVars.StmtCtx.ResourceGroupName = "rg1"
 
 	fc := funcs[ast.CurrentResourceGroup]
 	f, err := fc.getFunction(ctx, nil)
