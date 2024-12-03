@@ -82,6 +82,10 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	}
 	results = make([]any, 0, rows)
 
+	// ndv > 0: generate n rows with random value with `nvd` distinct value
+	// ndv == 0: generate n rows with random value
+	// ndv == -1: generate n rows with value provided by user and with `nvd` distinct value
+	// ndv == -2: use rows provided by user
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -95,7 +99,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	} else if ndv == -2 {
 		// Use data provided by user
 		if mds.P.Datums[col] == nil {
-			panic("need to provid data")
+			panic("need to provide data")
 		}
 
 		results = mds.P.Datums[col]
@@ -104,7 +108,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 		datums := make([]any, 0, max(ndv, 0))
 		if ndv == -1 {
 			if mds.P.Datums[col] == nil {
-				panic("need to provid data")
+				panic("need to provide data")
 			}
 
 			datums = mds.P.Datums[col]
