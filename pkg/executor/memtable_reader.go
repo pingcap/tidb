@@ -93,6 +93,22 @@ func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	}
 }
 
+// Open implements the Executor Open interface.
+func (e *MemTableReaderExec) Open(ctx context.Context) error {
+	err := e.BaseExecutor.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
+	// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
+	if !strings.HasPrefix(e.table.Name.L, "cluster_") {
+		// Skip cluster_ tables because it could be a tidb coprocessor request and txn is not prepared.
+		_, err = e.Ctx().Txn(true)
+	}
+	return err
+}
+
 // Next implements the Executor Next interface.
 func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var (
