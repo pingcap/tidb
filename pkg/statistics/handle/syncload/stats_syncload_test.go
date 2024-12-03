@@ -458,4 +458,20 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	// After the sync load. The column without any thing in storage should not be marked as loadNeeded any more.
 	require.False(t, loadNeeded)
 	require.False(t, analyzed)
+
+	// Analyze c then test sync load again
+	tk.MustExec("analyze table t columns a, b, c")
+	require.NoError(t, h.InitStatsLite(context.TODO()))
+	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	// a, b, d's status is not changed.
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
+	// c's stats is loaded.
+	_, loadNeeded, analyzed = statsTbl.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, false)
+	require.False(t, loadNeeded)
+	require.True(t, analyzed)
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
 }

@@ -755,7 +755,7 @@ func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalM
 
 // InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
-// 2. Column/index stats are marked whehter exists or not by initializing the table.ColAndIdxExistenceMap. (by reading mysql.stats_histograms)
+// 2. Column/index stats are marked as existing or not by initializing the table.ColAndIdxExistenceMap, based on data from mysql.stats_histograms)
 // 3. TopN, Bucket, FMSketch are not loaded.
 // And to work with auto analyze's needs, we need to read all the tables' stats meta into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
@@ -789,7 +789,7 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 // InitStats initiates the stats cache.
 // 1. Basic stats meta data is loaded.(count, modify count, etc.)
 // 2. Index stats are fully loaded. (histogram, topn, buckets)
-// 3. Column stats are just marked whehter exists or not by initializing the table.ColAndIdxExistenceMap. (by reading mysql.stats_histograms)
+// 2. Column stats are marked as existing or not by initializing the table.ColAndIdxExistenceMap, based on data from mysql.stats_histograms)
 // To work with auto-analyze's needs, we need to read all stats meta info into memory.
 // The sync/async load of the stats or other process haven't done a full initialization of the table.ColAndIdxExistenceMap. So we need to it here.
 func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err error) {
