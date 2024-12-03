@@ -162,51 +162,9 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp {
-		// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
-		// that are the child of an index scan
-		sessionVars := p.SCtx().GetSessionVars()
-		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
-		tblColHists := p.tblColHists
-		originalRows := int64(tblColHists.GetAnalyzeRowCount())
-
-		// hasUnreliableStats is a check for pseudo or zero stats
-		hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
-		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
-		hasHighModifyCount := tblColHists.ModifyCount > originalRows
-		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
-		var unsignedIntHandle bool
-		if p.Table.PKIsHandle {
-			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
-		hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo != nil && len(p.PlanPartInfo.PruningConds) > 0
-
-		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
-		// penalty is applied to a full table scan (not range scan). This may also penalize a
-		// full table scan where USE/FORCE was applied to the primary key.
-		hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
-		shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
-		if shouldApplyPenalty {
-			// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
-			// step further - because we don't differentiate USE/FORCE - the added penalty applies to
-			// both, and it also applies to any full table scan in the query.
-			maxChanges := float64(MaxPenaltyRowCount)
-			if !hasPartitionScan {
-				if hasIndexForce {
-					rows += MaxPenaltyRowCount
-				}
-				maxChanges = max(maxChanges, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
-			}
-			newRowCount := max(rows, maxChanges)
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
-		}
+	} else {
+		newRowCount := getTableScanPenalty(p, rows)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 	}
 
 	if p.AnnIndexExtra != nil {
@@ -951,6 +909,53 @@ func doubleReadCostVer2(option *optimizetrace.PlanCostOption, numTasks float64, 
 	return costusage.NewCostVer2(option, requestFactor,
 		numTasks*requestFactor.Value,
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
+}
+
+func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
+
+	if !p.isChildOfIndexLookUp {
+		// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
+		// that are the child of an index scan
+		sessionVars := p.SCtx().GetSessionVars()
+		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
+		tblColHists := p.tblColHists
+		originalRows := int64(tblColHists.GetAnalyzeRowCount())
+
+		// hasUnreliableStats is a check for pseudo or zero stats
+		hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
+		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
+		hasHighModifyCount := tblColHists.ModifyCount > originalRows
+		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
+		hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
+		// preferRangeScan check here is same as in skylinePruning
+		preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
+		var unsignedIntHandle bool
+		if p.Table.PKIsHandle {
+			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			}
+		}
+		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+		hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo != nil && len(p.PlanPartInfo.PruningConds) > 0
+
+		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
+		// penalty is applied to a full table scan (not range scan). This may also penalize a
+		// full table scan where USE/FORCE was applied to the primary key.
+		hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
+		shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
+		maxChanges := float64(MaxPenaltyRowCount)
+		if shouldApplyPenalty {
+			// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
+			// step further - because we don't differentiate USE/FORCE - the added penalty applies to
+			// both, and it also applies to any full table scan in the query.
+			if !hasPartitionScan && !hasIndexForce {
+				maxChanges = max(maxChanges, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+			}
+		}
+		return maxChanges
+	}
+	return float64(0)
 }
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
