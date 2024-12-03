@@ -186,7 +186,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
-		hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo.PruningConds != nil && len(p.PlanPartInfo.PruningConds) > 0
+		hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo != nil && len(p.PlanPartInfo.PruningConds) > 0
 
 		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
 		// penalty is applied to a full table scan (not range scan). This may also penalize a
