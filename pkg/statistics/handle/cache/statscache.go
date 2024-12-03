@@ -65,6 +65,47 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
+type tablesToUpdateOrDelete struct {
+	toUpdate []*statistics.Table
+	toDelete []int64
+	option   types.UpdateOptions
+}
+
+func (t *tablesToUpdateOrDelete) addToUpdate(statsCache *StatsCacheImpl, table *statistics.Table) {
+	if len(t.toUpdate) == 10 {
+		statsCache.UpdateStatsCache(types.CacheUpdate{
+			Updated: t.toUpdate,
+			Deleted: t.toDelete,
+			Options: t.option,
+		})
+		t.toUpdate = t.toUpdate[:0]
+		t.toDelete = t.toDelete[:0]
+	}
+	t.toUpdate = append(t.toUpdate, table)
+}
+
+func (t *tablesToUpdateOrDelete) addToDelete(statsCache *StatsCacheImpl, tableID int64) {
+	if len(t.toDelete) == 10 {
+		statsCache.UpdateStatsCache(types.CacheUpdate{
+			Updated: t.toUpdate,
+			Deleted: t.toDelete,
+			Options: t.option,
+		})
+		t.toUpdate = t.toUpdate[:0]
+		t.toDelete = t.toDelete[:0]
+	}
+}
+
+func (t *tablesToUpdateOrDelete) flush(statsCache *StatsCacheImpl) {
+	if len(t.toUpdate) > 0 || len(t.toDelete) > 0 {
+		statsCache.UpdateStatsCache(types.CacheUpdate{
+			Updated: t.toUpdate,
+			Deleted: t.toDelete,
+			Options: t.option,
+		})
+	}
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
 	start := time.Now()
@@ -100,8 +141,11 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		return errors.Trace(err)
 	}
 
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
+	tblToUpdateOrDelete := tablesToUpdateOrDelete{
+		toUpdate: make([]*statistics.Table, 0, min(len(rows), 10)),
+		toDelete: make([]int64, 0, min(len(rows), 10)),
+		option:   types.UpdateOptions{SkipMoveForward: skipMoveForwardStatsCache},
+	}
 
 	for _, row := range rows {
 		version := row.GetUint64(0)
@@ -122,7 +166,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 				"unknown physical ID in stats meta table, maybe it has been dropped",
 				zap.Int64("ID", physicalID),
 			)
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			tblToUpdateOrDelete.addToDelete(s, physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -148,7 +192,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			tblToUpdateOrDelete.addToDelete(s, physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -165,16 +209,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
-		tables = append(tables, tbl)
+		tblToUpdateOrDelete.addToUpdate(s, tbl)
 	}
 
-	s.UpdateStatsCache(types.CacheUpdate{
-		Updated: tables,
-		Deleted: deletedTableIDs,
-		Options: types.UpdateOptions{
-			SkipMoveForward: skipMoveForwardStatsCache,
-		},
-	})
+	tblToUpdateOrDelete.flush(s)
 	dur := time.Since(start)
 	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
