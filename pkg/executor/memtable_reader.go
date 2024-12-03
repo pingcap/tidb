@@ -93,6 +93,19 @@ func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	}
 }
 
+// Open implements the Executor Next interface.
+func (e *MemTableReaderExec) Open(ctx context.Context) error {
+	err := e.BaseExecutor.Open(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
+	// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
+	_, err = e.Ctx().Txn(true)
+	return err
+}
+
 // Next implements the Executor Next interface.
 func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	var (
