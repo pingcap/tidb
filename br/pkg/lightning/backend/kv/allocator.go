@@ -39,7 +39,8 @@ func NewPanickingAllocators(sepAutoInc bool) autoid.Allocators {
 // we use this to collect the max id(either _tidb_rowid or auto_increment id or auto_random) used
 // during import, and we will use this info to do ALTER TABLE xxx AUTO_RANDOM_BASE or AUTO_INCREMENT
 // on post-process phase.
-func NewPanickingAllocatorsWithBase(sepAutoInc bool, autoRandBase, autoIncrBase, autoRowIDBase int64) autoid.Allocators {
+func NewPanickingAllocatorsWithBase(sepAutoInc bool, autoRandBase, autoIncrBase,
+	autoRowIDBase int64) autoid.Allocators {
 	allocs := make([]autoid.Allocator, 0, 3)
 	for _, t := range []struct {
 		Type autoid.AllocatorType
