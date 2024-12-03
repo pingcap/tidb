@@ -115,7 +115,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-
 		// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
 		// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
 		txn, err := sctx.Txn(true)
