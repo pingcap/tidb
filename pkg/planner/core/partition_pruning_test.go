@@ -593,7 +593,7 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 			if v == "MAXVALUE" {
 				e = nil // MAXVALUE
 			} else {
-				expr, err := expression.ParseSimpleExpr(tc.sctx, v, tc.schema, tc.names)
+				expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, v, tc.schema, tc.names)
 				require.NoError(t, err)
 				e = &expr
 			}
@@ -623,7 +623,7 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, tc.schema, tc.names)
+		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
 		e := expression.SplitCNFItems(expr)
