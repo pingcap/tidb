@@ -574,35 +574,6 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.True(t, found)
 	require.NotEqual(t, uint64(0), statsTbl.LastAnalyzeVersion)
 }
-<<<<<<< HEAD
-=======
-
-func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set tidb_analyze_version = 1")
-	tk.MustExec("set global tidb_enable_historical_stats = true")
-	defer tk.MustExec("set global tidb_enable_historical_stats = default")
-
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
-					PARTITION BY RANGE (a) (
-					PARTITION p0 VALUES LESS THAN (10),
-					PARTITION p1 VALUES LESS THAN (20),
-					PARTITION p2 VALUES LESS THAN (30),
-					PARTITION p3 VALUES LESS THAN (40))`)
-	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
-	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
-
-	tblID := dom.MustGetTableID(t, "test", "t")
-
-	for i := 0; i < 10; i++ {
-		tk.MustExec("analyze table t")
-	}
-	// Each analyze will only generate one record
-	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
-}
 
 func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -612,17 +583,16 @@ func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int);")
 	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
-	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	tk.MustExec("insert into t values (1, 1);")
 	err := dom.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
 	tk.MustExec("alter table t add column c int default 1;")
 	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	tk.MustExec("select * from t where a = 1 or b = 1 or c = 1;")
-	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms())
 	result := tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Len(t, result.Rows(), 1)
 	// The last analyze time.
 	require.Equal(t, "<nil>", result.Rows()[0][6])
 }
->>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))

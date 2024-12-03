@@ -312,18 +312,8 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
-<<<<<<< HEAD
-			wrapper.col = &statistics.Column{
-				PhysicalID: item.TableID,
-				Info:       wrapper.colInfo,
-				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
-			}
+			wrapper.col = statistics.EmptyColumn(item.TableID, tbl.IsPkIsHandle, wrapper.colInfo)
 			s.updateCachedItem(item, wrapper.col, wrapper.idx, task.Item.FullLoad)
-=======
-			wrapper.col = statistics.EmptyColumn(item.TableID, isPkIsHandle, wrapper.colInfo)
-			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
->>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 			return nil
 		}
 	}

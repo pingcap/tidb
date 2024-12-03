@@ -652,21 +652,10 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-<<<<<<< HEAD
 	col, ok := t.Columns[id]
-=======
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to force to load the stats.
-	col, ok := t.columns[id]
-	if !ok {
-		return nil, true, true
-	}
->>>>>>> 2b03447f198 (statistics: fix some problem related to stats async load (#57723))
 	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
-	// The real check condition: !ok && !hashAnalyzed.
-	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		// If we don't have it in memory, we create a fake hist for pseudo estimation (see handleOneItemTask()).
 		if !ok {
@@ -680,9 +669,10 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	}
 
 	// Restore the condition from the simplified form:
-	// 1. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
-	// 2. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
-	if (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
+	// 1. !ok && hasAnalyzed => need load
+	// 2. ok && hasAnalyzed && fullLoad && !col.IsFullLoad => need load
+	// 3. ok && hasAnalyzed && !fullLoad && !col.statsInitialized => need load
+	if !ok || (fullLoad && !col.IsFullLoad()) || (!fullLoad && !col.statsInitialized) {
 		return col, true, true
 	}
 
