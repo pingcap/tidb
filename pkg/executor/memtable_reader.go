@@ -93,7 +93,7 @@ func (*MemTableReaderExec) isInspectionCacheableTable(tblName string) bool {
 	}
 }
 
-// Open implements the Executor Next interface.
+// Open implements the Executor Open interface.
 func (e *MemTableReaderExec) Open(ctx context.Context) error {
 	err := e.BaseExecutor.Open(ctx)
 	if err != nil {
