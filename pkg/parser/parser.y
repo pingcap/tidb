@@ -764,6 +764,7 @@ import (
 	priority              "PRIORITY"
 	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
+	readOnly              "READ_ONLY"
 	recent                "RECENT"
 	replay                "REPLAY"
 	replayer              "REPLAYER"
@@ -7207,6 +7208,7 @@ NotKeywordToken:
 |	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
+|	"READ_ONLY"
 |	"S3"
 |	"SPEED"
 |	"STRICT"
@@ -15786,7 +15788,7 @@ PlanReplayerDumpOpt:
  *
  * Examples:
  * TRAFFIC CAPTURE TO "/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
- * TRAFFIC REPLAY FROM "/tmp/traffic" USER="u1" PASSWORD="123456" SPEED=1.0
+ * TRAFFIC REPLAY FROM "/tmp/traffic" USER="u1" PASSWORD="123456" SPEED=1.0 READ_ONLY=true
  *******************************************************************/
 TrafficStmt:
 	"TRAFFIC" "CAPTURE" "TO" stringLit TrafficCaptureOptList
@@ -15877,6 +15879,10 @@ TrafficReplayOpt:
 |	"SPEED" EqOpt NumLiteral
 	{
 		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionSpeed, FloatValue: ast.NewValueExpr($3, "", "")}
+	}
+|	"READ_ONLY" EqOpt Boolean
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionReadOnly, BoolValue: $3.(bool)}
 	}
 
 /* Stored PROCEDURE parameter declaration list */
