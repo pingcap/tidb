@@ -658,7 +658,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		if loadNeeded && !analyzed {
 			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.SetCol(col.ID, fakeCol)
-			statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
 		}
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
@@ -720,7 +722,9 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		}
 	}
 	statsTbl.SetCol(col.ID, colHist)
-	statsHandle.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
@@ -782,7 +786,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
 	tbl.SetIdx(idx.ID, idxHist)
-	statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
