@@ -533,6 +533,12 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
+<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+=======
+	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756)):pkg/statistics/handle/syncload/stats_syncload.go
 	return true
 }
