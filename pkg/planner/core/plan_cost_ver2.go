@@ -162,10 +162,9 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp && p.Table.Partition == nil {
+	} else if !p.isChildOfIndexLookUp {
 		// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
-		// that are the child of an index scan or partition tables - since partition tables do not
-		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+		// that are the child of an index scan
 		sessionVars := p.SCtx().GetSessionVars()
 		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 		tblColHists := p.tblColHists
@@ -186,6 +185,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			}
 		}
 		hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+		// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+		hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo.PruningConds != nil && len(p.PlanPartInfo.PruningConds) > 0
 
 		// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
 		// penalty is applied to a full table scan (not range scan). This may also penalize a
@@ -196,12 +197,14 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 			// step further - because we don't differentiate USE/FORCE - the added penalty applies to
 			// both, and it also applies to any full table scan in the query.
-			if hasIndexForce {
-				rows += MaxPenaltyRowCount
-			} else {
-				rows = max(rows, MaxPenaltyRowCount)
+			maxChanges := float64(MaxPenaltyRowCount)
+			if !hasPartitionScan {
+				if hasIndexForce {
+					rows += MaxPenaltyRowCount
+				}
+				maxChanges = max(maxChanges, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
 			}
-			newRowCount := max(rows, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+			newRowCount := max(rows, maxChanges)
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}

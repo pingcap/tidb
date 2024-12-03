@@ -445,7 +445,7 @@ func TestPartialStatsInExplain(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 	tk.MustExec("create table t2(a int, primary key(a))")
 	tk.MustExec("insert into t2 values (1),(2),(3)")
