@@ -195,14 +195,10 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 
 func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 	if r != nil {
-<<<<<<< HEAD:pkg/executor/index_lookup_hash_join.go
 		e.IndexLookUpJoin.finished.Store(true)
-=======
-		e.IndexLookUpJoin.Finished.Store(true)
 		if e.cancelFunc != nil {
 			e.cancelFunc()
 		}
->>>>>>> 140525d026e (executor: fix inl_hash_join hang when abnormal exit (#57383)):pkg/executor/join/index_lookup_hash_join.go
 		err := fmt.Errorf("%v", r)
 
 		if !e.panicErr.Load() {
@@ -224,15 +220,7 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			task := &indexHashJoinTask{err: err}
 			e.taskCh <- task
 		}
-<<<<<<< HEAD:pkg/executor/index_lookup_hash_join.go
-
 		failpoint.Label("TestIssue49692End")
-
-		if e.cancelFunc != nil {
-			e.cancelFunc()
-		}
-=======
->>>>>>> 140525d026e (executor: fix inl_hash_join hang when abnormal exit (#57383)):pkg/executor/join/index_lookup_hash_join.go
 	}
 	e.workerWg.Done()
 }
