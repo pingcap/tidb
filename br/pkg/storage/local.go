@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
 )
 
@@ -92,11 +93,9 @@ func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) er
 			return errors.Trace(err)
 		}
 	}
-	targetPath := filepath.Join(l.base, name)
-	if err := os.Rename(tmpPath, targetPath); err != nil {
+	if err := os.Rename(tmpPath, filepath.Join(l.base, name)); err != nil {
 		return errors.Trace(err)
 	}
-
 	return nil
 }
 
@@ -123,15 +122,27 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		opt = &WalkOption{}
 	}
 	base := filepath.Join(l.base, opt.SubDir)
-	return filepath.WalkDir(base, func(path string, f os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				// Return directly if the root dir not found as we did before.
-				// `WalkDir` will try to Lstat the root dir only.
-				// It yields non-exist files.
-				log.Warn("Local: WalkDir called in an non-exist dir.", zap.String("path", path))
+	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
+		if os.IsNotExist(err) {
+			log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
+			if !opt.IncludeTombstone {
+				// if path not exists and the client doesn't require its tombstone,
+				// we should return nil to continue.
 				return nil
 			}
+			path, err = filepath.Rel(l.base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
+			}
+			if !strings.HasPrefix(path, opt.ObjPrefix) {
+				return nil
+			}
+			// NOTE: This may cause a tombstone of the dir emit to the caller when
+			// call `Walk` in a non-exist dir.
+			return fn(path, TombstoneSize)
+		}
+		if err != nil {
 			return errors.Trace(err)
 		}
 
@@ -145,39 +156,27 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 			}
 			return nil
 		}
-
 		// in mac osx, the path parameter is absolute path; in linux, the path is relative path to execution base dir,
 		// so use Rel to convert to relative path to l.base
 		path, _ = filepath.Rel(l.base, path)
+
 		if !strings.HasPrefix(path, opt.ObjPrefix) {
 			return nil
 		}
 
-		// Check whether the file exists...
-		// If not, should follow the configuration `IncludeTombstone`.
-		_, err = os.Lstat(filepath.Join(l.base, path))
-		if err != nil {
-			if os.IsNotExist(err) {
-				if !opt.IncludeTombstone {
-					log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
-					return nil
-				}
-				return fn(path, TombstoneSize)
+		size := f.Size()
+		// if not a regular file, we need to use os.stat to get the real file size
+		if !f.Mode().IsRegular() {
+			stat, err := os.Stat(filepath.Join(l.base, path))
+			if err != nil {
+				// error may happen because of file deleted after walk started, or other errors
+				// like #49423. We just return 0 size and let the caller handle it in later
+				// logic.
+				log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
+				return fn(path, 0)
 			}
-			return err
+			size = stat.Size()
 		}
-
-		// Keep the behavior with past: ignore errors happen during reading stats from symlinks and return zero...
-		// NOTE: For now `WalkDir` emits broken symlinks but ignores deleted files by default... Can we make it better?
-		stat, err := os.Stat(filepath.Join(l.base, path))
-		if err != nil {
-			// error may happen because of file deleted after walk started, or other errors
-			// like #49423. We just return 0 size and let the caller handle it in later
-			// logic.
-			log.Warn("failed to get file size", zap.String("path", path), zap.Error(err))
-			return fn(path, 0)
-		}
-		size := stat.Size()
 		return fn(path, size)
 	})
 }
@@ -273,8 +272,7 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 }
 
 // Close implements ExternalStorage interface.
-func (l *LocalStorage) Close() {
-}
+func (*LocalStorage) Close() {}
 
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
@@ -301,6 +299,5 @@ func NewLocalStorage(base string) (*LocalStorage, error) {
 			return nil, errors.Trace(err)
 		}
 	}
-
 	return &LocalStorage{base: base}, nil
 }
