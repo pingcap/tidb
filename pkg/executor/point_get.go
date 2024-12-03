@@ -269,7 +269,7 @@ func (e *PointGetExecutor) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil && e.stats != nil {
+	if e.indexUsageReporter != nil {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
