@@ -569,6 +569,12 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 		physicalTableIDs = append(physicalTableIDs, id)
 		return true
 	})
+	// Schema checker treat nil and empty slice differently.
+	// nil means unknow information about the changed tables.
+	// [] means it's known and it's empty.
+	if physicalTableIDs == nil {
+		physicalTableIDs = make([]int64, 0)
+	}
 	needCheckSchema := true
 	// Set this option for 2 phase commit to validate schema lease.
 	if sessVars.TxnCtx != nil {
