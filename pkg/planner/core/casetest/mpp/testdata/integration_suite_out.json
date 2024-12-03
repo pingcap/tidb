@@ -1088,7 +1088,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  left outer join, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
+          "HashJoin 2.00 root  left outer join, left side:TableReader, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
           "├─TableReader(Build) 2.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false",
@@ -1100,7 +1100,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  right outer join, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
+          "HashJoin 2.00 root  right outer join, left side:TableReader, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
           "├─TableReader(Build) 2.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
