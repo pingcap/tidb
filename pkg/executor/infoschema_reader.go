@@ -115,10 +115,19 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		e.is = is
 
-		var err error
+		// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
+		// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
+		txn, err := sctx.Txn(true)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(txn.StartTS())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			err = e.setDataFromSchemata(sctx)
@@ -177,7 +186,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(ctx, sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, e.is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
