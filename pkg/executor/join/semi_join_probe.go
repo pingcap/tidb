@@ -329,7 +329,7 @@ func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk
 	for index, colIndex := range s.lUsed {
 		srcCol := s.currentChunk.Column(colIndex)
 		dstCol := resultChk.Column(index)
-		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, nil, 0, len(s.offsets), func(i int) int {
+		chunk.CopyAllRowsWithRowIDFunc(dstCol, srcCol, 0, len(s.offsets), func(i int) int {
 			return s.offsets[i]
 		})
 	}

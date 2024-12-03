@@ -139,6 +139,31 @@ func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bo
 	}
 }
 
+// CopyAllRowsWithRowIDFunc copies all rows in srcCol to dstCol
+func CopyAllRowsWithRowIDFunc(dstCol *Column, srcCol *Column, start int, end int, rowIDFunc func(int) int) {
+	if srcCol.isFixed() {
+		for i := start; i < end; i++ {
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
+			dstCol.length++
+
+			elemLen := len(srcCol.elemBuf)
+			offset := rowID * elemLen
+			dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
+		}
+	} else {
+		for i := start; i < end; i++ {
+			rowID := rowIDFunc(i)
+			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
+			dstCol.length++
+
+			start, end := srcCol.offsets[rowID], srcCol.offsets[rowID+1]
+			dstCol.data = append(dstCol.data, srcCol.data[start:end]...)
+			dstCol.offsets = append(dstCol.offsets, int64(len(dstCol.data)))
+		}
+	}
+}
+
 // copySelectedInnerRows copies the selected inner rows from the source Chunk
 // to the destination Chunk.
 // return the number of rows which is selected.
