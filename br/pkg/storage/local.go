@@ -125,6 +125,13 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.WalkDir(base, func(path string, f os.DirEntry, err error) error {
 		if err != nil {
+			if os.IsNotExist(err) {
+				// Return directly if the root dir not found as we did before.
+				// `WalkDir` will try to Lstat the root dir only.
+				// It yields non-exist files.
+				log.Warn("Local: WalkDir called in an non-exist dir.", zap.String("path", path))
+				return nil
+			}
 			return errors.Trace(err)
 		}
 
@@ -152,6 +159,7 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 		if err != nil {
 			if os.IsNotExist(err) {
 				if !opt.IncludeTombstone {
+					log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
 					return nil
 				}
 				return fn(path, TombstoneSize)
