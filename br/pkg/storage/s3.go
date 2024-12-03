@@ -83,6 +83,10 @@ type S3Storage struct {
 	options *backuppb.S3
 }
 
+func (*S3Storage) MarkStrongConsistency() {
+	// See https://aws.amazon.com/cn/s3/consistency/
+}
+
 // GetS3APIHandle gets the handle to the S3 API.
 func (rs *S3Storage) GetS3APIHandle() s3iface.S3API {
 	return rs.svc

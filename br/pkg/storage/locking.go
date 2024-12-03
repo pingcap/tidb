@@ -88,7 +88,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during initial check")
 	}
-	failpoint.Inject("exclusive-write-commit-to-1", func() {})
+	failpoint.InjectCall("exclusive-write-commit-to-1")
 
 	if err := s.WriteFile(cx, intentFileName, []byte{}); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during writing intention file")
@@ -103,7 +103,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during checking whether there are other intentions")
 	}
-	failpoint.Inject("exclusive-write-commit-to-2", func() {})
+	failpoint.InjectCall("exclusive-write-commit-to-2")
 
 	return txnID, s.WriteFile(cx, w.Target, w.Content(txnID))
 }
@@ -112,9 +112,12 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
+
 	return cx.Storage.WalkDir(cx, &WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
+		// We'd better read a deleted intention...
+		IncludeTombstone: true,
 	}, func(path string, size int64) error {
 		if path != expect {
 			return fmt.Errorf("there is conflict file %s", path)
