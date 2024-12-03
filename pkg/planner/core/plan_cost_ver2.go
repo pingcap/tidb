@@ -912,7 +912,6 @@ func doubleReadCostVer2(option *optimizetrace.PlanCostOption, numTasks float64, 
 }
 
 func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
-
 	if !p.isChildOfIndexLookUp {
 		// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
 		// that are the child of an index scan
