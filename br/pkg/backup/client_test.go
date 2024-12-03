@@ -527,6 +527,9 @@ func TestOnBackupResponse2(t *testing.T) {
 		})
 		return true
 	})
+
+	// TODO: test overlap to remove table meta!
+	t.Error("unimplement")
 }
 
 func TestMainBackupLoop(t *testing.T) {

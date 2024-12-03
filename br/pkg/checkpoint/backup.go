@@ -95,19 +95,15 @@ func AppendForBackup(
 	ctx context.Context,
 	r *CheckpointRunner[BackupKeyType, BackupValueType],
 	groupKey BackupKeyType,
-	startKey []byte,
-	endKey []byte,
+	rangeKeys []RangeKey,
 	files []*backuppb.File,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[BackupKeyType, BackupValueType]{
 		GroupKey: groupKey,
 		Group: []BackupValueType{
 			{
-				Range: &rtree.Range{
-					StartKey: startKey,
-					EndKey:   endKey,
-					Files:    files,
-				},
+				RangeKeys: rangeKeys,
+				Files:     files,
 			},
 		},
 	})

@@ -792,14 +792,19 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTable(gs.se, dbName, table, "", cs...)
+func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return gs.CreateTableCloned(ctx, dbName, table.Clone(), cs...)
+}
+
+// CreateTable implements glue.Session
+func (gs *tidbGlueSession) CreateTableCloned(_ context.Context, dbName pmodel.CIStr, clonedTable *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTable(gs.se, dbName, clonedTable, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTables(gs.se, tables, "", cs...)
+func (gs *tidbGlueSession) CreateTablesCloned(_ context.Context,
+	clonedTables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTables(gs.se, clonedTables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session

@@ -4,11 +4,13 @@ package metautil
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -251,13 +253,35 @@ func (stats ChecksumStats) ChecksumExists() bool {
 	return true
 }
 
+func getPhysicalIDSet(tableInfo *model.TableInfo) map[int64]struct{} {
+	physicalIDSet := make(map[int64]struct{})
+	physicalIDSet[tableInfo.ID] = struct{}{}
+	if tableInfo.Partition != nil {
+		for _, p := range tableInfo.Partition.Definitions {
+			physicalIDSet[p.ID] = struct{}{}
+		}
+	}
+	return physicalIDSet
+}
+
 // CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
-func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
+func CalculateChecksumStatsOnFiles(tableInfo *model.TableInfo, files []*backuppb.File) ChecksumStats {
 	var stats ChecksumStats
+	physicalIDSet := getPhysicalIDSet(tableInfo)
 	for _, file := range files {
-		stats.Crc64Xor ^= file.Crc64Xor
-		stats.TotalKvs += file.TotalKvs
-		stats.TotalBytes += file.TotalBytes
+		if len(file.TableMetas) > 0 {
+			for _, tableMeta := range file.TableMetas {
+				if _, exist := physicalIDSet[tableMeta.PhysicalId]; exist {
+					stats.Crc64Xor ^= tableMeta.Crc64Xor
+					stats.TotalKvs += tableMeta.TotalKvs
+					stats.TotalBytes += tableMeta.TotalBytes
+				}
+			}
+		} else {
+			stats.Crc64Xor ^= file.Crc64Xor
+			stats.TotalKvs += file.TotalKvs
+			stats.TotalBytes += file.TotalBytes
+		}
 	}
 	return stats
 }
@@ -311,6 +335,11 @@ type readSchemaConfig struct {
 // ReadSchemaOption describes some extra option of reading the config.
 type ReadSchemaOption func(*readSchemaConfig)
 
+type TableIDSpan struct {
+	StartTableID int64
+	EndTableID   int64
+}
+
 // SkipFiles is the configuration which will make the schema reader skip all files.
 // This is useful when only schema information is needed.
 func SkipFiles(conf *readSchemaConfig) {
@@ -326,9 +355,34 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
 
+func mergePhysicalRangeLink(physicalRangeMap map[int64]int64) []TableIDSpan {
+	for startTableID, endTableID := range physicalRangeMap {
+		// merge range link to [startTableId, ..]
+		finalEndTableID := endTableID
+	MERGELINKS:
+		for {
+			nextEndTableID, exists := physicalRangeMap[finalEndTableID]
+			if !exists {
+				break MERGELINKS
+			}
+			delete(physicalRangeMap, finalEndTableID)
+			finalEndTableID = nextEndTableID
+		}
+		if finalEndTableID != endTableID {
+			physicalRangeMap[startTableID] = finalEndTableID
+		}
+	}
+	physicalIDSpans := make([]TableIDSpan, 0, len(physicalRangeMap))
+	for startTableID, endTableID := range physicalRangeMap {
+		physicalIDSpans = append(physicalIDSpans, TableIDSpan{StartTableID: startTableID, EndTableID: endTableID})
+	}
+	slices.SortFunc(physicalIDSpans, func(left, right TableIDSpan) int { return cmp.Compare(left.StartTableID, right.EndTableID) })
+	return physicalIDSpans
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
-func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
+func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) ([]TableIDSpan, error) {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -392,10 +446,17 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
 	var fileMap map[int64][]*backuppb.File
+	// start table ID -> end table ID
+	// The range of SST files are like:
+	// [range_start, next_key_from_the_same_range), [next_key_from_the_same_range, range_end), [next_range_start, ..)
+	// Notice that if there is an SST file whose range start/end is from table X,
+	// either its data is empty, or first/end key of the SST file must from table X.
+	var sortedPhysicalRanges []TableIDSpan
 	if !cfg.skipFiles {
 		fileCh := make(chan *backuppb.File, MaxBatchSize)
 		fileErrCh := make(chan error, 1)
 		fileMap = make(map[int64][]*backuppb.File)
+		physicalRangeMap := make(map[int64]int64)
 		go func() {
 			defer close(fileCh)
 			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
@@ -412,20 +473,42 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		for {
 			select {
 			case <-cctx.Done():
-				return errors.Trace(cctx.Err())
+				return sortedPhysicalRanges, errors.Trace(cctx.Err())
 			case err := <-fileErrCh:
-				return errors.Trace(err)
+				return sortedPhysicalRanges, errors.Trace(err)
 			case file, ok := <-fileCh:
 				if !ok {
 					break generateFileMapDone
 				}
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
+				startTableID := tablecodec.DecodeTableID(file.GetStartKey())
+				if startTableID == 0 {
 					log.Panic("tableID must not equal to 0", logutil.File(file))
 				}
-				fileMap[tableID] = append(fileMap[tableID], file)
+				endTableID := tablecodec.DecodeTableID(file.GetEndKey())
+				if endTableID == 0 {
+					log.Panic("tableID must not equal to 0", logutil.File(file))
+				}
+				if startTableID != endTableID {
+					// Any table whose table id is in (startTableID, endTableID] should be restored
+					// with the table whose table id is startTableID. However, maybe there is another
+					// SST file whose table range is [startTableID0, startTableID]. That's because
+					// region data was so large that SST file was split when backup.
+					physicalRangeMap[startTableID] = max(physicalRangeMap[startTableID], endTableID)
+				}
+				if len(file.TableMetas) == 0 {
+					fileMap[startTableID] = append(fileMap[startTableID], file)
+				} else {
+					for _, tableMeta := range file.TableMetas {
+						fileMap[tableMeta.PhysicalId] = append(fileMap[tableMeta.PhysicalId], file)
+					}
+				}
 			}
 		}
+
+		// there may be a link like this:
+		// physicalRangeMap[tableID1] = tableID2 and physicalRangeMap[tableID2] = tableID3
+		// it should be adjust to physicalRangeMap[tableID1] = tableID3.
+		sortedPhysicalRanges = mergePhysicalRangeLink(physicalRangeMap)
 	}
 
 	for {
@@ -455,11 +538,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			return nil
 		})
 		if err != nil {
-			return errors.Trace(err)
+			return sortedPhysicalRanges, errors.Trace(err)
 		}
 		if len(tableMap) == 0 {
 			// We have read all tables.
-			return nil
+			return sortedPhysicalRanges, nil
 		}
 		for _, table := range tableMap {
 			output <- table

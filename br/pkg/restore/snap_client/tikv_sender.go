@@ -17,6 +17,7 @@ package snapclient
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
@@ -68,24 +70,95 @@ func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
 	for _, file := range files {
 		tableID := tablecodec.DecodeTableID(file.GetStartKey())
 		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
+		if tableID != tableEndID &&
+			tableID != file.TableMetas[0].PhysicalId &&
+			tableEndID != file.TableMetas[len(file.TableMetas)-1].PhysicalId {
 			log.Panic("key range spread between many files.",
 				zap.String("file name", file.Name),
 				logutil.Key("startKey", file.StartKey),
 				logutil.Key("endKey", file.EndKey))
 		}
-		if tableID == 0 {
+		if tableID == 0 || tableEndID == 0 {
 			log.Panic("invalid table key of file",
 				zap.String("file name", file.Name),
 				logutil.Key("startKey", file.StartKey),
 				logutil.Key("endKey", file.EndKey))
 		}
+
 		result[tableID] = append(result[tableID], file)
 		if file.Cf == restoreutils.WriteCFName {
 			maxSplitKeyCount += 1
 		}
 	}
 	return result, maxSplitKeyCount
+}
+
+func iterSortedPhysicalTables(sortedPhysicalTables []*PhysicalTable, sortedTableIDSpans []metautil.TableIDSpan, iterFn func([]*PhysicalTable) error) error {
+	var (
+		currentSpanIndex   = 0
+		startPhysicalTable = -1
+		inSpan             = false
+	)
+	// Notice that some table ID may be filtered, so we need to handle these situations:
+	// There are 6 tables with ID 1, 3, 5, 7, 9, and 11, and there is a span [5 7 9].
+	// And the ID 5 is filtered.
+	// 1. The current iteration is from ID 1 to ID 3. Call iterFn([1]).
+	//
+	//     {1} 3 [5 7 9] 11 -> 1 {3} [5 7 9] 11
+	//
+	// 2. The current iteration is from ID 3 to ID 7. Call iterFn([3]).
+	//
+	//     1 {3} [5 7 9] 11 -> 1 3 [5 {7} 9] 11
+	//
+	// 3. The current iteration is from ID 9 to ID 11. Call iterFn([5 7 9]).
+	//
+	//     1 3 [5 7 {9}] 11 -> 1 3 [5 7 9] {11}
+	//
+NEXTTABLE:
+	for end := range sortedPhysicalTables {
+		table := sortedPhysicalTables[end]
+		for {
+			if currentSpanIndex >= len(sortedTableIDSpans) || table.OldPhysicalID < sortedTableIDSpans[currentSpanIndex].StartTableID {
+				if startPhysicalTable >= 0 && startPhysicalTable < end {
+					if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
+						return errors.Trace(err)
+					}
+				}
+				startPhysicalTable = end
+				continue NEXTTABLE
+			}
+			// table.OldPhysicalID >= span.StartTableID
+			if table.OldPhysicalID <= sortedTableIDSpans[currentSpanIndex].EndTableID {
+				// first in the span
+				if !inSpan {
+					if startPhysicalTable >= 0 && startPhysicalTable < end {
+						if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
+							return errors.Trace(err)
+						}
+					}
+					startPhysicalTable = end
+					inSpan = true
+				}
+				continue NEXTTABLE
+			}
+			// table.OldPhysicalID > span.EndTableID
+			if inSpan {
+				// move to next span
+				if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
+					return errors.Trace(err)
+				}
+				startPhysicalTable = end
+				inSpan = false
+			}
+			currentSpanIndex += 1
+		}
+	}
+	if startPhysicalTable >= 0 && startPhysicalTable < len(sortedPhysicalTables) {
+		if err := iterFn(sortedPhysicalTables[startPhysicalTable:]); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // filterOutFiles filters out files that exist in the checkpoint set.
@@ -126,6 +199,7 @@ func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
 	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
+	sortedTableIDSpans []metautil.TableIDSpan,
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
 	onProgress func(int64),
@@ -147,40 +221,38 @@ func SortAndValidateFileRanges(
 
 		// statistic
 		mergedRangeCount = 0
+		totalStat        = &restoreutils.MergeRangesStat{}
 	)
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
-	for _, table := range sortedPhysicalTables {
-		files := fileOfTable[table.OldPhysicalID]
-		for _, file := range files {
-			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRules); err != nil {
-				return nil, nil, errors.Trace(err)
+	if err := iterSortedPhysicalTables(sortedPhysicalTables, sortedTableIDSpans, func(tables []*PhysicalTable) error {
+		minPhysicalID := int64(math.MaxInt64)
+		mergedFiles := make([]*backuppb.File, 0)
+		rewriteRules := make(map[int64]*restoreutils.RewriteRules)
+		for _, table := range tables {
+			files := fileOfTable[table.OldPhysicalID]
+			for _, file := range files {
+				if err := restoreutils.ValidateFileRewriteRule(file, table.OldPhysicalID, table.RewriteRules); err != nil {
+					return errors.Trace(err)
+				}
 			}
+			minPhysicalID = min(minPhysicalID, table.NewPhysicalID)
+			mergedFiles = append(mergedFiles, files...)
+			rewriteRules[table.OldPhysicalID] = table.RewriteRules
 		}
 		// Merge small ranges to reduce split and scatter regions.
 		// Notice that the files having the same start key and end key are in the same range.
 		sortedRanges, stat, err := restoreutils.MergeAndRewriteFileRanges(
-			files, table.RewriteRules, splitSizeBytes, splitKeyCount)
+			mergedFiles, rewriteRules, splitSizeBytes, splitKeyCount)
 		if err != nil {
-			return nil, nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		log.Info("merge and validate file",
-			zap.Int64("new physical ID", table.NewPhysicalID),
-			zap.Int64("old physical ID", table.OldPhysicalID),
-			zap.Int("Files(total)", stat.TotalFiles),
-			zap.Int("File(write)", stat.TotalWriteCFFile),
-			zap.Int("File(default)", stat.TotalDefaultCFFile),
-			zap.Int("Region(total)", stat.TotalRegions),
-			zap.Int("Regoin(keys avg)", stat.RegionKeysAvg),
-			zap.Int("Region(bytes avg)", stat.RegionBytesAvg),
-			zap.Int("Merged(regions)", stat.MergedRegions),
-			zap.Int("Merged(keys avg)", stat.MergedRegionKeysAvg),
-			zap.Int("Merged(bytes avg)", stat.MergedRegionBytesAvg))
+		totalStat.MergeStat(stat)
 
 		// skip some ranges if recorded by checkpoint
 		// Notice that skip ranges after select split keys in order to make the split keys
 		// always the same.
-		checkpointSet := checkpointSetWithTableID[table.NewPhysicalID]
+		checkpointSet := checkpointSetWithTableID[minPhysicalID]
 
 		// Generate the split keys, and notice that the way to generate split keys must be deterministic
 		// and regardless of the current cluster region distribution. Therefore, when restore fails, the
@@ -233,11 +305,11 @@ func SortAndValidateFileRanges(
 			newFiles := filterOutFiles(checkpointSet, rg.Files, onProgress)
 			// append the new files into the group
 			if len(newFiles) > 0 {
-				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
+				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].MinPhysicalID != minPhysicalID {
 					lastFilesGroup = append(lastFilesGroup, restore.BackupFileSet{
-						TableID:      table.NewPhysicalID,
-						SSTFiles:     nil,
-						RewriteRules: table.RewriteRules,
+						MinPhysicalID: minPhysicalID,
+						SSTFiles:      nil,
+						RewriteRules:  rewriteRules,
 					})
 				}
 				lastFilesGroup[len(lastFilesGroup)-1].SSTFiles = append(lastFilesGroup[len(lastFilesGroup)-1].SSTFiles, newFiles...)
@@ -260,6 +332,9 @@ func SortAndValidateFileRanges(
 				lastFilesGroup = nil
 			}
 		}
+		return nil
+	}); err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 	// append the key of the last range anyway
 	if lastKey != nil {
@@ -273,6 +348,7 @@ func SortAndValidateFileRanges(
 			zap.Int("merged range count", mergedRangeCount))
 		tableIDWithFilesGroup = append(tableIDWithFilesGroup, lastFilesGroup)
 	}
+	totalStat.Summary()
 	return sortedSplitKeys, tableIDWithFilesGroup, nil
 }
 
@@ -297,7 +373,10 @@ func (rc *SnapClient) RestoreTables(
 	}()
 
 	start := time.Now()
-	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, onProgress)
+	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(
+		createdTables, allFiles,
+		checkpointSetWithTableID, rc.sortedTableIDSpans,
+		splitSizeBytes, splitKeyCount, splitOnTable, onProgress)
 	if err != nil {
 		return errors.Trace(err)
 	}

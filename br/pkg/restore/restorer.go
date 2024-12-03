@@ -44,7 +44,8 @@ import (
 type BackupFileSet struct {
 	// TableID only valid in 3.4.5.
 	// For Raw/Txn KV, table id is always 0
-	TableID int64
+	// MinPhysicalID is the minimal downstream table ID in the merged SST file set
+	MinPhysicalID int64
 
 	// For log Backup Changes, this field is null.
 	SSTFiles []*backuppb.File
@@ -52,7 +53,8 @@ type BackupFileSet struct {
 	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
-	RewriteRules *utils.RewriteRules
+	// map from table ID to rewrite rules
+	RewriteRules map[int64]*utils.RewriteRules
 }
 
 type BatchBackupFileSet []BackupFileSet
@@ -105,7 +107,7 @@ func CreateUniqueFileSets(files []*backuppb.File) []BackupFileSet {
 func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet {
 	return BackupFileSet{
 		SSTFiles:     files,
-		RewriteRules: rules,
+		RewriteRules: map[int64]*utils.RewriteRules{0: rules},
 	}
 }
 
@@ -302,7 +304,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.MinPhysicalID, rangeKey); err != nil {
 							return errors.Trace(err)
 						}
 					}

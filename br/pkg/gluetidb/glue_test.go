@@ -97,7 +97,7 @@ func TestTheSessionIsoation(t *testing.T) {
 		after := glueSe.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
 		req.Greater(after, before)
 	}
-	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
+	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTablesCloned(ctx, map[string][]*model.TableInfo{
 		"test": infos,
 	}))
 }

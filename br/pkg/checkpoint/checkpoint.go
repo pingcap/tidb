@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -63,12 +62,19 @@ type KeyType interface {
 	~BackupKeyType | ~RestoreKeyType
 }
 
+type RangeKey struct {
+	GroupKey BackupKeyType
+	StartKey []byte
+	EndKey   []byte
+}
+
 type RangeType struct {
-	*rtree.Range
+	RangeKeys []RangeKey
+	Files     []*backuppb.File
 }
 
 func (r RangeType) IdentKey() []byte {
-	return r.StartKey
+	panic("unimplement!")
 }
 
 type ValueType interface {

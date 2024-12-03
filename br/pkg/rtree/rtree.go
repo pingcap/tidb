@@ -4,6 +4,7 @@ package rtree
 
 import (
 	"bytes"
+	"slices"
 
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -187,12 +188,22 @@ var _ btree.Item = &Range{}
 // All the ranges it stored do not overlap.
 type RangeTree struct {
 	*btree.BTree
+
+	PhysicalID int64
 }
 
 // NewRangeTree returns an empty range tree.
 func NewRangeTree() RangeTree {
 	return RangeTree{
 		BTree: btree.New(32),
+	}
+}
+
+func NewRangeTreeWithPhysicalID(physicalID int64) RangeTree {
+	return RangeTree{
+		BTree: btree.New(32),
+
+		PhysicalID: physicalID,
 	}
 }
 
@@ -237,9 +248,66 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 	return overlaps
 }
 
+// isOverlapContainsRange currently only checks whether the only one overlap
+// entirely contains the range to avoid partition the merged backup SST file.
+//
+//	the merged backup SST file:   |___table A___|___table B____|__table C___|
+//	the only one overlap:                       |___overlap____|
+//	the new range:                              |__new range___|
+//
+// skip replace to avoid table A and table C having the same SST, but tbale B
+// does not have it.
+func isOverlapContainsRange(overlaps []*Range, rg *Range) bool {
+	if len(overlaps) != 1 {
+		return false
+	}
+	return bytes.Compare(rg.StartKey, overlaps[0].StartKey) >= 0 &&
+		bytes.Compare(rg.EndKey, overlaps[0].EndKey) <= 0
+}
+
+// removeOverlappedTableMetas remove table meta in files since the data is given up.
+func (rangeTree *RangeTree) removeOverlappedTableMetas(overlaps []*Range, rg *Range) bool {
+	if len(overlaps) == 0 {
+		return false
+	}
+	if isOverlapContainsRange(overlaps, rg) {
+		return true
+	}
+	// files in the first overlap having other tables range, so remove the last one table meta
+	for _, file := range overlaps[0].Files {
+		if len(file.TableMetas) > 1 {
+			// TODO: maybe it's OK to get file.TableMetas[:len-1]
+			if file.TableMetas[len(file.TableMetas)-1].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas = file.TableMetas[:len(file.TableMetas)-1]
+			} else {
+				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(meta *backuppb.TableMeta) bool {
+					return meta.PhysicalId == rangeTree.PhysicalID
+				})
+			}
+		}
+	}
+	// files in the last overlap having other tables range, so remove the first one table meta
+	for _, file := range overlaps[len(overlaps)-1].Files {
+		if len(file.TableMetas) > 1 {
+			// TODO: maybe it's OK to get file.TableMetas[1:]
+			if file.TableMetas[0].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas = file.TableMetas[1:]
+			} else {
+				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(meta *backuppb.TableMeta) bool {
+					return meta.PhysicalId == rangeTree.PhysicalID
+				})
+			}
+		}
+	}
+	return false
+}
+
 // Update inserts range into tree and delete overlapping ranges.
 func (rangeTree *RangeTree) Update(rg Range) {
 	overlaps := rangeTree.getOverlaps(&rg)
+	if rangeTree.removeOverlappedTableMetas(overlaps, &rg) {
+		return
+	}
 	// Range has backuped, overwrite overlapping range.
 	for _, item := range overlaps {
 		log.Info("delete overlapping range",

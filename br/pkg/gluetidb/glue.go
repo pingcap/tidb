@@ -244,15 +244,22 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return errors.Trace(executor.BRIECreateTables(gs.se, tables, brComment, cs...))
+func (gs *tidbSession) CreateTablesCloned(_ context.Context,
+	clonedTables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return errors.Trace(executor.BRIECreateTables(gs.se, clonedTables, brComment, cs...))
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(_ context.Context, dbName pmodel.CIStr,
+func (gs *tidbSession) CreateTable(ctx context.Context, dbName pmodel.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
+	return errors.Trace(gs.CreateTableCloned(ctx, dbName, table.Clone(), cs...))
+
+}
+
+// CreateTableCloned implements glue.Session.
+func (gs *tidbSession) CreateTableCloned(_ context.Context, dbName pmodel.CIStr, clonedTable *model.TableInfo,
+	cs ...ddl.CreateTableOption) error {
+	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, clonedTable, brComment, cs...))
 }
 
 // Close implements glue.Session.

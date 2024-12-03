@@ -214,8 +214,8 @@ func files(physicalTableID int64, startRows []int, cfs []string) restore.BackupF
 		files = append(files, &backuppb.File{Name: fmt.Sprintf("file_%d_%d_%s.sst", physicalTableID, startRow, cfs[i])})
 	}
 	return restore.BackupFileSet{
-		TableID:  downstreamID(physicalTableID),
-		SSTFiles: files,
+		MinPhysicalID: downstreamID(physicalTableID),
+		SSTFiles:      files,
 	}
 }
 
@@ -657,7 +657,7 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 		t.Log(i)
 		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
 		onProgress := func(i int64) { updateCh.IncBy(i) }
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, []metautil.TableIDSpan{}, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
@@ -666,12 +666,302 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 			require.Equal(t, len(expectFilesGroup), len(actualFilesGroup))
 			for j, expectFiles := range expectFilesGroup {
 				actualFiles := actualFilesGroup[j]
-				require.Equal(t, expectFiles.TableID, actualFiles.TableID)
+				require.Equal(t, expectFiles.MinPhysicalID, actualFiles.MinPhysicalID)
 				for k, expectFile := range expectFiles.SSTFiles {
 					actualFile := actualFiles.SSTFiles[k]
 					require.Equal(t, expectFile.Name, actualFile.Name)
 				}
 			}
+		}
+	}
+}
+
+func generatePhysicalTables(ids []int64) []*snapclient.PhysicalTable {
+	tables := make([]*snapclient.PhysicalTable, 0, len(ids))
+	for _, id := range ids {
+		tables = append(tables, &snapclient.PhysicalTable{
+			OldPhysicalID: id,
+		})
+	}
+	return tables
+}
+
+func generateTableIDSpans(idspans [][2]int64) []metautil.TableIDSpan {
+	spans := make([]metautil.TableIDSpan, 0, len(idspans))
+	for _, span := range idspans {
+		spans = append(spans, metautil.TableIDSpan{
+			StartTableID: span[0],
+			EndTableID:   span[1],
+		})
+	}
+	return spans
+}
+
+func TestIterSortedPhysicalTables(t *testing.T) {
+	// TODO: add filter, next many span
+	// [1 3] [5 7 9] 11 13
+	// [1 3] [5 7 9] [11 13]
+	// 1 3 [5 7 9] [11 13]
+	// 1 [3 5] 7 [9 11] 13
+	caseGroups := []struct {
+		idSpans [][2]int64
+		cases   []struct {
+			tableIDs     []int64
+			expectRanges [][]int64
+		}
+	}{
+		// 1 3 [5 7 9] 11 13
+		{
+			idSpans: [][2]int64{{5, 9}},
+			cases: []struct {
+				tableIDs     []int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {3}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{7, 9, 11, 13},
+					expectRanges: [][]int64{{7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7, 11, 13},
+					expectRanges: [][]int64{{1}, {5, 7}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7},
+					expectRanges: [][]int64{{1}, {5, 7}},
+				},
+				{
+					tableIDs:     []int64{5, 7},
+					expectRanges: [][]int64{{5, 7}},
+				},
+				{
+					tableIDs:     []int64{9},
+					expectRanges: [][]int64{{9}},
+				},
+				{
+					tableIDs:     []int64{7},
+					expectRanges: [][]int64{{7}},
+				},
+			},
+		},
+		// [1 3] [5 7 9] 11 13
+		{
+			idSpans: [][2]int64{{1, 3}, {5, 9}},
+			cases: []struct {
+				tableIDs     []int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{3}, {5, 7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 9, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {5, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {7, 9}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {5, 7}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 7, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {7}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 11, 13},
+					expectRanges: [][]int64{{1, 3}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 11, 13},
+					expectRanges: [][]int64{{1}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{3, 11, 13},
+					expectRanges: [][]int64{{3}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {7, 9}, {11}, {13}},
+				},
+			},
+		},
+		// 0 [1 3] [5 7 9] 11 13
+		{
+			idSpans: [][2]int64{{1, 3}, {5, 9}, {11, 13}},
+			cases: []struct {
+				tableIDs     []int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     []int64{0, 1, 3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {5, 7, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {1}, {5, 7, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {5, 7, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {3}, {5, 7, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 3, 5, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {5, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 3, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {7, 9}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 3, 5, 7, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {5, 7}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 3, 7, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {7}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 3, 11, 13},
+					expectRanges: [][]int64{{0}, {1, 3}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 11, 13},
+					expectRanges: [][]int64{{0}, {1}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 3, 11, 13},
+					expectRanges: [][]int64{{0}, {3}, {11, 13}},
+				},
+				{
+					tableIDs:     []int64{0, 1, 7, 9, 11, 13},
+					expectRanges: [][]int64{{0}, {1}, {7, 9}, {11, 13}},
+				},
+			},
+		},
+		// 1 [3 5] 7 [9 11] 13
+		{
+			idSpans: [][2]int64{{3, 5}, {9, 11}},
+			cases: []struct {
+				tableIDs     []int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {3, 5}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {5}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {3}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 7, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {3, 5}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 9, 11, 13},
+					expectRanges: [][]int64{{1}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{3, 5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{3, 5}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{5, 7, 9, 11, 13},
+					expectRanges: [][]int64{{5}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{7, 9, 11, 13},
+					expectRanges: [][]int64{{7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{3, 7, 9, 11, 13},
+					expectRanges: [][]int64{{3}, {7}, {9, 11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 11, 13},
+					expectRanges: [][]int64{{1}, {3, 5}, {7}, {11}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 9, 13},
+					expectRanges: [][]int64{{1}, {3, 5}, {7}, {9}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 13},
+					expectRanges: [][]int64{{1}, {3, 5}, {7}, {13}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5},
+					expectRanges: [][]int64{{1}, {3, 5}},
+				},
+				{
+					tableIDs:     []int64{1, 3, 5, 7, 9},
+					expectRanges: [][]int64{{1}, {3, 5}, {7}, {9}},
+				},
+			},
+		},
+	}
+
+	for _, csGroup := range caseGroups {
+		idSpans := csGroup.idSpans
+		for _, cs := range csGroup.cases {
+			i := 0
+			err := snapclient.IterSortedPhysicalTables(
+				generatePhysicalTables(cs.tableIDs),
+				generateTableIDSpans(idSpans),
+				func(pt []*snapclient.PhysicalTable) error {
+					expectRange := cs.expectRanges[i]
+					require.Equal(t, len(expectRange), len(pt))
+					for j, id := range expectRange {
+						require.Equal(t, id, pt[j].OldPhysicalID)
+					}
+					i += 1
+					return nil
+				},
+			)
+			require.NoError(t, err)
 		}
 	}
 }

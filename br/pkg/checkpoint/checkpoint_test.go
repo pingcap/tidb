@@ -217,7 +217,13 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []checkpoint.RangeKey{
+			{
+				GroupKey: "a",
+				StartKey: []byte(d.StartKey),
+				EndKey:   []byte(d.EndKey),
+			},
+		}, []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -230,7 +236,13 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []checkpoint.RangeKey{
+			{
+				GroupKey: "+",
+				StartKey: []byte(d.StartKey),
+				EndKey:   []byte(d.EndKey),
+			},
+		}, []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -241,13 +253,14 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 	checker := func(groupKey string, resp checkpoint.BackupValueType) {
 		require.NotNil(t, resp)
-		d, ok := data[string(resp.StartKey)]
+		require.Len(t, resp.RangeKeys, 1)
+		d, ok := data[string(resp.RangeKeys[0].StartKey)]
 		if !ok {
-			d, ok = data2[string(resp.StartKey)]
+			d, ok = data2[string(resp.RangeKeys[0].StartKey)]
 			require.True(t, ok)
 		}
-		require.Equal(t, d.StartKey, string(resp.StartKey))
-		require.Equal(t, d.EndKey, string(resp.EndKey))
+		require.Equal(t, d.StartKey, string(resp.RangeKeys[0].StartKey))
+		require.Equal(t, d.EndKey, string(resp.RangeKeys[0].EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
 	}
@@ -269,6 +282,62 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, meta.CheckpointChecksum[i].Crc64xor, uint64(i))
 	}
+}
+
+func TestCheckpointBackupRunner2(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	s, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
+
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+	checkpointRunner, err := checkpoint.StartCheckpointBackupRunnerForTest(
+		ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+	require.NoError(t, err)
+
+	err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []checkpoint.RangeKey{
+		{
+			GroupKey: "a",
+			StartKey: []byte("a1"),
+			EndKey:   []byte("a2"),
+		},
+		{
+			GroupKey: "b",
+			StartKey: []byte("b1"),
+			EndKey:   []byte("b2"),
+		},
+		{
+			GroupKey: "c",
+			StartKey: []byte("c1"),
+			EndKey:   []byte("c2"),
+		},
+	}, []*backuppb.File{
+		{Name: "1.sst"},
+		{Name: "2.sst"},
+	})
+	require.NoError(t, err)
+
+	checkpointRunner.WaitForFinish(ctx, true)
+	count := 0
+	checker := func(groupKey string, resp checkpoint.BackupValueType) {
+		require.Equal(t, "a", groupKey)
+		require.Len(t, resp.RangeKeys, 3)
+		require.Equal(t, checkpoint.RangeKey{GroupKey: "a", StartKey: []byte("a1"), EndKey: []byte("a2")}, resp.RangeKeys[0])
+		require.Equal(t, checkpoint.RangeKey{GroupKey: "b", StartKey: []byte("b1"), EndKey: []byte("b2")}, resp.RangeKeys[1])
+		require.Equal(t, checkpoint.RangeKey{GroupKey: "c", StartKey: []byte("c1"), EndKey: []byte("c2")}, resp.RangeKeys[2])
+		require.Len(t, resp.Files, 2)
+		require.Equal(t, "1.sst", resp.Files[0].Name)
+		require.Equal(t, "2.sst", resp.Files[1].Name)
+		count += 1
+	}
+	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
 }
 
 func TestCheckpointRestoreRunner(t *testing.T) {

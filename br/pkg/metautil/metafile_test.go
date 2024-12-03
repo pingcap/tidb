@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -266,4 +267,70 @@ func TestMetaFileSize(t *testing.T) {
 	needFlush = metafiles.append(&backuppb.File{Name: "meta4", Size_: 99999}, AppendMetaFile)
 	t.Logf("needFlush: %v, %+v", needFlush, metafiles)
 	require.True(t, needFlush)
+}
+
+func TestMergePhysicalRangeLink(t *testing.T) {
+	// 1 - 3 - 5 - 7 - 9
+	// 2 - 6
+	// 4 - 8
+	m := map[int64]int64{
+		1: 3,
+		4: 8,
+		7: 9,
+		5: 7,
+		2: 6,
+		3: 5,
+	}
+	mergePhysicalRangeLink(m)
+	require.Len(t, m, 3)
+	require.Equal(t, map[int64]int64{1: 9, 2: 6, 4: 8}, m)
+}
+
+func TestCalculateChecksumStatsOnFiles(t *testing.T) {
+	generateTableMeta := func(id int64, kvs, bytes, checksum uint64) *backuppb.TableMeta {
+		return &backuppb.TableMeta{
+			PhysicalId: id,
+			TotalKvs:   kvs,
+			TotalBytes: bytes,
+			Crc64Xor:   checksum,
+		}
+	}
+	checksumStats := CalculateChecksumStatsOnFiles(&model.TableInfo{
+		ID: 1,
+		Partition: &model.PartitionInfo{
+			Definitions: []model.PartitionDefinition{
+				{ID: 100},
+				{ID: 102},
+				{ID: 3},
+			},
+		},
+	}, []*backuppb.File{
+		{
+			TableMetas: []*backuppb.TableMeta{
+				generateTableMeta(1, 10, 20, 30),
+				generateTableMeta(3, 30, 40, 50),
+			},
+		},
+		{
+			TableMetas: []*backuppb.TableMeta{
+				generateTableMeta(3, 40, 50, 60),
+			},
+		},
+		{
+			TableMetas: []*backuppb.TableMeta{
+				generateTableMeta(3, 50, 60, 70),
+				generateTableMeta(4, 40, 50, 60),
+				generateTableMeta(100, 1000, 2000, 3000),
+			},
+		},
+		{
+			TableMetas: []*backuppb.TableMeta{
+				generateTableMeta(102, 1002, 2002, 3002),
+				generateTableMeta(103, 1003, 2003, 3003),
+			},
+		},
+	})
+	require.Equal(t, uint64(10+30+40+50+1000+1002), checksumStats.TotalKvs)
+	require.Equal(t, uint64(20+40+50+60+2000+2002), checksumStats.TotalBytes)
+	require.Equal(t, uint64(30^50^60^70^3000^3002), checksumStats.Crc64Xor)
 }

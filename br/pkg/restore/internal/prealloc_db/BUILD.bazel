@@ -28,7 +28,7 @@ go_test(
     timeout = "short",
     srcs = ["db_test.go"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         ":prealloc_db",
         "//br/pkg/gluetidb",

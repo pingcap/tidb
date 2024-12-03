@@ -95,8 +95,9 @@ type SnapClient struct {
 
 	noSchema bool
 
-	databases map[string]*metautil.Database
-	ddlJobs   []*model.Job
+	databases          map[string]*metautil.Database
+	sortedTableIDSpans []metautil.TableIDSpan
+	ddlJobs            []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
 	rebasedTablesMap map[restore.UniqueTableName]bool
@@ -284,7 +285,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	preallocedTableIDs := tidalloc.New(tables)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn), rc.sortedTableIDSpans)
 	})
 	if err != nil {
 		return err
@@ -567,11 +568,12 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawEndKey []byte,
 ) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
+		databases, sortedTableIDSpans, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rc.databases = databases
+		rc.sortedTableIDSpans = sortedTableIDSpans
 
 		var ddlJobs []*model.Job
 		// ddls is the bytes of json.Marshal
@@ -1051,7 +1053,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Info, tbl.OldTable.Files)
 	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil

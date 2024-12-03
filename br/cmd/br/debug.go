@@ -82,7 +82,7 @@ func newCheckSumCommand() *cobra.Command {
 			}
 
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
+			dbs, _, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -175,7 +175,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
+			dbs, _, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
 				return errors.Trace(err)
@@ -252,7 +252,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			}
 			// Validate rewrite rules
 			for _, file := range files {
-				err = restoreutils.ValidateFileRewriteRule(file, rewriteRules)
+				err = restoreutils.ValidateFileRewriteRule(file, 0, rewriteRules)
 				if err != nil {
 					return errors.Trace(err)
 				}

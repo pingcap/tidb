@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -598,12 +599,14 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 // getProgressRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
 func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
+	physicalID := tablecodec.DecodeTableID(r.StartKey)
 	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
 	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
 		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
 		if exists {
 			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
 			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
+			rangeTree.PhysicalID = physicalID
 			return &rtree.ProgressRange{
 				Res:        rangeTree,
 				Incomplete: incomplete,
@@ -616,7 +619,7 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res: rtree.NewRangeTree(),
+		Res: rtree.NewRangeTreeWithPhysicalID(physicalID),
 		Incomplete: []rtree.Range{
 			r,
 		},
@@ -629,13 +632,16 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
 	rangeDataMap := make(map[string]rtree.RangeTree)
 
-	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
-		rangeTree, exists := rangeDataMap[groupKey]
-		if !exists {
-			rangeTree = rtree.NewRangeTree()
-			rangeDataMap[groupKey] = rangeTree
+	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) {
+		// make sure the same SST file having the same pointer
+		for _, rangeKey := range rg.RangeKeys {
+			rangeTree, exists := rangeDataMap[rangeKey.GroupKey]
+			if !exists {
+				rangeTree = rtree.NewRangeTree()
+				rangeDataMap[rangeKey.GroupKey] = rangeTree
+			}
+			rangeTree.Put(rangeKey.StartKey, rangeKey.EndKey, rg.Files)
 		}
-		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
 		progressCallBack()
 	})
 
@@ -1192,23 +1198,30 @@ func (bc *Client) OnBackupResponse(
 				zap.Reflect("error", err))
 			return nil, err
 		}
+		checkpointRangeKeys := make([]checkpoint.RangeKey, 0, len(prs))
 		for _, pr := range prs {
 			startKey, endKey := maxStartKey(pr.Origin.StartKey, resp.StartKey), minEndKey(pr.Origin.EndKey, resp.EndKey)
 			if bc.checkpointRunner != nil {
-				if err := checkpoint.AppendForBackup(
-					ctx,
-					bc.checkpointRunner,
-					pr.GroupKey,
-					startKey,
-					endKey,
-					resp.Files,
-				); err != nil {
-					// flush checkpoint failed,
-					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-					return nil, err
-				}
+				checkpointRangeKeys = append(checkpointRangeKeys, checkpoint.RangeKey{
+					GroupKey: pr.GroupKey,
+					StartKey: startKey,
+					EndKey:   endKey,
+				})
 			}
 			pr.Res.Put(startKey, endKey, resp.Files)
+		}
+		if bc.checkpointRunner != nil && len(checkpointRangeKeys) > 0 {
+			if err := checkpoint.AppendForBackup(
+				ctx,
+				bc.checkpointRunner,
+				checkpointRangeKeys[0].GroupKey,
+				checkpointRangeKeys,
+				resp.Files,
+			); err != nil {
+				// flush checkpoint failed,
+				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
+				return nil, err
+			}
 		}
 		apiVersion := resp.ApiVersion
 		bc.SetApiVersion(apiVersion)
@@ -1240,10 +1253,19 @@ func (bc *Client) OnBackupResponse(
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
 	var progressRangeAscendErr error
+	var lastKey []byte
 	progressRangeTree.Ascend(func(progressRange *rtree.ProgressRange) bool {
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)
+			if len(r.Files) > 0 {
+				if bytes.Equal(lastKey, r.Files[0].StartKey) {
+					// skip these files because they have been sent to meta writer.
+					return true
+				} else {
+					lastKey = r.Files[0].StartKey
+				}
+			}
 			for _, f := range r.Files {
 				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)

@@ -56,6 +56,8 @@ type Session interface {
 	CreateDatabase(ctx context.Context, schema *model.DBInfo) error
 	CreateTable(ctx context.Context, dbName pmodel.CIStr, table *model.TableInfo,
 		cs ...ddl.CreateTableOption) error
+	CreateTableCloned(ctx context.Context, dbName pmodel.CIStr, clonedTable *model.TableInfo,
+		cs ...ddl.CreateTableOption) error
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
@@ -64,7 +66,7 @@ type Session interface {
 
 // BatchCreateTableSession is an interface to batch create table parallelly
 type BatchCreateTableSession interface {
-	CreateTables(ctx context.Context, tables map[string][]*model.TableInfo,
+	CreateTablesCloned(ctx context.Context, clonedTables map[string][]*model.TableInfo,
 		cs ...ddl.CreateTableOption) error
 }
 

@@ -274,9 +274,9 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			continue
 		}
 		set := restore.BackupFileSet{
-			TableID:      i.Meta.TableId,
-			SSTFiles:     i.SstOutputs,
-			RewriteRules: rewriteRules,
+			MinPhysicalID: i.Meta.TableId,
+			SSTFiles:      i.SstOutputs,
+			RewriteRules:  map[int64]*restoreutils.RewriteRules{i.Meta.TableId: rewriteRules},
 		}
 		backupFileSets = append(backupFileSets, set)
 	}
@@ -847,7 +847,8 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, cipherInfo)
 
-	databases, err := metautil.LoadBackupTables(ctx, reader, false)
+	// TODO: skip loading files
+	databases, _, err := metautil.LoadBackupTables(ctx, reader, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -310,14 +310,14 @@ func (importer *SnapFileImporter) SetRawRange(startKey, endKey []byte) error {
 	return nil
 }
 
-func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
+func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, minPhysicalID int64, rules map[int64]*restoreutils.RewriteRules) ([]byte, []byte, error) {
 	switch mode {
 	case Raw:
-		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
+		return func(f *backuppb.File, _ int64, _ map[int64]*restoreutils.RewriteRules) ([]byte, []byte, error) {
 			return f.GetStartKey(), f.GetEndKey(), nil
 		}
 	case Txn:
-		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
+		return func(f *backuppb.File, _ int64, _ map[int64]*restoreutils.RewriteRules) ([]byte, []byte, error) {
 			start, end := f.GetStartKey(), f.GetEndKey()
 			if len(start) != 0 {
 				start = codec.EncodeBytes([]byte{}, f.GetStartKey())
@@ -328,8 +328,19 @@ func getKeyRangeByMode(mode KvMode) func(f *backuppb.File, rules *restoreutils.R
 			return start, end, nil
 		}
 	default:
-		return func(f *backuppb.File, rules *restoreutils.RewriteRules) ([]byte, []byte, error) {
-			return restoreutils.GetRewriteRawKeys(f, rules)
+		return func(f *backuppb.File, minPhysicalID int64, rules map[int64]*restoreutils.RewriteRules) ([]byte, []byte, error) {
+			if len(f.TableMetas) == 0 {
+				return restoreutils.GetRewriteRawKeys(f, rules[minPhysicalID])
+			}
+			start, err := restoreutils.GetRewriteRawKey(f.GetStartKey(), rules[f.TableMetas[0].PhysicalId])
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			end, err := restoreutils.GetRewriteRawKey(f.GetEndKey(), rules[f.TableMetas[len(f.TableMetas)-1].PhysicalId])
+			if err != nil {
+				return nil, nil, errors.Trace(err)
+			}
+			return start, end, nil
 		}
 	}
 }
@@ -346,7 +357,7 @@ func (importer *SnapFileImporter) getKeyRangeForFiles(
 	getRangeFn := getKeyRangeByMode(importer.kvMode)
 	for _, files := range filesGroup {
 		for _, f := range files.SSTFiles {
-			start, end, err = getRangeFn(f, files.RewriteRules)
+			start, end, err = getRangeFn(f, files.MinPhysicalID, files.RewriteRules)
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -432,7 +443,8 @@ func (importer *SnapFileImporter) Import(
 func getSSTMetaFromFile(
 	file *backuppb.File,
 	region *metapb.Region,
-	regionRule *import_sstpb.RewriteRule,
+	startNewPrefix []byte,
+	endNewPrefix []byte,
 	rewriteMode RewriteMode,
 ) (meta *import_sstpb.SSTMeta, err error) {
 	r := *region
@@ -461,7 +473,7 @@ func getSSTMetaFromFile(
 	}
 	// Find the overlapped part between the file and the region.
 	// Here we rewrites the keys to compare with the keys of the region.
-	rangeStart := regionRule.GetNewKeyPrefix()
+	rangeStart := startNewPrefix
 	//  rangeStart = max(rangeStart, region.StartKey)
 	if bytes.Compare(rangeStart, r.GetStartKey()) < 0 {
 		rangeStart = r.GetStartKey()
@@ -472,7 +484,7 @@ func getSSTMetaFromFile(
 	// https://github.com/tikv/tikv/blob/970a9bf2a9ea782a455ae579ad237aaf6cb1daec/
 	// components/sst_importer/src/sst_importer.rs#L221
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
+	rangeEnd := append(append([]byte{}, endNewPrefix...), suffix...)
 	// rangeEnd = min(rangeEnd, region.EndKey)
 	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
 		rangeEnd = r.GetEndKey()
@@ -556,42 +568,26 @@ func (importer *SnapFileImporter) download(
 // Notice that the KvMode must be TiDB.
 func (importer *SnapFileImporter) buildDownloadRequest(
 	file *backuppb.File,
-	rewriteRules *restoreutils.RewriteRules,
+	rewriteRules map[int64]*restoreutils.RewriteRules,
 	regionInfo *split.RegionInfo,
 	cipher *backuppb.CipherInfo,
 ) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, error) {
 	// Get the rewrite rule for the file.
-	fileRule := restoreutils.FindMatchedRewriteRule(file, rewriteRules)
-	if fileRule == nil {
+	encodedStartKey, encodedEndKey, sortedFileRules := restoreutils.GetSortedRewriteRules(file, rewriteRules, importer.rewriteMode == RewriteModeLegacy)
+	if len(sortedFileRules) == 0 {
 		log.Warn("download file skipped", logutil.Region(regionInfo.Region), zap.Error(berrors.ErrKVRewriteRuleNotFound))
 		return nil, import_sstpb.SSTMeta{}, nil
 	}
 
 	// Check whether the range of the file overlaps with the region
-	encodedStartKey := restoreutils.RewriteAndEncodeRawKey(file.StartKey, fileRule)
 	if len(regionInfo.Region.EndKey) > 0 && bytes.Compare(encodedStartKey, regionInfo.Region.EndKey) >= 0 {
 		return nil, import_sstpb.SSTMeta{}, nil
 	}
-	encodedEndKey := restoreutils.RewriteAndEncodeRawKey(file.EndKey, fileRule)
 	if bytes.Compare(encodedEndKey, regionInfo.Region.StartKey) <= 0 {
 		return nil, import_sstpb.SSTMeta{}, nil
 	}
 
-	// For the legacy version of TiKV, we need to encode the key prefix, since in the legacy
-	// version, the TiKV will rewrite the key with the encoded prefix without decoding the keys in
-	// the SST file. For the new version of TiKV that support keyspace rewrite, we don't need to
-	// encode the key prefix. The TiKV will decode the keys in the SST file and rewrite the keys
-	// with the plain prefix and encode the keys before writing to SST.
-
-	// for the keyspace rewrite mode
-	rule := *fileRule
-	// for the legacy rewrite mode
-	if importer.rewriteMode == RewriteModeLegacy {
-		rule.OldKeyPrefix = restoreutils.EncodeKeyPrefix(fileRule.GetOldKeyPrefix())
-		rule.NewKeyPrefix = restoreutils.EncodeKeyPrefix(fileRule.GetNewKeyPrefix())
-	}
-
-	sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, &rule, importer.rewriteMode)
+	sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, sortedFileRules[0].NewKeyPrefix, sortedFileRules[len(sortedFileRules)-1].NewKeyPrefix, importer.rewriteMode)
 	if err != nil {
 		return nil, import_sstpb.SSTMeta{}, err
 	}
@@ -600,7 +596,7 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 		Sst:            *sstMeta,
 		StorageBackend: importer.backend,
 		Name:           file.GetName(),
-		RewriteRule:    rule,
+		RewriteRules:   sortedFileRules,
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 		// For the older version of TiDB, the request type will  be default to `import_sstpb.RequestType_Legacy`
@@ -719,7 +715,7 @@ func (importer *SnapFileImporter) downloadRawKVSST(
 		for _, file := range files.SSTFiles {
 			// Empty rule
 			var rule import_sstpb.RewriteRule
-			sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, &rule, RewriteModeLegacy)
+			sstMeta, err := getSSTMetaFromFile(file, regionInfo.Region, rule.NewKeyPrefix, rule.NewKeyPrefix, RewriteModeLegacy)
 			if err != nil {
 				return nil, err
 			}
