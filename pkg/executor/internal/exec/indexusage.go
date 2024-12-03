@@ -106,7 +106,7 @@ func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTab
 		return
 	}
 
-	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID)
+	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID, false)
 	if basic == nil {
 		return
 	}
