@@ -622,6 +622,8 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 			tbl.StatsVer = statistics.Version0
 		}
 	}
-	s.statsHandle.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	s.statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
 	return true
 }

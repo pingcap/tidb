@@ -368,10 +368,10 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	listType listTableType, tableTypes ...TableType) (DatabaseTables, error) { // revive:disable-line:flag-parameter
 	dbTables := DatabaseTables{}
 	var (
-		schema, table, tableTypeStr string
-		tableType                   TableType
-		avgRowLength                uint64
-		err                         error
+		table, tableTypeStr string
+		tableType           TableType
+		avgRowLength        uint64
+		err                 error
 	)
 
 	tableTypeConditions := make([]string, len(tableTypes))
@@ -380,38 +380,35 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 	}
 	switch listType {
 	case listTableByInfoSchema:
-		query := fmt.Sprintf("SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE %s", strings.Join(tableTypeConditions, " OR "))
 		for _, schema := range databaseNames {
+			query := fmt.Sprintf("SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=? AND (%s)", strings.Join(tableTypeConditions, " OR "))
 			dbTables[schema] = make([]*TableInfo, 0)
-		}
-		if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
-			var (
-				sqlAvgRowLength sql.NullInt64
-				err2            error
-			)
-			if err2 = rows.Scan(&schema, &table, &tableTypeStr, &sqlAvgRowLength); err != nil {
-				return errors.Trace(err2)
-			}
-			tableType, err2 = ParseTableType(tableTypeStr)
-			if err2 != nil {
-				return errors.Trace(err2)
-			}
+			if err = simpleQueryWithArgs(tctx, db, func(rows *sql.Rows) error {
+				var (
+					sqlAvgRowLength sql.NullInt64
+					err2            error
+				)
+				if err2 = rows.Scan(&table, &tableTypeStr, &sqlAvgRowLength); err != nil {
+					return errors.Trace(err2)
+				}
+				tableType, err2 = ParseTableType(tableTypeStr)
+				if err2 != nil {
+					return errors.Trace(err2)
+				}
 
-			if sqlAvgRowLength.Valid {
-				avgRowLength = uint64(sqlAvgRowLength.Int64)
-			} else {
-				avgRowLength = 0
-			}
-			// only append tables to schemas in databaseNames
-			if _, ok := dbTables[schema]; ok {
+				if sqlAvgRowLength.Valid {
+					avgRowLength = uint64(sqlAvgRowLength.Int64)
+				} else {
+					avgRowLength = 0
+				}
 				dbTables[schema] = append(dbTables[schema], &TableInfo{table, avgRowLength, tableType})
+				return nil
+			}, query, schema); err != nil {
+				return nil, errors.Annotatef(err, "sql: %s", query)
 			}
-			return nil
-		}, query); err != nil {
-			return nil, errors.Annotatef(err, "sql: %s", query)
 		}
 	case listTableByShowFullTables:
-		for _, schema = range databaseNames {
+		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf("SHOW FULL TABLES FROM `%s` WHERE %s",
 				escapeString(schema), strings.Join(tableTypeConditions, " OR "))
@@ -437,7 +434,7 @@ func ListAllDatabasesTables(tctx *tcontext.Context, db *sql.Conn, databaseNames 
 		for _, tableType = range tableTypes {
 			selectedTableType[tableType] = struct{}{}
 		}
-		for _, schema = range databaseNames {
+		for _, schema := range databaseNames {
 			dbTables[schema] = make([]*TableInfo, 0)
 			query := fmt.Sprintf(queryTemplate, escapeString(schema))
 			rows, err := db.QueryContext(tctx, query)
@@ -922,8 +919,8 @@ func CheckTiDBWithTiKV(db *sql.DB) (bool, error) {
 	return count > 0, nil
 }
 
-// CheckIfSeqExists use sql to check whether sequence exists
-func CheckIfSeqExists(db *sql.Conn) (bool, error) {
+// checkIfSeqExists use sql to check whether sequence exists
+func checkIfSeqExists(db *sql.Conn) (bool, error) {
 	var count int
 	const query = "SELECT COUNT(1) as c FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='SEQUENCE'"
 	row := db.QueryRowContext(context.Background(), query)

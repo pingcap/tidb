@@ -18,6 +18,12 @@ import (
 // Permission represents the permission we need to check in create storage.
 type Permission string
 
+// StrongConsistency is a marker interface that indicates the storage is strong consistent
+// over its `Read`, `Write` and `WalkDir` APIs.
+type StrongConsisency interface {
+	MarkStrongConsistency()
+}
+
 const (
 	// AccessBuckets represents bucket access permission
 	// it replace the origin skip-check-path.
@@ -33,7 +39,8 @@ const (
 	// we cannot check DeleteObject permission alone, so we use PutAndDeleteObject instead.
 	PutAndDeleteObject Permission = "PutAndDeleteObject"
 
-	DefaultRequestConcurrency uint = 128
+	DefaultRequestConcurrency uint  = 128
+	TombstoneSize             int64 = -1
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -62,6 +69,14 @@ type WalkOption struct {
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
 	ListCount int64
+	// IncludeTombstone will allow `Walk` to emit removed files during walking.
+	//
+	// In most cases, `Walk` runs over a snapshot, if a file in the snapshot
+	// was deleted during walking, the file will be ignored. Set this to `true`
+	// will make them be sent to the callback.
+	//
+	// The size of a deleted file should be `TombstoneSize`.
+	IncludeTombstone bool
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.

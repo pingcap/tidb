@@ -91,6 +91,7 @@ go_library(
         "//pkg/util/printer",
         "//pkg/util/replayer",
         "//pkg/util/servermemorylimit",
+        "//pkg/util/size",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",

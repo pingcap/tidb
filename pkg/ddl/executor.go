@@ -4066,6 +4066,9 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
+	if schema == "workload_schema" {
+		return true
+	}
 	if schema != mysql.SystemDB {
 		return false
 	}
@@ -6088,7 +6091,7 @@ func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResou
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	user, matched := checker.MatchUserResourceGroupName(ctx.GetRestrictedSQLExecutor(), groupName.L)
 	if matched {
 		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
 		return err
