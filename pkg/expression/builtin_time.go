@@ -6993,6 +6993,7 @@ func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (floa
 	}
 	unit := "MONTH"
 	integerMonth := float64(types.TimestampDiff(unit, rhs, lhs))
-	decimalMonth := float64(lhs.Day()-rhs.Day()) / 31
+	// Calculate the fractional month difference based on the day of the month, rounding to 8 decimal places to maintain precision.
+	decimalMonth := math.Round(float64(lhs.Day()-rhs.Day())/31.0*1e8) / 1e8
 	return integerMonth + decimalMonth, false, nil
 }
