@@ -1918,3 +1918,9 @@ SELECT @@GLOBAL.information_schema_stats_expiry;
 SELECT @@GLOBAL.information_schema_stats_expiry;
 set @@SESSION.information_schema_stats_expiry=default;
 set @@GLOBAL.information_schema_stats_expiry=default;
+
+# TestIssue56462
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
