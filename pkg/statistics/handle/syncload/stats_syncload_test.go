@@ -367,7 +367,7 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
