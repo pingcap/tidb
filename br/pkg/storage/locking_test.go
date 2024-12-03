@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -86,8 +87,28 @@ func TestConcurrentLock(t *testing.T) {
 	errChA := make(chan error, 1)
 	errChB := make(chan error, 1)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1", "1*pause"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2", "1*pause"))
+	waitRecvTwice := func(ch chan<- struct{}) func() {
+		return func() {
+			ch <- struct{}{}
+			ch <- struct{}{}
+		}
+	}
+
+	asyncOnceFunc := func(f func()) func() {
+		run := new(atomic.Bool)
+		return func() {
+			if run.CompareAndSwap(false, true) {
+				f()
+			}
+		}
+	}
+	chA := make(chan struct{})
+	onceA := asyncOnceFunc(waitRecvTwice(chA))
+	chB := make(chan struct{})
+	onceB := asyncOnceFunc(waitRecvTwice(chB))
+
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1", onceA))
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2", onceB))
 
 	go func() {
 		_, err := storage.TryLockRemote(ctx, strg, "test.lock", "I wanna read it, but I hesitated before send my intention!")
@@ -99,8 +120,11 @@ func TestConcurrentLock(t *testing.T) {
 		errChB <- err
 	}()
 
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-1")
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/storage/exclusive-write-commit-to-2")
+	<-chA
+	<-chB
+
+	<-chB
+	<-chA
 
 	// There is exactly one error.
 	errA := <-errChA
@@ -108,7 +132,7 @@ func TestConcurrentLock(t *testing.T) {
 	if errA == nil {
 		require.Error(t, errB)
 	} else {
-		require.NoError(t, errB)
+		require.NoError(t, errB, "%s", errA)
 	}
 
 	requireFileExists(t, filepath.Join(path, "test.lock"))

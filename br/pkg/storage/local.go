@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
 )
 
@@ -123,8 +124,23 @@ func (l *LocalStorage) WalkDir(_ context.Context, opt *WalkOption, fn func(strin
 	base := filepath.Join(l.base, opt.SubDir)
 	return filepath.Walk(base, func(path string, f os.FileInfo, err error) error {
 		if os.IsNotExist(err) {
-			// if path not exists, we should return nil to continue.
-			return nil
+			log.Info("Local Storage Hint: WalkDir yields a tomestone, a race may happen.", zap.String("path", path))
+			if !opt.IncludeTombstone {
+				// if path not exists and the client doesn't require its tombstone,
+				// we should return nil to continue.
+				return nil
+			}
+			path, err = filepath.Rel(l.base, path)
+			if err != nil {
+				log.Panic("filepath.Walk returns a path that isn't a subdir of the base dir.",
+					zap.String("path", path), zap.String("base", l.base), logutil.ShortError(err))
+			}
+			if !strings.HasPrefix(path, opt.ObjPrefix) {
+				return nil
+			}
+			// NOTE: This may cause a tombstone of the dir emit to the caller when
+			// call `Walk` in a non-exist dir.
+			return fn(path, TombstoneSize)
 		}
 		if err != nil {
 			return errors.Trace(err)
