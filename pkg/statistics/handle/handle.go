@@ -185,11 +185,7 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 				h.UpdateStatsCache(types.CacheUpdate{
-					Added:   []*statistics.Table{tbl},
-					Deleted: []int64{},
-					Options: types.UpdateOptions{
-						SkipMoveForward: false,
-					},
+					Updated: []*statistics.Table{tbl},
 				})
 			}
 			return tbl

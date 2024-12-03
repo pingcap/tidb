@@ -197,7 +197,7 @@ type StatsAnalyze interface {
 
 // CacheUpdate encapsulates changes to be made to the stats cache
 type CacheUpdate struct {
-	Added   []*statistics.Table
+	Updated []*statistics.Table
 	Deleted []int64
 	Options UpdateOptions
 }
