@@ -233,7 +233,7 @@ func TestNormalOperations(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(11, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET auto_rand_base = .+ auto_incr_base = .+ auto_row_id_base = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.table_v\\d+ SET auto_rand_base = .+ auto_incr_base = .+ auto_row_id_base = .+").
 		ExpectExec().
 		WithArgs(132861, 132862, 132863, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(12, 1))
@@ -547,7 +547,7 @@ func TestDump(t *testing.T) {
 		csvBuilder.String())
 
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status",
 			"create_time", "update_time", "auto_rand_base", "auto_incr_base", "auto_row_id_base"}).
 			AddRow(1555555555, "`db1`.`t2`", 0, 90, tm, tm, 132861, 132862, 132863),
