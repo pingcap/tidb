@@ -211,6 +211,32 @@ func TestTaskExecutorRun(t *testing.T) {
 		require.True(t, e.ctrl.Satisfied())
 	})
 
+	t.Run("run subtask panic, fail the entire task", func(t *testing.T) {
+		e := newTaskExecutorRunEnv(t)
+		e.mockForCheckBalanceSubtask()
+
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
+		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
+			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
+		e.taskExecExt.EXPECT().GetStepExecutor(gomock.Any()).Return(e.stepExecutor, nil)
+		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
+		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), e.pendingSubtask1).DoAndReturn(
+			func(context.Context, *proto.Subtask) error {
+				panic("run subtask panic")
+			},
+		)
+		e.taskTable.EXPECT().FailSubtask(gomock.Any(), "id", e.task1.ID, gomock.Any()).DoAndReturn(
+			func(_ context.Context, _ string, _ int64, err error) error {
+				require.ErrorContains(t, err, "run subtask panic")
+				return nil
+			},
+		)
+		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+		e.taskExecutor.Run(nil)
+		require.True(t, e.ctrl.Satisfied())
+	})
+
 	t.Run("run one subtask failed with retryable error, success after retry 3 times", func(t *testing.T) {
 		e := newTaskExecutorRunEnv(t)
 		e.mockForCheckBalanceSubtask()

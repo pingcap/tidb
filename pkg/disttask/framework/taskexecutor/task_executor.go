@@ -195,6 +195,12 @@ func (e *BaseTaskExecutor) Ctx() context.Context {
 // Run implements the TaskExecutor interface.
 func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	defer func() {
+		if r := recover(); r != nil {
+			e.logger.Error("run task panicked, fail the task", zap.Any("recover", r), zap.Stack("stack"))
+			err4Panic := errors.Errorf("%v", r)
+			taskBase := e.task.Load()
+			e.failOneSubtask(e.ctx, taskBase.ID, err4Panic)
+		}
 		if e.stepExec != nil {
 			e.cleanStepExecutor()
 		}
