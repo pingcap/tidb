@@ -1431,14 +1431,10 @@ func (e *BasicRuntimeStats) String() string {
 	closeTime := e.close.Load()
 	str.WriteString(fmt.Sprintf("%stime:", timePrefix))
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
-	if openTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
-		str.WriteString(FormatDuration(time.Duration(openTime)))
-	}
-	if closeTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
-		str.WriteString(FormatDuration(time.Duration(closeTime)))
-	}
+	str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
+	str.WriteString(FormatDuration(time.Duration(openTime)))
+	str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
+	str.WriteString(FormatDuration(time.Duration(closeTime)))
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()

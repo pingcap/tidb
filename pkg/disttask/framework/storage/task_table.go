@@ -81,7 +81,8 @@ type TaskExecInfo struct {
 	*proto.TaskBase
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
-	// TODO: such as post-process of import-into.
+	// TODO: such as post-process of import-into. Also remember the 'modifying' state
+	// also update subtask concurrency.
 	// TODO: we might need create one task executor for each step in this case, to alloc
 	// TODO: minimal resource
 	SubtaskConcurrency int

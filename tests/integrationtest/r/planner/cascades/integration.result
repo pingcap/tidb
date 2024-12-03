@@ -772,7 +772,7 @@ explain format = 'brief' select t1.a, t1.b from t1 left join t2 on t1.a = t2.a w
 id	estRows	task	access object	operator info
 Projection	3333.33	root		planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
 └─Selection	3333.33	root		gt(planner__cascades__integration.t2.b, 200)
-  └─MergeJoin	4166.67	root		left outer join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+  └─MergeJoin	4166.67	root		left outer join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
     ├─TableReader(Build)	3333.33	root		data:TableRangeScan
     │ └─TableRangeScan	3333.33	cop[tikv]	table:t2	range:(2,+inf], keep order:true, stats:pseudo
     └─TableReader(Probe)	3333.33	root		data:TableRangeScan
@@ -784,7 +784,7 @@ explain format = 'brief' select t2.a, t2.b from t1 right join t2 on t1.a = t2.a 
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__cascades__integration.t2.a, planner__cascades__integration.t2.b
 └─Selection	8000.00	root		gt(planner__cascades__integration.t1.a, 2)
-  └─MergeJoin	10000.00	root		right outer join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+  └─MergeJoin	10000.00	root		right outer join, left side:TableReader, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
     └─TableReader(Probe)	8000.00	root		data:Selection
@@ -837,7 +837,7 @@ set session tidb_enable_cascades_planner = 1;
 explain select a = (select a from t2 where t1.b = t2.b order by a limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection_19	10000.00	root		eq(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)->Column#7
-└─Apply_21	10000.00	root		CARTESIAN left outer join
+└─Apply_21	10000.00	root		CARTESIAN left outer join, left side:TableReader_22
   ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_23
   │ └─TableFullScan_23	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow_24(Probe)	1.00	root		
@@ -856,8 +856,8 @@ NULL
 explain select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
 id	estRows	task	access object	operator info
 Projection_32	1.00	root		Column#7, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─Apply_34	1.00	root		CARTESIAN left outer join
-  ├─Apply_36(Build)	1.00	root		CARTESIAN left outer join
+└─Apply_34	1.00	root		CARTESIAN left outer join, left side:Apply_36
+  ├─Apply_36(Build)	1.00	root		CARTESIAN left outer join, left side:HashAgg_41
   │ ├─HashAgg_41(Build)	1.00	root		funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->planner__cascades__integration.t2.a, funcs:firstrow(Column#14)->planner__cascades__integration.t2.b
   │ │ └─TableReader_42	1.00	root		data:HashAgg_43
   │ │   └─HashAgg_43	1.00	cop[tikv]		funcs:sum(planner__cascades__integration.t2.a)->Column#12, funcs:firstrow(planner__cascades__integration.t2.a)->Column#13, funcs:firstrow(planner__cascades__integration.t2.b)->Column#14
@@ -879,7 +879,7 @@ sum(a)	(select t1.a from t1 where t1.a = t2.a limit 1)	(select t1.b from t1 wher
 6	1	11
 explain select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
 id	estRows	task	access object	operator info
-MergeJoin_30	10000.00	root		semi join, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
+MergeJoin_30	10000.00	root		semi join, left side:TableReader_32, left key:planner__cascades__integration.t1.a, right key:planner__cascades__integration.t2.a
 ├─TableReader_35(Build)	10000.00	root		data:TableFullScan_36
 │ └─TableFullScan_36	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader_32(Probe)	10000.00	root		data:TableFullScan_33

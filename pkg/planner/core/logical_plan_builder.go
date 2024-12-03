@@ -5012,7 +5012,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName pmodel
 	if tableInfo.View.Security == pmodel.SecurityDefiner {
 		if pm != nil {
 			for _, v := range b.visitInfo {
-				if !pm.RequestVerificationWithUser(v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
+				if !pm.RequestVerificationWithUser(ctx, v.db, v.table, v.column, v.privilege, tableInfo.View.Definer) {
 					return nil, plannererrors.ErrViewInvalid.GenWithStackByArgs(dbName.O, tableInfo.Name.O)
 				}
 			}
