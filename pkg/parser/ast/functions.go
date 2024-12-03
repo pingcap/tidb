@@ -160,6 +160,7 @@ const (
 	SubDate          = "subdate"
 	SubTime          = "subtime"
 	Sysdate          = "sysdate"
+	SysTimestamp     = "systimestamp"
 	Time             = "time"
 	TimeLiteral      = "'tidb`.(timeliteral"
 	TimeFormat       = "time_format"

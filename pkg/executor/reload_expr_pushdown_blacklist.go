@@ -202,6 +202,7 @@ var funcName2Alias = map[string]string{
 	"subdate":                    ast.SubDate,
 	"subtime":                    ast.SubTime,
 	"sysdate":                    ast.Sysdate,
+	"systimestamp":               ast.SysTimestamp,
 	"time":                       ast.Time,
 	"time_format":                ast.TimeFormat,
 	"time_to_sec":                ast.TimeToSec,
