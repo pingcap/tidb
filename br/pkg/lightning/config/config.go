@@ -375,11 +375,11 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1_2` table on the target TiDB.
 	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1_2 table to add back the correct rows.
 	DupeResAlgRemove
 
 	// DupeResAlgErr reports an error and stops the import process.

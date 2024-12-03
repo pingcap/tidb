@@ -55,7 +55,7 @@ func TestInit(t *testing.T) {
 	em.dupResolution = config.DupeResAlgRecord
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1_2.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestInit(t *testing.T) {
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(3, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(4, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -72,9 +72,9 @@ func TestInit(t *testing.T) {
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`.*").
 		WillReturnResult(sqlmock.NewResult(5, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(6, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1_2.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ type mockRows struct {
 }
 
 func (r *mockRows) Columns() []string {
-	return []string{"_tidb_rowid", "raw_handle", "raw_row"}
+	return []string{"id", "raw_handle", "raw_row"}
 }
 
 func (r *mockRows) Close() error { return nil }
@@ -120,7 +120,7 @@ func (r *mockRows) Next(dest []driver.Value) error {
 	if r.start >= r.end {
 		return io.EOF
 	}
-	dest[0] = r.start  // _tidb_rowid
+	dest[0] = r.start  // id
 	dest[1] = []byte{} // raw_handle
 	dest[2] = []byte{} // raw_row
 	r.start++
@@ -128,7 +128,7 @@ func (r *mockRows) Next(dest []driver.Value) error {
 }
 
 func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	expectedQuery := "SELECT _tidb_rowid, raw_handle, raw_row.*"
+	expectedQuery := "SELECT id, raw_handle, raw_row.*"
 	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
 		return &mockRows{}, nil
 	}
@@ -241,7 +241,7 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	em.remainingError.Syntax.Sub(1)
 	output = em.Output()
 	checkStr := strings.ReplaceAll(output, "\n", "")
-	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
+	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v2` \x1b[0m|+---+-------------+-------------+--------------------------------+"
 	require.Equal(t, expected, checkStr)
 
 	em.remainingError = cfg.App.MaxError
@@ -249,7 +249,7 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	em.remainingError.Type.Store(10)
 	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
+	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v2`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v2` \x1b[0m|+---+-------------+-------------+--------------------------------+"
 	require.Equal(t, expected, checkStr)
 
 	// change multiple keys
@@ -260,6 +260,6 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	em.remainingError.Conflict.Store(0)
 	output = em.Output()
 	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
+	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v2`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v2`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1_2` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
 	require.Equal(t, expected, checkStr)
 }
