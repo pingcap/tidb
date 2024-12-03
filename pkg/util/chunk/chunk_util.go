@@ -144,7 +144,7 @@ func CopyRows(dstCol *Column, srcCol *Column, selected []int) {
 	selectedLen := len(selected)
 
 	if srcCol.isFixed() {
-		for i := 0; i < selectedLen; i++ {
+		for i := range selectedLen {
 			rowID := selected[i]
 			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
@@ -154,7 +154,7 @@ func CopyRows(dstCol *Column, srcCol *Column, selected []int) {
 			dstCol.data = append(dstCol.data, srcCol.data[offset:offset+elemLen]...)
 		}
 	} else {
-		for i := 0; i < selectedLen; i++ {
+		for i := range selectedLen {
 			rowID := selected[i]
 			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
