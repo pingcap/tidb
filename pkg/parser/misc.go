@@ -805,6 +805,7 @@ var tokenMap = map[string]int{
 	"SWITCH_GROUP":             switchGroup,
 	"SYSTEM":                   system,
 	"SYSTEM_TIME":              systemTime,
+	"SYSDATE":                  sysDate,
 	"TARGET":                   target,
 	"TASK_TYPES":               taskTypes,
 	"TABLE_CHECKSUM":           tableChecksum,

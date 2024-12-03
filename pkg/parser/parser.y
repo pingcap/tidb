@@ -270,6 +270,7 @@ import (
 	starting          "STARTING"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
+	sysDate           "SYSDATE"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
@@ -1533,8 +1534,8 @@ import (
 	KeyOrIndex        "{KEY|INDEX}"
 	ColumnKeywordOpt  "Column keyword or empty"
 	PrimaryOpt        "Optional primary keyword"
-	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
-	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/SYSDATE"
+	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW/SYSDATE"
 	CurdateSym        "CURDATE or CURRENT_DATE"
 	DefaultKwdOpt     "optional DEFAULT keyword"
 	DatabaseSym       "DATABASE or SCHEMA"
@@ -4102,12 +4103,14 @@ NowSymFunc:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+|	"SYSDATE"
 |	builtinNow
 
 NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+|	"SYSDATE"
 
 CurdateSym:
 	builtinCurDate
@@ -8104,6 +8107,7 @@ FunctionNameDatetimePrecision:
 |	"LOCALTIMESTAMP"
 |	"UTC_TIME"
 |	"UTC_TIMESTAMP"
+|   "SYSDATE"
 
 FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
