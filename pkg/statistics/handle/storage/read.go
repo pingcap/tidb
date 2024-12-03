@@ -651,9 +651,17 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
+<<<<<<< HEAD
 			fakeCol := statistics.EmptyColumn(colInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.Columns[col.ID] = fakeCol
 			statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+=======
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl.SetCol(col.ID, fakeCol)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 		}
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
@@ -713,9 +721,17 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 			statsTbl.StatsVer = int(statsVer)
 		}
 	}
+<<<<<<< HEAD
 	statsTbl.Columns[col.ID] = colHist
 	statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
+=======
+	statsTbl.SetCol(col.ID, colHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{statsTbl},
+	})
+	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", colHist.PhysicalID),
@@ -771,8 +787,15 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 		tbl.StatsVer = int(idxHist.StatsVer)
 		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
+<<<<<<< HEAD
 	tbl.Indices[idx.ID] = idxHist
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+=======
+	tbl.SetIdx(idx.ID, idxHist)
+	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+		Updated: []*statistics.Table{tbl},
+	})
+>>>>>>> f585f5d1d48 (statistics: avoid stats meta full load after table analysis (#57756))
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
