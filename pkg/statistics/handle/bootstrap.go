@@ -253,7 +253,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				// We will also set int primary key's loaded status to evicted.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			} else if col.NDV > 0 || col.NullCount > 0 {
-				// If NDV > 0 or NullCount > 0, we should set the stats loaded status to loaded. See comments in Column.StatsAvailable.
+				// If NDV > 0 or NullCount > 0, we also treat it as the one having its statistics. See the comments of StatsAvailable in column.go.
+				// So we align its status as evicted too.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
