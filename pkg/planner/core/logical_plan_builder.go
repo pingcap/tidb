@@ -1959,21 +1959,14 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 	return proj, proj.Exprs, oldLen, nil
 }
 
-<<<<<<< HEAD
 func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggregation, error) {
 	b.optFlag = b.optFlag | flagBuildKeyInfo
 	b.optFlag = b.optFlag | flagPushDownAgg
-	plan4Agg := LogicalAggregation{
-=======
-func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {
-	b.optFlag = b.optFlag | rule.FlagBuildKeyInfo
-	b.optFlag = b.optFlag | rule.FlagPushDownAgg
 	// flag it if cte contain distinct
 	if b.buildingCTE {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
-	plan4Agg := logicalop.LogicalAggregation{
->>>>>>> fa723c3bd54 (planner, CTE, view: Fix default inline CTE which contains orderby/limit/distinct and inside of view (#56609))
+	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx, child.SelectBlockOffset())
@@ -2563,17 +2556,12 @@ func extractLimitCountOffset(ctx sessionctx.Context, limit *ast.Limit) (count ui
 	return count, offset, nil
 }
 
-<<<<<<< HEAD
 func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan, error) {
 	b.optFlag = b.optFlag | flagPushDownTopN
-=======
-func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
-	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
 	if b.buildingCTE {
 		b.outerCTEs[len(b.outerCTEs)-1].containRecursiveForbiddenOperator = true
 	}
->>>>>>> fa723c3bd54 (planner, CTE, view: Fix default inline CTE which contains orderby/limit/distinct and inside of view (#56609))
 	var (
 		offset, count uint64
 		err           error

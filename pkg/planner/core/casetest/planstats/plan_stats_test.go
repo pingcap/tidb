@@ -163,23 +163,6 @@ func TestPlanStatsLoad(t *testing.T) {
 				require.Greater(t, countFullStats(ptr.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
 			},
 		},
-<<<<<<< HEAD
-		{ // CTE
-			sql: "with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3",
-			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
-				ps, ok := p.(*plannercore.PhysicalProjection)
-				require.True(t, ok)
-				pc, ok := ps.Children()[0].(*plannercore.PhysicalTableReader)
-				require.True(t, ok)
-				pp, ok := pc.GetTablePlan().(*plannercore.PhysicalSelection)
-				require.True(t, ok)
-				reader, ok := pp.Children()[0].(*plannercore.PhysicalTableScan)
-				require.True(t, ok)
-				require.Greater(t, countFullStats(reader.StatsInfo().HistColl, tableInfo.Columns[2].ID), 0)
-			},
-		},
-=======
->>>>>>> fa723c3bd54 (planner, CTE, view: Fix default inline CTE which contains orderby/limit/distinct and inside of view (#56609))
 		{ // recursive CTE
 			sql: "with recursive cte(x, y) as (select a, b from t where c > 1 union select x + 1, y from cte where x < 5) select * from cte",
 			check: func(p plannercore.Plan, tableInfo *model.TableInfo) {
