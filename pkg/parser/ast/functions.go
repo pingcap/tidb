@@ -380,6 +380,9 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// Oracle functions.
+	ToNumber = "to_number"
 )
 
 type FuncCallExprType int8
