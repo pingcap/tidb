@@ -721,3 +721,15 @@ func TestOrderByDependency(t *testing.T) {
 	require.Greater(t, slices.Index(names, TiDBEnablePlanReplayerContinuousCapture), slices.Index(names, TiDBEnableHistoricalStats))
 	require.Contains(t, names, "unknown")
 }
+
+// NewTableDeltaMap is used by test.
+func NewTableDeltaMap(data map[int64]TableDelta) *TableDeltaMap {
+	return &TableDeltaMap{
+		data: data,
+	}
+}
+
+// Get is used by tests.
+func (tdm *TableDeltaMap) Data() map[int64]TableDelta {
+	return tdm.data
+}
