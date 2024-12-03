@@ -438,6 +438,7 @@ const (
 	TrafficOptionUsername
 	TrafficOptionPassword
 	TrafficOptionSpeed
+	TrafficOptionReadOnly
 )
 
 // TrafficStmt is traffic operation statement.
@@ -497,6 +498,10 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WriteKeyWord("SPEED ")
 				ctx.WritePlain("= ")
 				ctx.WritePlainf("%v", option.FloatValue.GetValue())
+			case TrafficOptionReadOnly:
+				ctx.WriteKeyWord("READONLY ")
+				ctx.WritePlain("= ")
+				ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", option.BoolValue)))
 			}
 		}
 	case TrafficOpShow:

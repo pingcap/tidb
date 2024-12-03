@@ -648,6 +648,7 @@ var tokenMap = map[string]int{
 	"RANGE":                    rangeKwd,
 	"RATE_LIMIT":               rateLimit,
 	"READ":                     read,
+	"READ_ONLY":                readOnly,
 	"REAL":                     realType,
 	"REBUILD":                  rebuild,
 	"RECENT":                   recent,
