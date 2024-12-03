@@ -240,6 +240,15 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 // RunStep start to fetch and run all subtasks for the step of task on the node.
 // return if there's no subtask to run.
 func (e *BaseTaskExecutor) RunStep(resource *proto.StepResource) (resErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			e.logger.Error("run step panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err4Panic := errors.Errorf("%v", r)
+			taskBase := e.taskBase.Load()
+			e.failOneSubtask(e.ctx, taskBase.ID, err4Panic)
+			resErr = err4Panic
+		}
+	}()
 	runStepCtx, runStepCancel := context.WithCancelCause(e.ctx)
 	e.registerRunStepCancelFunc(runStepCancel)
 	defer func() {
