@@ -310,9 +310,26 @@ func TestInitStats2(t *testing.T) {
 	require.Equal(t, uint8(0x37), cols[2].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x38), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
+<<<<<<< HEAD
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
+=======
+	require.NoError(t, h.Update(context.Background(), is))
+	// Index and pk are loaded.
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
+index:1 ndv:6
+num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
+num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
+num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
+num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
+num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
+	require.Equal(t, needed, table0.String())
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
 	h.SetLease(0)
 }
 
@@ -362,7 +379,7 @@ func TestInitStatsVer2(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	initStatsVer2(t, false)
+	initStatsVer2(t)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
@@ -374,17 +391,26 @@ func TestInitStatsVer2Concurrency(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	initStatsVer2(t, true)
+	initStatsVer2(t)
 }
 
-func initStatsVer2(t *testing.T, isConcurrency bool) {
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
+<<<<<<< HEAD
 	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+=======
+	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a), index idxab(a, b))")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
+	tk.MustExec("insert into t values(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4), (4, 4, 4, 4), (4, 4, 4, 4)")
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	tk.MustExec("alter table t add column e int default 1")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -396,6 +422,7 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table0 := h.GetTableStats(tbl.Meta())
+<<<<<<< HEAD
 	if isConcurrency {
 		idx := table0.Indices
 		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
@@ -409,6 +436,17 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 		require.Equal(t, uint8(0x3), idx[1].LastAnalyzePos.GetBytes()[0])
 		require.Equal(t, uint8(0x3), idx[2].LastAnalyzePos.GetBytes()[0])
 	}
+=======
+	require.Equal(t, 5, table0.ColNum())
+	require.True(t, table0.GetCol(1).IsAllEvicted())
+	require.True(t, table0.GetCol(2).IsAllEvicted())
+	require.True(t, table0.GetCol(3).IsAllEvicted())
+	require.True(t, !table0.GetCol(4).IsStatsInitialized())
+	require.True(t, table0.GetCol(5).IsStatsInitialized())
+	require.Equal(t, 2, table0.IdxNum())
+	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
+>>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())
