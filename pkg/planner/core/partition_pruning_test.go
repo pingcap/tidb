@@ -595,7 +595,7 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 			} else {
 				expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, v, tc.schema, tc.names)
 				require.NoError(t, err)
-				e = &expr
+				e = &expr[0]
 			}
 			l = append(l, e)
 		}
@@ -626,7 +626,7 @@ func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
 		expr, err := expression.ParseSimpleExprsWithNames(tc.sctx, ca.input, tc.schema, tc.names)
 		require.NoError(t, err)
 		result := fullRange(len(lessThan))
-		e := expression.SplitCNFItems(expr)
+		e := expression.SplitCNFItems(expr[0])
 		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
 		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
 	}
