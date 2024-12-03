@@ -20,7 +20,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 )
 
 // Document
