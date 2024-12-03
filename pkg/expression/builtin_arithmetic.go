@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -40,6 +41,7 @@ var (
 	_ builtinFunc = &builtinArithmeticPlusRealSig{}
 	_ builtinFunc = &builtinArithmeticPlusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticPlusIntSig{}
+	_ builtinFunc = &builtinArithmeticPlusDateTimeSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
@@ -180,6 +182,17 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDatetime {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
+		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
+		sig := &builtinArithmeticPlusDateTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_PlusDateTime)
+		return sig, nil
+	}
+
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -292,6 +305,38 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(ctx EvalContext, row chunk
 		return nil, true, err
 	}
 	return c, false, nil
+}
+
+type builtinArithmeticPlusDateTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusDateTimeSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusDateTimeSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusDateTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	dt, isNULL, err := s.args[0].EvalTime(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	n, isNULL, err := s.args[1].EvalReal(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	dur := time.Duration(float64(time.Hour) * 24 * n)
+	result, err := dt.Add(typeCtx(ctx), types.Duration{
+		Duration: dur.Round(time.Second),
+	})
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
+	return result, false, nil
 }
 
 type builtinArithmeticPlusRealSig struct {
