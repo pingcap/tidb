@@ -1508,7 +1508,49 @@ func TestAddPartitioning(t *testing.T) {
 	)
 }
 
+<<<<<<< HEAD
 func findEvent(eventCh <-chan *statsutil.DDLEvent, eventType model.ActionType) *statsutil.DDLEvent {
+=======
+func TestDropSchema(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	h := dom.StatsHandle()
+	tk.MustExec("insert into t values (1)")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	// Check the current stats meta version.
+	rows := tk.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	tk.MustExec("drop database test")
+
+	// Handle the drop schema event.
+	dropSchemaEvent := findEvent(h.DDLEventCh(), model.ActionDropSchema)
+	err = h.HandleDDLEvent(dropSchemaEvent)
+	require.NoError(t, err)
+
+	// Check the stats meta version after drop schema.
+	rows = tk.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func findEvent(eventCh <-chan *notifier.SchemaChangeEvent, eventType model.ActionType) *notifier.SchemaChangeEvent {
+>>>>>>> b273109b9a6 (statistics: gc the statistics correctly after drop the database (#57309))
 	// Find the target event.
 	for {
 		event := <-eventCh
