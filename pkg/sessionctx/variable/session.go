@@ -177,68 +177,12 @@ type TransactionContext struct {
 	TxnCtxNeedToRestore
 }
 
-// TableDeltaMap is concurrency safe.
-type TableDeltaMap struct {
-	sync.Mutex
-	data map[int64]TableDelta
-}
-
-// Len is used by tests.
-func (tdm *TableDeltaMap) Len() int {
-	if tdm == nil {
-		return 0
-	}
-	tdm.Lock()
-	defer tdm.Unlock()
-	return len(tdm.data)
-}
-
-// Get is used by tests.
-func (tdm *TableDeltaMap) Get(id int64) TableDelta {
-	tdm.Lock()
-	defer tdm.Unlock()
-	return tdm.data[id]
-}
-
-// Clone clones this TableDeltaMap, returns a new one.
-func (tdm *TableDeltaMap) Clone() *TableDeltaMap {
-	if tdm == nil {
-		return nil
-	}
-
-	tdm.Lock()
-	defer tdm.Unlock()
-	tableDeltaMap := make(map[int64]TableDelta, len(tdm.data))
-	for k, v := range tdm.data {
-		tableDeltaMap[k] = v.Clone()
-	}
-	return &TableDeltaMap{
-		data: tableDeltaMap,
-	}
-}
-
-// Visit visits the data of the TableDeltaMap.
-// If fn return false, exit the visit loop in advance.
-func (tdm *TableDeltaMap) Visit(fn func(int64, TableDelta) bool) {
-	if tdm == nil {
-		return
-	}
-	tdm.Lock()
-	defer tdm.Unlock()
-	for k, v := range tdm.data {
-		ok := fn(k, v)
-		if !ok {
-			break
-		}
-	}
-}
-
 // TxnCtxNeedToRestore stores transaction variables which need to be restored when rolling back to a savepoint.
 type TxnCtxNeedToRestore struct {
 	// TableDeltaMap is used in the schema validator for DDL changes in one table not to block others.
 	// It's also used in the statistics updating.
 	// Note: for the partitioned table, it stores all the partition IDs.
-	*TableDeltaMap
+	TableDeltaMap map[int64]TableDelta
 
 	// pessimisticLockCache is the cache for pessimistic locked keys,
 	// The value never changes during the transaction.
@@ -284,6 +228,9 @@ type TxnCtxNoNeedToRestore struct {
 	// Savepoints contains all definitions of the savepoint of a transaction at runtime, the order of the SavepointRecord is the same with the SAVEPOINT statements.
 	// It is used for a lookup when running `ROLLBACK TO` statement.
 	Savepoints []SavepointRecord
+
+	// TableDeltaMap lock to prevent potential data race
+	tdmLock sync.Mutex
 
 	// TemporaryTables is used to store transaction-specific information for global temporary tables.
 	// It can also be stored in sessionCtx with local temporary tables, but it's easier to clean this data after transaction ends.
@@ -426,21 +373,19 @@ func (tc *TransactionContext) UpdateDeltaForTable(
 	physicalTableID int64, delta int64,
 	count int64, cols DeltaCols,
 ) {
+	tc.tdmLock.Lock()
+	defer tc.tdmLock.Unlock()
 	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = &TableDeltaMap{
-			data: make(map[int64]TableDelta),
-		}
+		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
-	tc.TableDeltaMap.Lock()
-	defer tc.TableDeltaMap.Unlock()
-	item := tc.TableDeltaMap.data[physicalTableID]
+	item := tc.TableDeltaMap[physicalTableID]
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
 	if cols != nil {
 		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
 	}
-	tc.TableDeltaMap.data[physicalTableID] = item
+	tc.TableDeltaMap[physicalTableID] = item
 }
 
 // GetKeyInPessimisticLockCache gets a key in pessimistic lock cache.
@@ -478,8 +423,10 @@ func (tc *TransactionContext) Cleanup() {
 	// tc.InfoSchema = nil; we cannot do it now, because some operation like handleFieldList depend on this.
 	tc.Binlog = nil
 	tc.History = nil
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
 	tc.relatedTableForMDL = nil
+	tc.tdmLock.Unlock()
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
 	tc.IsStaleness = false
@@ -489,7 +436,9 @@ func (tc *TransactionContext) Cleanup() {
 
 // ClearDelta clears the delta map.
 func (tc *TransactionContext) ClearDelta() {
+	tc.tdmLock.Lock()
 	tc.TableDeltaMap = nil
+	tc.tdmLock.Unlock()
 }
 
 // GetForUpdateTS returns the ts for update.
@@ -509,7 +458,10 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 
 // GetCurrentSavepoint gets TransactionContext's savepoint.
 func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
-	tableDeltaMap := tc.TableDeltaMap.Clone()
+	tableDeltaMap := make(map[int64]TableDelta, len(tc.TableDeltaMap))
+	for k, v := range tc.TableDeltaMap {
+		tableDeltaMap[k] = v.Clone()
+	}
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
 		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
@@ -3823,6 +3775,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
@@ -3834,6 +3789,8 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // even for queries inside DDLs like `create view as select xxx` and `create table as select xxx`.
 // it should be cleared before we execute the DDL statement.
 func (s *SessionVars) ClearRelatedTableForMDL() {
+	s.TxnCtx.tdmLock.Lock()
+	defer s.TxnCtx.tdmLock.Unlock()
 	s.TxnCtx.relatedTableForMDL = nil
 }
 

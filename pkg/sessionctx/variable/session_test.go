@@ -352,16 +352,15 @@ func TestTableDeltaClone(t *testing.T) {
 func TestTransactionContextSavepoint(t *testing.T) {
 	tc := &variable.TransactionContext{
 		TxnCtxNeedToRestore: variable.TxnCtxNeedToRestore{
-			TableDeltaMap: variable.NewTableDeltaMap(
-				map[int64]variable.TableDelta{
-					1: {
-						Delta:    1,
-						Count:    2,
-						ColSize:  map[int64]int64{1: 1},
-						InitTime: time.Now(),
-						TableID:  5,
-					},
-				}),
+			TableDeltaMap: map[int64]variable.TableDelta{
+				1: {
+					Delta:    1,
+					Count:    2,
+					ColSize:  map[int64]int64{1: 1},
+					InitTime: time.Now(),
+					TableID:  5,
+				},
+			},
 		},
 	}
 	tc.SetPessimisticLockCache([]byte{'a'}, []byte{'a'})
@@ -369,15 +368,15 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 	tc.AddSavepoint("S1", nil)
 	require.Equal(t, 1, len(tc.Savepoints))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap.Data()))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
 
 	succ := tc.DeleteSavepoint("s2")
 	require.False(t, succ)
 	require.Equal(t, 1, len(tc.Savepoints))
 
-	tc.TableDeltaMap.Data()[1].ColSize[2] = 2
-	tc.TableDeltaMap.Data()[2] = variable.TableDelta{
+	tc.TableDeltaMap[1].ColSize[2] = 2
+	tc.TableDeltaMap[2] = variable.TableDelta{
 		Delta:    6,
 		Count:    7,
 		ColSize:  map[int64]int64{8: 8},
@@ -389,13 +388,13 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap.Data()))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap.Data()[1].ColSize))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap[1].ColSize))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
-	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap.Data()))
+	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)
 
-	tc.TableDeltaMap.Data()[3] = variable.TableDelta{
+	tc.TableDeltaMap[3] = variable.TableDelta{
 		Delta:    10,
 		Count:    11,
 		ColSize:  map[int64]int64{12: 12},
@@ -407,12 +406,12 @@ func TestTransactionContextSavepoint(t *testing.T) {
 
 	tc.AddSavepoint("s2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
-	require.Equal(t, 3, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap.Data()))
+	require.Equal(t, 3, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)
 
 	tc.RollbackToSavepoint("s1")
 	require.Equal(t, 1, len(tc.Savepoints))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap.Data()))
+	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
 	val, ok := tc.GetKeyInPessimisticLockCache([]byte{'a'})
 	require.True(t, ok)
