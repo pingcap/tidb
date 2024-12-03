@@ -485,7 +485,9 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-2'").Check(testkit.Rows("4"))
 
 	// Then m1 cannot update the heartbeat of its task
-	require.Error(t, m1.UpdateHeartBeat(context.Background(), se, now.Add(time.Hour)))
+	for i := 0; i < 4; i++ {
+		require.Error(t, m1.UpdateHeartBeatForTask(context.Background(), se, now.Add(time.Hour), m1.GetRunningTasks()[i]))
+	}
 	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
 		now.Format(time.DateTime),
 		now.Format(time.DateTime),
@@ -494,7 +496,9 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	))
 
 	// m2 can successfully update the heartbeat
-	require.NoError(t, m2.UpdateHeartBeat(context.Background(), se, now.Add(time.Hour)))
+	for i := 0; i < 4; i++ {
+		require.NoError(t, m2.UpdateHeartBeatForTask(context.Background(), se, now.Add(time.Hour), m2.GetRunningTasks()[i]))
+	}
 	tk.MustQuery("select owner_hb_time from mysql.tidb_ttl_task").Check(testkit.Rows(
 		now.Add(time.Hour).Format(time.DateTime),
 		now.Add(time.Hour).Format(time.DateTime),
@@ -524,5 +528,62 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
 		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
 		`finished {"total_rows":0,"success_rows":0,"error_rows":0,"scan_task_err":""} task-manager-2`,
+	))
+}
+
+func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := wrapPoolForTest(dom.SysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
+	sessionFactory := sessionFactory(t, store)
+
+	tk.MustExec("set global tidb_ttl_running_tasks = 32")
+
+	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
+	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	for id := 0; id < 4; id++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)
+		tk.MustExec(sql)
+	}
+
+	se := sessionFactory()
+	now := se.Now()
+
+	isc := cache.NewInfoSchemaCache(time.Minute)
+	require.NoError(t, isc.Update(se))
+	m := ttlworker.NewTaskManager(context.Background(), pool, isc, "task-manager-1", store)
+	workers := []ttlworker.Worker{}
+	for j := 0; j < 4; j++ {
+		scanWorker := ttlworker.NewMockScanWorker(t)
+		scanWorker.Start()
+		workers = append(workers, scanWorker)
+	}
+	m.SetScanWorkers4Test(workers)
+	m.RescheduleTasks(se, now)
+
+	// All tasks should be scheduled to m1 and running
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("4"))
+
+	// Mock the situation that the owner of task 0 has changed
+	tk.MustExec("update mysql.tidb_ttl_task set owner_id = 'task-manager-2' where scan_id = 0")
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("3"))
+
+	now = now.Add(time.Hour)
+	require.Error(t, m.UpdateHeartBeatForTask(context.Background(), se, now, m.GetRunningTasks()[0]))
+	for i := 1; i < 4; i++ {
+		require.NoError(t, m.UpdateHeartBeatForTask(context.Background(), se, now, m.GetRunningTasks()[i]))
+	}
+
+	now = now.Add(time.Hour)
+	m.UpdateHeartBeat(context.Background(), se, now)
+	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("3"))
+	tk.MustQuery("select scan_id, owner_hb_time from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
+		fmt.Sprintf("0 %s", now.Add(-2*time.Hour).Format(time.DateTime)),
+		fmt.Sprintf("1 %s", now.Format(time.DateTime)),
+		fmt.Sprintf("2 %s", now.Format(time.DateTime)),
+		fmt.Sprintf("3 %s", now.Format(time.DateTime)),
 	))
 }
