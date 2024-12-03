@@ -139,13 +139,13 @@ func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bo
 	}
 }
 
-// CopyAllRowsWithRowIDFunc copies all rows in srcCol to dstCol
-func CopyAllRowsWithRowIDFunc(dstCol *Column, srcCol *Column, offsets []int) {
-	offsetLen := len(offsets)
+// CopyAllRows copies all rows in srcCol to dstCol
+func CopyAllRows(dstCol *Column, srcCol *Column, selected []int) {
+	offsetLen := len(selected)
 
 	if srcCol.isFixed() {
 		for i := 0; i < offsetLen; i++ {
-			rowID := offsets[i]
+			rowID := selected[i]
 			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
 
@@ -155,7 +155,7 @@ func CopyAllRowsWithRowIDFunc(dstCol *Column, srcCol *Column, offsets []int) {
 		}
 	} else {
 		for i := 0; i < offsetLen; i++ {
-			rowID := offsets[i]
+			rowID := selected[i]
 			dstCol.appendNullBitmap(!srcCol.IsNull(rowID))
 			dstCol.length++
 
