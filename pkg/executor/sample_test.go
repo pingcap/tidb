@@ -155,5 +155,4 @@ func TestKeyspaceSample(t *testing.T) {
 	tk02.MustExec("create table t (a int);")
 	tk02.MustExec("insert into t values (3),(4);")
 	tk02.MustQuery("select a from t;").Check(testkit.Rows("3", "4"))
-
 }
