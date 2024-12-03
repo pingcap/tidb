@@ -906,12 +906,11 @@ func addTableNameInTableIDField(ctx context.Context, tableIDField any, is infosc
 func (s *session) updateStatsDeltaToCollector() {
 	mapper := s.GetSessionVars().TxnCtx.TableDeltaMap
 	if s.statsCollector != nil && mapper != nil {
-		mapper.Visit(func(_ int64, item variable.TableDelta) bool {
+		for _, item := range mapper {
 			if item.TableID > 0 {
 				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
 			}
-			return true
-		})
+		}
 	}
 }
 
@@ -4206,7 +4205,7 @@ func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 	if txnScope != kv.GlobalTxnScope {
 		is := s.GetInfoSchema().(infoschema.InfoSchema)
 		deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap
-		deltaMap.Visit(func(physicalTableID int64, _ variable.TableDelta) bool {
+		for physicalTableID := range deltaMap {
 			var tableName string
 			var partitionName string
 			tblInfo, _, partInfo := is.FindTableByPartitionID(physicalTableID)
@@ -4226,7 +4225,7 @@ func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 						tableName, partitionName, txnScope)
 				}
 				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				return false
+				break
 			}
 			dcLocation, ok := bundle.GetLeaderDC(placement.DCLabelKey)
 			if !ok {
@@ -4235,7 +4234,7 @@ func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 					errMsg = fmt.Sprintf("table %v's partition %v's leader placement policy is not defined", tableName, partitionName)
 				}
 				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				return false
+				break
 			}
 			if dcLocation != txnScope {
 				errMsg := fmt.Sprintf("table %v's leader location %v is out of txn_scope %v", tableName, dcLocation, txnScope)
@@ -4244,7 +4243,7 @@ func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 						tableName, partitionName, dcLocation, txnScope)
 				}
 				err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(errMsg)
-				return false
+				break
 			}
 			// FIXME: currently we assume the physicalTableID is the partition ID. In future, we should consider the situation
 			// if the physicalTableID belongs to a Table.
@@ -4257,11 +4256,10 @@ func (s *session) checkPlacementPolicyBeforeCommit(ctx context.Context) error {
 					err = dbterror.ErrInvalidPlacementPolicyCheck.GenWithStackByArgs(
 						fmt.Sprintf("partition %s of table %s can not be written by local transactions when its placement policy is being altered",
 							tblInfo.Name, partitionDefInfo.Name))
-					return false
+					break
 				}
 			}
-			return true
-		})
+		}
 	}
 	return err
 }

@@ -560,20 +560,13 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	relatedPhysicalTables := sessVars.TxnCtx.TableDeltaMap
 	// Get accessed temporary tables in the transaction.
 	temporaryTables := sessVars.TxnCtx.TemporaryTables
-	var physicalTableIDs []int64
-	relatedPhysicalTables.Visit(func(id int64, _ variable.TableDelta) bool {
+	physicalTableIDs := make([]int64, 0, len(relatedPhysicalTables))
+	for id := range relatedPhysicalTables {
 		// Schema change on global temporary tables doesn't affect transactions.
 		if _, ok := temporaryTables[id]; ok {
-			return true
+			continue
 		}
 		physicalTableIDs = append(physicalTableIDs, id)
-		return true
-	})
-	// Schema checker treat nil and empty slice differently.
-	// nil means unknow information about the changed tables.
-	// [] means it's known and it's empty.
-	if physicalTableIDs == nil {
-		physicalTableIDs = make([]int64, 0)
 	}
 	needCheckSchema := true
 	// Set this option for 2 phase commit to validate schema lease.
