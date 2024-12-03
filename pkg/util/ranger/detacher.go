@@ -892,16 +892,9 @@ func DetachCondAndBuildRangeForIndex(sctx sessionctx.Context, conditions []expre
 	return d.detachCondAndBuildRangeForCols()
 }
 
-<<<<<<< HEAD
-// detachCondAndBuildRangeWithoutMerging detaches the index filters from table filters and uses them to build ranges.
-// When building ranges, it doesn't merge consecutive ranges.
-func detachCondAndBuildRangeWithoutMerging(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*DetachRangeResult, error) {
-=======
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
-func detachCondAndBuildRange(sctx *rangerctx.RangerContext, conditions []expression.Expression, cols []*expression.Column,
+func detachCondAndBuildRange(sctx sessionctx.Context, conditions []expression.Expression, cols []*expression.Column,
 	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
->>>>>>> 3c70a289b27 (planner: fix RANGE COLUMNS partition prune gives wrong result with special collation (#57344))
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
