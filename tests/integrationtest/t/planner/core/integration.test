@@ -2077,9 +2077,9 @@ disconnect conn1;
 drop table if exists t;
 create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a=1;
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a in (1,2,3);
 
 
@@ -2087,9 +2087,9 @@ explain analyze select * from t where a in (1,2,3);
 drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}/
 explain analyze select * from t where a=1;
---replace_regex /:[ ]?[.0-9]+[µms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
+--replace_regex /:[ ]?[.0-9]+[nµms]*/:<num>/ /},.*}/}}}/ /[0-9]+ Bytes/<num> Bytes/
 explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 
 

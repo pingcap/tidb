@@ -107,7 +107,7 @@ CTE_0	2.00	root		Recursive CTE
     └─CTETable_15	1.00	root		Scan on CTE_0
 explain select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
 id	estRows	task	access object	operator info
-Apply_24	10000.00	root		CARTESIAN semi join
+Apply_24	10000.00	root		CARTESIAN semi join, left side:TableReader_26
 ├─TableReader_26(Build)	10000.00	root		data:TableFullScan_25
 │ └─TableFullScan_25	10000.00	cop[tikv]	table:dt	keep order:false, stats:pseudo
 └─Selection_29(Probe)	14400.00	root		eq(Column#8, 1)
