@@ -36,7 +36,6 @@ func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey s
 }
 
 func TestHANodeRandomShutdown(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 4, 15)
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
@@ -44,18 +43,18 @@ func TestHANodeRandomShutdown(t *testing.T) {
 	keepCount := int(math.Min(float64(c.NodeCount()-1), float64(c.Rand.Intn(10)+1)))
 	nodeNeedDown := c.GetRandNodeIDs(c.NodeCount() - keepCount)
 	t.Logf("started %d nodes, and we keep %d nodes, nodes that need shutdown: %v", c.NodeCount(), keepCount, nodeNeedDown)
-	taskexecutor.MockTiDBDown = func(execID string, _ *proto.TaskBase) bool {
-		if _, ok := nodeNeedDown[execID]; ok {
-			c.AsyncShutdown(execID)
-			return true
-		}
-		return false
-	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown",
+		func(e taskexecutor.TaskExecutor, execID string, _ *proto.TaskBase) {
+			if _, ok := nodeNeedDown[execID]; ok {
+				c.AsyncShutdown(execID)
+				e.Cancel()
+			}
+		},
+	)
 	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
 }
 
 func TestHARandomShutdownInDifferentStep(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 6, 15)
 
 	registerExampleTask(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
@@ -64,22 +63,23 @@ func TestHARandomShutdownInDifferentStep(t *testing.T) {
 	nodeNeedDownAtStepTwo := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
 	t.Logf("started %d nodes, shutdown nodes at step 1: %v, shutdown nodes at step 2: %v",
 		c.NodeCount(), nodeNeedDownAtStepOne, nodeNeedDownAtStepTwo)
-	taskexecutor.MockTiDBDown = func(execID string, task *proto.TaskBase) bool {
-		var targetNodes map[string]struct{}
-		switch task.Step {
-		case proto.StepOne:
-			targetNodes = nodeNeedDownAtStepOne
-		case proto.StepTwo:
-			targetNodes = nodeNeedDownAtStepTwo
-		default:
-			return false
-		}
-		if _, ok := targetNodes[execID]; ok {
-			c.AsyncShutdown(execID)
-			return true
-		}
-		return false
-	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown",
+		func(e taskexecutor.TaskExecutor, execID string, task *proto.TaskBase) {
+			var targetNodes map[string]struct{}
+			switch task.Step {
+			case proto.StepOne:
+				targetNodes = nodeNeedDownAtStepOne
+			case proto.StepTwo:
+				targetNodes = nodeNeedDownAtStepTwo
+			default:
+				return
+			}
+			if _, ok := targetNodes[execID]; ok {
+				c.AsyncShutdown(execID)
+				e.Cancel()
+			}
+		},
+	)
 	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
 }
 

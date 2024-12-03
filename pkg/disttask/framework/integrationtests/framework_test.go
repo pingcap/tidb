@@ -234,22 +234,6 @@ func TestGC(t *testing.T) {
 	}, 10*time.Second, 500*time.Millisecond)
 }
 
-func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 3, 16, true)
-
-	registerExampleTask(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
-	var counter atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterOnFinishedCalled",
-		func(e *taskexecutor.BaseTaskExecutor) {
-			if counter.Add(1) == 1 {
-				e.CancelRunningSubtask()
-			}
-		},
-	)
-	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
-	require.Equal(t, proto.TaskStateReverted, task.State)
-}
-
 func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 3, 16, true)
 
@@ -257,8 +241,9 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	t.Run("meet cancel on run subtask", func(t *testing.T) {
 		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
-			func(errP *error) {
+			func(e taskexecutor.TaskExecutor, errP *error) {
 				if counter.Add(1) == 1 {
+					e.CancelRunningSubtask()
 					*errP = taskexecutor.ErrCancelSubtask
 				}
 			},
@@ -270,7 +255,7 @@ func TestFrameworkRunSubtaskCancelOrFailed(t *testing.T) {
 	t.Run("meet some error on run subtask", func(t *testing.T) {
 		var counter atomic.Int32
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/changeRunSubtaskError",
-			func(errP *error) {
+			func(_ taskexecutor.TaskExecutor, errP *error) {
 				if counter.Add(1) == 1 {
 					*errP = errors.New("MockExecutorRunErr")
 				}

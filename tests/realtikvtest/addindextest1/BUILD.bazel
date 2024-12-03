@@ -12,6 +12,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/taskexecutor",
         "//pkg/errno",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
