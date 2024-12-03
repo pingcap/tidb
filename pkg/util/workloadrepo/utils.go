@@ -43,9 +43,9 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool 
 		newPtTime := now.AddDate(0, 0, i+1)
 		newPtName := "p" + newPtTime.Format("20060102")
 		if tbInfo != nil {
-			ptInfos := tbInfo.GetPartitionInfo().Definitions
-			if slice.AnyOf(ptInfos, func(i int) bool {
-				return ptInfos[i].Name.L == newPtName
+			pi := tbInfo.GetPartitionInfo()
+			if pi != nil && slice.AnyOf(pi.Definitions, func(i int) bool {
+				return pi.Definitions[i].Name.L == newPtName
 			}) {
 				continue
 			}

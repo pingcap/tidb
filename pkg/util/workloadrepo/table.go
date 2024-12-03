@@ -172,7 +172,11 @@ func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName
 	for i := range 2 {
 		newPtTime := now.AddDate(0, 0, i+1)
 		newPtName := "p" + newPtTime.Format("20060102")
-		ptInfos := tbInfo.GetPartitionInfo().Definitions
+		pi := tbInfo.GetPartitionInfo()
+		if pi == nil {
+			return false
+		}
+		ptInfos := pi.Definitions
 		if slice.NoneOf(ptInfos, func(i int) bool {
 			return ptInfos[i].Name.L == newPtName
 		}) {

@@ -76,11 +76,20 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 	for _, tbl := range workloadTables {
 		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 		if err != nil {
-			logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
+			logutil.BgLogger().Info("workload repository could not find table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			continue
 		}
 		tbInfo := tbSchema.Meta()
-		for _, pt := range tbInfo.GetPartitionInfo().Definitions {
+		if tbInfo == nil {
+			logutil.BgLogger().Info("workload repository could not load table information", zap.String("tbl", tbl.destTable))
+			continue
+		}
+		pi := tbInfo.GetPartitionInfo()
+		if pi == nil {
+			logutil.BgLogger().Info("workload repository could not load partition infomation", zap.String("tbl", tbl.destTable))
+			continue
+		}
+		for _, pt := range pi.Definitions {
 			ot, err := time.Parse("p20060102", pt.Name.L)
 			if err != nil {
 				logutil.BgLogger().Info("workload repository cannot parse partition name", zap.String("part", pt.Name.L), zap.NamedError("err", err))
