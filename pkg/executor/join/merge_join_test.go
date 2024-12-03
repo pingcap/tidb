@@ -176,7 +176,7 @@ func TestVectorizedMergeJoin(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain format = 'brief' select /*+ TIDB_HJ(%s, %s) */ * from %s, %s where %s.a=%s.a and %s.b>5 and %s.b<5",
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
-			fmt.Sprintf(`HashJoin 4150.01 root  inner join, left side:TableReader, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
+			fmt.Sprintf(`HashJoin 4150.01 root  inner join, equal:[eq(test.%s.a, test.%s.a)]`, t1, t2),
 			`├─TableReader(Build) 3320.01 root  data:Selection`,
 			fmt.Sprintf(`│ └─Selection 3320.01 cop[tikv]  lt(test.%s.b, 5), not(isnull(test.%s.a))`, t2, t2),
 			fmt.Sprintf(`│   └─TableFullScan 10000.00 cop[tikv] table:%s keep order:false, stats:pseudo`, t2),
@@ -284,7 +284,7 @@ func TestVectorizedShuffleMergeJoin(t *testing.T) {
 			t1, t2, t1, t2, t1, t2, t1, t2,
 		)).Check(testkit.Rows(
 			`Shuffle 4150.01 root  execution info: concurrency:4, data sources:[TableReader TableReader]`,
-			fmt.Sprintf(`└─MergeJoin 4150.01 root  inner join, left side:Sort, left key:test.%s.a, right key:test.%s.a`, t1, t2),
+			fmt.Sprintf(`└─MergeJoin 4150.01 root  inner join, left key:test.%s.a, right key:test.%s.a`, t1, t2),
 			fmt.Sprintf(`  ├─Sort(Build) 3320.01 root  test.%s.a`, t2),
 			`  │ └─ShuffleReceiver 3320.01 root  `,
 			`  │   └─TableReader 3320.01 root  data:Selection`,
