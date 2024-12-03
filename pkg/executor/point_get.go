@@ -204,7 +204,7 @@ func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	//e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
+	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
