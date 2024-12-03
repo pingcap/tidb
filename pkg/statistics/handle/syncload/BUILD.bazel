@@ -34,11 +34,7 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 6,
-=======
-    shard_count = 8,
->>>>>>> d0216482f81 (statistics: correct behavior of non-lite InitStats and stats sync load of no stats column (#57803))
+    shard_count = 7,
     deps = [
         ":syncload",
         "//pkg/config",
