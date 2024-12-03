@@ -1815,7 +1815,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("1"))
 
-	exists, err := CheckIfSeqExists(conn)
+	exists, err := checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, true, exists)
 
@@ -1823,7 +1823,7 @@ func TestCheckIfSeqExists(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"c"}).
 			AddRow("0"))
 
-	exists, err = CheckIfSeqExists(conn)
+	exists, err = checkIfSeqExists(conn)
 	require.NoError(t, err)
 	require.Equal(t, false, exists)
 }

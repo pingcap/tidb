@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "util",
+    srcs = ["string_writer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/util",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/util/intest"],
+)

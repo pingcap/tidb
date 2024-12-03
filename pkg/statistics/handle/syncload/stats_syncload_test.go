@@ -409,3 +409,69 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 		require.Error(t, rs1.Err)
 	}
 }
+
+func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, primary key(a))")
+	h := dom.StatsHandle()
+	// Skip create table event.
+	<-h.DDLEventCh()
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	tk.MustExec("analyze table t columns a, b")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, h.InitStatsLite(context.TODO()))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+	tblInfo := tbl.Meta()
+	statsTbl, ok := h.Get(tblInfo.ID)
+	require.True(t, ok)
+	// Only a and b.
+	require.Equal(t, 2, statsTbl.ColAndIdxExistenceMap.ColNum())
+	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[0].ID, false))
+	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[1].ID, false))
+	require.False(t, statsTbl.ColAndIdxExistenceMap.Has(tblInfo.Columns[2].ID, false))
+
+	// Do some DDL, one successfully handled by handleDDLEvent, the other not.
+	tk.MustExec("alter table t add column d int default 2")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, tbl)
+	tblInfo = tbl.Meta()
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	require.True(t, statsTbl.ColAndIdxExistenceMap.Has(tblInfo.Columns[3].ID, false))
+	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(tblInfo.Columns[3].ID, false))
+
+	// Try sync load.
+	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
+	require.Nil(t, statsTbl.GetCol(tblInfo.Columns[2].ID))
+	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, false)
+	// After the sync load. The column without any thing in storage should not be marked as loadNeeded any more.
+	require.False(t, loadNeeded)
+	require.False(t, analyzed)
+
+	// Analyze c then test sync load again
+	tk.MustExec("analyze table t columns a, b, c")
+	require.NoError(t, h.InitStatsLite(context.TODO()))
+	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
+	statsTbl, ok = h.Get(tblInfo.ID)
+	require.True(t, ok)
+	// a, b, d's status is not changed.
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
+	// c's stats is loaded.
+	_, loadNeeded, analyzed = statsTbl.ColumnIsLoadNeeded(tblInfo.Columns[2].ID, false)
+	require.False(t, loadNeeded)
+	require.True(t, analyzed)
+	require.True(t, statsTbl.GetCol(tblInfo.Columns[2].ID).IsFullLoad())
+}

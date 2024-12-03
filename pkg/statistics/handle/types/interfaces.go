@@ -146,6 +146,8 @@ type IndicatorsJSON struct {
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
@@ -195,6 +197,22 @@ type StatsAnalyze interface {
 	Close()
 }
 
+// CacheUpdate encapsulates changes to be made to the stats cache
+type CacheUpdate struct {
+	Updated []*statistics.Table
+	Deleted []int64
+	Options UpdateOptions
+}
+
+// UpdateOptions contains configuration for cache updates
+type UpdateOptions struct {
+	// SkipMoveForward controls whether to skip updating the cache's max version number.
+	// When true, the cache max version number stays unchanged even after updates.
+	// This improves performance when analyzing a small number of tables by avoiding
+	// unnecessary full cache reloads that would normally be triggered by version changes.
+	SkipMoveForward bool
+}
+
 // StatsCache is used to manage all table statistics in memory.
 type StatsCache interface {
 	// Close closes this cache.
@@ -204,7 +222,8 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(ctx context.Context, is infoschema.InfoSchema) error
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -215,8 +234,8 @@ type StatsCache interface {
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
-	// UpdateStatsCache updates the cache.
-	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+	// UpdateStatsCache applies a batch of changes to the cache
+	UpdateStatsCache(update CacheUpdate)
 
 	// GetNextCheckVersionWithOffset returns the last version with offset.
 	// It is used to fetch updated statistics from the stats meta table.

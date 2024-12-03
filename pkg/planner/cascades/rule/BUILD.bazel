@@ -12,7 +12,8 @@ go_library(
     deps = [
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/pattern",
-        "//pkg/sessionctx",
+        "//pkg/planner/cascades/util",
+        "//pkg/planner/core/base",
     ],
 )
 
@@ -27,8 +28,9 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/pattern",
-        "//pkg/planner/core",
+        "//pkg/planner/cascades/util",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
     ],
 )

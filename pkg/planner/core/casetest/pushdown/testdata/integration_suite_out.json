@@ -187,7 +187,7 @@
       {
         "SQL": "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.id, Column#25)]",
+          "HashJoin 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.t.id, Column#25)]",
           "├─TableReader(Build) 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#25",
@@ -201,7 +201,7 @@
       {
         "SQL": "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin 12487.50 root  right outer join, equal:[eq(test.t.id, Column#25)]",
+          "HashJoin 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t.id, Column#25)]",
           "├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─Projection 10000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#25",
@@ -234,7 +234,7 @@
         "Plan": [
           "TableReader 7992.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 7992.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 7992.00 mpp[tiflash]  semi join, left side:Selection, equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
@@ -248,7 +248,7 @@
         "Plan": [
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 8000.00 mpp[tiflash]  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "  └─HashJoin 8000.00 mpp[tiflash]  anti semi join, left side:TableFullScan, equal:[eq(test.t.id, test.t.id)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
@@ -357,7 +357,7 @@
       {
         "SQL": "desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin 10000.00 root  left outer join, equal:[eq(test.t.id, Column#9)]",
+          "HashJoin 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.t.id, Column#9)]",
           "├─Projection(Build) 8000.00 root  minus(test.t.id, 2)->Column#9",
           "│ └─TableReader 8000.00 root  data:Selection",
           "│   └─Selection 8000.00 cop[tiflash]  not(isnull(minus(test.t.id, 2)))",
@@ -369,7 +369,7 @@
       {
         "SQL": "desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin 12487.50 root  right outer join, equal:[eq(test.t.id, Column#9)]",
+          "HashJoin 12487.50 root  right outer join, left side:TableReader, equal:[eq(test.t.id, Column#9)]",
           "├─Projection(Build) 10000.00 root  minus(test.t.id, 2)->Column#9",
           "│ └─TableReader 10000.00 root  data:TableFullScan",
           "│   └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
@@ -396,7 +396,7 @@
       {
         "SQL": "desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id)",
         "Plan": [
-          "HashJoin 7992.00 root  semi join, equal:[eq(test.t.id, test.t.id)]",
+          "HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t.id, test.t.id)]",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tiflash]  not(isnull(test.t.id))",
           "│   └─TableFullScan 10000.00 cop[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo",
@@ -408,7 +408,7 @@
       {
         "SQL": "desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id)",
         "Plan": [
-          "HashJoin 8000.00 root  anti semi join, equal:[eq(test.t.id, test.t.id)]",
+          "HashJoin 8000.00 root  anti semi join, left side:TableReader, equal:[eq(test.t.id, test.t.id)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -488,7 +488,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  left outer join, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
+          "HashJoin 2.00 root  left outer join, left side:TableReader, equal:[eq(test.table_1.id, test.table_1.id)], left cond:[gt(dayofmonth(test.table_1.datetime_col), 100)]",
           "├─TableReader(Build) 2.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 2.00 mpp[tiflash] table:b keep order:false",
@@ -500,7 +500,7 @@
       {
         "SQL": "explain format = 'brief' select * from table_1 a right join table_1 b on a.id = b.id and dayofmonth(b.datetime_col) > 100",
         "Plan": [
-          "HashJoin 2.00 root  right outer join, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
+          "HashJoin 2.00 root  right outer join, left side:TableReader, equal:[eq(test.table_1.id, test.table_1.id)], right cond:gt(dayofmonth(test.table_1.datetime_col), 100)",
           "├─TableReader(Build) 2.00 root  MppVersion: 2, data:ExchangeSender",
           "│ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 2.00 mpp[tiflash] table:a keep order:false",
