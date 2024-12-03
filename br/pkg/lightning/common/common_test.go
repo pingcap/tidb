@@ -19,12 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD:br/pkg/lightning/common/common_test.go
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
-=======
 	// autoid1.MockForTest is init there, we need to import it to make sure it's called
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
->>>>>>> ea550644144 (lightning/importinto: set correct step to create single point allocator (#56602)):pkg/lightning/common/common_test.go
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
