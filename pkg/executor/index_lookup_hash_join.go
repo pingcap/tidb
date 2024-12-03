@@ -220,8 +220,8 @@ func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
 			task := &indexHashJoinTask{err: err}
 			e.taskCh <- task
 		}
-		failpoint.Label("TestIssue49692End")
 	}
+	failpoint.Label("TestIssue49692End")
 	e.workerWg.Done()
 }
 
