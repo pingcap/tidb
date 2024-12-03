@@ -2170,6 +2170,39 @@ func TestTimestampDiff(t *testing.T) {
 	require.True(t, d.IsNull())
 }
 
+func TestMonthsBetween(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		t1     string
+		t2     string
+		expect float64
+	}{
+		{"2003-02-01", "2003-05-01", -3},
+		{"2002-05-01", "2001-01-01", 16},
+		{"2003-02-01", "2003-05-01 12:05:55", -3},
+		{"1995-02-02", "1995-01-01", 1.03225806},
+		{"2002-05-15", "2001-04-16", 11.96774194},
+		{"2001-05-15", "2001-04-16", 11.96774194},
+		{"2003-00-01", "2003-05-01", 0},
+		{"2003-02-01", "2003-05-00", 0},
+	}
+
+	fc := funcs[ast.MonthsBetween]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewStringDatum(test.t1),
+			types.NewStringDatum(test.t2),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		fmt.Println(fmt.Printf("expect %.8f, actual %.8f, judge %v", test.expect, d.GetFloat64(), test.expect == d.GetFloat64()))
+		require.Equal(t, test.expect, d.GetFloat64())
+	}
+}
+
 func TestUnixTimestamp(t *testing.T) {
 	ctx := createContext(t)
 	// Test UNIX_TIMESTAMP().
