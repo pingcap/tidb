@@ -190,7 +190,6 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		}
 		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
 		sig := &builtinArithmeticPlusDateTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_PlusDateTime)
 		return sig, nil
 	}
 
@@ -392,7 +391,6 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		}
 		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
 		sig := &builtinArithmeticMinusDateTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_MinusDateTime)
 		return sig, nil
 	}
 

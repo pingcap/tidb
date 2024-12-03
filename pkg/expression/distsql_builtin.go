@@ -300,16 +300,12 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinArithmeticPlusDecimalSig{base}
 	case tipb.ScalarFuncSig_PlusInt:
 		f = &builtinArithmeticPlusIntSig{base}
-	case tipb.ScalarFuncSig_PlusDateTime:
-		f = &builtinArithmeticPlusDateTimeSig{base}
 	case tipb.ScalarFuncSig_MinusReal:
 		f = &builtinArithmeticMinusRealSig{base}
 	case tipb.ScalarFuncSig_MinusDecimal:
 		f = &builtinArithmeticMinusDecimalSig{base}
 	case tipb.ScalarFuncSig_MinusInt:
 		f = &builtinArithmeticMinusIntSig{base}
-	case tipb.ScalarFuncSig_MinusDateTime:
-		f = &builtinArithmeticMinusDateTimeSig{base}
 	case tipb.ScalarFuncSig_MultiplyReal:
 		f = &builtinArithmeticMultiplyRealSig{base}
 	case tipb.ScalarFuncSig_MultiplyDecimal:
