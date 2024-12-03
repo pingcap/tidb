@@ -183,6 +183,23 @@ type TableDeltaMap struct {
 	data map[int64]TableDelta
 }
 
+// Len is used by tests.
+func (tdm *TableDeltaMap) Len() int {
+	if tdm == nil {
+		return 0
+	}
+	tdm.Lock()
+	defer tdm.Unlock()
+	return len(tdm.data)
+}
+
+// Get is used by tests.
+func (tdm *TableDeltaMap) Get(id int64) TableDelta {
+	tdm.Lock()
+	defer tdm.Unlock()
+	return tdm.data[id]
+}
+
 // Clone clones this TableDeltaMap, returns a new one.
 func (tdm *TableDeltaMap) Clone() *TableDeltaMap {
 	if tdm == nil {
