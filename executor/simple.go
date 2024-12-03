@@ -2868,7 +2868,5 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 	} else {
 		e.ctx.GetSessionVars().ResourceGroupName = "default"
 	}
-
-	e.ctx.GetSessionVars().ResourceGroupName = s.Name.L
 	return nil
 }
