@@ -102,8 +102,8 @@ func (e *MemTableReaderExec) Open(ctx context.Context) error {
 
 	// Activate the transaction, otherwise SELECT .. FROM INFORMATION_SCHEMA.XX .. does not block GC worker.
 	// And if the query last too long (10min), it causes error "GC life time is shorter than transaction duration"
-	if !strings.HasPrefix(e.table.Name.L, "cluster_") {
-		// Skip cluster_ tables because it could be a tidb coprocessor request and txn is not prepared.
+	if txn, err1 := e.Ctx().Txn(false); err1 == nil && txn != nil && txn.Valid() {
+		// Call e.Ctx().Txn(true) may panic, it's too difficult to debug all the callers.
 		_, err = e.Ctx().Txn(true)
 	}
 	return err
