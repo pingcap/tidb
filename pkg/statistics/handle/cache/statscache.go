@@ -169,7 +169,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 	}
 
 	s.UpdateStatsCache(types.CacheUpdate{
-		Added:   tables,
+		Updated: tables,
 		Deleted: deletedTableIDs,
 		Options: types.UpdateOptions{
 			SkipMoveForward: skipMoveForwardStatsCache,
@@ -217,10 +217,10 @@ func (s *StatsCacheImpl) replace(newCache *StatsCache) {
 // UpdateStatsCache updates the cache with the new cache.
 func (s *StatsCacheImpl) UpdateStatsCache(cacheUpdate types.CacheUpdate) {
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(cacheUpdate.Added, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
+		s.Load().Update(cacheUpdate.Updated, cacheUpdate.Deleted, cacheUpdate.Options.SkipMoveForward)
 	} else {
 		// TODO: remove this branch because we will always enable quota.
-		newCache := s.Load().CopyAndUpdate(cacheUpdate.Added, cacheUpdate.Deleted)
+		newCache := s.Load().CopyAndUpdate(cacheUpdate.Updated, cacheUpdate.Deleted)
 		s.replace(newCache)
 	}
 }

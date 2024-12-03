@@ -212,11 +212,7 @@ func removeExtendedStatsItem(statsCache types.StatsCache,
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
 	statsCache.UpdateStatsCache(types.CacheUpdate{
-		Added:   []*statistics.Table{newTbl},
-		Deleted: []int64{},
-		Options: types.UpdateOptions{
-			SkipMoveForward: false,
-		},
+		Updated: []*statistics.Table{newTbl},
 	})
 }
 
