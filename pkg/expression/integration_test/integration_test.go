@@ -2985,6 +2985,16 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	// for to_date
+	tk.MustQuery("select to_date('2024-11-23','YyYy-Mm-Dd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('20241123','yyyymmdd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024/11/23','YYYY/MM/DD')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi:Ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi')").Check(testkit.Rows("<nil>"))
+	_, err = tk.Exec("select to_date('2024-11-23 07:45:37')")
+	require.Error(t, err, "ERROR 1582 (42000): Incorrect parameter count in the call to native function 'to_date'")
+
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a double, b float, c decimal(10,4));`)

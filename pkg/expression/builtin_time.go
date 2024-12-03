@@ -1854,16 +1854,7 @@ func (c *toDateFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
-	var (
-		retTp = types.ETDatetime
-		bf    baseBuiltinFunc
-		err   error
-	)
-	if len(args) == c.maxArgs {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, types.ETString, types.ETString)
-	} else {
-		bf, err = newBaseBuiltinFuncWithTp(ctx, c.funcName, args, retTp, types.ETString)
-	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
 	}
