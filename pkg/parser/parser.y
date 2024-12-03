@@ -305,6 +305,7 @@ import (
 	while             "WHILE"
 	window            "WINDOW"
 	with              "WITH"
+	within            "WITHIN"
 	write             "WRITE"
 	xor               "XOR"
 	yearMonth         "YEAR_MONTH"
@@ -739,6 +740,7 @@ import (
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
+	percentileCont        "PERCENTILE_CONT"
 	leader                "LEADER"
 	leaderConstraints     "LEADER_CONSTRAINTS"
 	learner               "LEARNER"
@@ -1246,6 +1248,7 @@ import (
 	Order                                  "Ordering keyword: ASC or DESC"
 	OptionLevel                            "3 levels used by lightning config"
 	OrderBy                                "ORDER BY clause"
+	OrderBySingle                          "ORDER BY single clause"
 	OrReplace                              "or replace"
 	ByItem                                 "BY item"
 	OrderByOptional                        "Optional ORDER BY clause optional"
@@ -7233,6 +7236,7 @@ NotKeywordToken:
 |	"STRONG"
 |	"FLASHBACK"
 |	"JSON_OBJECTAGG"
+|	"PERCENTILE_CONT"
 |	"JSON_ARRAYAGG"
 |	"TLS"
 |	"FOLLOWER"
@@ -7646,6 +7650,12 @@ OrderBy:
 	"ORDER" "BY" ByList
 	{
 		$$ = &ast.OrderByClause{Items: $3.([]*ast.ByItem)}
+	}
+
+OrderBySingle:
+	"ORDER" "BY" ByItem
+	{
+		$$ = &ast.OrderByClause{Items: []*ast.ByItem{$3.(*ast.ByItem)}}
 	}
 
 ByList:
@@ -8617,6 +8627,14 @@ SumExpr:
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$4, $7}, Spec: *($9.(*ast.WindowSpec))}
 		} else {
 			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$4, $7}}
+		}
+	}
+|	"PERCENTILE_CONT" '(' Expression ')' "WITHIN" "GROUP" '(' OrderBySingle ')' OptWindowingClause
+	{
+		if $10 != nil {
+			$$ = &ast.WindowFuncExpr{Name: $1, Args: []ast.ExprNode{$3}, Order: $8.(*ast.OrderByClause), Spec: *($10.(*ast.WindowSpec))}
+		} else {
+			$$ = &ast.AggregateFuncExpr{F: $1, Args: []ast.ExprNode{$3}, Order: $8.(*ast.OrderByClause)}
 		}
 	}
 

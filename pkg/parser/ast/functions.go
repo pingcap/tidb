@@ -794,6 +794,8 @@ const (
 	AggFuncApproxCountDistinct = "approx_count_distinct"
 	// AggFuncApproxPercentile is the name of approx_percentile function.
 	AggFuncApproxPercentile = "approx_percentile"
+
+	AggFuncPercentileCont = "percentile_cont"
 )
 
 // AggregateFuncExpr represents aggregate function expression.
@@ -925,6 +927,9 @@ type WindowFuncExpr struct {
 	FromLast bool
 	// Spec is the specification of this window.
 	Spec WindowSpec
+	
+	// Order is used in PERCENTILE_CONT
+	Order *OrderByClause
 }
 
 // Restore implements Node interface.

@@ -132,6 +132,8 @@ func (a *baseFuncDesc) TypeInfer(ctx expression.BuildContext) error {
 		a.typeInfer4ApproxCountDistinct()
 	case ast.AggFuncApproxPercentile:
 		return a.typeInfer4ApproxPercentile(ctx.GetEvalCtx())
+	case ast.AggFuncPercentileCont:
+		return a.typeInfer4PercentileCont(ctx.GetEvalCtx())
 	case ast.AggFuncSum:
 		a.typeInfer4Sum(ctx.GetEvalCtx())
 	case ast.AggFuncAvg:
@@ -176,6 +178,29 @@ func (a *baseFuncDesc) typeInfer4Count() {
 
 func (a *baseFuncDesc) typeInfer4ApproxCountDistinct() {
 	a.typeInfer4Count()
+}
+
+func (a *baseFuncDesc) typeInfer4PercentileCont(ctx expression.EvalContext) error {
+	if len(a.Args) != 1 {
+		return errors.New("PERCENTILE_CONT missing percent argument")
+	}
+	if a.Args[0].ConstLevel() == expression.ConstNone {
+		return errors.New("PERCENTILE_CONT should take a constant expression as percentage argument")
+	}
+	percent, isNull, err := a.Args[0].EvalInt(ctx, chunk.Row{})
+	if err != nil {
+		return fmt.Errorf("PERCENTILE_CONT Invalid argument %s", a.Args[0].StringWithCtx(ctx, errors.RedactLogDisable))
+	}
+	if isNull {
+		return errors.New("PERCENTILE_CONT Percentage value cannot be NULL")
+	}
+	if percent <= 0 || percent > 100 || isNull {
+		return fmt.Errorf("Percentage value %d is out of range [0, 100]", percent)
+	}
+	// TODO fix
+	a.RetTp = types.NewFieldType(mysql.TypeDouble)
+
+	return nil
 }
 
 func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx expression.EvalContext) error {
@@ -428,6 +453,7 @@ var noNeedCastAggFuncs = map[string]struct{}{
 	ast.AggFuncCount:               {},
 	ast.AggFuncApproxCountDistinct: {},
 	ast.AggFuncApproxPercentile:    {},
+	ast.AggFuncPercentileCont:      {},
 	ast.AggFuncMax:                 {},
 	ast.AggFuncMin:                 {},
 	ast.AggFuncFirstRow:            {},

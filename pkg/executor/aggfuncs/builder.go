@@ -72,6 +72,8 @@ func Build(ctx AggFuncBuildContext, aggFuncDesc *aggregation.AggFuncDesc, ordina
 		return buildVarSamp(aggFuncDesc, ordinal)
 	case ast.AggFuncStddevSamp:
 		return buildStddevSamp(aggFuncDesc, ordinal)
+	case ast.AggFuncPercentileCont:
+		return buildPercentileCont(ctx.GetEvalCtx(), aggFuncDesc, ordinal)
 	}
 	return nil
 }
@@ -195,6 +197,46 @@ func buildApproxPercentile(sctx AggFuncBuildContext, aggFuncDesc *aggregation.Ag
 	}
 
 	return nil
+}
+
+func buildPercentileCont(sctx expression.EvalContext, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
+	if aggFuncDesc.Mode == aggregation.DedupMode {
+		return nil
+	}
+
+	// Checked while building descriptor
+	percent, _, err := aggFuncDesc.Args[0].EvalInt(sctx, chunk.Row{})
+	if err != nil {
+		// Should not reach here
+		logutil.BgLogger().Error("Error happened when buildPercentileCont", zap.Error(err))
+		return nil
+	}
+
+	// Checked by parser
+	orderBy := aggFuncDesc.OrderByItems[0]
+
+	base := basePercentile{
+		percent: int(percent),
+		// TODO comment
+		baseAggFunc: baseAggFunc{args: append([]expression.Expression{orderBy.Expr}, aggFuncDesc.Args...), ordinal: ordinal},
+	}
+
+	evalType := orderBy.Expr.GetType(sctx).EvalType()
+
+	switch evalType {
+	case types.ETInt:
+		return &percentileCont4Int{
+			percentileOriginal4Int: percentileOriginal4Int{base},
+			OrderByDesc:            orderBy.Desc,
+		}
+	case types.ETReal:
+		return &percentileCont4Real{
+			percentileOriginal4Real: percentileOriginal4Real{base},
+			OrderByDesc:             orderBy.Desc,
+		}
+	default:
+		return &base
+	}
 }
 
 // buildCount builds the AggFunc implementation for function "COUNT".
