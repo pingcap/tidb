@@ -80,18 +80,13 @@ check_cluster_version 4 0 0 'local backend'
 
 # Set the failpoint to kill the lightning instance as soon as one table is imported
 # If checkpoint does work, this should only kill 9 instances of lightnings.
-<<<<<<< HEAD:br/tests/lightning_checkpoint/run.sh
 SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb/br/pkg/lightning/importer/SlowDownImport=sleep(250)'
-export GO_FAILPOINTS="$SLOWDOWN_FAILPOINTS;github.com/pingcap/tidb/br/pkg/lightning/importer/FailBeforeIndexEngineImported=return"
-=======
-SLOWDOWN_FAILPOINTS='github.com/pingcap/tidb/lightning/pkg/importer/SlowDownImport=sleep(250)'
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):lightning/tests/lightning_checkpoint/run.sh
 
 #
 # run with file checkpoint
 #
 run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
-export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailBeforeIndexEngineImported=return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailBeforeIndexEngineImported=return"
 set +e
 for i in $(seq 5); do
     echo "******** with file checkpoint (step $i/5) ********"
@@ -120,7 +115,7 @@ check_contains "NEXT_GLOBAL_ROW_ID: 63205"
 run_sql 'DROP DATABASE IF EXISTS cppk_tsr'
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_test_cppk'
 run_sql 'DROP DATABASE IF EXISTS `tidb_lightning_checkpoint_test_cppk.1357924680.bak`'
-export GO_FAILPOINTS="github.com/pingcap/tidb/lightning/pkg/importer/FailBeforeIndexEngineImported=return"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/FailBeforeIndexEngineImported=return"
 
 # panic after saving index engine checkpoint status before saving table checkpoint status
 set +e

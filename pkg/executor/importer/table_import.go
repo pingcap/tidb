@@ -171,18 +171,8 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-<<<<<<< HEAD
 func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
-=======
-func NewTableImporter(
-	ctx context.Context,
-	e *LoadDataController,
-	id string,
-	kvStore tidbkv.Storage,
-) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398))
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -262,52 +252,6 @@ type TableImporter struct {
 	regionSplitKeys int64
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
-<<<<<<< HEAD
-=======
-
-	rowCh chan QueryRow
-}
-
-// NewTableImporterForTest creates a new table importer for test.
-func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
-	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
-	}
-
-	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, id, tidbCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
-	localBackend, err := local.NewBackendForTest(ctx, backendConfig, helper)
-	if err != nil {
-		return nil, err
-	}
-
-	return &TableImporter{
-		LoadDataController: e,
-		id:                 id,
-		backend:            localBackend,
-		tableInfo: &checkpoints.TidbTableInfo{
-			ID:   e.Table.Meta().ID,
-			Name: e.Table.Meta().Name.O,
-			Core: e.Table.Meta(),
-		},
-		encTable:      tbl,
-		dbID:          e.DBID,
-		logger:        e.logger.With(zap.String("import-id", id)),
-		diskQuotaLock: new(syncutil.RWMutex),
-	}, nil
-}
-
-// GetKeySpace gets the keyspace of the kv store.
-func (ti *TableImporter) GetKeySpace() []byte {
-	return ti.keyspace
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398))
 }
 
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {

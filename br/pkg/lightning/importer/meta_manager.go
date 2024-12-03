@@ -196,13 +196,7 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, requiredRowIDCnt 
 			// - try lock with FOR UPDATE
 			rows, err := tx.QueryContext(
 				ctx,
-<<<<<<< HEAD:br/pkg/lightning/importer/meta_manager.go
 				fmt.Sprintf("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from %s WHERE table_id = ? FOR UPDATE", m.tableName),
-=======
-				common.SprintfWithIdentifiers(`
-SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status
-FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):lightning/pkg/importer/meta_manager.go
 				m.tr.tableInfo.ID,
 			)
 			if err != nil {
@@ -292,14 +286,9 @@ FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 					newStatus = metaStatusRestoreStarted
 				}
 
-<<<<<<< HEAD:br/pkg/lightning/importer/meta_manager.go
 				// nolint:gosec
 				query := fmt.Sprintf("update %s set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?", m.tableName)
-				_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
-=======
-				query := common.SprintfWithIdentifiers("UPDATE %s.%s SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
 				_, err := tx.ExecContext(ctx, query, myStartRowID, myEndRowID, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):lightning/pkg/importer/meta_manager.go
 				if err != nil {
 					return errors.Trace(err)
 				}

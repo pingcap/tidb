@@ -190,17 +190,6 @@ func (tr *TableImporter) importTable(
 		}
 		web.BroadcastTableCheckpoint(tr.tableName, cp)
 
-<<<<<<< HEAD:br/pkg/lightning/importer/table_import.go
-		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
-				return false, err
-			}
-		} else {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
-=======
 		// rebase the allocator based on the max ID from table info.
 		ti := tr.tableInfo.Core
 		if ti.ContainsAutoRandomBits() {
@@ -217,7 +206,6 @@ func (tr *TableImporter) importTable(
 			}
 			cp.AutoRowIDBase = max(cp.AutoRowIDBase, ti.AutoIncID)
 			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AutoRowIDBase, false); err != nil {
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):lightning/pkg/importer/table_import.go
 				return false, err
 			}
 		}

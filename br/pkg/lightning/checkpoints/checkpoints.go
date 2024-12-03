@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -566,13 +565,9 @@ type RebaseCheckpointMerger struct {
 // MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
-<<<<<<< HEAD:br/pkg/lightning/checkpoints/checkpoints.go
-	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
-=======
 	cpd.autoRandBase = max(cpd.autoRandBase, merger.AutoRandBase)
 	cpd.autoIncrBase = max(cpd.autoIncrBase, merger.AutoIncrBase)
 	cpd.autoRowIDBase = max(cpd.autoRowIDBase, merger.AutoRowIDBase)
->>>>>>> ecca340037b (lightning: fix id too large after parallel import (#57398)):pkg/lightning/checkpoints/checkpoints.go
 }
 
 // DestroyedTableCheckpoint is the checkpoint for a table that has been
