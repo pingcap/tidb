@@ -510,16 +510,10 @@ func (tc *TransactionContext) SetForUpdateTS(forUpdateTS uint64) {
 // GetCurrentSavepoint gets TransactionContext's savepoint.
 func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	tableDeltaMap := tc.TableDeltaMap.Clone()
-	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]any, len(tc.CachedTables))
-	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
-		pessimisticLockCache: pessimisticLockCache,
-		CachedTables:         cachedTables,
+		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
+		CachedTables:         maps.Clone(tc.CachedTables),
 		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
