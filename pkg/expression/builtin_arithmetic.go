@@ -45,6 +45,7 @@ var (
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
+	_ builtinFunc = &builtinArithmeticMinusDateTimeSig{}
 	_ builtinFunc = &builtinArithmeticDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyRealSig{}
@@ -384,6 +385,17 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
+	if args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDatetime {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
+		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
+		sig := &builtinArithmeticMinusDateTimeSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_MinusDateTime)
+		return sig, nil
+	}
+
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -506,6 +518,38 @@ func (s *builtinArithmeticMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (
 	}
 
 	return a - b, false, nil
+}
+
+type builtinArithmeticMinusDateTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMinusDateTimeSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMinusDateTimeSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMinusDateTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	dt, isNULL, err := s.args[0].EvalTime(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	n, isNULL, err := s.args[1].EvalReal(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	dur := time.Duration(float64(time.Hour) * 24 * n)
+	result, err := dt.Add(typeCtx(ctx), types.Duration{
+		Duration: dur.Round(time.Second),
+	}.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
+	return result, false, nil
 }
 
 // returns true when overflowed
