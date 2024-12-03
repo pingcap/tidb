@@ -644,7 +644,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 // ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
-// The Column should be visible in the table and really has analyzed statistics in the stroage.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.
