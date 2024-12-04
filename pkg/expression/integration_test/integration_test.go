@@ -1876,7 +1876,7 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 
 		// Invalid json text
 		{[]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
-		//{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
 	}
 
