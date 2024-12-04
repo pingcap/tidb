@@ -2990,8 +2990,14 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery("select to_date('20241123','yyyymmdd')").Check(testkit.Rows("2024-11-23 00:00:00"))
 	tk.MustQuery("select to_date('2024/11/23','YYYY/MM/DD')").Check(testkit.Rows("2024-11-23 00:00:00"))
 	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi:Ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hh24:mi:ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
 
+	// illegal pattern test
 	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyY-Mm-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MA-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-DH')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-dD')").Check(testkit.Rows("2024-11-23 00:00:00"))
 	_, err = tk.Exec("select to_date('2024-11-23 07:45:37')")
 	require.Error(t, err, "ERROR 1582 (42000): Incorrect parameter count in the call to native function 'to_date'")
 
@@ -3360,7 +3366,8 @@ func TestTimeBuiltin(t *testing.T) {
 	for _, test := range tidbBoundedStalenessTests {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", test.injectSafeTS)))
-		tk.MustQuery(test.sql).Check(testkit.Rows(test.expect))
+
+			tk.MustQuery(test.sql).Check(testkit.Rows(test.expect))
 	}
 	failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS")
 	// test whether tidb_bounded_staleness is deterministic
