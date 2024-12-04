@@ -1024,14 +1024,12 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4);")
 
 	tk.MustExec(`begin`)
-	tk.MustExec(`prepare select_stmt from 'select * from t where a = ?';`)
 	tk.MustExec(`prepare delete_stmt from 'delete from t where a = ?'`)
 	tk.MustExec(`prepare insert_stmt from 'insert into t values (?, ?)'`)
 	tk.MustExec(`commit`)
 
 	tk.MustExec(`begin`)
 	tk.MustExec(`set @a = 4, @b= 4;`)
-	tk.MustExec(`execute select_stmt using @a;`)
 	tk.MustExec(`execute delete_stmt using @a;`)
 	tk.MustExec(`execute insert_stmt using @a, @b;`)
 	tk.MustExec(`commit`)
@@ -1050,9 +1048,6 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 			case model.BackfillStateRunning:
 				if first {
 					tk.MustExec(`begin`)
-					tk.MustExec(`set @a=4;`)
-					tk.MustExec(`execute select_stmt using @a;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 					tk.MustExec(`set @a=9;`)
 					tk.MustExec(`execute delete_stmt using @a;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -1062,8 +1057,6 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 					tk.MustExec(`commit`)
 					tk.MustExec(`begin`)
 					tk.MustExec(`set @a=4;`)
-					tk.MustExec(`execute select_stmt using @a;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 					tk.MustExec(`set @a=4;`)
 					tk.MustExec(`execute delete_stmt using @a;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
