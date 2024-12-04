@@ -393,18 +393,11 @@ func (p *ParquetParser) readInGroup(num, dataOffset int) (int, error) {
 		meta := p.colMetas[i]
 
 		switch meta.converted {
-		case schema.ConvertedTypes.BSON:
-		case schema.ConvertedTypes.JSON:
-		case schema.ConvertedTypes.UTF8:
-		case schema.ConvertedTypes.Enum:
+		case schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
 			p.setStringData(num, i, dataOffset)
-		case schema.ConvertedTypes.Int8:
-		case schema.ConvertedTypes.Int16:
-		case schema.ConvertedTypes.Int32:
+		case schema.ConvertedTypes.Int8, schema.ConvertedTypes.Int16, schema.ConvertedTypes.Int32:
 			p.setInt32Data(num, i, dataOffset)
-		case schema.ConvertedTypes.Uint8:
-		case schema.ConvertedTypes.Uint16:
-		case schema.ConvertedTypes.Uint32:
+		case schema.ConvertedTypes.Uint8, schema.ConvertedTypes.Uint16, schema.ConvertedTypes.Uint32:
 			p.setUint32Data(num, i, dataOffset)
 		case schema.ConvertedTypes.Int64:
 			p.setInt64Data(num, i, dataOffset)
@@ -632,6 +625,36 @@ func ReadParquetFileRowCountByFile(
 	return numberRows, nil
 }
 
+type parquetFileOpener struct {
+	storage.ReadSeekCloser
+	lastOff int64
+	bufSize int
+	buf     []byte
+}
+
+func (pf *parquetFileOpener) InitBuffer(bufSize int) {
+	pf.bufSize = bufSize
+	pf.buf = make([]byte, bufSize)
+}
+
+func (pf *parquetFileOpener) ReadAt(p []byte, off int64) (n int, err error) {
+	// We want to minimize the number of Seek call as much as possible,
+	// since the underlying reader may require reopening the file.
+	gap := int(off - pf.lastOff)
+	if gap < 0 || gap > pf.bufSize {
+		if _, err := pf.Seek(off, io.SeekStart); err != nil {
+			return 0, err
+		}
+	} else {
+		pf.buf = pf.buf[:gap]
+		if _, err := pf.Read(pf.buf); err != nil {
+			return 0, err
+		}
+	}
+
+	return pf.Read(p)
+}
+
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
@@ -650,8 +673,9 @@ func NewParquetParser(
 		}
 	}
 
-	// TODO(joechenrh): use r
-	reader, err := file.OpenParquetFile(path, false)
+	nr := &parquetFileOpener{ReadSeekCloser: r}
+	nr.InitBuffer(64 * 1024)
+	reader, err := file.NewParquetReader(nr)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
