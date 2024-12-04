@@ -3815,12 +3815,11 @@ func findNthOccurrenceUTF8(str, sub string, position, n int) int {
 	}
 
 	for i := 0; i < n; i++ {
-		currentPos = strings.Index(str[currentPos:], sub)
-		if currentPos == -1 {
+		newPos := strings.Index(str[currentPos:], sub)
+		if newPos == -1 {
 			return -1
 		}
-		currentPos += position
-		currentPos++
+		currentPos += (newPos + 1)
 	}
 	return currentPos - 1
 }

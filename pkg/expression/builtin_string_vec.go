@@ -1756,6 +1756,7 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 		position := positions.GetInt64(i)
 		if position == 0 {
 			res[i] = 0
+			continue
 		}
 
 		occurrence := occurrences.GetInt64(i)
@@ -2237,6 +2238,7 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		position := positions.GetInt64(i)
 		if position == 0 {
 			res[i] = 0
+			continue
 		}
 
 		occurrence := occurrences.GetInt64(i)
