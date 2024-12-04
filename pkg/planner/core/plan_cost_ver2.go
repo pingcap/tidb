@@ -944,16 +944,15 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	// full table scan where USE/FORCE was applied to the primary key.
 	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
 	shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
-	maxChanges := float64(MaxPenaltyRowCount)
 	if shouldApplyPenalty {
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
 		// both, and it also applies to any full table scan in the query.
 		if !hasPartitionScan && !hasIndexForce {
-			maxChanges = max(maxChanges, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+			return max(MaxPenaltyRowCount, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
 		}
 	}
-	return maxChanges
+	return float64(0)
 }
 
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
