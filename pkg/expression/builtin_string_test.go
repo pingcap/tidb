@@ -2759,3 +2759,25 @@ func TestCIWeightString(t *testing.T) {
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
 }
+
+func TestNumberToChar(t *testing.T) {
+	ctx := createContext(t)
+	fc := funcs[ast.ToChar]
+	cases := []struct {
+		arg    any
+		expect string
+	}{
+		{11.1, "11.1"},
+		{-12, "-12"},
+	}
+	for _, c := range cases {
+		v := types.NewDatum(c.arg)
+		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{v}))
+		require.NoError(t, err)
+		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		rs, err := result.ToString()
+		require.NoError(t, err)
+		require.Equal(t, c.expect, rs)
+	}
+}

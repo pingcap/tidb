@@ -84,6 +84,7 @@ var (
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
 	_ functionClass = &weightStringFunctionClass{}
+	_ functionClass = &toCharFunctionClass{}
 )
 
 var (
@@ -4177,9 +4178,11 @@ func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, err
 	}
 
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).GetType()
+
 	// TO_CHAR(datetime, fmt)
 	if len(args) == 2 {
-		if args[0].GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeDatetime {
+		if arg0Tp != mysql.TypeDatetime {
 			return nil, errors.Errorf("First argument should be datetime")
 		}
 		bc := dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}}
@@ -4187,8 +4190,19 @@ func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 	}
 
 	// TO_CHAR(num)
+	// TODO: you can add second argument fmt later.
 	if len(args) != 1 {
-		return nil, errors.Errorf("Wronr number of arguments for to_char(number)")
+		return nil, errors.Errorf("Wrong number of arguments for to_char(number)")
+	}
+
+	if arg0Tp != mysql.TypeTiny &&
+		arg0Tp != mysql.TypeShort &&
+		arg0Tp != mysql.TypeLong &&
+		arg0Tp != mysql.TypeFloat &&
+		arg0Tp != mysql.TypeDouble &&
+		arg0Tp != mysql.TypeLonglong &&
+		arg0Tp != mysql.TypeInt24 {
+		return nil, errors.Errorf("Wrong type of argument for to_char(number)")
 	}
 
 	tp := types.NewFieldType(mysql.TypeVarString)

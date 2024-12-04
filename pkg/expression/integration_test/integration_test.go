@@ -2998,6 +2998,14 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select maketime('', '', ''), maketime('h', 'm', 's');")
 	result.Check(testkit.Rows("00:00:00.000000 00:00:00.000000"))
 
+	// for to_char and date_to_char
+	tk.MustExec("drop table if exists tdate")
+	tk.MustExec("create table tdate(a datetime)")
+	tk.MustExec(`insert into tdate values ('2024-11-23 07:45:37')`)
+	tk.MustQuery(`select to_char(a, 'yyyymmdd'), date_to_char(a, 'yyyymmdd') from tdate`).Check(testkit.Rows("20241123 20241123"))
+	tk.MustQuery(`select to_char(a, 'Mm/YYyy dd'), date_to_char(a, 'Mm/YYyy dd') from tdate`).Check(testkit.Rows("11/2024 23 11/2024 23"))
+	tk.MustQuery(`select to_char(a, 'yyYy-Mm-dD hh24:mi:ss'), date_to_char(a, 'yyYy-Mm-dD hh24:mi:ss') from tdate`).Check(testkit.Rows("2024-11-23 07:45:37 2024-11-23 07:45:37"))
+
 	// for get_format
 	result = tk.MustQuery(`select GET_FORMAT(DATE,'USA'), GET_FORMAT(DATE,'JIS'), GET_FORMAT(DATE,'ISO'), GET_FORMAT(DATE,'EUR'),
 	GET_FORMAT(DATE,'INTERNAL'), GET_FORMAT(DATETIME,'USA') , GET_FORMAT(DATETIME,'JIS'), GET_FORMAT(DATETIME,'ISO'),
