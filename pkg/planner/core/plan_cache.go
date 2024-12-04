@@ -119,11 +119,17 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
 		if err != nil {
 			schemaNotMatch = true
 			continue
 		}
+		// We need to keep the newTbl as the newest table info.
+		// If the MDL is locked by previous statement, then the tbl is the newest table info.
+		// We don't pass tbl to tryLockMDLAndUpdateSchemaIfNecessary for avoiding nil.
+		//if tbl != nil && tbl.Meta().Revision > newTbl.Meta().Revision {
+		//	newTbl = tbl
+		//}
 		// The revision of tbl and newTbl may not be the same.
 		// Example:
 		// The version of stmt.tbls[i] is taken from the prepare statement and is revision v1.
