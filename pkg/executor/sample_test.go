@@ -132,27 +132,30 @@ func TestMaxChunkSize(t *testing.T) {
 }
 
 func TestKeyspaceSample(t *testing.T) {
+	// Build an exist keyspace.
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
 	keyspaceMeta.Id = 2
 	keyspaceMeta.Name = "test_ks_name2"
 
 	opts := mockstore.WithKeyspaceMeta(&keyspaceMeta)
-
 	store := testkit.CreateMockStore(t, opts)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1),(2);")
 	tk.MustQuery("select a from t;").Check(testkit.Rows("1", "2"))
 
+	// Build another exist keyspace.
 	keyspaceMeta02 := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta02.Id = 2
-	keyspaceMeta02.Name = "test_ks_name2"
+	keyspaceMeta02.Id = 3
+	keyspaceMeta02.Name = "test_ks_name3"
 
 	opts02 := mockstore.WithKeyspaceMeta(&keyspaceMeta02)
-
 	store02 := testkit.CreateMockStore(t, opts02)
+
 	tk02 := createSampleTestkit(t, store02)
 	tk02.MustExec("create table t (a int);")
+
+	// Tables with the same name in different keyspaces have isolated data.
 	tk02.MustExec("insert into t values (3),(4);")
 	tk02.MustQuery("select a from t;").Check(testkit.Rows("3", "4"))
 }
