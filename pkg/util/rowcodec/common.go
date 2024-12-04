@@ -372,6 +372,9 @@ func appendLengthValue(buf []byte, val []byte) []byte {
 
 // RemoveKeyspacePrefix is used to remove keyspace prefix from the key.
 func RemoveKeyspacePrefix(key []byte) []byte {
+
+	// If it is not a UT scenario, the operation to remove the keyspace prefix is performed in client-go,
+	// so there is no need to remove it again.
 	if !intest.InTest {
 		return key
 	}
