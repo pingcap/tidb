@@ -286,8 +286,6 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 			h.SPool().Put(se)
 		}
 	}()
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
-=======
 	var skipTypes map[string]struct{}
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
@@ -295,10 +293,6 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	} else {
 		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 	}
-
-	item := task.Item.TableItemID
-	tbl, ok := s.statsHandle.Get(item.TableID)
->>>>>>> bfec7325a12 (statsitstics: avoid sync load column which is skiped type to analyze (#57144)):pkg/statistics/handle/syncload/stats_syncload.go
 
 	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
@@ -317,32 +311,13 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		if !ok || col.IsFullLoad() {
 			wrapper.col = nil
 		} else {
-<<<<<<< HEAD:pkg/statistics/handle/handle_hist.go
 			wrapper.col = col
-=======
-			// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
-			// so we have to get the column info from the domain.
-			wrapper.colInfo = tblInfo.Meta().GetColumnByID(item.ID)
 		}
-		if skipTypes != nil {
-			_, skip := skipTypes[types.TypeToStr(wrapper.colInfo.FieldType.GetType(), wrapper.colInfo.FieldType.GetCharset())]
+		if skipTypes != nil && wrapper.col != nil && wrapper.col.Info != nil {
+			_, skip := skipTypes[types.TypeToStr(wrapper.col.Info.FieldType.GetType(), wrapper.col.Info.FieldType.GetCharset())]
 			if skip {
 				return nil
 			}
-		}
-
-		// If this column is not analyzed yet and we don't have it in memory.
-		// We create a fake one for the pseudo estimation.
-		if loadNeeded && !analyzed {
-			wrapper.col = &statistics.Column{
-				PhysicalID: item.TableID,
-				Info:       wrapper.colInfo,
-				Histogram:  *statistics.NewHistogram(item.ID, 0, 0, 0, &wrapper.colInfo.FieldType, 0, 0),
-				IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
-			}
-			s.updateCachedItem(tblInfo, item, wrapper.col, wrapper.idx, task.Item.FullLoad)
-			return nil
->>>>>>> bfec7325a12 (statsitstics: avoid sync load column which is skiped type to analyze (#57144)):pkg/statistics/handle/syncload/stats_syncload.go
 		}
 	}
 	failpoint.Inject("handleOneItemTaskPanic", nil)
