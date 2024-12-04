@@ -1391,7 +1391,6 @@ func (c *getGUIDFunctionClass) getFunction(ctx BuildContext, args []Expression) 
 	bf.tp.SetCollate(collate)
 	bf.tp.SetFlen(36)
 	sig := &builtinGetGUIDSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_UUID)
 	return sig, nil
 }
 
