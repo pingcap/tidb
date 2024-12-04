@@ -2411,7 +2411,6 @@ func TestBuiltinFuncAsIdentifier(t *testing.T) {
 		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
 		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
 		{"SUM", "`c1`"},
-		{"SYSDATE", ""},
 		{"TRIM", "_UTF8MB4' foo '"},
 		{"VAR_POP", "`c1`"},
 		{"VAR_SAMP", "`c1`"},

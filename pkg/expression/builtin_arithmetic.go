@@ -170,6 +170,21 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
+// arithmeticDatetimePlusOrMinusNumeric checks whether do 'Datetime' +/- 'number'.
+// It is used for oracle operation.
+func arithmeticDatetimePlusOrMinusNumeric(ctx BuildContext, args []Expression) bool {
+	if len(args) != 2 {
+		return false
+	}
+
+	tp1 := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	tp2 := args[1].GetType(ctx.GetEvalCtx()).EvalType()
+	if (tp1 == types.ETDatetime) && (tp2 == types.ETReal || tp2 == types.ETInt) {
+		return true
+	}
+	return false
+}
+
 func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -183,7 +198,7 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
-	if args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDatetime {
+	if arithmeticDatetimePlusOrMinusNumeric(ctx, args) {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
 		if err != nil {
 			return nil, err
@@ -384,7 +399,7 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
-	if args[0].GetType(ctx.GetEvalCtx()).EvalType() == types.ETDatetime {
+	if arithmeticDatetimePlusOrMinusNumeric(ctx, args) {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
 		if err != nil {
 			return nil, err
