@@ -50,7 +50,11 @@ func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infosc
 
 		sb.Reset()
 		sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
-		if !generatePartitionRanges(sb, tbInfo) {
+		skip, err := generatePartitionRanges(sb, tbInfo)
+		if err != nil {
+			return err
+		}
+		if !skip {
 			fmt.Fprintf(sb, ")")
 			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
@@ -90,7 +94,7 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 			continue
 		}
 		for _, pt := range pi.Definitions {
-			ot, err := time.Parse("p20060102", pt.Name.L)
+			ot, err := parsePartitionName(pt.Name.L)
 			if err != nil {
 				logutil.BgLogger().Info("workload repository cannot parse partition name", zap.String("part", pt.Name.L), zap.NamedError("err", err))
 				break

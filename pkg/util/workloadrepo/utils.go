@@ -22,41 +22,56 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/util/slice"
 )
 
 func generatePartitionDef(sb *strings.Builder, col string) {
 	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
 	// tbInfo is nil, retval must be false
-	_ = generatePartitionRanges(sb, nil)
+	_, _ = generatePartitionRanges(sb, nil)
 	fmt.Fprintf(sb, ")")
 }
 
-func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) bool {
+func generatePartitionName(t time.Time) string {
+	return "p" + t.Format("20060102")
+}
+
+func parsePartitionName(part string) (time.Time, error) {
+	return time.ParseInLocation("p20060102", part, time.Local)
+}
+
+func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) (bool, error) {
 	now := time.Now()
-	newPtNum := 2
-	// add new partitions per day
-	// if all partitions to be added existed, do nothing
-	allExisted := true
-	for i := range newPtNum {
-		// TODO: should we make this UTC? timezone issues
-		newPtTime := now.AddDate(0, 0, i+1)
-		newPtName := "p" + newPtTime.Format("20060102")
-		if tbInfo != nil {
-			pi := tbInfo.GetPartitionInfo()
-			if pi != nil && slice.AnyOf(pi.Definitions, func(i int) bool {
-				return pi.Definitions[i].Name.L == newPtName
-			}) {
-				continue
+	firstPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	if tbInfo != nil {
+		pi := tbInfo.GetPartitionInfo()
+		if pi != nil {
+			ptInfos := pi.Definitions
+			lastPartDate, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
+			if err != nil {
+				// not sure what to do
+				return true, err
+			}
+			if firstPart.Before(lastPartDate) {
+				firstPart = lastPartDate
 			}
 		}
-		if !allExisted && i > 0 {
-			fmt.Fprintf(sb, ",")
+	}
+
+	allExisted := true
+	for firstPart.Before(now.AddDate(0, 0, 1)) {
+		newPtTime := firstPart.AddDate(0, 0, 1)
+		newPtName := generatePartitionName(newPtTime)
+
+		if allExisted == false {
+			fmt.Fprintf(sb, ", ")
 		}
 		fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPtName, newPtTime.Format("2006-01-02"))
+
+		firstPart = newPtTime
 		allExisted = false
 	}
-	return allExisted
+
+	return allExisted, nil
 }
 
 func (w *worker) setRetentionDays(_ context.Context, d string) error {

@@ -168,20 +168,21 @@ func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName
 		return false
 	}
 
+	// Insure that the table has a partition for tomorrow.
 	tbInfo := tbSchema.Meta()
-	for i := range 2 {
-		newPtTime := now.AddDate(0, 0, i+1)
-		newPtName := "p" + newPtTime.Format("20060102")
-		pi := tbInfo.GetPartitionInfo()
-		if pi == nil {
-			return false
-		}
-		ptInfos := pi.Definitions
-		if slice.NoneOf(ptInfos, func(i int) bool {
-			return ptInfos[i].Name.L == newPtName
-		}) {
-			return false
-		}
+	if tbInfo == nil {
+		return false
 	}
-	return true
+	pi := tbInfo.GetPartitionInfo()
+	if pi == nil {
+		return false
+	}
+	ptInfos := pi.Definitions
+	ot, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
+	if err != nil {
+		return false
+	}
+
+	// It doesn't matter if now has a timestamp.
+	return ot.After(now.AddDate(0, 0, 1))
 }
