@@ -933,13 +933,13 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 				if !applyFlag {
 					break
 				}
-				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
-				if applyFlag {
+				/*applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
+				/if applyFlag {
 					x.TiFlashFineGrainedShuffleStreamCount = streamCount
 					for _, p := range helper.plans {
 						p.TiFlashFineGrainedShuffleStreamCount = streamCount
 					}
-				}
+				}*/
 			}
 		}
 		// exchange sender will break the data partition.
