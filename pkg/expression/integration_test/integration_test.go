@@ -3983,4 +3983,10 @@ func TestInstr(t *testing.T) {
 	tk.MustExec(`insert into t values ("中文和中文", "中文", -3, 1)`)
 	tk.MustExec(`insert into t values ("中文和中文", "中文", -1, 3)`)
 	tk.MustQuery(`select instr(c1, c2, c3, c4) from t`).Check(testkit.Rows("1", "0", "2", "3", "0", "2", "0", "4", "1", "4", "1", "0"))
+
+	tk.MustExec("create table t2(c1 varchar(16), c2 varchar(16))")
+	tk.MustExec(`insert into t2 values ("abab", "ba")`)
+	tk.MustExec(`insert into t2 values ("英文和中文", "中文")`)
+	tk.MustQuery(`select instr(c1, c2) from t2`).Check(testkit.Rows("2", "4"))
+	tk.MustQuery(`select instr(c1, c2, 3) from t2`).Check(testkit.Rows("0", "4"))
 }

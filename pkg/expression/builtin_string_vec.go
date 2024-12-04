@@ -1723,18 +1723,21 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	defer b.bufAllocator.put(positions)
-	if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
-		return err
+	if len(b.args) >= 3 {
+		if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
+			return err
+		}
 	}
 	occurrences, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(occurrences)
-	if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
-		return err
+	if len(b.args) >= 4 {
+		if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
+			return err
+		}
 	}
-
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
@@ -1753,17 +1756,23 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 			substrI = substr.GetString(i)
 		}
 
-		position := positions.GetInt64(i)
-		if position == 0 {
-			res[i] = 0
-			continue
+		position := int64(1)
+		if len(b.args) >= 3 {
+			position = positions.GetInt64(i)
+			if position == 0 {
+				res[i] = 0
+				continue
+			}
 		}
 
-		occurrence := occurrences.GetInt64(i)
-		if occurrence < 0 {
-			return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
-		} else if occurrence == 0 {
-			occurrence = 1
+		occurrence := int64(1)
+		if len(b.args) >= 4 {
+			occurrence = occurrences.GetInt64(i)
+			if occurrence < 0 {
+				return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
+			} else if occurrence == 0 {
+				occurrence = 1
+			}
 		}
 
 		var idx int
@@ -2213,16 +2222,20 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	defer b.bufAllocator.put(positions)
-	if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
-		return err
+	if len(b.args) >= 3 {
+		if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
+			return err
+		}
 	}
 	occurrences, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(occurrences)
-	if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
-		return err
+	if len(b.args) >= 4 {
+		if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
+			return err
+		}
 	}
 
 	result.ResizeInt64(n, false)
@@ -2235,17 +2248,23 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		strI := str.GetString(i)
 		substrI := substr.GetString(i)
 
-		position := positions.GetInt64(i)
-		if position == 0 {
-			res[i] = 0
-			continue
+		position := int64(1)
+		if len(b.args) >= 3 {
+			position = positions.GetInt64(i)
+			if position == 0 {
+				res[i] = 0
+				continue
+			}
 		}
 
-		occurrence := occurrences.GetInt64(i)
-		if occurrence < 0 {
-			return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
-		} else if occurrence == 0 {
-			occurrence = 1
+		occurrence := int64(1)
+		if len(b.args) >= 4 {
+			occurrence = occurrences.GetInt64(i)
+			if occurrence < 0 {
+				return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
+			} else if occurrence == 0 {
+				occurrence = 1
+			}
 		}
 
 		var idx int

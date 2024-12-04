@@ -3774,6 +3774,8 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
+// Find nth occurrence of substring in given string.
+// Search starts from the `position` character to the last character.
 func findNthOccurrence(str, sub string, position, n int) int {
 	currentPos := position
 	for i := 0; i < n; i++ {
@@ -3787,6 +3789,8 @@ func findNthOccurrence(str, sub string, position, n int) int {
 	return currentPos - 1
 }
 
+// Find nth occurrence of substring in given string.
+// Search starts from the last `position` character to the first character.
 func findLastOccurrence(str, sub string, position, n int) int {
 	subLen := len(sub)
 	currentPos := len(str) - max(position, subLen)
@@ -3807,6 +3811,8 @@ func findLastOccurrence(str, sub string, position, n int) int {
 	return -1
 }
 
+// Find nth occurrence of substring in given string.
+// Search starts from the `position` rune to the last rune.
 func findNthOccurrenceUTF8(str, sub string, position, n int) int {
 	currentPos := 0
 	runes := []rune(str)
@@ -3824,6 +3830,8 @@ func findNthOccurrenceUTF8(str, sub string, position, n int) int {
 	return currentPos - 1
 }
 
+// Find nth occurrence of substring in given string.
+// Search starts from the last `position` rune to the first rune.
 func findLastOccurrenceUTF8(str, sub string, position, n int) int {
 	runes := []rune(str)
 	subRunes := []rune(sub)
@@ -3850,8 +3858,9 @@ func findLastOccurrenceUTF8(str, sub string, position, n int) int {
 	return -1
 }
 
-// evalInt evals INSTR(str,substr).
+// evalInt evals INSTR(str,substr,[position],[occurrence]).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
+// and https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/INSTR.html
 func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(ctx, row)
 	if IsNull || err != nil {
