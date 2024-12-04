@@ -6991,9 +6991,16 @@ func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (floa
 		}
 		return 0, true, err
 	}
-	unit := "MONTH"
-	integerMonth := float64(types.TimestampDiff(unit, rhs, lhs))
-	// Calculate the fractional month difference based on the day of the month, rounding to 8 decimal places to maintain precision.
-	decimalMonth := math.Round(float64(lhs.Day()-rhs.Day())/31.0*1e8) / 1e8
+
+	// Calculate the total number of complete months between the two dates.
+	integerMonth := float64((lhs.Year()-rhs.Year())*12 + (lhs.Month() - rhs.Month()))
+	// If lhs and rhs's day is the same day or the end of month, will not calculate the time part diff
+	if lhs.Day() == rhs.Day() || (types.GetLastDay(lhs.Year(), lhs.Month()) == lhs.Day() && types.GetLastDay(rhs.Year(), rhs.Month()) == rhs.Day()) {
+		return integerMonth, false, nil
+	}
+	// Calculate the fractional month difference based on the time difference in second unit first.
+	totalSeconds := (lhs.Day()-rhs.Day())*24*60*60 + (lhs.Hour()-rhs.Hour())*60*60 + (lhs.Minute()-rhs.Minute())*60 + (lhs.Second() - rhs.Second())
+	// Compute fractional months as a ratio of total seconds base on 31 days. And result needs to maintain a precision of eight decimal places.
+	decimalMonth := math.Round(float64(totalSeconds)/(31.0*24.0*60.0*60.0)*1e8) / 1e8
 	return integerMonth + decimalMonth, false, nil
 }
