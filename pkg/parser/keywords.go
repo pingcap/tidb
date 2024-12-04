@@ -218,6 +218,7 @@ var Keywords = []KeywordsType{
 	{"STARTING", true, "reserved"},
 	{"STORED", true, "reserved"},
 	{"STRAIGHT_JOIN", true, "reserved"},
+	{"SYSDATE", true, "reserved"},
 	{"SYSTIMESTAMP", true, "reserved"},
 	{"TABLE", true, "reserved"},
 	{"TABLESAMPLE", true, "reserved"},
