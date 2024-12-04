@@ -1396,7 +1396,7 @@ func doSendBackup(
 // Stop receiving response if respFn returns error.
 func SendBackup(
 	ctx context.Context,
-// the `storeID` seems only used for logging now, maybe we can remove it then?
+	// the `storeID` seems only used for logging now, maybe we can remove it then?
 	storeID uint64,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
