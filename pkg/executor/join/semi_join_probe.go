@@ -167,7 +167,10 @@ func (s *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 
 		for index, result := range s.selected {
 			if result {
-				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&s.rowIndexInfos[index].buildRowStart)))
+				candidateRow := unsafe.Pointer(&s.rowIndexInfos[index].buildRowStart)
+				if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+					meta.setUsedFlag(*(*unsafe.Pointer)(candidateRow))
+				}
 			}
 		}
 	}
@@ -246,38 +249,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		for remainCap > 0 && (s.currentProbeRow < s.chunkRows) {
-			rowNumToTryAppend := min(remainCap, s.chunkRows-s.currentProbeRow)
-			start := s.currentProbeRow
-			end := s.currentProbeRow + rowNumToTryAppend
-
-			for index, usedColIdx := range s.lUsed {
-				dstCol := chk.Column(index)
-				srcCol := s.currentChunk.Column(usedColIdx)
-				chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, s.isMatchedRows, start, end, func(i int) int {
-					return s.usedRows[i]
-				})
-			}
-
-			if len(s.lUsed) == 0 {
-				// For calculating virtual row num
-				virtualRowNum := chk.GetNumVirtualRows()
-				for i := start; i < end; i++ {
-					if s.isMatchedRows[i] {
-						virtualRowNum++
-					}
-				}
-
-				// When `len(s.lUsed) == 0`, column number in chk is 0
-				// We need to manually calculate virtual row number.
-				chk.SetNumVirtualRows(virtualRowNum)
-			} else {
-				chk.SetNumVirtualRows(chk.NumRows())
-			}
-
-			s.currentProbeRow += rowNumToTryAppend
-			remainCap = chk.RequiredRows() - chk.NumRows()
-		}
+		s.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, s.isMatchedRows)
 	}
 	return
 }

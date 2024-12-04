@@ -192,7 +192,10 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 
 		for index, result := range a.selected {
 			if result || a.isNulls[index] {
-				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)))
+				candidateRow := unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)
+				if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+					meta.setUsedFlag(*(*unsafe.Pointer)(candidateRow))
+				}
 			}
 		}
 	}
@@ -204,17 +207,29 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildNoOtherCondition(sqlKiller *sql
 	meta := a.ctx.hashTableMeta
 	tagHelper := a.ctx.hashTableContext.tagHelper
 
+	loopCnt := 0
+
 	for a.currentProbeRow < a.chunkRows {
 		if a.matchedRowsHeaders[a.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(a.matchedRowsHeaders[a.currentProbeRow])
-			if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
-				meta.setUsedFlag(candidateRow)
-			} else {
-				a.probeCollision++
+			if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
+				if isKeyMatched(meta.keyMode, a.serializedKeys[a.currentProbeRow], candidateRow, meta) {
+					meta.setUsedFlag(candidateRow)
+				} else {
+					a.probeCollision++
+				}
 			}
 			a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 		} else {
 			a.currentProbeRow++
+		}
+
+		loopCnt++
+		if loopCnt%2000 == 0 {
+			err = checkSQLKiller(sqlKiller, "killedDuringProbe")
+			if err != nil {
+				return err
+			}
 		}
 	}
 
