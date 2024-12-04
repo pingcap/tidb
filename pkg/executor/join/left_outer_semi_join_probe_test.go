@@ -29,10 +29,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// generate left outer semi join result using nested loop
 func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
-	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, rightUsedColumns []int,
-	otherConditions expression.CNFExprs, resultTypes []*types.FieldType) []*chunk.Chunk {
+	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
+	resultTypes []*types.FieldType) []*chunk.Chunk {
+	return genLeftOuterSemiOrSemiJoinResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, true)
+}
+
+func genSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
+	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
+	resultTypes []*types.FieldType) []*chunk.Chunk {
+	return genLeftOuterSemiOrSemiJoinResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, false)
+}
+
+// generate left outer semi join result using nested loop
+func genLeftOuterSemiOrSemiJoinResultImpl(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
+	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
+	resultTypes []*types.FieldType, isLeftOuter bool) []*chunk.Chunk {
 	filterVector := make([]bool, 0)
 	var err error
 	returnChks := make([]*chunk.Chunk, 0, 1)
@@ -54,9 +66,12 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 				filterIndex = leftChunk.Sel()[leftIndex]
 			}
 			if leftFilter != nil && !filterVector[filterIndex] {
-				// Filtered by left filter, append 0 for matched flag
-				appendToResultChk(leftChunk.GetRow(leftIndex), chunk.Row{}, leftUsedColumns, nil, resultChk)
-				resultChk.AppendInt64(len(leftUsedColumns), 0)
+				if isLeftOuter {
+					// Filtered by left filter, append 0 for matched flag
+					appendToResultChk(leftChunk.GetRow(leftIndex), chunk.Row{}, leftUsedColumns, nil, resultChk)
+					resultChk.AppendInt64(len(leftUsedColumns), 0)
+				}
+
 				if resultChk.IsFull() {
 					returnChks = append(returnChks, resultChk)
 					resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -99,15 +114,21 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 				}
 			}
 
-			// Append result with matched flag
-			appendToResultChk(leftRow, chunk.Row{}, leftUsedColumns, nil, resultChk)
-			if hasMatch {
-				resultChk.AppendInt64(len(leftUsedColumns), 1)
-			} else {
-				if hasNull {
-					resultChk.AppendNull(len(leftUsedColumns))
+			if isLeftOuter {
+				// Append result with matched flag
+				appendToResultChk(leftRow, chunk.Row{}, leftUsedColumns, nil, resultChk)
+				if hasMatch {
+					resultChk.AppendInt64(len(leftUsedColumns), 1)
 				} else {
-					resultChk.AppendInt64(len(leftUsedColumns), 0)
+					if hasNull {
+						resultChk.AppendNull(len(leftUsedColumns))
+					} else {
+						resultChk.AppendInt64(len(leftUsedColumns), 0)
+					}
+				}
+			} else {
+				if hasMatch {
+					appendToResultChk(leftRow, chunk.Row{}, leftUsedColumns, nil, resultChk)
 				}
 			}
 
@@ -123,7 +144,7 @@ func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFi
 	return returnChks
 }
 
-func TestLeftOuterSemiJoinProbeBasic(t *testing.T) {
+func testLeftOuterSemiOrSemiJoinProbeBasic(t *testing.T, isLeftOuter bool) {
 	// todo test nullable type after builder support nullable type
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	tinyTp.AddFlag(mysql.NotNullFlag)
@@ -142,9 +163,23 @@ func TestLeftOuterSemiJoinProbeBasic(t *testing.T) {
 	rTypes1 = append(rTypes1, rTypes1...)
 
 	rightAsBuildSide := []bool{true}
+	if !isLeftOuter {
+		rightAsBuildSide = append(rightAsBuildSide, false)
+	}
+
 	partitionNumber := 4
 	simpleFilter := createSimpleFilter(t)
-	hasFilter := []bool{false, true}
+	hasFilter := []bool{false}
+	if isLeftOuter {
+		hasFilter = append(hasFilter, true)
+	}
+
+	var joinType logicalop.JoinType
+	if isLeftOuter {
+		joinType = logicalop.LeftOuterSemiJoin
+	} else {
+		joinType = logicalop.SemiJoin
+	}
 
 	testCases := []testCase{
 		// normal case
@@ -171,16 +206,16 @@ func TestLeftOuterSemiJoinProbeBasic(t *testing.T) {
 					leftFilter = nil
 				}
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, value, tc.leftUsed,
-					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, logicalop.LeftOuterSemiJoin, 200)
+					tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, leftFilter, nil, tc.otherCondition, partitionNumber, joinType, 200)
 				testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
 					toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), value, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition,
-					leftFilter, nil, tc.otherCondition, partitionNumber, logicalop.LeftOuterSemiJoin, 200)
+					leftFilter, nil, tc.otherCondition, partitionNumber, joinType, 200)
 			}
 		}
 	}
 }
 
-func TestLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T) {
+func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool) {
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	tinyTp.AddFlag(mysql.NotNullFlag)
 	intTp := types.NewFieldType(mysql.TypeLonglong)
@@ -224,10 +259,18 @@ func TestLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T) {
 	rTypes := lTypes
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := []int{}
-	joinType := logicalop.LeftOuterSemiJoin
+	var joinType logicalop.JoinType
+	if isLeftOuter {
+		joinType = logicalop.LeftOuterSemiJoin
+	} else {
+		joinType = logicalop.SemiJoin
+	}
 	partitionNumber := 4
 
 	rightAsBuildSide := []bool{true}
+	if !isLeftOuter {
+		rightAsBuildSide = append(rightAsBuildSide, false)
+	}
 
 	// single key
 	for i := 0; i < len(lTypes); i++ {
@@ -269,7 +312,7 @@ func TestLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T) {
 	}
 }
 
-func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
+func testLeftOuterSemiJoinProbeOtherCondition(t *testing.T, isLeftOuter bool) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
 	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
@@ -297,10 +340,26 @@ func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
 	otherCondition = append(otherCondition, sf)
 	otherCondition2 := make(expression.CNFExprs, 0)
 	otherCondition2 = append(otherCondition2, sf2)
-	joinType := logicalop.LeftOuterSemiJoin
+
+	var joinType logicalop.JoinType
+	if isLeftOuter {
+		joinType = logicalop.LeftOuterSemiJoin
+	} else {
+		joinType = logicalop.SemiJoin
+	}
+
 	simpleFilter := createSimpleFilter(t)
-	hasFilter := []bool{false, true}
+
+	hasFilter := []bool{false}
+	if isLeftOuter {
+		hasFilter = append(hasFilter, true)
+	}
+
 	rightAsBuildSide := []bool{true}
+	if !isLeftOuter {
+		rightAsBuildSide = append(rightAsBuildSide, false)
+	}
+
 	partitionNumber := 4
 	rightUsed := []int{}
 
@@ -323,7 +382,7 @@ func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
 	}
 }
 
-func TestLeftOuterSemiJoinProbeWithSel(t *testing.T) {
+func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLeftOuter bool) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
 	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
@@ -346,10 +405,26 @@ func TestLeftOuterSemiJoinProbeWithSel(t *testing.T) {
 	require.NoError(t, err, "error when create other condition")
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
-	joinType := logicalop.LeftOuterSemiJoin
+
+	var joinType logicalop.JoinType
+	if isLeftOuter {
+		joinType = logicalop.LeftOuterSemiJoin
+	} else {
+		joinType = logicalop.SemiJoin
+	}
+
 	rightAsBuildSide := []bool{true}
+	if !isLeftOuter {
+		rightAsBuildSide = append(rightAsBuildSide, false)
+	}
+
 	simpleFilter := createSimpleFilter(t)
-	hasFilter := []bool{false, true}
+
+	hasFilter := []bool{false}
+	if isLeftOuter {
+		hasFilter = append(hasFilter, true)
+	}
+
 	partitionNumber := 4
 	rightUsed := []int{}
 
@@ -365,6 +440,22 @@ func TestLeftOuterSemiJoinProbeWithSel(t *testing.T) {
 			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightBuild, nil, rightUsed, []int{1}, []int{3}, leftFilter, nil, otherCondition, partitionNumber, joinType, 500)
 		}
 	}
+}
+
+func TestLeftOuterSemiJoinProbeBasic(t *testing.T) {
+	testLeftOuterSemiOrSemiJoinProbeBasic(t, true)
+}
+
+func TestLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T) {
+	testLeftOuterSemiJoinProbeAllJoinKeys(t, true)
+}
+
+func TestLeftOuterSemiJoinProbeOtherCondition(t *testing.T) {
+	testLeftOuterSemiJoinProbeOtherCondition(t, true)
+}
+
+func TestLeftOuterSemiJoinProbeWithSel(t *testing.T) {
+	testLeftOuterSemiJoinProbeWithSel(t, true)
 }
 
 func TestLeftOuterSemiJoinBuildResultFastPath(t *testing.T) {

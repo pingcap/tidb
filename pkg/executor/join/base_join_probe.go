@@ -478,7 +478,7 @@ func (j *baseJoinProbe) prepareForProbe(chk *chunk.Chunk) (joinedChk *chunk.Chun
 	j.nextCachedBuildRowIndex = 0
 	j.matchedRowsForCurrentProbeRow = 0
 	joinedChk = chk
-	if j.ctx.OtherCondition != nil {
+	if j.ctx.hasOtherCondition() {
 		j.tmpChk.Reset()
 		j.rowIndexInfos = j.rowIndexInfos[:0]
 		j.selected = j.selected[:0]
@@ -693,6 +693,22 @@ func isKeyMatched(keyMode keyMode, serializedKey []byte, rowStart unsafe.Pointer
 	}
 }
 
+func commonInitForScanRowTable(base *baseJoinProbe) *rowIter {
+	totalRowCount := base.ctx.hashTableContext.hashTable.totalRowCount()
+	concurrency := base.ctx.Concurrency
+	workID := uint64(base.workID)
+	avgRowPerWorker := totalRowCount / uint64(concurrency)
+	startIndex := workID * avgRowPerWorker
+	endIndex := (workID + 1) * avgRowPerWorker
+	if workID == uint64(concurrency-1) {
+		endIndex = totalRowCount
+	}
+	if endIndex > totalRowCount {
+		endIndex = totalRowCount
+	}
+	return base.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
+}
+
 // NewJoinProbe create a join probe used for hash join v2
 func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, keyIndex []int, joinedColumnTypes, probeKeyTypes []*types.FieldType, rightAsBuildSide bool) ProbeV2 {
 	base := baseJoinProbe{
@@ -747,7 +763,15 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 		return newOuterJoinProbe(base, !rightAsBuildSide, rightAsBuildSide)
 	case logicalop.RightOuterJoin:
 		return newOuterJoinProbe(base, rightAsBuildSide, rightAsBuildSide)
+	case logicalop.SemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for semi join")
+		}
+		return newSemiJoinProbe(base, !rightAsBuildSide)
 	case logicalop.LeftOuterSemiJoin:
+		if len(base.rUsed) != 0 {
+			panic("len(base.rUsed) != 0 for left outer semi join")
+		}
 		if rightAsBuildSide {
 			return newLeftOuterSemiJoinProbe(base)
 		}

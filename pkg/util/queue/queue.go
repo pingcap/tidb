@@ -79,6 +79,15 @@ func (r *Queue[T]) Clear() {
 	r.size = 0
 }
 
+// ClearAndExpandIfNeed clears the queue and try to expand the elements
+func (r *Queue[T]) ClearAndExpandIfNeed(size int) {
+	r.Clear()
+
+	if len(r.elements) < size {
+		r.elements = make([]T, size)
+	}
+}
+
 // Cap returns the capacity of the queue.
 func (r *Queue[T]) Cap() int {
 	return len(r.elements)
