@@ -3277,6 +3277,15 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 
+	// for last_month
+	tk.MustQuery(`select last_month('2001-01-01')`).Check(testkit.Rows("2000-12-31"))
+	tk.MustQuery(`select last_month('2001-12-31')`).Check(testkit.Rows("2001-11-30"))
+	tk.MustQuery(`select last_month('2001-10-01')`).Check(testkit.Rows("2001-09-30"))
+	tk.MustQueryToErr(`select last_month('2000-10-1')`)
+	tk.MustQueryToErr(`select last_month('2001-1-1')`)
+	tk.MustQueryToErr(`select last_month('2001-13-01')`)
+	tk.MustQueryToErr(`select last_month('2001-10-50')`)
+
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))

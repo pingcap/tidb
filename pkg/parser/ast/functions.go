@@ -382,7 +382,8 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate = "to_date"
+	ToDate    = "to_date"
+	LastMonth = "last_month"
 )
 
 type FuncCallExprType int8

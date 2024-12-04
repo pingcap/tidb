@@ -78,6 +78,7 @@ var (
 	_ functionClass = &dateLiteralFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
 	_ functionClass = &timeDiffFunctionClass{}
+	_ functionClass = &lastMonthFunctionClass{}
 	_ functionClass = &dateFormatFunctionClass{}
 	_ functionClass = &hourFunctionClass{}
 	_ functionClass = &minuteFunctionClass{}
@@ -759,6 +760,53 @@ func convertStringToDuration(tc types.Context, str string, fsp int) (d types.Dur
 		}
 	}
 	return types.StrToDuration(tc, str, fsp)
+}
+
+type lastMonthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lastMonthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	// The output is fixed to YYYY-MM-DD
+	bf.tp.SetFlen(10)
+	sig := &builtinLastMonthSig{bf}
+	return sig, nil
+}
+
+type builtinLastMonthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLastMonthSig) Clone() builtinFunc {
+	newSig := &builtinLastMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinLastMonthSig.
+func (b *builtinLastMonthSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	t, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	curDate, err := time.Parse("2006-01-02", t)
+	if err != nil {
+		return "", isNull, errors.Errorf("can not parse time %s in YYYY-MM-DD format", t)
+	}
+
+	// We first get the first day of this month, then get the last day of last month.
+	firstDayOfCurrentMonth := time.Date(curDate.Year(), curDate.Month(), 1, 0, 0, 0, 0, curDate.Location())
+	lastDayOfPreviousMonth := firstDayOfCurrentMonth.AddDate(0, 0, -1)
+	dateStr := lastDayOfPreviousMonth.Format("2006-01-02")
+	return dateStr, isNull, err
 }
 
 type dateFormatFunctionClass struct {
