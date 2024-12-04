@@ -856,6 +856,7 @@ timestampadd
 timestampdiff
 to_base64
 to_days
+to_number
 to_seconds
 translate
 trim
