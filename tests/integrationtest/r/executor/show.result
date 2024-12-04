@@ -733,6 +733,7 @@ json_unquote
 json_valid
 last_day
 last_insert_id
+last_month
 lastval
 lcase
 le
