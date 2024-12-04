@@ -699,6 +699,7 @@ var funcs = map[string]functionClass{
 	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
 	ast.DateLiteral:      &dateLiteralFunctionClass{baseFunctionClass{ast.DateLiteral, 1, 1}},
 	ast.DateFormat:       &dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}},
+	ast.LastMonth:        &lastMonthFunctionClass{baseFunctionClass{ast.LastMonth, 1, 1}},
 	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
 	ast.Day:              &dayOfMonthFunctionClass{baseFunctionClass{ast.Day, 1, 1}},
 	ast.DayName:          &dayNameFunctionClass{baseFunctionClass{ast.DayName, 1, 1}},

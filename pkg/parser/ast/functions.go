@@ -380,6 +380,8 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	LastMonth = "last_month"
 )
 
 type FuncCallExprType int8

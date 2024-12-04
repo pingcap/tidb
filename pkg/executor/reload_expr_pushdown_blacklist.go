@@ -172,6 +172,7 @@ var funcName2Alias = map[string]string{
 	"date":                       ast.Date,
 	"date_add":                   ast.DateAdd,
 	"date_format":                ast.DateFormat,
+	"last_month":                 ast.LastMonth,
 	"date_sub":                   ast.DateSub,
 	"datediff":                   ast.DateDiff,
 	"day":                        ast.Day,
