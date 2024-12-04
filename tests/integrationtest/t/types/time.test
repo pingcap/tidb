@@ -129,4 +129,24 @@ select timestamp '2024-01-01 14+01:00';
 -- error 1525
 select timestamp'10101.5';
 
+# ODBC style escape MySQL extensions
+SELECT { ts '2024-01-01 14:00:00+00:00' };
+SELECT { ts '2024-01-01 14:00:00-14:00' };
+SELECT { ts '2024-01-01 14:00:00+14:00' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00-14:01' };
+-- error 1292
+SELECT { ts '2024-01-01 14:00:00+14:01' };
+-- error 1292
+# Not allowed!
+SELECT { ts '2024-01-01 14:00:00-00:00' };
+
+SELECT { d '2024-01-01' };
+-- error 1292
+SELECT { d '2024-01-01 01:12:31' };
+
+SELECT { t '14:00:00' };
+-- error 1292
+SELECT { d '2024-01-01 01:12:31' };
+
 # TODO: Also test if there are difference between explicitly give the timestamp/datetime as literal/string or having it from a varchar in a table
