@@ -325,6 +325,8 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (kv.Handle, error) {
+	// In the read path, remove the keyspace prefix
+	// to ensure compatibility with the key parsing implemented in the mock.
 	tempKey := rowcodec.RemoveKeyspacePrefix(key)
 
 	if len(tempKey) < RecordRowKeyLen || !hasTablePrefix(tempKey) || !hasRecordPrefixSep(tempKey[prefixLen-2:]) {
