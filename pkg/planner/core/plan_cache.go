@@ -116,6 +116,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
+			tbl = tblByName
 			stmt.tbls[i] = tblByName
 			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
 		}
