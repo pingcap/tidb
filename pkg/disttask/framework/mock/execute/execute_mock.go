@@ -103,20 +103,6 @@ func (mr *MockStepExecutorMockRecorder) Init(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockStepExecutor)(nil).Init), arg0)
 }
 
-// OnFinished mocks base method.
-func (m *MockStepExecutor) OnFinished(arg0 context.Context, arg1 *proto.Subtask) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "OnFinished", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// OnFinished indicates an expected call of OnFinished.
-func (mr *MockStepExecutorMockRecorder) OnFinished(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), arg0, arg1)
-}
-
 // RealtimeSummary mocks base method.
 func (m *MockStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	m.ctrl.T.Helper()
