@@ -3078,16 +3078,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	if !ok {
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
-<<<<<<< HEAD
-	// send request to tiflash, timeout is 1s
-	instanceID := e.instanceIds[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
-=======
 	// send request to tiflash, use 5 minutes as per-request timeout
-	instanceID := e.instanceIDs[e.instanceIdx]
+	instanceID := e.instanceIds[e.instanceIdx]
 	timeout := time.Duration(5*60) * time.Second
 	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, timeout)
->>>>>>> a0a7cef9bdd (executor: Enlarge the timeout for fetching TiFlash system tables (#57967))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
