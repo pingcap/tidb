@@ -394,8 +394,8 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	lineFieldsInfo := plannercore.LineFieldsInfo{
 		FieldsTerminatedBy: `,`,
 		FieldsEnclosedBy:   `"`,
-		//FieldsEscapedBy:    `\`,
-		LinesStartingBy: ``,
+		FieldsEscapedBy:    `\`,
+		LinesStartingBy:    ``,
 		// csv_parser will determine it automatically(either '\r' or '\n' or '\r\n')
 		// But user cannot set this to empty explicitly.
 		LinesTerminatedBy: ``,
