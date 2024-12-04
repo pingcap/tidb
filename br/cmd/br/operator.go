@@ -35,6 +35,7 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newBase64ifyCommand())
 	cmd.AddCommand(newListMigrationsCommand())
 	cmd.AddCommand(newMigrateToCommand())
+	cmd.AddCommand(newChecksumCommand())
 	return cmd
 }
 
@@ -107,5 +108,22 @@ func newMigrateToCommand() *cobra.Command {
 		},
 	}
 	operator.DefineFlagsForMigrateToConfig(cmd.Flags())
+	return cmd
+}
+
+func newChecksumCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "checksum <subcommand>",
+		Short: "utilities for checksumming.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ChecksumTableConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunChecksumTable(ctx, tidbGlue, cfg)
+		},
+	}
 	return cmd
 }

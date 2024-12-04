@@ -191,3 +191,14 @@ func DefineFlagsForForceFlushConfig(f *pflag.FlagSet) {
 func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.Config.ParseFromFlags(flags)
 }
+
+type ChecksumTableConfig struct {
+	task.Config
+}
+
+func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
+}
+
+func (cfg *ChecksumTableConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+	return cfg.Config.ParseFromFlags(flags)
+}
