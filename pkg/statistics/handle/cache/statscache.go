@@ -94,6 +94,7 @@ func (t *tablesToUpdateOrDelete) addToDelete(statsCache *StatsCacheImpl, tableID
 		t.toUpdate = t.toUpdate[:0]
 		t.toDelete = t.toDelete[:0]
 	}
+	t.toDelete = append(t.toDelete, tableID)
 }
 
 func (t *tablesToUpdateOrDelete) flush(statsCache *StatsCacheImpl) {
