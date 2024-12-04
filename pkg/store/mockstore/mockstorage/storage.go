@@ -56,21 +56,6 @@ func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
 	}, nil
 }
 
-// NewKeyspaceMockStorage wraps tikv.KVStore as keyspace kv.Storage.
-func NewKeyspaceMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMeta) (kv.Storage, error) {
-	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
-	if err != nil {
-		return nil, err
-	}
-	return &mockStorage{
-		KVStore:      tikvStore,
-		Store:        coprStore,
-		memCache:     kv.NewCacheDB(),
-		keyspaceMeta: keyspaceMeta,
-	}, nil
-}
-
 func (s *mockStorage) GetOption(k any) (any, bool) {
 	return s.opts.Load(k)
 }
