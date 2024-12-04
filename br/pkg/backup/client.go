@@ -1001,6 +1001,9 @@ func (bc *Client) findRegionLeader(ctx context.Context, key []byte, isRawKv bool
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 1; i < 100; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
@@ -1393,7 +1396,7 @@ func doSendBackup(
 // Stop receiving response if respFn returns error.
 func SendBackup(
 	ctx context.Context,
-	// the `storeID` seems only used for logging now, maybe we can remove it then?
+// the `storeID` seems only used for logging now, maybe we can remove it then?
 	storeID uint64,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
