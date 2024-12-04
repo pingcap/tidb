@@ -960,7 +960,6 @@ func (sender *copIteratorTaskSender) run(connID uint64, checker resourcegroup.Ru
 }
 
 func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copResponse) (resp *copResponse, ok bool, exit bool) {
-	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	for {
 		select {
 		case resp, ok = <-respCh:
@@ -1088,6 +1087,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// If data order matters, response should be returned in the same order as copTask slice.
 	// Otherwise all responses are returned from a single channel.
 
+	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteSendReq()
 		if resp == nil {
