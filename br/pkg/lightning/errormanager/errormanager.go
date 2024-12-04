@@ -40,13 +40,14 @@ const (
 		CREATE SCHEMA IF NOT EXISTS %s;
 	`
 
-	syntaxErrorTableName = "syntax_error_v1"
-	typeErrorTableName   = "type_error_v1"
+	syntaxErrorTableName = "syntax_error_v2"
+	typeErrorTableName   = "type_error_v2"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName = "conflict_error_v1"
+	ConflictErrorTableName = "conflict_error_v1_2"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
+			id bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -59,6 +60,7 @@ const (
 
 	createTypeErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + typeErrorTableName + ` (
+			id bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -71,6 +73,7 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -108,10 +111,10 @@ const (
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
 
 	selectConflictKeys = `
-		SELECT _tidb_rowid, raw_handle, raw_row
+		SELECT id, raw_handle, raw_row
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 )
 
