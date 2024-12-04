@@ -320,3 +320,10 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 	a.generateResultChkForRightBuildNoOtherCondition(chk)
 	return
 }
+
+func (a *antiSemiJoinProbe) IsCurrentChunkProbeDone() bool {
+	if a.ctx.hasOtherCondition() && !a.unFinishedProbeRowIdxQueue.IsEmpty() {
+		return false
+	}
+	return a.baseJoinProbe.IsCurrentChunkProbeDone()
+}

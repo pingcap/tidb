@@ -142,9 +142,7 @@ func (b *baseSemiJoin) generateResultChkForRightBuildNoOtherCondition(resultChk 
 	for index, colIndex := range b.lUsed {
 		srcCol := b.currentChunk.Column(colIndex)
 		dstCol := resultChk.Column(index)
-		chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, nil, 0, len(b.offsets), func(i int) int {
-			return b.offsets[i]
-		})
+		chunk.CopyRows(dstCol, srcCol, b.offsets)
 	}
 
 	if len(b.lUsed) == 0 {

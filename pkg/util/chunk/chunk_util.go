@@ -110,13 +110,9 @@ func CopySelectedRows(dstCol *Column, srcCol *Column, selected []bool) {
 
 // CopySelectedRowsWithRowIDFunc copies the selected rows in srcCol to dstCol
 func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bool, start int, end int, rowIDFunc func(int) int) {
-	if selected == nil {
-		return
-	}
-
 	if srcCol.isFixed() {
 		for i := start; i < end; i++ {
-			if selected != nil && !selected[i] {
+			if !selected[i] {
 				continue
 			}
 			rowID := rowIDFunc(i)
@@ -129,7 +125,7 @@ func CopySelectedRowsWithRowIDFunc(dstCol *Column, srcCol *Column, selected []bo
 		}
 	} else {
 		for i := start; i < end; i++ {
-			if selected != nil && !selected[i] {
+			if !selected[i] {
 				continue
 			}
 			rowID := rowIDFunc(i)
