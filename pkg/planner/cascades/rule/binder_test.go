@@ -107,7 +107,7 @@ func TestBinderFail(t *testing.T) {
 	require.Equal(t, b.String(), "")
 
 	// renew memo
-	mm = memo.NewMemo(ctx)
+	mm = memo.NewMemo()
 	mm.Init(p1)
 	rootGE = mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder = NewBinder(pa, rootGE)

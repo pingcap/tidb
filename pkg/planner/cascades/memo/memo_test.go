@@ -25,18 +25,21 @@ import (
 func TestMemo(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	memo := NewMemo(ctx)
-	memo.Init(join)
-	require.Equal(t, 3, memo.groups.Len())
-	require.Equal(t, 3, len(memo.groupID2Group))
+	mm := NewMemo()
+	mm.Init(join)
+	require.Equal(t, 3, mm.GetGroups().Len())
+	require.Equal(t, 3, len(mm.GetGroupID2Group()))
 
 	// iter memo.groups to assert group ids.
 	cnt := 1
-	for e := memo.groups.Front(); e != nil; e = e.Next() {
+	for e := mm.GetGroups().Front(); e != nil; e = e.Next() {
 		group := e.Value.(*Group)
 		require.NotNil(t, group)
 		require.Equal(t, GroupID(cnt), group.groupID)
@@ -47,33 +50,37 @@ func TestMemo(t *testing.T) {
 func TestInsertGE(t *testing.T) {
 	ctx := plannercore.MockContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
+	t1.SetID(-1)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
+	t2.SetID(-2)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join.SetID(-3)
 	join.SetChildren(t1, t2)
 
-	memo := NewMemo(ctx)
-	memo.Init(join)
-	require.Equal(t, 3, memo.groups.Len())
-	require.Equal(t, 3, len(memo.groupID2Group))
+	mm := NewMemo()
+	mm.Init(join)
+	require.Equal(t, 3, mm.GetGroups().Len())
+	require.Equal(t, 3, len(mm.GetGroupID2Group()))
 
 	// prepare a new group expression with join's group as its children.
 	limit := logicalop.LogicalLimit{}.Init(ctx, 0)
-	hasher := memo.GetHasher()
-	groupExpr := NewGroupExpression(limit, []*Group{memo.rootGroup})
+	limit.SetID(-4)
+	hasher := mm.GetHasher()
+	groupExpr := NewGroupExpression(limit, []*Group{mm.GetRootGroup()})
 	groupExpr.Init(hasher)
 
 	// Insert a new group with a new expression.
-	memo.insertGroupExpression(groupExpr, nil)
-	require.Equal(t, 4, memo.groups.Len())
-	require.Equal(t, 4, len(memo.groupID2Group))
+	mm.InsertGroupExpression(groupExpr, nil)
+	require.Equal(t, 4, mm.GetGroups().Len())
+	require.Equal(t, 4, len(mm.GetGroupID2Group()))
 
 	// iter memo.groups to assert group ids.
 	cnt := 1
-	for e := memo.groups.Front(); e != nil; e = e.Next() {
+	for e := mm.GetGroups().Front(); e != nil; e = e.Next() {
 		group := e.Value.(*Group)
 		require.NotNil(t, group)
-		require.Equal(t, GroupID(cnt), group.groupID)
+		require.Equal(t, GroupID(cnt), group.GetGroupID())
 		cnt++
 	}
-	require.Equal(t, memo.groups.Back().Value.(*Group).groupID, GroupID(cnt-1))
+	require.Equal(t, mm.GetGroups().Back().Value.(*Group).GetGroupID(), GroupID(cnt-1))
 }

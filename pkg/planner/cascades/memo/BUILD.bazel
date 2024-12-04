@@ -11,12 +11,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression",
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
-        "//pkg/sessionctx",
         "//pkg/util/intest",
     ],
 )
