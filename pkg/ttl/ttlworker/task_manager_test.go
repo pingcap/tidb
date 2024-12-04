@@ -112,8 +112,13 @@ func (m *taskManager) CheckInvalidTask(se session.Session) {
 }
 
 // UpdateHeartBeat is an exported version of updateHeartBeat
-func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
-	return m.updateHeartBeat(ctx, se, now)
+func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+// UpdateHeartBeatForTask is an exported version of updateHeartBeatForTask
+func (m *taskManager) UpdateHeartBeatForTask(ctx context.Context, se session.Session, now time.Time, task *runningScanTask) error {
+	return m.updateHeartBeatForTask(ctx, se, now, task)
 }
 
 func TestResizeWorkers(t *testing.T) {
