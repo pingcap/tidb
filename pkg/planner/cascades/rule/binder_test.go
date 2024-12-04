@@ -34,7 +34,7 @@ func TestBinderSuccess(t *testing.T) {
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -68,7 +68,7 @@ func TestBinderFail(t *testing.T) {
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -127,7 +127,7 @@ func TestBinderTopNode(t *testing.T) {
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -144,7 +144,7 @@ func TestBinderOneNode(t *testing.T) {
 	ctx := mock.NewContext()
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 1, mm.GetGroups().Len())
 	require.Equal(t, 1, len(mm.GetGroupID2Group()))
@@ -171,7 +171,7 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	join3 := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join3.SetChildren(join1, join2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join3)
 	require.Equal(t, 7, mm.GetGroups().Len())
 	require.Equal(t, 7, len(mm.GetGroupID2Group()))
@@ -213,7 +213,7 @@ func TestBinderMultiNext(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.
@@ -310,7 +310,7 @@ func TestBinderAny(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.
@@ -393,7 +393,7 @@ func TestBinderMultiAny(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.
