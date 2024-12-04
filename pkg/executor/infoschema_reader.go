@@ -115,10 +115,29 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		e.is = is
-
 		var err error
+		// InTxn() should be true in most of the cases.
+		// Because the transaction should have been activated in MemTableReaderExec Open().
+		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
+		// Because it could DATA RACE here and in Open() it's safe.
+		if sctx.GetSessionVars().InTxn() {
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// When the excutor is built from tidb coprocessor request, the transaction is not valid.
+			// Then InTxn() is false.
+			//
+			// What's the difference between using latest infoschema and using snapshot infoschema?
+			// A query *should* use the infoschema of the txn start ts, but it's still safe to use the latest.
+			// If now it's 12:00:00, the ts of the latest infoschema might be 11:59:30 or 11:52:12 or anything.
+			// Say, default GC interval is 10min, the ts of the latest infoschema is 11:52:12.
+			// Then the valid lifetime range on infoschema API become [11:52:12, 12:12:12) using latest infoschema,
+			// but it should be [12:00:00, 12:10:00) if using the snapshot infoschema.
+			e.is = sctx.GetInfoSchema().(infoschema.InfoSchema)
+		}
+
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			err = e.setDataFromSchemata(sctx)
@@ -177,7 +196,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(ctx, sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, e.is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:

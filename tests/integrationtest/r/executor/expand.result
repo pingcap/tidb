@@ -538,7 +538,7 @@ FROM
 GROUP BY T0.DATE WITH ROLLUP;
 id	estRows	task	access object	operator info
 Projection_18	1.00	root		Column#6
-└─Apply_20	1.00	root		CARTESIAN left outer join
+└─Apply_20	1.00	root		CARTESIAN left outer join, left side:HashAgg_21
   ├─HashAgg_21(Build)	1.00	root		group by:Column#3, gid, funcs:firstrow(Column#1)->Column#1
   │ └─Expand_24	1.00	root		level-projection:[Column#1, <nil>->Column#3, 0->gid],[Column#1, Column#3, 1->gid]; schema: [Column#1,Column#3,gid]
   │   └─Projection_26	1.00	root		2024-09-15->Column#1, 2024-09-15->Column#3
@@ -570,7 +570,7 @@ FROM  (select tr.a as DATE from tr) T0
 GROUP BY T0.DATE WITH ROLLUP;
 id	estRows	task	access object	operator info
 Projection_18	8000.00	root		Column#7
-└─Apply_20	8000.00	root		CARTESIAN left outer join
+└─Apply_20	8000.00	root		CARTESIAN left outer join, left side:HashAgg_21
   ├─HashAgg_21(Build)	8000.00	root		group by:Column#4, gid, funcs:firstrow(executor__expand.tr.a)->executor__expand.tr.a
   │ └─Expand_25	10000.00	root		level-projection:[executor__expand.tr.a, <nil>->Column#4, 0->gid],[executor__expand.tr.a, Column#4, 1->gid]; schema: [executor__expand.tr.a,Column#4,gid]
   │   └─Projection_27	10000.00	root		executor__expand.tr.a, executor__expand.tr.a->Column#4
