@@ -362,4 +362,7 @@ var funcName2Alias = map[string]string{
 	"vec_l2_norm":                ast.VecL2Norm,
 	"vec_from_text":              ast.VecFromText,
 	"vec_as_text":                ast.VecAsText,
+
+	// oracle functions.
+	"to_date": ast.ToDate,
 }

@@ -99,6 +99,7 @@ var (
 	_ functionClass = &fromUnixTimeFunctionClass{}
 	_ functionClass = &getFormatFunctionClass{}
 	_ functionClass = &strToDateFunctionClass{}
+	_ functionClass = &toDateFunctionClass{}
 	_ functionClass = &sysDateFunctionClass{}
 	_ functionClass = &currentDateFunctionClass{}
 	_ functionClass = &currentTimeFunctionClass{}
@@ -1892,6 +1893,39 @@ func (b *builtinGetFormatSig) evalString(ctx EvalContext, row chunk.Row) (string
 	return res, false, nil
 }
 
+type toDateFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toDateFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinStrToDateDatetimeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_StrToDateDatetime)
+	return sig, nil
+}
+
+func convertFormatFromOracelToMysql(format string) string {
+	re := regexp.MustCompile(`(?i)YYYY`)
+	newFormat := re.ReplaceAllString(format, "%Y")
+	re = regexp.MustCompile(`(?i)MM`)
+	newFormat = re.ReplaceAllString(newFormat, "%m")
+	re = regexp.MustCompile(`(?i)DD`)
+	newFormat = re.ReplaceAllString(newFormat, "%d")
+	re = regexp.MustCompile(`(?i)hh24:mi:ss`)
+	newFormat = re.ReplaceAllString(newFormat, "%H:%i:%s")
+
+	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
+	return newFormat
+}
+
 type strToDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -2002,10 +2036,13 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+
 	format, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+	format = convertFormatFromOracelToMysql(format)
+
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
