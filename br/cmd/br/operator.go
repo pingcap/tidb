@@ -125,5 +125,7 @@ func newChecksumCommand() *cobra.Command {
 			return operator.RunChecksumTable(ctx, tidbGlue, cfg)
 		},
 	}
+	task.DefineFilterFlags(cmd, []string{"!*.*"}, false)
+	operator.DefineFlagsForChecksumTableConfig(cmd.Flags())
 	return cmd
 }

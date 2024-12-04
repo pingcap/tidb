@@ -6,10 +6,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/spf13/pflag"
+)
+
+const (
+	flagTableConcurrency = "table-concurrency"
 )
 
 type PauseGcConfig struct {
@@ -197,8 +202,14 @@ type ChecksumTableConfig struct {
 }
 
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
+	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
 }
 
-func (cfg *ChecksumTableConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *ChecksumTableConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return
+	}
 	return cfg.Config.ParseFromFlags(flags)
 }

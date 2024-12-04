@@ -133,13 +133,19 @@ func (c *checksumTableCtx) loadOldTableIDs(ctx context.Context) (res []*metautil
 
 	metaReader := metautil.NewMetaReader(&backupMeta, strg, &c.cfg.CipherInfo)
 
-	tblCh := make(chan *metautil.Table)
-	if err := metaReader.ReadSchemasFiles(ctx, tblCh, metautil.SkipFiles, metautil.SkipStats); err != nil {
-		return nil, errors.Annotate(err, "failed to read schema files")
-	}
+	tblCh := make(chan *metautil.Table, 1024)
+	errCh := make(chan error, 1)
+	go func() {
+		if err := metaReader.ReadSchemasFiles(ctx, tblCh, metautil.SkipFiles, metautil.SkipStats); err != nil {
+			errCh <- errors.Annotate(err, "failed to read schema files")
+		}
+		close(tblCh)
+	}()
 
 	for {
 		select {
+		case err := <-errCh:
+			return nil, err
 		case tbl, ok := <-tblCh:
 			if !ok {
 				return
@@ -252,6 +258,10 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 			resultsMu.Unlock()
 			return err
 		})
+	}
+
+	if err := eg.Wait(); err != nil {
+		return nil, err
 	}
 
 	return results, nil
