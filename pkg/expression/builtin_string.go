@@ -3950,9 +3950,6 @@ func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		idx = findLastOccurrence(str, substr, int(-position), int(occurrences))
 	}
 
-	if idx == -1 {
-		return 0, false, nil
-	}
 	return int64(idx + 1), false, nil
 }
 
