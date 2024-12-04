@@ -855,6 +855,7 @@ timestamp
 timestampadd
 timestampdiff
 to_base64
+to_date
 to_days
 to_number
 to_seconds

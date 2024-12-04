@@ -381,7 +381,8 @@ const (
 	LastVal = "lastval"
 	SetVal  = "setval"
 
-	// Oracle functions.
+	// oracle functions.
+	ToDate = "to_date"
 	ToNumber = "to_number"
 )
 
