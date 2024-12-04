@@ -1298,6 +1298,12 @@ func (bc *Client) handleFineGrained(
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
 
+	// inject a disconnect failpoint
+	failpoint.Inject("disconnect", func(_ failpoint.Value) {
+		logutil.CL(ctx).Warn("This is a injected disconnection error")
+		err = berrors.ErrFailedToConnect
+	})
+
 	if err != nil {
 		if berrors.Is(err, berrors.ErrFailedToConnect) {
 			// When the leader store is died,
