@@ -3366,8 +3366,7 @@ func TestTimeBuiltin(t *testing.T) {
 	for _, test := range tidbBoundedStalenessTests {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectSafeTS",
 			fmt.Sprintf("return(%v)", test.injectSafeTS)))
-
-			tk.MustQuery(test.sql).Check(testkit.Rows(test.expect))
+		tk.MustQuery(test.sql).Check(testkit.Rows(test.expect))
 	}
 	failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectSafeTS")
 	// test whether tidb_bounded_staleness is deterministic
