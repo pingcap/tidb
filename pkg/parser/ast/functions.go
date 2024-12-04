@@ -381,7 +381,10 @@ const (
 	LastVal = "lastval"
 	SetVal  = "setval"
 
-	// oracle functions
+	// oracle functions.
+	ToDate    = "to_date"
+	LastMonth = "last_month"
+
 	MonthsBetween = "months_between"
 )
 

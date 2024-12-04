@@ -3708,3 +3708,27 @@ func TestCurrentTso(t *testing.T) {
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	require.Equal(t, itso, n, v.Kind())
 }
+
+func TestLastMonth(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		param  string
+		expect string
+	}{
+		{"2020-01-01", "2019-12-31"},
+		{"2020-02-01", "2020-01-31"},
+		{"2020-12-31", "2020-11-30"},
+		{"2020-05-05", "2020-04-30"},
+	}
+
+	fc := funcs[ast.LastMonth]
+	for _, test := range tests {
+		dat := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(ctx, datumsToConstants(dat))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}
