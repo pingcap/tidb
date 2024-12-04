@@ -123,7 +123,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats.RegisterStats(1, s1)
 	stmtStats.RegisterStats(1, &s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())

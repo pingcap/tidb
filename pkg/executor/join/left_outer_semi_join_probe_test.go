@@ -382,7 +382,7 @@ func testLeftOuterSemiJoinProbeOtherCondition(t *testing.T, isLeftOuter bool) {
 	}
 }
 
-func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLefterOuter bool) {
+func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLeftOuter bool) {
 	intTp := types.NewFieldType(mysql.TypeLonglong)
 	intTp.AddFlag(mysql.NotNullFlag)
 	nullableIntTp := types.NewFieldType(mysql.TypeLonglong)
@@ -407,21 +407,21 @@ func testLeftOuterSemiJoinProbeWithSel(t *testing.T, isLefterOuter bool) {
 	otherCondition = append(otherCondition, sf)
 
 	var joinType logicalop.JoinType
-	if isLefterOuter {
+	if isLeftOuter {
 		joinType = logicalop.LeftOuterSemiJoin
 	} else {
 		joinType = logicalop.SemiJoin
 	}
 
 	rightAsBuildSide := []bool{true}
-	if !isLefterOuter {
+	if !isLeftOuter {
 		rightAsBuildSide = append(rightAsBuildSide, false)
 	}
 
 	simpleFilter := createSimpleFilter(t)
 
 	hasFilter := []bool{false}
-	if isLefterOuter {
+	if isLeftOuter {
 		hasFilter = append(hasFilter, true)
 	}
 

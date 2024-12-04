@@ -328,7 +328,7 @@ a	b	c	d	a	b	c	d
 3	333	3.3000000000	13	3	333	3.3000000000	13
 explain  format = 'brief'select /*+ inl_merge_join(t1,t2) */ t2.a, t2.c, t2.d from t t1 left join t t2 on t1.a = t2.c;
 id	estRows	task	access object	operator info
-HashJoin	3.00	root		left outer join, equal:[eq(Column#9, planner__core__casetest__index__index.t.c)]
+HashJoin	3.00	root		left outer join, left side:Projection, equal:[eq(Column#9, planner__core__casetest__index__index.t.c)]
 ├─Projection(Build)	3.00	root		cast(planner__core__casetest__index__index.t.a, decimal(10,0) BINARY)->Column#9
 │ └─IndexReader	3.00	root		index:IndexFullScan
 │   └─IndexFullScan	3.00	cop[tikv]	table:t1, index:c(c)	keep order:false
