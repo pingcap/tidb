@@ -953,10 +953,11 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
 		// both, and it also applies to any full table scan in the query.
+		minRows := max(MaxPenaltyRowCount, rows)
 		if hasPartitionScan {
-			return max(MaxPenaltyRowCount, rows)
+			return minRows
 		}
-		return max(MaxPenaltyRowCount, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+		return max(minRows, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
 	}
 	return float64(0)
 }
