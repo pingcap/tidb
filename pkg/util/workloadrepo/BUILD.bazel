@@ -30,6 +30,7 @@ go_library(
         "//pkg/util/slice",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
+        "//pkg/util/stmtsummary",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@io_etcd_go_etcd_client_v3//:client",

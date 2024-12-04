@@ -81,6 +81,7 @@ type stmtSummaryByDigestMap struct {
 	// These options are set by global system variables and are accessed concurrently.
 	optEnabled             *atomic2.Bool
 	optEnableInternalQuery *atomic2.Bool
+	optHistoryEnabled      *atomic2.Bool
 	optMaxStmtCount        *atomic2.Uint32
 	optRefreshInterval     *atomic2.Int64
 	optHistorySize         *atomic2.Int32
@@ -293,6 +294,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 		optMaxStmtCount:        atomic2.NewUint32(uint32(maxStmtCount)),
 		optEnabled:             atomic2.NewBool(true),
 		optEnableInternalQuery: atomic2.NewBool(false),
+		optHistoryEnabled:      atomic2.NewBool(true),
 		optRefreshInterval:     atomic2.NewInt64(1800),
 		optHistorySize:         atomic2.NewInt32(24),
 		optMaxSQLLength:        atomic2.NewInt32(4096),
@@ -322,7 +324,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	})
 
 	intervalSeconds := ssMap.refreshInterval()
-	historySize := ssMap.historySize()
+	historySize := 0
+	if ssMap.historyEnabled() {
+		historySize = ssMap.historySize()
+	}
 
 	key := &stmtSummaryByDigestKey{
 		schemaName:        sei.SchemaName,
@@ -395,6 +400,22 @@ func (ssMap *stmtSummaryByDigestMap) clearInternal() {
 		if summary.(*stmtSummaryByDigest).isInternal {
 			ssMap.summaryMap.Delete(key)
 		}
+	}
+}
+
+// clearHistory removes history for all statement summaries, leaving only the current interval.
+func (ssMap *stmtSummaryByDigestMap) clearHistory() {
+	ssMap.Lock()
+	values := ssMap.summaryMap.Values()
+	ssMap.Unlock()
+
+	for _, value := range values {
+		ssbd := value.(*stmtSummaryByDigest)
+		ssbd.Lock()
+		newHistory := list.New()
+		newHistory.PushFront(ssbd.history.Front().Value)
+		ssbd.history = newHistory
+		ssbd.Unlock()
 	}
 }
 
@@ -479,6 +500,21 @@ func (ssMap *stmtSummaryByDigestMap) SetEnabledInternalQuery(value bool) error {
 // EnabledInternal returns whether internal statement summary is enabled.
 func (ssMap *stmtSummaryByDigestMap) EnabledInternal() bool {
 	return ssMap.optEnableInternalQuery.Load()
+}
+
+// SetHistoryEnabled enables or disables maintaining the history of statement summary intervals.
+// When history is disabled, any existing history is cleared.
+func (ssMap *stmtSummaryByDigestMap) SetHistoryEnabled(value bool) error {
+	ssMap.optHistoryEnabled.Store(value)
+	if !value {
+		ssMap.clearHistory()
+	}
+	return nil
+}
+
+// historyEnabled returns whether the history of statement summary intervals is maintained.
+func (ssMap *stmtSummaryByDigestMap) historyEnabled() bool {
+	return ssMap.optHistoryEnabled.Load()
 }
 
 // SetRefreshInterval sets refreshing interval in ssMap.sysVars.
