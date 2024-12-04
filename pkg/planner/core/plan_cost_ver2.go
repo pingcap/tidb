@@ -939,7 +939,7 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
 	hasPartitionScan := false
 	if p.PlanPartInfo != nil {
-		if p.PlanPartInfo.PruningConds != nil && len(p.PlanPartInfo.PruningConds) > 0 {
+		if len(p.PlanPartInfo.PruningConds) > 0 {
 			hasPartitionScan = true
 		}
 	}
