@@ -937,7 +937,12 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	}
 	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
-	hasPartitionScan := p.Table.Partition != nil && p.PlanPartInfo != nil && len(p.PlanPartInfo.PruningConds) > 0
+	hasPartitionScan := false
+	if p.PlanPartInfo != nil {
+		if p.PlanPartInfo.PruningConds != nil && len(p.PlanPartInfo.PruningConds) > 0 {
+			hasPartitionScan = true
+		}
+	}
 
 	// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
 	// penalty is applied to a full table scan (not range scan). This may also penalize a
@@ -948,9 +953,10 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
 		// both, and it also applies to any full table scan in the query.
-		if !hasPartitionScan && !hasIndexForce {
-			return max(MaxPenaltyRowCount, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+		if hasPartitionScan {
+			return max(MaxPenaltyRowCount, rows)
 		}
+		return max(MaxPenaltyRowCount, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
 	}
 	return float64(0)
 }
