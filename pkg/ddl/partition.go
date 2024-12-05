@@ -87,7 +87,6 @@ func checkAddPartition(jobCtx *jobContext, job *model.Job) (*model.TableInfo, *m
 	return tblInfo, partInfo, []model.PartitionDefinition{}, nil
 }
 
-// TODO: Move this into reorganize partition!
 func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetTablePartitionArgs(job)
 	if err != nil {
