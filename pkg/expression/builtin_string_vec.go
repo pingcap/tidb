@@ -2258,10 +2258,8 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		occurrence := int64(1)
 		if len(b.args) >= 4 {
 			occurrence = occurrences.GetInt64(i)
-			if occurrence < 0 {
+			if occurrence <= 0 {
 				return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
-			} else if occurrence == 0 {
-				occurrence = 1
 			}
 		}
 

@@ -1800,6 +1800,12 @@ func TestInstr(t *testing.T) {
 		{[]any{"aaaa", "aa", 0, 1}, 0},
 		{[]any{"aaaa", "aa", 2, 1}, 2},
 		{[]any{"aaaa", "aa", 1, 4}, 0},
+
+		// non-integer arguments
+		{[]any{"aaaa", "aa", 2.1, 2}, 3},
+		{[]any{"aaaa", "aa", 1.1, "2.2"}, 2},
+
+		// utf8
 		{[]any{"中文和中文", "中文", 2, 1}, 4},
 		{[]any{"中文和中文", "中文", -2, 2}, 1},
 		{[]any{"中文和中文", "中文", -1, 1}, 4},
