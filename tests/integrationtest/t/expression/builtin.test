@@ -1509,6 +1509,10 @@ select uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4
     uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
     uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
     uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}';
+select get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+	get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+	get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+	get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}';
 select sleep(1);
 select sleep(0);
 select sleep('a');

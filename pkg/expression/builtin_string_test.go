@@ -2759,3 +2759,26 @@ func TestCIWeightString(t *testing.T) {
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
 	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
 }
+
+func TestToNumber(t *testing.T) {
+	ctx := createContext(t)
+	tbl := []struct {
+		Args []any
+		Want any
+	}{
+		{[]any{"1"}, float64(1)},
+		{[]any{"1.5"}, 1.5},
+		{[]any{"bar"}, nil},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+	toNumber := funcs[ast.ToNumber]
+	for i, c := range Dtbl {
+		f, err := toNumber.getFunction(ctx, datumsToConstants(c["Args"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		got, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equalf(t, tbl[i].Want, got.GetValue(), "[%d]: args: %v", i, c["Args"])
+	}
+}

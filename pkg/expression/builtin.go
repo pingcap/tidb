@@ -699,6 +699,7 @@ var funcs = map[string]functionClass{
 	ast.Date:             &dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}},
 	ast.DateLiteral:      &dateLiteralFunctionClass{baseFunctionClass{ast.DateLiteral, 1, 1}},
 	ast.DateFormat:       &dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}},
+	ast.LastMonth:        &lastMonthFunctionClass{baseFunctionClass{ast.LastMonth, 1, 1}},
 	ast.DateDiff:         &dateDiffFunctionClass{baseFunctionClass{ast.DateDiff, 2, 2}},
 	ast.Day:              &dayOfMonthFunctionClass{baseFunctionClass{ast.Day, 1, 1}},
 	ast.DayName:          &dayNameFunctionClass{baseFunctionClass{ast.DayName, 1, 1}},
@@ -725,6 +726,7 @@ var funcs = map[string]functionClass{
 	ast.SecToTime:        &secToTimeFunctionClass{baseFunctionClass{ast.SecToTime, 1, 1}},
 	ast.Second:           &secondFunctionClass{baseFunctionClass{ast.Second, 1, 1}},
 	ast.StrToDate:        &strToDateFunctionClass{baseFunctionClass{ast.StrToDate, 2, 2}},
+	ast.ToDate:           &toDateFunctionClass{baseFunctionClass{ast.ToDate, 2, 2}},
 	ast.SubTime:          &subTimeFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}},
 	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
 	ast.SysTimestamp:     &nowFunctionClass{baseFunctionClass{ast.SysTimestamp, 0, 1}},
@@ -857,6 +859,7 @@ var funcs = map[string]functionClass{
 	ast.NameConst:       &nameConstFunctionClass{baseFunctionClass{ast.NameConst, 2, 2}},
 	ast.ReleaseAllLocks: &releaseAllLocksFunctionClass{baseFunctionClass{ast.ReleaseAllLocks, 0, 0}},
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
+	ast.GetGUID:         &getGUIDFunctionClass{baseFunctionClass{ast.GetGUID, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
 	ast.VitessHash:      &vitessHashFunctionClass{baseFunctionClass{ast.VitessHash, 1, 1}},
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
@@ -987,6 +990,9 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// Oracle functions
+	ast.ToNumber: &toNumberFunctionClass{baseFunctionClass{ast.ToNumber, 1, 1}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

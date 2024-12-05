@@ -867,12 +867,18 @@ func (w *worker) runOneJobStep(
 							if latestJob.IsAlterable() {
 								job.ReorgMeta.SetConcurrency(latestJob.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())))
 								job.ReorgMeta.SetBatchSize(latestJob.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())))
+								job.ReorgMeta.SetMaxWriteSpeed(latestJob.ReorgMeta.GetMaxWriteSpeedOrDefault())
 							}
 						}
 					}
 				}
 			})
 		}
+	}
+	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
+	// the unmarshalled job will have a nil value for the ReorgMeta field.
+	if w.tp == addIdxWorker && job.ReorgMeta == nil {
+		job.ReorgMeta = &model.DDLReorgMeta{}
 	}
 
 	prevState := job.State
