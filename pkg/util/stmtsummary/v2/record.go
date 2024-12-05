@@ -180,7 +180,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	tableNames := buffer.String()
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
-		//TODO: remove this comment, It comes here only when the plan is 'Point_Get'.
+		// It comes here only when the plan is 'Point_Get'.
 		planDigest = info.LazyInfo.GetPlanDigest()
 	}
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
@@ -615,12 +615,10 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 	sc.IndexNames = indexes
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName: "schema_name",
-		//OriginalSQL:    stringutil.StringerStr("original_sql1"),
-		NormalizedSQL: "normalized_sql",
-		Digest:        digest,
-		PlanDigest:    "plan_digest",
-		//PlanGenerator:  func() (string, string, any) { return "", "", nil },
+		SchemaName:     "schema_name",
+		NormalizedSQL:  "normalized_sql",
+		Digest:         digest,
+		PlanDigest:     "plan_digest",
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,

@@ -572,7 +572,7 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 
 	planDigest := sei.PlanDigest
 	if len(planDigest) == 0 {
-		//TODO: remove this comment, It comes here only when the plan is 'Point_Get'.
+		// It comes here only when the plan is 'Point_Get'.
 		planDigest = sei.LazyInfo.GetPlanDigest()
 	}
 	ssbd.schemaName = sei.SchemaName

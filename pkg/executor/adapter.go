@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"math"
 	"runtime/trace"
 	"strconv"
@@ -73,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -2021,7 +2021,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 
