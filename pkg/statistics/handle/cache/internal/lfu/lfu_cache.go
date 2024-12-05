@@ -75,7 +75,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 }
 
 // adjustMemCost adjusts the memory cost according to the total memory cost.
-// When the total memory cost is 0, the memory cost is set to 15% of the total memory.
+// When the total memory cost is 0, the memory cost is set to 20% of the total memory.
 func adjustMemCost(totalMemCost int64) (result int64, err error) {
 	if totalMemCost == 0 {
 		memTotal, err := memory.MemTotal()
