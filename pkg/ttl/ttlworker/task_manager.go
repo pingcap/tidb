@@ -416,6 +416,23 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 			return errors.WithStack(errTooManyRunningTasks)
 		}
 
+		if task.OwnerID != "" {
+			logutil.Logger(m.ctx).Info(
+				"try to lock a heartbeat timeout task",
+				zap.String("jobID", task.JobID),
+				zap.Int64("scanID", task.ScanID),
+				zap.String("prevOwner", task.OwnerID),
+				zap.Time("lastHeartbeat", task.OwnerHBTime),
+			)
+		} else if task.State != nil && task.State.PreviousOwner != "" {
+			logutil.Logger(m.ctx).Info(
+				"try to lock a task resigned from another instance",
+				zap.String("jobID", task.JobID),
+				zap.Int64("scanID", task.ScanID),
+				zap.String("prevOwner", task.State.PreviousOwner),
+			)
+		}
+
 		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
 		sql, args := setTTLTaskOwnerSQL(task.JobID, task.ScanID, m.id, now)
 		_, err = se.ExecuteSQL(ctx, sql, args...)
