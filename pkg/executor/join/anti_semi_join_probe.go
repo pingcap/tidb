@@ -103,11 +103,9 @@ func (a *antiSemiJoinProbe) resetProbeState() {
 
 	if !a.isLeftSideBuild {
 		if a.ctx.spillHelper.isSpillTriggered() {
-			for i := range a.chunkRows {
-				if a.isProbeRowSpilled(i) {
-					// We see rows that have be spilled as matched rows
-					a.isMatchedRows[i] = true
-				}
+			for _, idx := range a.spilledIdx {
+				// We see rows that have be spilled as matched rows
+				a.isMatchedRows[idx] = true
 			}
 		}
 	}
@@ -133,11 +131,6 @@ func (a *antiSemiJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	a.resetProbeState()
 	return nil
-}
-
-func (a *antiSemiJoinProbe) isProbeRowSpilled(probeRowIdx int) bool {
-	partIndex := generatePartitionIndex(a.matchedRowsHashValue[probeRowIdx], a.ctx.partitionMaskOffset)
-	return a.ctx.spillHelper.isPartitionSpilled(int(partIndex))
 }
 
 func (a *antiSemiJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) (ok bool, _ *hashjoinWorkerResult) {
@@ -312,7 +305,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Ch
 				a.matchedRowsHeaders[a.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, a.matchedRowsHashValue[a.currentProbeRow])
 			}
 		} else {
-			if a.ctx.spillHelper.isSpillTriggered() && a.isProbeRowSpilled(a.currentProbeRow) {
+			if a.ctx.spillHelper.isSpillTriggered() && a.isMatchedRows[a.currentProbeRow] {
 				// We see rows that have be spilled as matched rows
 				matched = true
 			}
