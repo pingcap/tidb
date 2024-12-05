@@ -696,6 +696,13 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
+type Traffic struct {
+	baseSchemaProducer
+	OpType  ast.TrafficOpType
+	Options []*ast.TrafficOption
+	Dir     string
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
