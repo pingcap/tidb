@@ -53,6 +53,9 @@ func (sg *statsGlobalImpl) MergePartitionStats2GlobalStatsByTableID(sc sessionct
 	info *statstypes.GlobalStatsInfo,
 	physicalID int64,
 ) (err error) {
+	if len(info.HistIDs) == 0 {
+		return nil
+	}
 	globalStats, err := MergePartitionStats2GlobalStatsByTableID(sc, sg.statsHandler, opts, is, physicalID, info.IsIndex == 1, info.HistIDs)
 	if err != nil {
 		if types.ErrPartitionStatsMissing.Equal(err) || types.ErrPartitionColumnStatsMissing.Equal(err) {

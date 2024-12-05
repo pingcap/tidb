@@ -1054,7 +1054,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
-		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
+		tk.MustExec(fmt.Sprintf("analyze table %v all columns", tbl))
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
