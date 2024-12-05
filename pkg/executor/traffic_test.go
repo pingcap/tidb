@@ -141,7 +141,7 @@ func TestTrafficError(t *testing.T) {
 
 	// tiproxy no response
 	m["127.0.0.1:0"] = &infosync.TiProxyServerInfo{IP: "127.0.0.1", StatusPort: "0"}
-	require.ErrorContains(t, exec.Next(tempCtx, nil), "can't assign requested address")
+	require.ErrorContains(t, exec.Next(tempCtx, nil), "dial tcp")
 
 	// tiproxy responds with error
 	httpHandler := &mockHTTPHandler{t: t, httpOK: false}
