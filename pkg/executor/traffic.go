@@ -44,6 +44,7 @@ type TrafficCaptureExec struct {
 	Args map[string]string
 }
 
+// Next implements the Executor Next interface.
 func (e *TrafficCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	form := getForm(e.Args)
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/capture")
@@ -55,25 +56,28 @@ type TrafficReplayExec struct {
 	Args map[string]string
 }
 
+// Next implements the Executor Next interface.
 func (e *TrafficReplayExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	form := getForm(e.Args)
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/replay")
 }
 
-// TrafficReplayExec sends cancel traffic job requests to TiProxy.
+// TrafficCancelExec sends cancel traffic job requests to TiProxy.
 type TrafficCancelExec struct {
 	exec.BaseExecutor
 }
 
+// Next implements the Executor Next interface.
 func (e *TrafficCancelExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, nil, http.MethodPost, "api/traffic/cancel")
 }
 
-// TrafficReplayExec sends show traffic job requests to TiProxy.
+// TrafficShowExec sends show traffic job requests to TiProxy.
 type TrafficShowExec struct {
 	exec.BaseExecutor
 }
 
+// Next implements the Executor Next interface.
 func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, nil, http.MethodGet, "api/traffic/show")
 }

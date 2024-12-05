@@ -102,7 +102,7 @@ func TestTrafficForm(t *testing.T) {
 	ctx := context.TODO()
 	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	builder, _ := plannercore.NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	httpHandler := &mockHttpHandler{t: t, httpOK: true}
+	httpHandler := &mockHTTPHandler{t: t, httpOK: true}
 	server, port := runServer(t, httpHandler)
 	defer server.Close()
 	ctx = fillCtxWithTiProxyAddr(ctx, []int{port})
@@ -144,14 +144,14 @@ func TestTrafficError(t *testing.T) {
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "can't assign requested address")
 
 	// tiproxy responds with error
-	httpHandler := &mockHttpHandler{t: t, httpOK: false}
+	httpHandler := &mockHTTPHandler{t: t, httpOK: false}
 	server, port := runServer(t, httpHandler)
 	defer server.Close()
 	tempCtx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	require.ErrorContains(t, exec.Next(tempCtx, nil), "500 Internal Server Error")
 }
 
-type mockHttpHandler struct {
+type mockHTTPHandler struct {
 	t *testing.T
 	sync.Mutex
 	form   url.Values
@@ -160,25 +160,25 @@ type mockHttpHandler struct {
 	httpOK bool
 }
 
-func (handler *mockHttpHandler) getForm() url.Values {
+func (handler *mockHTTPHandler) getForm() url.Values {
 	handler.Lock()
 	defer handler.Unlock()
 	return handler.form
 }
 
-func (handler *mockHttpHandler) getMethod() string {
+func (handler *mockHTTPHandler) getMethod() string {
 	handler.Lock()
 	defer handler.Unlock()
 	return handler.method
 }
 
-func (handler *mockHttpHandler) getPath() string {
+func (handler *mockHTTPHandler) getPath() string {
 	handler.Lock()
 	defer handler.Unlock()
 	return handler.path
 }
 
-func (handler *mockHttpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (handler *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler.Lock()
 	defer handler.Unlock()
 	handler.method = r.Method
