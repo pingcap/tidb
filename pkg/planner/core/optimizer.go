@@ -21,6 +21,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -255,6 +256,11 @@ func doOptimize(
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
+
+	if strings.Contains(sessVars.StmtCtx.OriginalSQL, "EXPLAIN FORMAT='hint'") {
+		panic("parsing hints panic")
+	}
+
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
