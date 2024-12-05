@@ -25,7 +25,7 @@ import (
 type antiSemiJoinProbe struct {
 	baseSemiJoin
 
-	// After processing all probe rows, we will find which rows will be outputed
+	// After processing all probe rows, we will find which rows will be outputted
 	outputProbeRowsSelected bool
 }
 
