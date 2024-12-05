@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -180,22 +179,19 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	}
 	tableNames := buffer.String()
 	planDigest := info.PlanDigest
-	if info.PlanDigestGen != nil && len(planDigest) == 0 {
-		// It comes here only when the plan is 'Point_Get'.
-		planDigest = info.PlanDigestGen()
+	if len(planDigest) == 0 {
+		//TODO: remove this comment, It comes here only when the plan is 'Point_Get'.
+		planDigest = info.LazyInfo.GetPlanDigest()
 	}
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, _ := info.PlanGenerator()
+	samplePlan, planHint, _ := info.LazyInfo.GetEncodedPlan()
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := ""
-	if info.BinaryPlanGenerator != nil {
-		binPlan = info.BinaryPlanGenerator()
-		if len(binPlan) > MaxEncodedPlanSizeInBytes {
-			binPlan = plancodec.BinaryPlanDiscardedEncoded
-		}
+	binPlan := info.LazyInfo.GetBinaryPlan()
+	if len(binPlan) > MaxEncodedPlanSizeInBytes {
+		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
@@ -205,7 +201,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		NormalizedSQL: info.NormalizedSQL,
 		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		SampleSQL:     formatSQL(info.OriginalSQL.String()),
+		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -257,15 +253,17 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.MaxCompileLatency = info.CompileLatency
 	}
 	// Coprocessor
-	numCopTasks := int64(info.CopTasks.NumCopTasks)
-	r.SumNumCopTasks += numCopTasks
-	if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
-		r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
-		r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
-	}
-	if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
-		r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
-		r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+	if info.CopTasks != nil {
+		numCopTasks := int64(info.CopTasks.NumCopTasks)
+		r.SumNumCopTasks += numCopTasks
+		if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
+			r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
+			r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
+		}
+		if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
+			r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
+			r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
+		}
 	}
 	// TiKV
 	r.SumProcessTime += info.ExecDetail.TimeDetail.ProcessTime
@@ -617,12 +615,12 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 	sc.IndexNames = indexes
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
-		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql1"),
-		NormalizedSQL:  "normalized_sql",
-		Digest:         digest,
-		PlanDigest:     "plan_digest",
-		PlanGenerator:  func() (string, string, any) { return "", "", nil },
+		SchemaName: "schema_name",
+		//OriginalSQL:    stringutil.StringerStr("original_sql1"),
+		NormalizedSQL: "normalized_sql",
+		Digest:        digest,
+		PlanDigest:    "plan_digest",
+		//PlanGenerator:  func() (string, string, any) { return "", "", nil },
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
@@ -638,7 +636,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{

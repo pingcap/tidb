@@ -464,14 +464,14 @@ func (s *SyncExecDetails) GetExecDetails() ExecDetails {
 }
 
 // CopTasksDetails returns some useful information of cop-tasks during execution.
-func (s *SyncExecDetails) CopTasksDetails() CopTasksDetails {
+func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	n := s.detailsSummary.NumCopTasks
-	d := CopTasksDetails{NumCopTasks: n}
 	if n == 0 {
-		return d
+		return nil
 	}
+	d := &CopTasksDetails{NumCopTasks: n}
 	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
 	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
 
@@ -1532,6 +1532,16 @@ func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 		e.rootStats[planID] = runtimeStats
 	}
 	return runtimeStats
+}
+
+func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	runtimeStats, exists := e.rootStats[planID]
+	if !exists {
+		return 0
+	}
+	return runtimeStats.GetActRows()
 }
 
 // GetCopStats gets the CopRuntimeStats specified by planID.
