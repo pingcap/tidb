@@ -1311,16 +1311,9 @@ func TestIssue18681(t *testing.T) {
 	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_test"
-<<<<<<< HEAD
-	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
+	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-=======
-	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
-	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
-	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
-	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
->>>>>>> 95b04c76703 (table: fix the issue that the default value for `BIT` column is wrong (#57303))
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()
