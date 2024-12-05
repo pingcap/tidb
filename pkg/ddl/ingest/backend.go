@@ -229,7 +229,7 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 		newTS, err = mgr.refreshTSAndUpdateCP()
 		if err == nil {
 			for _, ei := range bc.engines {
-				err = bc.backend.AllocTSAfterResetEngine(ei.uuid, newTS)
+				err = bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
 				if err != nil {
 					return false, false, err
 				}

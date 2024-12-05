@@ -98,7 +98,10 @@ type EngineConfig struct {
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
-	// will be set lazily.
+	// will be set lazily. This is used by local backend. This field will be written
+	// to engineMeta.TS and take effect in below cases:
+	// - engineManager.openEngine
+	// - engineManager.closeEngine only for an external engine
 	TS uint64
 }
 
