@@ -591,9 +591,9 @@ show builtins;
 Supported_builtin_functions
 abs
 acos
+add_month
 adddate
 addtime
-add_month
 aes_decrypt
 aes_encrypt
 and
