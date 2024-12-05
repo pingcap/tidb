@@ -32,7 +32,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/util",
         "//pkg/util",
         "//pkg/util/table-filter",
         "@com_github_google_btree//:btree",

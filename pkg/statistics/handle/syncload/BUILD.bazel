@@ -18,7 +18,6 @@ go_library(
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
-        "//pkg/table",
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/intest",
@@ -36,7 +35,7 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         ":syncload",
         "//pkg/config",

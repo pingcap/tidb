@@ -9,7 +9,7 @@ HashJoin	100000000.00	root		CARTESIAN inner join
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v);
 id	estRows	task	access object	operator info
-HashJoin	7992.00	root		CARTESIAN semi join, other cond:gt(executor__explain.t.v, executor__explain.t.v)
+HashJoin	7992.00	root		CARTESIAN semi join, left side:TableReader, other cond:gt(executor__explain.t.v, executor__explain.t.v)
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__explain.t.v))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -18,7 +18,7 @@ HashJoin	7992.00	root		CARTESIAN semi join, other cond:gt(executor__explain.t.v,
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2));
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		CARTESIAN semi join, other cond:in(executor__explain.t.v, plus(executor__explain.t.v, 1), plus(executor__explain.t.v, 2))
+HashJoin	8000.00	root		CARTESIAN semi join, left side:TableReader, other cond:in(executor__explain.t.v, plus(executor__explain.t.v, 1), plus(executor__explain.t.v, 2))
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -219,7 +219,7 @@ select @@last_plan_from_cache;
 0
 explain format = 'binary' select * from t;
 binary plan
-4QFYCtwBCg1UYWJsZVJlYWRlcl81EncKD1QBEVBGdWxsU2Nhbl80IQEAAAA4DU9BKQABAfBGiMNAOAJAAkoYChYKEWV4ZWN1dG9yX19leHBsYWluEgF0Uh5rZWVwIG9yZGVyOmZhbHNlLCBzdGF0czpwc2V1ZG9w//////8BAwQBeAEGBQEgASFVVVVVlSMTHWYoAUABUhRkYXRhOlQ2kgBIWhB0aW1lOjBzLCBsb29wczowcAVFAQE0AXj///////////8BGAE=
+9AFYCu8BCg1UYWJsZVJlYWRlcl81EncKD1QBEVBGdWxsU2Nhbl80IQEAAAA4DU9BKQABAfBGiMNAOAJAAkoYChYKEWV4ZWN1dG9yX19leHBsYWluEgF0Uh5rZWVwIG9yZGVyOmZhbHNlLCBzdGF0czpwc2V1ZG9w//////8BAwQBeAEGBQEgASFVVVVVlSMTHWYoAUABUhRkYXRhOlQ2kgA4WiN0aW1lOjBzLCBvcGVuBQkMY2xvcwkTHGxvb3BzOjBwBVgBATQBeP///////////wEYAQ==
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -346,7 +346,7 @@ id	estRows	task	access object	operator info
 Update_17	N/A	root		N/A
 └─Projection_28	8.00	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
   └─Selection_29	8.00	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#22, 0))
-    └─HashJoin_32	10.00	root		left outer join, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
+    └─HashJoin_32	10.00	root		left outer join, left side:IndexLookUp_84, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg_85(Build)	12.50	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#22, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
       │ └─IndexJoin_92	15.62	root		inner join, inner:IndexReader_91, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
       │   ├─IndexHashJoin_132(Build)	12.50	root		inner join, inner:IndexLookUp_129, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
