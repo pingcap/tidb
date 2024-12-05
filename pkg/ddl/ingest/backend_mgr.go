@@ -51,6 +51,7 @@ type BackendCtxMgr interface {
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
 		importConc int,
+		maxWriteSpeed int,
 		initTS uint64,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
@@ -118,6 +119,7 @@ func (m *litBackendCtxMgr) Register(
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	concurrency int,
+	maxWriteSpeed int,
 	initTS uint64,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
@@ -136,7 +138,7 @@ func (m *litBackendCtxMgr) Register(
 		logutil.Logger(ctx).Error(LitErrCreateDirFail, zap.Error(err))
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency)
+	cfg, err := genConfig(ctx, sortPath, m.memRoot, hasUnique, resourceGroupName, concurrency, maxWriteSpeed)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 		return nil, err

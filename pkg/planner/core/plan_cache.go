@@ -236,7 +236,7 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, binding, paramTypes)
 }
 
 func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
@@ -292,7 +292,8 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		return nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
-	return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
+	sctx.GetSessionVars().PlanCacheValue = pcv
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
@@ -326,7 +327,7 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey, binding string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -349,8 +350,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {
@@ -358,6 +359,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 		} else {
 			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
 		}
+		sctx.GetSessionVars().PlanCacheValue = cached
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

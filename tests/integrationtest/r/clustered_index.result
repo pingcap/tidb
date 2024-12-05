@@ -79,14 +79,14 @@ IndexReader_8	1860.39	root		index:IndexRangeScan_7
 └─IndexRangeScan_7	1860.39	cop[tikv]	table:tbl_0, index:idx_1(col_3)	range:[1981-09-15 00:00:00,+inf], keep order:false
 explain select tbl_2.col_14 , tbl_0.col_1 from with_cluster_index.tbl_2 right join with_cluster_index.tbl_0 on col_3 = col_11 ;
 id	estRows	task	access object	operator info
-MergeJoin_7	2533.51	root		right outer join, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3
+MergeJoin_7	2533.51	root		right outer join, left side:IndexReader_22, left key:with_cluster_index.tbl_2.col_11, right key:with_cluster_index.tbl_0.col_3
 ├─IndexReader_22(Build)	4509.00	root		index:IndexFullScan_21
 │ └─IndexFullScan_21	4509.00	cop[tikv]	table:tbl_2, index:idx_9(col_11)	keep order:true
 └─TableReader_24(Probe)	2244.00	root		data:TableFullScan_23
   └─TableFullScan_23	2244.00	cop[tikv]	table:tbl_0	keep order:true
 explain select tbl_2.col_14 , tbl_0.col_1 from wout_cluster_index.tbl_2 right join wout_cluster_index.tbl_0 on col_3 = col_11 ;
 id	estRows	task	access object	operator info
-HashJoin_22	2533.51	root		right outer join, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]
+HashJoin_22	2533.51	root		right outer join, left side:TableReader_44, equal:[eq(wout_cluster_index.tbl_2.col_11, wout_cluster_index.tbl_0.col_3)]
 ├─TableReader_41(Build)	2244.00	root		data:TableFullScan_40
 │ └─TableFullScan_40	2244.00	cop[tikv]	table:tbl_0	keep order:false
 └─TableReader_44(Probe)	4509.00	root		data:Selection_43

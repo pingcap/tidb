@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
@@ -37,6 +38,8 @@ type mockStorage struct {
 	opts      sync.Map
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
+
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
@@ -140,8 +143,18 @@ func (s *mockStorage) Close() error {
 }
 
 func (s *mockStorage) GetCodec() tikv.Codec {
+	if s.keyspaceMeta == nil {
+		pdClient := s.KVStore.GetPDClient()
+		pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+		return pdCodecCli.GetCodec()
+	}
+
+	// Get API V2 codec.
 	pdClient := s.KVStore.GetPDClient()
-	pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	pdCodecCli, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdClient, s.keyspaceMeta.Name)
+	if err != nil {
+		panic(err)
+	}
 	return pdCodecCli.GetCodec()
 }
 

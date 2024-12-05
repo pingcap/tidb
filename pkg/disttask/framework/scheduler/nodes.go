@@ -142,6 +142,7 @@ func (nm *NodeManager) refreshNodes(ctx context.Context, taskMgr TaskManager, sl
 	for _, node := range newNodes {
 		if node.CPUCount > 0 {
 			cpuCount = node.CPUCount
+			break
 		}
 	}
 	slotMgr.updateCapacity(cpuCount)

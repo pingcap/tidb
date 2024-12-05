@@ -818,10 +818,11 @@ var defaultSysVars = []*SysVar{
 			return vars.ScatterRegion, nil
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
-				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
+			lowerVal := strings.ToLower(normalizedValue)
+			if lowerVal != ScatterOff && lowerVal != ScatterTable && lowerVal != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", lowerVal, ScatterOff, ScatterTable, ScatterGlobal)
 			}
-			return normalizedValue, nil
+			return lowerVal, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
@@ -909,7 +910,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: strconv.Itoa(DefTiDBGOGCMaxValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			maxValue := TidbOptInt64(val, DefTiDBGOGCMaxValue)
 			gctuner.SetMaxGCPercent(uint32(maxValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
@@ -926,7 +927,7 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMinValue, Value: strconv.Itoa(DefTiDBGOGCMinValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			minValue := TidbOptInt64(val, DefTiDBGOGCMinValue)
 			gctuner.SetMinGCPercent(uint32(minValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()

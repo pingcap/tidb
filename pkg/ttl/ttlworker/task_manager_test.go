@@ -56,6 +56,16 @@ func (m *taskManager) RescheduleTasks(se session.Session, now time.Time) {
 	m.rescheduleTasks(se, now)
 }
 
+// ResizeScanWorkers is an exported version of resizeScanWorkers
+func (m *taskManager) ResizeScanWorkers(count int) error {
+	return m.resizeScanWorkers(count)
+}
+
+// ResizeDelWorkers is an exported version of resizeDeleteWorkers
+func (m *taskManager) ResizeDelWorkers(count int) error {
+	return m.resizeDelWorkers(count)
+}
+
 // ReportMetrics is an exported version of reportMetrics
 func (m *taskManager) ReportMetrics() {
 	m.reportMetrics()
@@ -81,9 +91,34 @@ func (m *taskManager) ReportTaskFinished(se session.Session, now time.Time, task
 	return m.reportTaskFinished(se, now, task)
 }
 
+// GetScanWorkers returns the scan workers of the task manager.
+func (m *taskManager) GetScanWorkers() []worker {
+	return m.scanWorkers
+}
+
 // SetResult sets the result of the task
 func (t *runningScanTask) SetResult(err error) {
 	t.result = t.ttlScanTask.result(err)
+}
+
+// SetCancel sets the cancel function of the task
+func (t *runningScanTask) SetCancel(cancel func()) {
+	t.cancel = cancel
+}
+
+// CheckInvalidTask is an exported version of checkInvalidTask
+func (m *taskManager) CheckInvalidTask(se session.Session) {
+	m.checkInvalidTask(se)
+}
+
+// UpdateHeartBeat is an exported version of updateHeartBeat
+func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
+	m.updateHeartBeat(ctx, se, now)
+}
+
+// UpdateHeartBeatForTask is an exported version of updateHeartBeatForTask
+func (m *taskManager) UpdateHeartBeatForTask(ctx context.Context, se session.Session, now time.Time, task *runningScanTask) error {
+	return m.updateHeartBeatForTask(ctx, se, now, task)
 }
 
 func TestResizeWorkers(t *testing.T) {

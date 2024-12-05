@@ -3,6 +3,7 @@
 package stream
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -347,8 +349,6 @@ func TestTruncateSafepoint(t *testing.T) {
 }
 
 func TestTruncateSafepointForGCS(t *testing.T) {
-	t.SkipNow()
-
 	require.True(t, intest.InTest)
 	ctx := context.Background()
 	opts := fakestorage.Options{
@@ -387,144 +387,6 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, ts, n, "failed at %d round: truncate safepoint mismatch", i)
 	}
-}
-
-func fakeMetaDatas(t *testing.T, helper *MetadataHelper, cf string) []*backuppb.Metadata {
-	ms := []*backuppb.Metadata{
-		{
-			StoreId: 1,
-			MinTs:   1500,
-			MaxTs:   2000,
-			Files: []*backuppb.DataFileInfo{
-				{
-					MinTs:                 1500,
-					MaxTs:                 2000,
-					Cf:                    cf,
-					MinBeginTsInDefaultCf: 800,
-				},
-			},
-		},
-		{
-			StoreId: 2,
-			MinTs:   3000,
-			MaxTs:   4000,
-			Files: []*backuppb.DataFileInfo{
-				{
-					MinTs:                 3000,
-					MaxTs:                 4000,
-					Cf:                    cf,
-					MinBeginTsInDefaultCf: 2000,
-				},
-			},
-		},
-		{
-			StoreId: 3,
-			MinTs:   5100,
-			MaxTs:   6100,
-			Files: []*backuppb.DataFileInfo{
-				{
-					MinTs:                 5100,
-					MaxTs:                 6100,
-					Cf:                    cf,
-					MinBeginTsInDefaultCf: 1800,
-				},
-			},
-		},
-	}
-
-	m2s := make([]*backuppb.Metadata, 0, len(ms))
-	for _, m := range ms {
-		raw, err := m.Marshal()
-		require.NoError(t, err)
-		m2, err := helper.ParseToMetadata(raw)
-		require.NoError(t, err)
-		m2s = append(m2s, m2)
-	}
-	return m2s
-}
-
-func fakeMetaDataV2s(t *testing.T, helper *MetadataHelper, cf string) []*backuppb.Metadata {
-	ms := []*backuppb.Metadata{
-		{
-			StoreId: 1,
-			MinTs:   1500,
-			MaxTs:   6100,
-			FileGroups: []*backuppb.DataFileGroup{
-				{
-					MinTs: 1500,
-					MaxTs: 6100,
-					DataFilesInfo: []*backuppb.DataFileInfo{
-						{
-							MinTs:                 1500,
-							MaxTs:                 2000,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 800,
-						},
-						{
-							MinTs:                 3000,
-							MaxTs:                 4000,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 2000,
-						},
-						{
-							MinTs:                 5200,
-							MaxTs:                 6100,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 1700,
-						},
-					},
-				},
-				{
-					MinTs: 1000,
-					MaxTs: 5100,
-					DataFilesInfo: []*backuppb.DataFileInfo{
-						{
-							MinTs:                 9000,
-							MaxTs:                 10000,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 0,
-						},
-						{
-							MinTs:                 3000,
-							MaxTs:                 4000,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 2000,
-						},
-					},
-				},
-			},
-			MetaVersion: backuppb.MetaVersion_V2,
-		},
-		{
-			StoreId: 2,
-			MinTs:   4100,
-			MaxTs:   5100,
-			FileGroups: []*backuppb.DataFileGroup{
-				{
-					MinTs: 4100,
-					MaxTs: 5100,
-					DataFilesInfo: []*backuppb.DataFileInfo{
-						{
-							MinTs:                 4100,
-							MaxTs:                 5100,
-							Cf:                    cf,
-							MinBeginTsInDefaultCf: 1800,
-						},
-					},
-				},
-			},
-			MetaVersion: backuppb.MetaVersion_V2,
-		},
-	}
-	m2s := make([]*backuppb.Metadata, 0, len(ms))
-	for _, m := range ms {
-		raw, err := m.Marshal()
-		require.NoError(t, err)
-		m2, err := helper.ParseToMetadata(raw)
-		require.NoError(t, err)
-		m2s = append(m2s, m2)
-	}
-	return m2s
 }
 
 func ff(minTS, maxTS uint64) *backuppb.DataFileGroup {
@@ -707,12 +569,26 @@ func pmt(s storage.ExternalStorage, path string, mt *backuppb.Metadata) {
 	}
 }
 
+func pmlt(s storage.ExternalStorage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
+	for i, g := range mt.FileGroups {
+		g.Path = logPath(i)
+		maxLen := uint64(0)
+		for _, sg := range g.DataFilesInfo {
+			if sg.RangeOffset+sg.Length > maxLen {
+				maxLen = sg.RangeOffset + sg.Length
+			}
+		}
+		os.WriteFile(g.Path, bytes.Repeat([]byte("0"), int(maxLen)), 0o644)
+	}
+	pmt(s, path, mt)
+}
+
 func pmig(s storage.ExternalStorage, num uint64, mt *backuppb.Migration) string {
 	numS := fmt.Sprintf("%08d", num)
-	if num == baseMigrationSN {
-		numS = baseMigrationName
-	}
 	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
+	if num == baseMigrationSN {
+		name = baseMigrationName
+	}
 	p := path.Join(migrationPrefix, name)
 
 	data, err := mt.Marshal()
@@ -2835,6 +2711,86 @@ func TestWithSimpleTruncate(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestAppendingMigs(t *testing.T) {
+	s := tmp(t)
+	ctx := context.Background()
+	mN := func(n uint64) string { return fmt.Sprintf("v1/backupmeta/%05d.meta", n) }
+	lN := func(mn int) func(n int) string {
+		return func(n int) string { return fmt.Sprintf("v1/%05d_%05d.log", mn, n) }
+	}
+	placeholder := func(pfx string) string {
+		path := path.Join(pfx, "monolith")
+		require.NoError(t, s.WriteFile(ctx, path, []byte("🪨")))
+		return path
+	}
+	// asp appends a span to the data file info.
+	asp := func(b *backuppb.DataFileInfo, span *backuppb.Span) *backuppb.DataFileInfo {
+		b.RangeOffset = span.Offset
+		b.RangeLength = span.Length
+		return b
+	}
+
+	pmlt(s, mN(1), mf(1, [][]*backuppb.DataFileInfo{
+		{
+			asp(fi(10, 20, DefaultCF, 0), sp(0, 10)),
+			asp(fi(15, 30, WriteCF, 8), sp(10, 15)),
+			asp(fi(25, 35, WriteCF, 11), sp(25, 10)),
+			asp(fi(42, 65, WriteCF, 20), sp(35, 10)),
+		},
+	}), lN(1))
+	pmlt(s, mN(2), mf(2, [][]*backuppb.DataFileInfo{
+		{
+			asp(fi(45, 64, WriteCF, 32), sp(0, 19)),
+			asp(fi(65, 70, WriteCF, 55), sp(19, 5)),
+			asp(fi(50, 60, DefaultCF, 0), sp(24, 10)),
+			asp(fi(80, 85, WriteCF, 72), sp(34, 5)),
+		},
+	}), lN(2))
+	est := MigerationExtension(s)
+
+	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
+	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
+	compaction := mCompaction(placeholder(cDir(1)), placeholder(aDir(1)), 15, 66)
+	del11 := mLogDel(mN(1), spans(lN(1)(0), 45, sp(0, 10), sp(10, 15)))
+	del12 := mLogDel(mN(1), spans(lN(1)(0), 45, sp(35, 10), sp(25, 10)))
+	del2 := mLogDel(mN(2), spans(lN(2)(0), 39, sp(24, 10)))
+	m := mig(compaction, del11, del2)
+	pmig(s, 1, m)
+	pmig(s, 2, mig(del12))
+
+	res := est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(65))))
+	require.NoError(t, multierr.Combine(res.Warnings...))
+	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(65), compaction, del2))
+	require.FileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
+
+	res = est.MergeAndMigrateTo(ctx, math.MaxInt, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+		return true
+	}), MMOptAlwaysRunTruncate(), MMOptAppendPhantomMigration(*mig(mTruncatedTo(100))))
+	require.NoError(t, multierr.Combine(res.Warnings...))
+	requireMigrationsEqual(t, res.NewBase, mig(mTruncatedTo(100)))
+	require.NoFileExists(t, filepath.Join(s.Base(), cDir(1), "monolith"))
+	require.NoFileExists(t, filepath.Join(s.Base(), mN(1)))
+	require.NoFileExists(t, filepath.Join(s.Base(), lN(1)(0)))
+}
+
+func TestUserAbort(t *testing.T) {
+	s := tmp(t)
+	ctx := context.Background()
+
+	pmig(s, 0, mig(mTruncatedTo(42)))
+	pmig(s, 1, mig(mTruncatedTo(96)))
+	est := MigerationExtension(s)
+	var res MergeAndMigratedTo
+	effs := est.DryRun(func(me MigrationExt) {
+		res = me.MergeAndMigrateTo(ctx, 1, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
+			return false
+		}))
+	})
+	require.Len(t, res.Warnings, 1)
+	require.ErrorContains(t, res.Warnings[0], "aborted")
+	require.Empty(t, effs)
 }
 
 func TestUnsupportedVersion(t *testing.T) {
