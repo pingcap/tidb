@@ -16,6 +16,8 @@ package executor
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -118,4 +120,68 @@ func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, 
 		return "", false
 	}
 	return u.EncodedPassword()
+}
+
+var taskPool = sync.Pool{
+	New: func() any { return &gotask{} },
+}
+
+type gotask struct {
+	f    func()
+	next *gotask
+}
+
+type gopool struct {
+	lock sync.Mutex
+	head *gotask
+	tail *gotask
+
+	tasks   atomic.Int32
+	workers atomic.Int32
+
+	TolerablePendingTasks int32
+	MaxWorkers            int32
+}
+
+func (p *gopool) submit(f func()) {
+	task := taskPool.Get().(*gotask)
+	task.f, task.next = f, nil
+	p.lock.Lock()
+	if p.head == nil {
+		p.head = task
+	} else {
+		p.tail.next = task
+	}
+	p.tail = task
+	p.lock.Unlock()
+	tasks := p.tasks.Add(1)
+
+	if workers := p.workers.Load(); workers == 0 || (workers < p.MaxWorkers && tasks > p.TolerablePendingTasks) {
+		p.workers.Add(1)
+		go p.run()
+	}
+}
+
+func (p *gopool) run() {
+	for {
+		var task *gotask
+
+		p.lock.Lock()
+		if p.head != nil {
+			task, p.head = p.head, p.head.next
+			if p.head == nil {
+				p.tail = nil
+			}
+		}
+		p.lock.Unlock()
+
+		if task == nil {
+			p.workers.Add(-1)
+			return
+		}
+		p.tasks.Add(-1)
+
+		task.f()
+		taskPool.Put(task)
+	}
 }
