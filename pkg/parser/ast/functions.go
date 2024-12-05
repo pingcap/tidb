@@ -384,6 +384,7 @@ const (
 	// oracle functions.
 	ToDate    = "to_date"
 	LastMonth = "last_month"
+	GetGUID   = "get_guid"
 )
 
 type FuncCallExprType int8
