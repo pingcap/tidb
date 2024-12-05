@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
@@ -68,7 +70,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
-	f.TS = 123
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// simulate import
 	f.lock(importMutexStateImport)
@@ -107,7 +109,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
-	f.TS = 123
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
@@ -144,7 +146,7 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
-	f.TS = 123
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -187,7 +189,7 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
-	f.TS = 123
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)

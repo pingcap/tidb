@@ -466,6 +466,7 @@ func TestAddIndexDiskQuotaTS(t *testing.T) {
 	ingest.ForceSyncFlagForTest = true
 	tk.MustExec("alter table t add index idx_test(b);")
 	ingest.ForceSyncFlagForTest = false
+	tk.MustQuery("select /*+ force_index(t, idx_test) */ * from t;").Check(testkit.Rows("1 1 1", "100000 1 1"))
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
