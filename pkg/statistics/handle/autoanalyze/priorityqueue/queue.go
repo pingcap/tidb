@@ -130,7 +130,7 @@ func (pq *AnalysisPriorityQueue) IsInitialized() bool {
 
 // Initialize initializes the priority queue.
 // Note: This function is thread-safe.
-func (pq *AnalysisPriorityQueue) Initialize() error {
+func (pq *AnalysisPriorityQueue) Initialize() (err error) {
 	pq.syncFields.mu.Lock()
 	if pq.syncFields.initialized {
 		statslogutil.StatsLogger().Warn("Priority queue already initialized")
@@ -141,7 +141,11 @@ func (pq *AnalysisPriorityQueue) Initialize() error {
 
 	start := time.Now()
 	defer func() {
-		statslogutil.StatsLogger().Info("Priority queue initialized", zap.Duration("duration", time.Since(start)))
+		if err == nil {
+			statslogutil.StatsLogger().Info("Priority queue initialized", zap.Duration("duration", time.Since(start)))
+		} else {
+			statslogutil.StatsLogger().Error("Failed to initialize priority queue", zap.Error(err), zap.Duration("duration", time.Since(start)))
+		}
 	}()
 
 	pq.syncFields.mu.Lock()
@@ -205,7 +209,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		// Query locked tables once to minimize overhead.
 		// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 		lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
@@ -217,7 +220,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		if err != nil {
 			return err
 		}
-
+		// Get the info schema after starting the transaction to avoid GC lifetime errors.
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
 		dbs := is.AllSchemaNames()
