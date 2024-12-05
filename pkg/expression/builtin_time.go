@@ -937,12 +937,12 @@ func (b *builtinNextDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 	// deal with case sensitivity
 	weekday = strings.ToUpper(weekday)
 
-	target_weekday, valid := dayMap[weekday]
+	targetWeekday, valid := dayMap[weekday]
 	if !valid {
 		return types.ZeroTime, isNull, errors.Errorf("given weekday %s is not valid", weekday)
 	}
-	current_weekday := date.Weekday()
-	days_to_add := (int64(target_weekday)-int64(current_weekday)+6)%7 + 1
+	currentWeekday := date.Weekday()
+	daysToAdd := (int64(targetWeekday)-int64(currentWeekday)+6)%7 + 1
 
 	//calculate the exact date
 	orgTime, err := date.GoTime(time.UTC)
@@ -950,7 +950,7 @@ func (b *builtinNextDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 
-	resultTime, err := types.AddDate(0, 0, days_to_add, orgTime)
+	resultTime, err := types.AddDate(0, 0, daysToAdd, orgTime)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
