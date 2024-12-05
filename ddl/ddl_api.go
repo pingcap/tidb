@@ -961,6 +961,20 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			}
 		}
 	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+	}
 	return hasDefaultValue, value, nil
 }
 
