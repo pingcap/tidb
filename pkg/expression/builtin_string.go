@@ -3893,10 +3893,8 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		if IsNull || err != nil {
 			return 0, true, err
 		}
-		if occurrences < 0 {
+		if occurrences <= 0 {
 			return 0, true, errors.Errorf("Occurrence should not be negative, got %d", occurrences)
-		} else if occurrences == 0 {
-			occurrences = 1
 		}
 	}
 
@@ -3944,10 +3942,8 @@ func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		if IsNull || err != nil {
 			return 0, true, err
 		}
-		if occurrences < 0 {
+		if occurrences <= 0 {
 			return 0, true, errors.Errorf("Occurrence should not be negative, got %d", occurrences)
-		} else if occurrences == 0 {
-			occurrences = 1
 		}
 	}
 
