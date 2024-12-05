@@ -157,3 +157,20 @@ func TestExchangePartitionAfterDropForeignKey(t *testing.T) {
 	tk.MustExec("alter table child drop key fk_1;")
 	tk.MustExec("alter table child_with_partition exchange partition p1 with table child;")
 }
+
+func TestTooLongDefaultValueForBit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+
+	tk.MustGetErrCode("create table t(a bit(2) default b'111');", 1067)
+	tk.MustGetErrCode("create table t(a bit(65) default b'111');", 1439)
+	tk.MustExec("create table t(a bit(64) default b'1111111111111111111111111111111111111111111111111111111111111111');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bit(3) default b'111');")
+	tk.MustExec("drop table t")
+	tk.MustExec("create table t(a bit(3) default b'000111');")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a bit(32) default b'1111111111111111111111111111111');")
+}
