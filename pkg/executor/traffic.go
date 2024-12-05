@@ -45,7 +45,7 @@ type TrafficCaptureExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *TrafficCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TrafficCaptureExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	form := getForm(e.Args)
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/capture")
 }
@@ -57,7 +57,7 @@ type TrafficReplayExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *TrafficReplayExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TrafficReplayExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	form := getForm(e.Args)
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/replay")
 }
@@ -68,7 +68,7 @@ type TrafficCancelExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *TrafficCancelExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, nil, http.MethodPost, "api/traffic/cancel")
 }
 
@@ -78,7 +78,7 @@ type TrafficShowExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *TrafficShowExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, nil, http.MethodGet, "api/traffic/show")
 }
 
