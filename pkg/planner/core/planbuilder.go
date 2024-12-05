@@ -5829,7 +5829,7 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 	return nil
 }
 
-func (_ *PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
+func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
 	return &Traffic{
 		OpType:  pc.OpType,
 		Options: pc.Options,
