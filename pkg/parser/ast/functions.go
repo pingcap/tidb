@@ -385,6 +385,7 @@ const (
 	ToDate    = "to_date"
 	LastMonth = "last_month"
 	ToNumber  = "to_number"
+	GetGUID   = "get_guid"
 )
 
 type FuncCallExprType int8

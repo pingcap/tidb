@@ -674,6 +674,7 @@ from_days
 from_unixtime
 ge
 get_format
+get_guid
 get_lock
 getparam
 greatest
