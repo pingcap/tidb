@@ -68,6 +68,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = 123
 	f.db.Store(db)
 	// simulate import
 	f.lock(importMutexStateImport)
@@ -106,6 +107,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = 123
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
@@ -142,6 +144,7 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
+	f.TS = 123
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -184,6 +187,7 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
+	f.TS = 123
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)

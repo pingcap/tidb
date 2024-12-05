@@ -353,6 +353,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = 123
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -587,6 +588,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.TS = 123
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -1565,6 +1567,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = 123
 	f.db.Store(db)
 	err = db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -1708,6 +1711,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		regionSplitKeysCache: [][]byte{{1}, {11}},
 		regionSplitSize:      1 << 30,
 	}
+	f.TS = 123
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
