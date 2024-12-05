@@ -226,3 +226,35 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
+
+func TestAddIndexRestoreData(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	defer func() {
+		tk.MustExec("set global tidb_ddl_enable_fast_reorg=default")
+		tk.MustExec("drop table if exists test_add_index_restore_data;")
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg=true;")
+	tk.MustExec("drop table if exists test_add_index_restore_data;")
+	tk.MustExec("create table test_add_index_restore_data (a char(100) NOT NULL primary key, b int) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert test_add_index_restore_data value('abc', 0);")
+	tk.MustExec("alter table test_add_index_restore_data add index idx(b);")
+	tk.MustQuery("select a from test_add_index_restore_data use index(idx);").Check(testkit.Rows("abc"))
+	tk.MustExec("admin check table test_add_index_restore_data;")
+
+	tk.MustExec("drop table if exists test_add_index_restore_data;")
+	tk.MustExec("create table test_add_index_restore_data (a char(100), b int NOT NULL primary key) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert test_add_index_restore_data value('abc', 0);")
+	tk.MustExec("alter table test_add_index_restore_data add index idx(b);")
+	tk.MustQuery("select a from test_add_index_restore_data use index(idx);").Check(testkit.Rows("abc"))
+	tk.MustExec("admin check table test_add_index_restore_data;")
+
+	tk.MustExec("drop table if exists test_add_index_restore_data;")
+	tk.MustExec("create table test_add_index_restore_data (a char(100) NOT NULL, b date NOT NULL DEFAULT '2005-02-12', c int, primary key(a, b)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;")
+	tk.MustExec("insert test_add_index_restore_data value('abc', '1972-11-10', 0);")
+	tk.MustExec("alter table test_add_index_restore_data add index idx(c);")
+	tk.MustQuery("select a from test_add_index_restore_data use index(idx);").Check(testkit.Rows("abc"))
+	tk.MustExec("admin check table test_add_index_restore_data;")
+}

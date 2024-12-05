@@ -1679,7 +1679,11 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
+	pkNeedRestore := false
+	if copCtx.pkInfo != nil && copCtx.tblInfo.IsCommonHandle && copCtx.tblInfo.CommonHandleVersion != 0 {
+		pkNeedRestore = tables.NeedRestoredData(copCtx.pkInfo.Columns, copCtx.tblInfo.Columns)
+	}
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk, pkNeedRestore)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1691,41 +1695,17 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 
 func writeChunkToLocal(writer ingest.Writer,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, kv.Handle, error) {
+	copChunk *chunk.Chunk, pkNeedRestore bool) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
 	handleDataBuf := make([]types.Datum, len(copCtx.handleOutputOffsets))
 	count := 0
 	var lastHandle kv.Handle
-<<<<<<< HEAD:ddl/index.go
 	unlock := writer.LockForWrite()
 	defer unlock()
 	var restoreDataBuf []types.Datum
-	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
-=======
-
-	unlockFns := make([]func(), 0, len(writers))
-	for _, w := range writers {
-		unlock := w.LockForWrite()
-		unlockFns = append(unlockFns, unlock)
-	}
-	defer func() {
-		for _, unlock := range unlockFns {
-			unlock()
-		}
-	}()
-	needRestoreForIndexes := make([]bool, len(indexes))
-	restore, pkNeedRestore := false, false
-	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
-		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
-	}
-	for i, index := range indexes {
-		needRestore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
-		needRestoreForIndexes[i] = needRestore
-		restore = restore || needRestore
-	}
->>>>>>> 12b37d88dce (ddl: fix the primary key in index is not in restored format (#53118)):pkg/ddl/index.go
+	restore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
 	}
