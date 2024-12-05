@@ -915,7 +915,21 @@ func doubleReadCostVer2(option *optimizetrace.PlanCostOption, numTasks float64, 
 
 func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
 	// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
-	// that are the child of an index scan
+	// that are the child of an index scan or child is TableRangeScan
+	if len(p.rangeInfo) > 0 || p.haveCorCol() {
+		return float64(0)
+	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+	if !hasFullRangeScan {
+		return float64(0)
+	}
+
 	sessionVars := p.SCtx().GetSessionVars()
 	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 	tblColHists := p.tblColHists
@@ -929,13 +943,7 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
 	// preferRangeScan check here is same as in skylinePruning
 	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
-	var unsignedIntHandle bool
-	if p.Table.PKIsHandle {
-		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-		}
-	}
-	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+
 	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
 	hasPartitionScan := false
 	if p.PlanPartInfo != nil {
@@ -952,12 +960,14 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	if shouldApplyPenalty {
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
-		// both, and it also applies to any full table scan in the query.
+		// both, and it also applies to any full table scan in the query. Use "max" to get the minimum
+		// number of rows to add as a penalty to the table scan.
 		minRows := max(MaxPenaltyRowCount, rows)
 		if hasPartitionScan {
 			return minRows
 		}
-		return max(minRows, max(float64(tblColHists.RealtimeCount), float64(tblColHists.ModifyCount)))
+		// If it isn't a partitioned table - choose the max that includes ModifyCount
+		return max(minRows, float64(tblColHists.ModifyCount))
 	}
 	return float64(0)
 }
