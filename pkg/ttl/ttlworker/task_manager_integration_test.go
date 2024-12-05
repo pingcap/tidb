@@ -17,10 +17,12 @@ package ttlworker_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -357,7 +360,9 @@ func TestMeetTTLRunningTasks(t *testing.T) {
 	require.True(t, dom.TTLJobManager().TaskManager().MeetTTLRunningTasks(3, cache.TaskStatusRunning))
 }
 
-func TestShrinkScanWorkerTimeout(t *testing.T) {
+func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
+	defer ttlworker.SetWaitWorkerStopTimeoutForTest(time.Second)()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	pool := wrapPoolForTest(dom.SysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
@@ -370,8 +375,9 @@ func TestShrinkScanWorkerTimeout(t *testing.T) {
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
 	testTable, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	for id := 0; id < 4; id++ {
-		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW())", testTable.Meta().ID, id)
+	taskCnt := 8
+	for id := 0; id < taskCnt; id++ {
+		sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW() - INTERVAL 1 DAY, NOW() - interval %d second)", testTable.Meta().ID, id, taskCnt-id)
 		tk.MustExec(sql)
 	}
 
@@ -384,50 +390,157 @@ func TestShrinkScanWorkerTimeout(t *testing.T) {
 
 	startBlockNotifyCh := make(chan struct{})
 	blockCancelCh := make(chan struct{})
+	workers := make([]ttlworker.Worker, 0, taskCnt)
+	defer func() {
+		close(blockCancelCh)
+		for _, w := range workers {
+			w.Stop()
+			require.NoError(t, w.WaitStopped(context.Background(), time.Minute))
+		}
+	}()
 
-	workers := []ttlworker.Worker{}
-	for j := 0; j < 4; j++ {
+	for j := 0; j < taskCnt; j++ {
 		scanWorker := ttlworker.NewMockScanWorker(t)
-		if j == 0 {
-			scanWorker.SetCtx(func(ctx context.Context) context.Context {
-				return context.WithValue(ctx, ttlworker.TTLScanPostScanHookForTest{}, func() {
-					startBlockNotifyCh <- struct{}{}
-					<-blockCancelCh
-				})
+		scanWorker.SetInfoSchema(dom.InfoSchema())
+		switch j {
+		case 0:
+			scanWorker.SetExecuteSQL(func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+				// test for shrink scan worker timeout
+				startBlockNotifyCh <- struct{}{}
+				<-blockCancelCh
+				return nil, nil
+			})
+		case 1:
+			scanWorker.SetExecuteSQL(func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+				return nil, errors.New("mockErr")
+			})
+		default:
+			scanWorker.SetExecuteSQL(func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+				<-ctx.Done()
+				return nil, nil
 			})
 		}
 		scanWorker.Start()
 		workers = append(workers, scanWorker)
 	}
-
 	m.SetScanWorkers4Test(workers)
 
 	m.RescheduleTasks(se, now)
-	require.Len(t, m.GetRunningTasks(), 4)
-	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
+	require.Len(t, m.GetRunningTasks(), len(workers))
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").
+		Check(testkit.Rows(strconv.Itoa(taskCnt)))
 	<-startBlockNotifyCh
 
-	// shrink scan workers, one of them will timeout
+	// shrink scan workers, and one of them will be a timeout
 	require.Error(t, m.ResizeScanWorkers(0))
 	require.Len(t, m.GetScanWorkers(), 0)
 
-	// the canceled 3 tasks are still running, but they have results, so after `CheckFinishedTask`, it should be finished
-	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("4"))
-	m.CheckFinishedTask(se, now)
-	require.Len(t, m.GetRunningTasks(), 0)
-	// now, the task should be finished
-	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").Check(testkit.Rows("0"))
-	// the first task will be finished with "timeout to cancel scan task"
-	// other tasks will finish with table not found because we didn't mock the table in this test.
-	tk.MustQuery("SELECT scan_id, json_extract(state, '$.scan_task_err') from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
-		"0 \"timeout to cancel scan task\"",
-		"1 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
-		"2 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
-		"3 \"table 'test.t' meta changed, should abort current job: [schema:1146]Table 'test.t' doesn't exist\"",
-	))
+	// mock running task's statistics and end time
+	tk.MustQuery("SELECT count(1) from mysql.tidb_ttl_task where status = 'running'").
+		Check(testkit.Rows(strconv.Itoa(taskCnt)))
+	tasks := m.GetRunningTasks()
+	require.Len(t, tasks, len(workers))
+	for j, task := range tasks {
+		terminated, reason, endTime := task.GetTerminateInfo()
+		require.True(t, terminated, j)
+		require.Equal(t, ttlworker.ReasonWorkerStop, reason, j)
+		stat := task.GetStatistics()
+		require.True(t, !endTime.IsZero(), j)
+		switch j {
+		case 0:
+			// some rows error
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(100)
+			stat.ErrorRows.Store(28)
+		case 1:
+			// no rows
+			stat.TotalRows.Store(0)
+			stat.SuccessRows.Store(0)
+			stat.ErrorRows.Store(0)
+		case 2:
+			// all rows processed
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(128)
+			stat.ErrorRows.Store(0)
+		case 3:
+			// no enough rows processed, not timeout
+			task.ResetEndTimeForTest(t, now.Add(9*time.Second))
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(64)
+			stat.ErrorRows.Store(63)
+		case 4:
+			// no enough rows processed, but timed out
+			task.ResetEndTimeForTest(t, now.Add(10*time.Second))
+			// also, test report rows should be accumulated
+			task.TTLTask.State = &cache.TTLTaskState{
+				TotalRows:   5,
+				SuccessRows: 2,
+				ErrorRows:   1,
+			}
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(64)
+			stat.ErrorRows.Store(63)
+		case 5:
+			// no enough rows processed, but no negative time
+			task.ResetEndTimeForTest(t, now.Add(-9*time.Second))
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(64)
+			stat.ErrorRows.Store(63)
+		case 6:
+			// no enough rows processed, but negative timed out
+			task.ResetEndTimeForTest(t, now.Add(-10*time.Second))
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(64)
+			stat.ErrorRows.Store(63)
+		case 7:
+			// some unexpected data
+			stat.TotalRows.Store(128)
+			stat.SuccessRows.Store(129)
+			stat.ErrorRows.Store(0)
+		}
+	}
 
-	require.NoError(t, m.ResizeDelWorkers(0))
-	close(blockCancelCh)
+	// After CheckFinishedTask, tasks should be "waiting" state except some are waiting for statistics collecting.
+	m.CheckFinishedTask(se, now)
+	tk.MustQuery(
+		"SELECT scan_id, status, owner_id," +
+			" json_extract(state, '$.total_rows')," +
+			" json_extract(state, '$.success_rows')," +
+			" json_extract(state, '$.error_rows')," +
+			" json_extract(state, '$.prev_owner')," +
+			" json_extract(state, '$.scan_task_err')" +
+			" from mysql.tidb_ttl_task order by scan_id").
+		Check(testkit.Rows(
+			"0 waiting <nil> 128 100 28 \"scan-manager-1\" \"timeout to cancel scan task\"",
+			"1 waiting <nil> 0 0 0 \"scan-manager-1\" \"context canceled\"",
+			"2 waiting <nil> 128 128 0 \"scan-manager-1\" \"context canceled\"",
+			"3 running scan-manager-1 <nil> <nil> <nil> <nil> <nil>",
+			"4 waiting <nil> 131 66 64 \"scan-manager-1\" \"context canceled\"",
+			"5 running scan-manager-1 <nil> <nil> <nil> <nil> <nil>",
+			"6 waiting <nil> 128 64 63 \"scan-manager-1\" \"context canceled\"",
+			"7 waiting <nil> 128 129 0 \"scan-manager-1\" \"context canceled\"",
+		))
+
+	// A resigned task can be obtained by other task managers
+	m2 := ttlworker.NewTaskManager(context.Background(), pool, isc, "scan-manager-2", store)
+	worker2 := ttlworker.NewMockScanWorker(t)
+	worker2.Start()
+	defer func() {
+		worker2.Stop()
+		require.NoError(t, worker2.WaitStopped(context.Background(), time.Minute))
+	}()
+	m2.SetScanWorkers4Test([]ttlworker.Worker{worker2})
+	m2.RescheduleTasks(se, now)
+	require.Len(t, m2.GetRunningTasks(), 1)
+	task := m2.GetRunningTasks()[0]
+	require.Equal(t, int64(0), task.ScanID)
+	require.Equal(t, cache.TaskStatusRunning, task.Status)
+	require.Equal(t, "scan-manager-2", task.OwnerID)
+	require.Equal(t, uint64(128), task.State.TotalRows)
+	require.Equal(t, uint64(100), task.State.SuccessRows)
+	require.Equal(t, uint64(28), task.State.ErrorRows)
+	tk.MustQuery("select status, owner_id from mysql.tidb_ttl_task where scan_id=0").
+		Check(testkit.Rows("running scan-manager-2"))
 }
 
 func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
