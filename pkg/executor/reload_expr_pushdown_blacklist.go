@@ -202,7 +202,6 @@ var funcName2Alias = map[string]string{
 	"subdate":                    ast.SubDate,
 	"subtime":                    ast.SubTime,
 	"sysdate":                    ast.Sysdate,
-	"systimestamp":               ast.SysTimestamp,
 	"time":                       ast.Time,
 	"time_format":                ast.TimeFormat,
 	"time_to_sec":                ast.TimeToSec,
@@ -364,8 +363,9 @@ var funcName2Alias = map[string]string{
 	"vec_as_text":                ast.VecAsText,
 
 	// oracle functions.
-	"to_date":    ast.ToDate,
-	"last_month": ast.LastMonth,
-	"to_number":  ast.ToNumber,
-	"get_guid":   ast.GetGUID,
+	"to_date":      ast.ToDate,
+	"systimestamp": ast.SysTimestamp,
+	"last_month":   ast.LastMonth,
+	"to_number":    ast.ToNumber,
+	"get_guid":     ast.GetGUID,
 }

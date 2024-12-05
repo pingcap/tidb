@@ -160,7 +160,6 @@ const (
 	SubDate          = "subdate"
 	SubTime          = "subtime"
 	Sysdate          = "sysdate"
-	SysTimestamp     = "systimestamp"
 	Time             = "time"
 	TimeLiteral      = "'tidb`.(timeliteral"
 	TimeFormat       = "time_format"
@@ -383,10 +382,11 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate    = "to_date"
-	LastMonth = "last_month"
-	ToNumber  = "to_number"
-	GetGUID   = "get_guid"
+	ToDate       = "to_date"
+	SysTimestamp = "systimestamp"
+	LastMonth    = "last_month"
+	ToNumber     = "to_number"
+	GetGUID      = "get_guid"
 )
 
 type FuncCallExprType int8
