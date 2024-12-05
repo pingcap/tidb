@@ -81,14 +81,33 @@ type ttlScanTask struct {
 	statistics *ttlStatistics
 }
 
+// TaskTerminateReason indicates the reason why the task is terminated.
+type TaskTerminateReason string
+
+const (
+	// ReasonTaskFinished indicates the task is finished.
+	ReasonTaskFinished TaskTerminateReason = "finished"
+	// ReasonError indicates whether the task is terminated because of error.
+	ReasonError TaskTerminateReason = "error"
+	// ReasonWorkerStop indicates whether the task is terminated because the scan worker stops.
+	// We should reschedule this task in another worker or TiDB again.
+	ReasonWorkerStop TaskTerminateReason = "workerStop"
+)
+
 type ttlScanTaskExecResult struct {
 	time time.Time
 	task *ttlScanTask
 	err  error
+	// reason indicates why the task is terminated.
+	reason TaskTerminateReason
 }
 
 func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
-	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err}
+	reason := ReasonTaskFinished
+	if err != nil {
+		reason = ReasonError
+	}
+	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err, reason: reason}
 }
 
 func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
@@ -97,6 +116,17 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 		datums[i] = row.GetDatumRow(t.tbl.KeyColumnTypes)
 	}
 	return datums
+}
+
+func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
+	return l.With(
+		zap.String("jobID", t.JobID),
+		zap.Int64("scanID", t.ScanID),
+		zap.Int64("tableID", t.TableID),
+		zap.String("db", t.tbl.Schema.O),
+		zap.String("table", t.tbl.Name.O),
+		zap.String("partition", t.tbl.Partition.O),
+	)
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
@@ -121,13 +151,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		case <-doScanFinished.Done():
 			return
 		}
-		logger := logutil.BgLogger().With(
-			zap.Int64("tableID", t.TableID),
-			zap.String("table", t.tbl.Name.O),
-			zap.String("partition", t.tbl.Partition.O),
-			zap.String("jobID", t.JobID),
-			zap.Int64("scanID", t.ScanID),
-		)
+		logger := t.taskLogger(logutil.BgLogger())
 		logger.Info("kill the running statement in scan task because the task or worker cancelled")
 		rawSess.KillStmt()
 		ticker := time.NewTicker(time.Minute)
@@ -380,6 +404,13 @@ func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlSca
 		result = task.result(nil)
 	}
 
+<<<<<<< HEAD
+=======
+	if result.reason == ReasonError && w.baseWorker.ctx.Err() != nil {
+		result.reason = ReasonWorkerStop
+	}
+
+>>>>>>> bb9096cac66 (ttl: reschedule task to other instances when shrinking worker (#57703))
 	w.baseWorker.Lock()
 	w.curTaskResult = result
 	w.baseWorker.Unlock()
