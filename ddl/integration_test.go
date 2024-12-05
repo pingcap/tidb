@@ -146,7 +146,8 @@ func TestDDLOnCachedTable(t *testing.T) {
 }
 
 func TestTooLongDefaultValueForBit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test;")
