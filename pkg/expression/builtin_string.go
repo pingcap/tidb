@@ -4180,36 +4180,26 @@ func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 
 	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).GetType()
 
-	// TO_CHAR(datetime, fmt)
-	if len(args) == 2 {
-		if arg0Tp != mysql.TypeDatetime {
-			return nil, errors.Errorf("First argument should be datetime")
+	switch arg0Tp {
+	case mysql.TypeDatetime: // TO_CHAR(datetime, fmt)
+		if len(args) != 2 {
+			return nil, errors.Errorf("Wrong number of arguments for to_char(datetime), expect 2 but got %d", len(args))
 		}
-		bc := dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}}
-		return bc.getFunction(ctx, args)
+		fc := dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}}
+		return fc.getFunction(ctx, args)
+	case mysql.TypeTiny, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24: // TO_CHAR(number)
+		// TODO: you can add second argument fmt later
+		if len(args) == 2 {
+			return nil, errors.Errorf("Wrong number of arguments for to_char(number), expect 1 but got %d", len(args))
+		}
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetCharset(mysql.UTF8MB4Charset)
+		tp.SetCollate(mysql.UTF8MB4GeneralCICollation)
+
+		fc := &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
+		return fc.getFunction(ctx, args)
+	default:
+		// TODO: you can add more supported type here
+		return nil, errors.Errorf("invaild argument type %v", arg0Tp)
 	}
-
-	// TO_CHAR(num)
-	// TODO: you can add second argument fmt later.
-	if len(args) != 1 {
-		return nil, errors.Errorf("Wrong number of arguments for to_char(number)")
-	}
-
-	if arg0Tp != mysql.TypeTiny &&
-		arg0Tp != mysql.TypeShort &&
-		arg0Tp != mysql.TypeLong &&
-		arg0Tp != mysql.TypeFloat &&
-		arg0Tp != mysql.TypeDouble &&
-		arg0Tp != mysql.TypeLonglong &&
-		arg0Tp != mysql.TypeInt24 {
-		return nil, errors.Errorf("Wrong type of argument for to_char(number)")
-	}
-
-	tp := types.NewFieldType(mysql.TypeVarString)
-	tp.SetFlen(types.UnspecifiedLength)
-	tp.SetCharset(charset.CharsetUTF8MB4)
-	tp.SetCollate("utf8mb4_general_ci")
-
-	fc := &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
-	return fc.getFunction(ctx, args)
 }
