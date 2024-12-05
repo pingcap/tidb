@@ -544,6 +544,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	// Check deleted table.
 	if len(rows) == 0 {
+		table.Pseudo = true
 		return table, nil
 	}
 	for _, row := range rows {
