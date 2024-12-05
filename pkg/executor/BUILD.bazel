@@ -489,6 +489,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/diagnosticspb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
