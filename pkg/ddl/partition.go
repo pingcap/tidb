@@ -133,6 +133,22 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
+		failpoint.Inject("addPartCancel1", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateCancelled
+				err = errors.New("Injected error by addPartCancel1")
+				failpoint.Return(ver, err)
+			}
+		})
+
+		failpoint.Inject("addPartFail1", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by addPartFail1")
+				failpoint.Return(ver, err)
+			}
+		})
+
 		// move the adding definition into tableInfo.
 		updateAddingPartitionInfo(partInfo, tblInfo)
 		tblInfo.Partition.DDLState = model.StateReplicaOnly
@@ -163,6 +179,14 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			return ver, errors.Trace(err)
 		}
 
+		failpoint.Inject("addPartCancel2", func(val failpoint.Value) {
+			if val.(bool) {
+				job.State = model.JobStateCancelled
+				err = errors.New("Injected error by addPartCancel2")
+				failpoint.Return(ver, err)
+			}
+		})
+
 		ids := getIDs([]*model.TableInfo{tblInfo})
 		for _, p := range tblInfo.Partition.AddingDefinitions {
 			ids = append(ids, p.ID)
@@ -171,6 +195,14 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
+
+		failpoint.Inject("addPartFail2", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by addPartFail2")
+				failpoint.Return(ver, err)
+			}
+		})
 
 		// none -> replica only
 		job.SchemaState = model.StateReplicaOnly
@@ -218,12 +250,29 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, addingDefinitions)
 
+		failpoint.Inject("addPartFail3", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by addPartFail3")
+				failpoint.Return(ver, err)
+			}
+		})
+
 		tblInfo.Partition.DDLState = model.StateNone
 		tblInfo.Partition.DDLAction = model.ActionNone
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+
+		failpoint.Inject("addPartFail4", func(val failpoint.Value) {
+			if val.(bool) {
+				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				err = errors.New("Injected error by addPartFail4")
+				failpoint.Return(ver, err)
+			}
+		})
+
 		addPartitionEvent := notifier.NewAddPartitionEvent(tblInfo, partInfo)
 		err = asyncNotifyEvent(jobCtx, addPartitionEvent, job, noSubJob, w.sess)
 		if err != nil {
