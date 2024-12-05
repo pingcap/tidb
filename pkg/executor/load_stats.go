@@ -83,6 +83,7 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
 	}
+	// Check the `jsonTbl` in cases where the stats file with `null`.
 	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
 		return nil
 	}
