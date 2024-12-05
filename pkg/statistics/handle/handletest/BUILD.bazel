@@ -16,6 +16,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/util",
