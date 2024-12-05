@@ -544,22 +544,14 @@ func TestStringToMysqlBit(t *testing.T) {
 		{NewStringDatum("b'1'"), []byte{0x62, 0x27, 0x31, 0x27}, 32, false},
 		{NewStringDatum("b'0'"), []byte{0x62, 0x27, 0x30, 0x27}, 32, false},
 	}
-<<<<<<< HEAD:types/datum_test.go
 	sc := new(stmtctx.StatementContext)
 	sc.IgnoreTruncate = true
-	tp := NewFieldType(mysql.TypeBit)
-	tp.SetFlen(1)
-	for _, tt := range tests {
-		bin, err := tt.a.convertToMysqlBit(nil, tp)
-		require.NoError(t, err)
-		require.Equal(t, tt.out, bin.b)
-=======
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%s %d %t", tt.a.GetString(), tt.flen, tt.truncated), func(t *testing.T) {
 			tp := NewFieldType(mysql.TypeBit)
 			tp.SetFlen(tt.flen)
 
-			bin, err := tt.a.convertToMysqlBit(DefaultStmtNoWarningContext, tp)
+			bin, err := tt.a.convertToMysqlBit(sc, tp)
 			if tt.truncated {
 				require.Contains(t, err.Error(), "Data Too Long")
 			} else {
@@ -567,7 +559,6 @@ func TestStringToMysqlBit(t *testing.T) {
 			}
 			require.Equal(t, tt.out, bin.b)
 		})
->>>>>>> 95b04c76703 (table: fix the issue that the default value for `BIT` column is wrong (#57303)):pkg/types/datum_test.go
 	}
 }
 
