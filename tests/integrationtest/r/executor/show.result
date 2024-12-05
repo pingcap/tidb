@@ -734,6 +734,7 @@ json_unquote
 json_valid
 last_day
 last_insert_id
+last_month
 lastval
 lcase
 le
@@ -857,6 +858,7 @@ timestampadd
 timestampdiff
 to_base64
 to_char
+to_date
 to_days
 to_seconds
 translate

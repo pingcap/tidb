@@ -2985,6 +2985,22 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("show warnings")
 	result.Check(testkit.Rows())
 
+	// for to_date
+	tk.MustQuery("select to_date('2024-11-23','YyYy-Mm-Dd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('20241123','yyyymmdd')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024/11/23','YYYY/MM/DD')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi:Ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hh24:mi:ss')").Check(testkit.Rows("2024-11-23 07:45:37"))
+
+	// illegal pattern test
+	tk.MustQuery("select to_date('2024-11-23 07:45:37','yyYy-Mm-dD hH24:Mi')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyY-Mm-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MA-dD')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-DH')").Check(testkit.Rows("<nil>"))
+	tk.MustQuery("select to_date('2024-11-23','yyyY-MM-dD')").Check(testkit.Rows("2024-11-23 00:00:00"))
+	_, err = tk.Exec("select to_date('2024-11-23 07:45:37')")
+	require.Error(t, err, "ERROR 1582 (42000): Incorrect parameter count in the call to native function 'to_date'")
+
 	// for maketime
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a double, b float, c decimal(10,4));`)
@@ -3268,6 +3284,15 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select adddate(20100101, cast(1 as decimal))`).Check(testkit.Rows("2010-01-02"))
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), 1)`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
 	tk.MustQuery(`select adddate(cast('10:10:10' as time), cast(1 as decimal))`).CheckWithFunc(testkit.Rows("10:10:10"), checkHmsMatch)
+
+	// for last_month
+	tk.MustQuery(`select last_month('2001-01-01')`).Check(testkit.Rows("2000-12-31"))
+	tk.MustQuery(`select last_month('2001-12-31')`).Check(testkit.Rows("2001-11-30"))
+	tk.MustQuery(`select last_month('2001-10-01')`).Check(testkit.Rows("2001-09-30"))
+	tk.MustQueryToErr(`select last_month('2000-10-1')`)
+	tk.MustQueryToErr(`select last_month('2001-1-1')`)
+	tk.MustQueryToErr(`select last_month('2001-13-01')`)
+	tk.MustQueryToErr(`select last_month('2001-10-50')`)
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
