@@ -38,6 +38,7 @@ type tiproxyAddrKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
 
+// TrafficCaptureExec sends capture traffic requests to TiProxy.
 type TrafficCaptureExec struct {
 	exec.BaseExecutor
 	Args map[string]string
@@ -48,6 +49,7 @@ func (e *TrafficCaptureExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/capture")
 }
 
+// TrafficReplayExec sends replay traffic requests to TiProxy.
 type TrafficReplayExec struct {
 	exec.BaseExecutor
 	Args map[string]string
@@ -58,6 +60,7 @@ func (e *TrafficReplayExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/replay")
 }
 
+// TrafficReplayExec sends cancel traffic job requests to TiProxy.
 type TrafficCancelExec struct {
 	exec.BaseExecutor
 }
@@ -66,6 +69,7 @@ func (e *TrafficCancelExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return request(ctx, e.BaseExecutor, nil, http.MethodPost, "api/traffic/cancel")
 }
 
+// TrafficReplayExec sends show traffic job requests to TiProxy.
 type TrafficShowExec struct {
 	exec.BaseExecutor
 }

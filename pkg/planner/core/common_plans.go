@@ -696,6 +696,7 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
+// Traffic represents a traffic plan.
 type Traffic struct {
 	baseSchemaProducer
 	OpType  ast.TrafficOpType
