@@ -16,6 +16,7 @@ package workloadrepo
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -87,5 +88,9 @@ func (w *worker) setRetentionDays(_ context.Context, d string) error {
 
 func validateDest(orig string) (string, error) {
 	// validate S3 URL, etc...
-	return strings.ToLower(orig), nil
+	orig = strings.ToLower(orig)
+	if orig != "" && orig != "table" {
+		return "", errors.New("invalid repository destination")
+	}
+	return orig, nil
 }
