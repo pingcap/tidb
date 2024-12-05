@@ -436,6 +436,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		allPeers = append(allPeers, peer)
 	}
 	dataCommitTS := j.ingestData.GetTS()
+	if dataCommitTS == 0 {
+		intest.Assert(false, "data commitTS is 0")
+		return errors.New("data commitTS is 0")
+	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,

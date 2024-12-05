@@ -229,7 +229,10 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 		newTS, err = mgr.refreshTSAndUpdateCP()
 		if err == nil {
 			for _, ei := range bc.engines {
-				ei.openedEngine.SetTS(newTS)
+				err = bc.backend.AllocTSAfterResetEngine(ei.uuid, newTS)
+				if err != nil {
+					return false, false, err
+				}
 			}
 		}
 	}
@@ -247,6 +250,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 
+	// TODO(lance6716): where to let TS take effect?
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {

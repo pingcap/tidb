@@ -319,13 +319,6 @@ func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterCon
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
 }
 
-// SetTS sets the TS of the engine. In most cases if the caller wants to specify
-// TS it should use the TS field in EngineConfig. This method is only used after
-// a ResetEngine.
-func (engine *OpenedEngine) SetTS(ts uint64) {
-	engine.config.TS = ts
-}
-
 // UnsafeCloseEngine closes the engine without first opening it.
 // This method is "unsafe" as it does not follow the normal operation sequence
 // (Open -> Write -> Close -> Import). This method should only be used when one
