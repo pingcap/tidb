@@ -912,10 +912,10 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
 	do.bindHandle = bindinfo.NewBindHandle(ctxForHandle)
-	err := do.bindHandle.Update(true)
-	if err != nil || bindinfo.Lease == 0 {
-		return err
-	}
+	//err := do.bindHandle.Update(true)
+	//if err != nil || bindinfo.Lease == 0 {
+	//	return err
+	//}
 
 	do.globalBindHandleWorkerLoop()
 	do.handleEvolvePlanTasksLoop(ctxForEvolve)
