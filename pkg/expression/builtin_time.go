@@ -828,21 +828,6 @@ func (c *dateFormatFunctionClass) getFunction(ctx BuildContext, args []Expressio
 	return sig, nil
 }
 
-// TODO(joechenrh): Remove this function after merge
-func convertFormatFromOracelToMysql(format string) string {
-	re := regexp.MustCompile(`(?i)YYYY`)
-	newFormat := re.ReplaceAllString(format, "%Y")
-	re = regexp.MustCompile(`(?i)MM`)
-	newFormat = re.ReplaceAllString(newFormat, "%m")
-	re = regexp.MustCompile(`(?i)DD`)
-	newFormat = re.ReplaceAllString(newFormat, "%d")
-	re = regexp.MustCompile(`(?i)hh24:mi:ss`)
-	newFormat = re.ReplaceAllString(newFormat, "%H:%i:%s")
-
-	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
-	return newFormat
-}
-
 type builtinDateFormatSig struct {
 	baseBuiltinFunc
 }

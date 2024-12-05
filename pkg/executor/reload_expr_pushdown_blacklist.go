@@ -172,8 +172,6 @@ var funcName2Alias = map[string]string{
 	"date":                       ast.Date,
 	"date_add":                   ast.DateAdd,
 	"date_format":                ast.DateFormat,
-	"to_char":                    ast.ToChar,
-	"date_to_char":               ast.DateToChar,
 	"date_sub":                   ast.DateSub,
 	"datediff":                   ast.DateDiff,
 	"day":                        ast.Day,
@@ -365,6 +363,8 @@ var funcName2Alias = map[string]string{
 	"vec_as_text":                ast.VecAsText,
 
 	// oracle functions.
-	"to_date":    ast.ToDate,
-	"last_month": ast.LastMonth,
+	"to_date":      ast.ToDate,
+	"last_month":   ast.LastMonth,
+	"to_char":      ast.ToChar,
+	"date_to_char": ast.DateToChar,
 }

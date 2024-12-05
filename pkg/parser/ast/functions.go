@@ -327,9 +327,6 @@ const (
 	UncompressedLength       = "uncompressed_length"
 	ValidatePasswordStrength = "validate_password_strength"
 
-	ToChar     = "to_char"
-	DateToChar = "date_to_char"
-
 	// json functions
 	JSONType          = "json_type"
 	JSONExtract       = "json_extract"
@@ -386,8 +383,10 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate    = "to_date"
-	LastMonth = "last_month"
+	ToDate     = "to_date"
+	LastMonth  = "last_month"
+	ToChar     = "to_char"
+	DateToChar = "date_to_char"
 )
 
 type FuncCallExprType int8
