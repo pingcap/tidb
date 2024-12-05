@@ -690,6 +690,7 @@ var funcs = map[string]functionClass{
 	ast.SubDate:          &addSubDateFunctionClass{baseFunctionClass{ast.SubDate, 3, 3}, subTime, subDuration, setSub},
 	ast.DateSub:          &addSubDateFunctionClass{baseFunctionClass{ast.DateSub, 3, 3}, subTime, subDuration, setSub},
 	ast.AddTime:          &addTimeFunctionClass{baseFunctionClass{ast.AddTime, 2, 2}},
+	ast.AddMonth:         &addMonthFunctionClass{baseFunctionClass{ast.AddMonth, 2, 2}},
 	ast.ConvertTz:        &convertTzFunctionClass{baseFunctionClass{ast.ConvertTz, 3, 3}},
 	ast.Curdate:          &currentDateFunctionClass{baseFunctionClass{ast.Curdate, 0, 0}},
 	ast.CurrentDate:      &currentDateFunctionClass{baseFunctionClass{ast.CurrentDate, 0, 0}},
@@ -719,6 +720,7 @@ var funcs = map[string]functionClass{
 	ast.Minute:           &minuteFunctionClass{baseFunctionClass{ast.Minute, 1, 1}},
 	ast.Month:            &monthFunctionClass{baseFunctionClass{ast.Month, 1, 1}},
 	ast.MonthName:        &monthNameFunctionClass{baseFunctionClass{ast.MonthName, 1, 1}},
+	ast.NextDay:          &nextDayFunctionClass{baseFunctionClass{ast.NextDay, 2, 2}},
 	ast.Now:              &nowFunctionClass{baseFunctionClass{ast.Now, 0, 1}},
 	ast.PeriodAdd:        &periodAddFunctionClass{baseFunctionClass{ast.PeriodAdd, 2, 2}},
 	ast.PeriodDiff:       &periodDiffFunctionClass{baseFunctionClass{ast.PeriodDiff, 2, 2}},
@@ -989,6 +991,9 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	// Oracle function.
+
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.

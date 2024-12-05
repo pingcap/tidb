@@ -3286,6 +3286,17 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQueryToErr(`select last_month('2001-13-01')`)
 	tk.MustQueryToErr(`select last_month('2001-10-50')`)
 
+	// for add_month
+	tk.MustQuery(`select add_month('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08"))
+	tk.MustQuery(`select add_month('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08"))
+	tk.MustQuery(`select add_month('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28"))
+	tk.MustQuery(`select add_month('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28"))
+
+	// for next_day
+	tk.MustQuery(`select next_day('2024-12-31', 'TUE')`).Check(testkit.Rows("2025-01-07"))
+	tk.MustQuery(`select next_day('2024-12-05', 'Tuesday')`).Check(testkit.Rows("2024-12-10"))
+	tk.MustQuery(`select next_day('2024-12-31', 'sunday')`).Check(testkit.Rows("2025-01-05"))
+
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))
