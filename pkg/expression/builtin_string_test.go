@@ -1801,6 +1801,10 @@ func TestInstr(t *testing.T) {
 		{[]any{"aaaa", "aa", 2, 1}, 2},
 		{[]any{"aaaa", "aa", 1, 4}, 0},
 
+		// out-of-range position
+		{[]any{"ababab", "ab", 7, 1}, 0},
+		{[]any{"ababab", "ab", -7, 1}, 0},
+
 		// non-integer arguments
 		{[]any{"aaaa", "aa", 2.1, 2}, 3},
 		{[]any{"aaaa", "aa", 1.1, "2.2"}, 2},
