@@ -1020,7 +1020,7 @@ func TestIssue57149(t *testing.T) {
 }
 
 func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
 	tk.MustExec("use tiflash_partition_BCJ")
@@ -1040,7 +1040,8 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
 		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
 	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
-
+	h := dom.StatsHandle()
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "tiflash_partition_BCJ", tbl)

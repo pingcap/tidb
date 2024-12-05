@@ -517,7 +517,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			if err != nil {
 				return err
 			}
-			if allhg != nil && len(poppedTopN) == 0 {
+			if len(allhg) == 0 && len(poppedTopN) == 0 {
 				return errors.New("empty hg cannot merge")
 			}
 			// Merge histogram.
