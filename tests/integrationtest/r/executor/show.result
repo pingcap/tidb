@@ -674,6 +674,7 @@ from_days
 from_unixtime
 ge
 get_format
+get_guid
 get_lock
 getparam
 greatest
@@ -859,6 +860,7 @@ timestampdiff
 to_base64
 to_date
 to_days
+to_number
 to_seconds
 translate
 trim

@@ -363,8 +363,9 @@ var funcName2Alias = map[string]string{
 	"vec_as_text":                ast.VecAsText,
 
 	// oracle functions.
-	"to_date":    ast.ToDate,
-	"last_month": ast.LastMonth,
-
+	"to_date":        ast.ToDate,
+	"last_month":     ast.LastMonth,
+	"to_number":      ast.ToNumber,
+	"get_guid":       ast.GetGUID,
 	"months_between": ast.MonthsBetween,
 }

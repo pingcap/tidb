@@ -382,9 +382,10 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate    = "to_date"
-	LastMonth = "last_month"
-
+	ToDate        = "to_date"
+	LastMonth     = "last_month"
+	ToNumber      = "to_number"
+	GetGUID       = "get_guid"
 	MonthsBetween = "months_between"
 )
 

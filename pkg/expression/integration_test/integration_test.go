@@ -2033,6 +2033,27 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	))
 }
 
+func TestToNumber(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a INT, b DECIMAL(10,2), c VARCHAR(10), d text)")
+
+	tk.MustExec("insert into t values(1, 1.1, '1', '1a')")
+	tk.MustExec("insert into t values(2, 2.2, '2.2', '2.b')")
+	tk.MustExec("insert into t values(3, 3.3, '3.33', '3.3c')")
+	tk.MustExec("insert into t values(4, 4.4, '4.444', '4.44d')")
+	tk.MustExec("insert into t values(5, 5.5, '5.5555', '5555e')")
+
+	tk.MustQuery("select to_number(a), to_number(b), to_number(c), to_number(d) from t").Check(testkit.Rows(
+		"1 1.1 1 <nil>",
+		"2 2.2 2.2 <nil>",
+		"3 3.3 3.33 <nil>",
+		"4 4.4 4.444 <nil>",
+		"5 5.5 5.5555 <nil>",
+	))
+}
+
 func TestCompareBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
