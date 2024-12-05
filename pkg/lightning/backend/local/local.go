@@ -1589,6 +1589,16 @@ func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uui
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
+func (local *Backend) AllocTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
+	if e == nil {
+		return errors.Errorf("engine %s not found in AllocTSAfterResetEngine", engineUUID.String())
+	}
+	defer e.unlock()
+	e.engineMeta.TS = ts
+	return e.saveEngineMeta()
+}
+
 // CleanupEngine cleanup the engine and reclaim the space.
 func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.cleanupEngine(ctx, engineUUID)
