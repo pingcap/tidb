@@ -3697,7 +3697,7 @@ func TestAddMonth(t *testing.T) {
 		{"2025-04-30", -2, "2025-02-28"},
 	}
 
-	fc := funcs[ast.LastMonth]
+	fc := funcs[ast.AddMonth]
 	for _, test := range tests {
 		args := []types.Datum{
 			types.NewDatum(test.date),
@@ -3725,7 +3725,7 @@ func TestNextDay(t *testing.T) {
 		{"2024-12-31", "sunday", "2025-01-05"},
 	}
 
-	fc := funcs[ast.LastMonth]
+	fc := funcs[ast.NextDay]
 	for _, test := range tests {
 		args := []types.Datum{
 			types.NewDatum(test.date),
