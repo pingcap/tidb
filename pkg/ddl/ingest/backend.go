@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -295,6 +296,9 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	}
 	bc.diskRoot.UpdateUsage()
 	shouldImport = bc.diskRoot.ShouldImport()
+	if rand.Intn(3) == 0 {
+		shouldImport = true
+	}
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
 	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
