@@ -909,15 +909,28 @@ type NvlFunctionClass struct {
 	baseFunctionClass
 }
 
+func evalTypeIsNumeric(t types.EvalType) bool {
+	return t == types.ETInt || t == types.ETReal || t == types.ETDecimal
+}
+
 func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
 
-	lhs, _ := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
-	retTp := lhs
-	evalTps := retTp.EvalType()
+	ltp, rtp := args[0].GetType(ctx.GetEvalCtx()), args[1].GetType(ctx.GetEvalCtx())
+	lEvalTp, rEvalTp := ltp.EvalType(), rtp.EvalType()
+	// if arg0 and arg1 have the same EvalType, or there ars all numeric, Call ifNull() directly.
+	if lEvalTp == rEvalTp ||
+		(evalTypeIsNumeric(lEvalTp) && evalTypeIsNumeric(rEvalTp)) {
+		c := ifNullFunctionClass{baseFunctionClass{ast.Ifnull, 2, 2}}
+		return c.getFunction(ctx, args)
+	}
 
+	// if the type of arg0 is different from the type of arg1.
+	// just support type converting for string.
+	retTp := ltp
+	evalTps := retTp.EvalType()
 	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
@@ -925,23 +938,11 @@ func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 	bf.tp = retTp
 
 	switch evalTps {
-	case types.ETInt:
-		sig = &builtinIfNullIntSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
-	case types.ETReal:
-		sig = &builtinIfNullRealSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_IfNullReal)
-	case types.ETDecimal:
-		sig = &builtinIfNullDecimalSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_IfNullDecimal)
 	case types.ETString:
 		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
-	case types.ETDatetime, types.ETTimestamp:
-		sig = &builtinIfNullTimeSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_IfNullTime)
 	default:
-		return nil, errors.Errorf("%s is not supported for nvl()", evalTps)
+		return nil, errors.Errorf("%s is not supported for converting", rtp.EvalType())
 	}
 	return sig, nil
 }

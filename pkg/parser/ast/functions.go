@@ -274,6 +274,7 @@ const (
 	// control functions
 	If     = "if"
 	Ifnull = "ifnull"
+	Nullif = "nullif"
 
 	// miscellaneous functions
 	AnyValue        = "any_value"
@@ -388,7 +389,6 @@ const (
 	AddMonth  = "add_month"
 	NextDay   = "next_day"
 	Nvl       = "nvl"
-	Nullif    = "nullif"
 )
 
 type FuncCallExprType int8
