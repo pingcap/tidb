@@ -27,7 +27,6 @@ go_library(
         "//pkg/util/ppcpuusage",
         "//pkg/util/set",
         "//pkg/util/stmtsummary",
-        "//pkg/util/stringutil",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
