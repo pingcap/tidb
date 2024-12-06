@@ -2929,7 +2929,6 @@ func TestIssue40135Ver2(t *testing.T) {
 }
 
 func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
-	t.Skip("waiting for supporting Modify Partition Column again")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "truncWarn"
@@ -2941,10 +2940,7 @@ func TestAlterModifyPartitionColTruncateWarning(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t modify a varchar(5)`, "[types:1265]Data truncated for column 'a', value is '")
 	tk.MustExec(`set sql_mode = ''`)
 	tk.MustExec(`alter table t modify a varchar(5)`)
-	// Fix the duplicate warning, see https://github.com/pingcap/tidb/issues/38699
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(""+
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'",
-		"Warning 1265 Data truncated for column 'a', value is ' 654321'"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1265 2 warnings with this error code, first warning: Data truncated for column 'a', value is ' 654321'"))
 	tk.MustExec(`admin check table t`)
 }
 
@@ -3887,4 +3883,44 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	tk.MustExec(`alter table t truncate partition p1`)
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
+}
+
+func TestIssue57780(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `cis_assay_report_detail` (\n" +
+		"  `org_code` varchar(9) NOT NULL ,\n" +
+		"  `branch_code` varchar(2) NOT NULL DEFAULT '00' ,\n" +
+		"  `report_no` varchar(20) NOT NULL ,\n" +
+		"  `report_seqno` varchar(22) NOT NULL ,\n" +
+		"  `report_seq` varchar(22) NOT NULL ,\n" +
+		"  `reg_id` varchar(22) DEFAULT NULL ,\n" +
+		"  report_time datetime,\n" +
+		"  `modify_empid` varchar(10) DEFAULT NULL ,\n" +
+		"  `modify_empid_code_org` varchar(64) DEFAULT NULL ,\n" +
+		"  `modify_empid_name_org` varchar(256) DEFAULT NULL ,\n" +
+		"  `create_time_sys` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ,\n" +
+		"  `create_empid` varchar(10) DEFAULT NULL ,\n" +
+		"  `create_empid_code_org` varchar(64) DEFAULT NULL ,\n" +
+		"  `create_empid_name_org` varchar(256) DEFAULT NULL ,\n" +
+		"  `modify_time_mfs` datetime DEFAULT NULL ,\n" +
+		"  `create_time_mfs` datetime DEFAULT NULL ,\n" +
+		"  `batch_version` varchar(40) DEFAULT NULL ,\n" +
+		"  `batch_type` varchar(10) DEFAULT NULL ,\n" +
+		"  `time_correlation_mark` varchar(2) NOT NULL DEFAULT '0' ,\n" +
+		"  `modify_time_center` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) ,\n" +
+		"  `create_time_center` timestamp(6) DEFAULT CURRENT_TIMESTAMP(6) ,\n" +
+		"  PRIMARY KEY (`report_time`,`org_code`,`branch_code`,`report_no`,`report_seqno`,`report_seq`) /*T![clustered_index] NONCLUSTERED */\n" +
+		"  \n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin \n" +
+		"PARTITION BY RANGE COLUMNS(`report_time`)\n" +
+		"(PARTITION `p201001` VALUES LESS THAN ('2010-02-01 00:00:00'),\n" +
+		" PARTITION `p201002` VALUES LESS THAN ('2010-03-01 00:00:00'),\n" +
+		" PARTITION `p201003` VALUES LESS THAN ('2010-04-01 00:00:00'),\n" +
+		" PARTITION `p201004` VALUES LESS THAN ('2010-05-01 00:00:00'),\n" +
+		" PARTITION `p201005` VALUES LESS THAN ('2010-06-01 00:00:00'),\n" +
+		" PARTITION `pmax` VALUES LESS THAN (MAXVALUE))")
+	tk.MustExec(`alter table cis_assay_report_detail add column test_decimal decimal(9,2)`)
+	tk.MustExec(`alter table cis_assay_report_detail change column test_decimal test_decimal decimal(11,2)`)
 }
