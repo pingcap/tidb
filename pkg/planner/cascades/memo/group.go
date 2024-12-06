@@ -200,3 +200,15 @@ func (g *Group) IsExplored() bool {
 func (g *Group) SetExplored() {
 	g.explored = true
 }
+
+// ForEachGE traverse the inside group expression with f call on them each.
+func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
+	var next bool
+	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpression)
+		next = f(expr)
+		if !next {
+			break
+		}
+	}
+}

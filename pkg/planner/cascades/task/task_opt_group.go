@@ -42,8 +42,9 @@ func (g *OptGroupTask) Execute() error {
 	if g.group.IsExplored() {
 		return nil
 	}
-	g.group.ForEachGE(func(ge *memo.GroupExpression) {
+	g.group.ForEachGE(func(ge *memo.GroupExpression) bool {
 		g.Push(NewOptGroupExpressionTask(g.ctx, ge))
+		return true
 	})
 	g.group.SetExplored()
 	return nil
