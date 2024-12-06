@@ -24,6 +24,7 @@ import (
 
 var _ base.Task = &OptGroupTask{}
 
+// OptGroupExpressionTask is a wrapper of running logic of exploring group expression.
 type OptGroupExpressionTask struct {
 	BaseTask
 
@@ -45,7 +46,7 @@ func (ge *OptGroupExpressionTask) Execute() error {
 	for _, one := range ruleList {
 		ge.Push(NewApplyRuleTask(ge.ctx, ge.groupExpression, one))
 	}
-	// since it's a stack-order, LUFO, when we want to apply a rule for a specific group expression,
+	// since it's a stack-order, LIFO, when we want to apply a rule for a specific group expression,
 	// the pre-condition is that this group expression's child group has been fully explored.
 	for i := len(ge.groupExpression.Inputs) - 1; i >= 0; i-- {
 		ge.Push(NewOptGroupTask(ge.ctx, ge.groupExpression.Inputs[i]))

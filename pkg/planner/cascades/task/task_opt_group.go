@@ -23,6 +23,7 @@ import (
 
 var _ base.Task = &OptGroupTask{}
 
+// OptGroupTask is a wrapper of running logic of exploring a group.
 type OptGroupTask struct {
 	BaseTask
 

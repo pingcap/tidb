@@ -30,10 +30,10 @@ var _ base.Task = &ApplyRuleTask{}
 // all the optimizing logic is encapsulated as Task unit, which is running transparent and resource
 // isolated internally.
 //
-// First, we are optimizing the root node from the memo tree downward, so we got the only one task as
-// OptGroupTask{root}, inside which, the consecutive downward Tasks will be triggered and encapsulated
-// and pushed into the singleton stack continuously. Different task type may trigger additional task
-// generation depend on how the Execute interface is implemented.
+// First, we are optimizing the root node from the memo tree downward, at the beginning we got the only
+// one task as OptGroupTask{root}, inside which, the consecutive downward Tasks will be triggered and
+// encapsulated and pushed into the singleton stack continuously. Different task type may trigger an
+// additional task generation depend on how the Execute interface is implemented.
 //
 // Currently, here is how we work.
 //
@@ -52,19 +52,17 @@ var _ base.Task = &ApplyRuleTask{}
 // B represent OptGroupExpressionTask
 // C represent ApplyRuleTask
 //
-// When memo init is done, the only targeted task is OptGroupTask, say we got
-// 3 group expression inside this group, it will trigger and push additional
-// 3 OptGroupExpressionTask into the stack. Then task A is wiped out from the
-// stack. With the FILO rule, the stack-top B will be popped out and run, from
-// which it will find valid rules for its member group expression and encapsulate
-// ApplyRuleTask for each of those valid rules. Say we got two valid rules here,
-// so it will push another two task with type C into the stack, note, since current
-// B's child group hasn't been optimized yet, so the cascades task A will be triggered
-// and pushed into the stack as well, and they are queued after rule tasks. then
-// the toppest B is wiped out from the stack.
+// When memo init is done, the only targeted task is OptGroupTask, say we got 3 group expression inside
+// this group, it will trigger and push additional 3 OptGroupExpressionTask into the stack when running
+// A. Then task A is wiped out from the stack. With the FILO rule, the stack-top B will be popped out and
+// run, from which it will find valid rules for its member group expression and encapsulate ApplyRuleTask
+// for each of those valid rules. Say we got two valid rules here, so it will push another two task with
+// type C into the stack, note, since current B's child group hasn't been optimized yet, so the cascaded
+// task A will be triggered and pushed into the stack as well, and they are queued after rule tasks. then
+// the old toppest B is wiped out from the stack.
 //
-// At last, when the stack is out of task calling internally, or forcible mechanism
-// is called from the outside, this stack running will be stopped.
+// At last, when the stack is running out of task calling internally, or forcible mechanism is called from
+// the outside, this stack running will be stopped.
 //
 // State Flow:
 //                                                ┌── Opt 4 New Group Expression ──┐
@@ -76,7 +74,7 @@ var _ base.Task = &ApplyRuleTask{}
 //            └───── Child Opt Group Trigger ─────┘
 //
 
-// ApplyRuleTask is basic logic union of scheduling apply rule.
+// ApplyRuleTask is a wrapper of running basic logic union of scheduling apply rule.
 type ApplyRuleTask struct {
 	BaseTask
 
