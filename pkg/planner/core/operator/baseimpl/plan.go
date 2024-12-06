@@ -16,7 +16,6 @@ package baseimpl
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"strconv"
 	"unsafe"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
