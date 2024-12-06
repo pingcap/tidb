@@ -872,7 +872,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -886,7 +886,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -902,7 +902,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -916,7 +916,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -933,7 +933,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -955,7 +955,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -971,7 +971,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -987,7 +987,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
@@ -1003,7 +1003,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1024,7 +1024,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -1040,7 +1040,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.a))",
@@ -1056,7 +1056,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
@@ -1072,7 +1072,7 @@
         "Plan": [
           "TableReader 12487.50 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 12487.50 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, equal:[eq(test.t.a, test.t.a)]",
+          "  └─HashJoin 12487.50 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t.a, test.t.a)]",
           "    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "    │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1090,7 +1090,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, left side:TableFullScan, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1107,7 +1107,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1126,7 +1126,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, other cond:eq(test.t.a, test.t.a)",
+          "      └─HashJoin 10000.00 mpp[tiflash]  CARTESIAN left outer semi join, left side:TableFullScan, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1145,7 +1145,7 @@
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#9)",
-          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "      └─HashJoin 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
@@ -1579,7 +1579,7 @@
         "Plan": [
           "TableReader_36 0.80 root  MppVersion: 2, data:ExchangeSender_35",
           "└─ExchangeSender_35 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_34 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
+          "  └─HashJoin_34 0.80 mpp[tiflash]  semi join, left side:Selection_13, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_17(Build) 8.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_16 8.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_15 8.00 mpp[tiflash]  not(isnull(test.t2.b))",
@@ -1609,7 +1609,7 @@
         "Plan": [
           "TableReader_38 0.80 root  MppVersion: 2, data:ExchangeSender_37",
           "└─ExchangeSender_37 0.80 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_36 0.80 mpp[tiflash]  semi join, equal:[eq(test.t1.a, test.t2.b)]",
+          "  └─HashJoin_36 0.80 mpp[tiflash]  semi join, left side:ExchangeReceiver_15, equal:[eq(test.t1.a, test.t2.b)]",
           "    ├─ExchangeReceiver_15(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 1.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.a, collate: binary]",
           "    │   └─Selection_13 1.00 mpp[tiflash]  not(isnull(test.t1.a))",
@@ -1636,7 +1636,7 @@
         "Plan": [
           "TableReader_32 3.00 root  MppVersion: 2, data:ExchangeSender_31",
           "└─ExchangeSender_31 3.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_30 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "  └─HashJoin_30 3.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver_14, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
           "    ├─ExchangeReceiver_14(Build) 5.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_13 5.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection_12 5.00 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.c))",
@@ -1665,7 +1665,7 @@
         "Plan": [
           "TableReader_34 3.00 root  MppVersion: 2, data:ExchangeSender_33",
           "└─ExchangeSender_33 3.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_32 3.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
+          "  └─HashJoin_32 3.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver_14, equal:[eq(test.t1.a, test.t2.b)], other cond:lt(test.t1.c, test.t2.d)",
           "    ├─ExchangeReceiver_17(Build) 3.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_16 3.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.b, collate: binary]",
           "    │   └─TableFullScan_15 3.00 mpp[tiflash] table:t2 keep order:false",
@@ -1684,7 +1684,7 @@
       {
         "SQL": "select /*+ inl_join(t1@sel_2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
         "Plan": [
-          "IndexJoin 12500.00 root  left outer join, inner:TableReader, outer key:test.t2.b, inner key:test.t1.a, equal cond:eq(test.t2.b, test.t1.a)",
+          "IndexJoin 12500.00 root  left outer join, inner:TableReader, left side:TableReader, outer key:test.t2.b, inner key:test.t1.a, equal cond:eq(test.t2.b, test.t1.a)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableRangeScan",
@@ -1695,7 +1695,7 @@
       {
         "SQL": "select /*+ inl_join(t2) */ a, (select b from t1 where t1.a = t2.b) from t2;",
         "Plan": [
-          "HashJoin 12500.00 root  left outer join, equal:[eq(test.t2.b, test.t1.a)]",
+          "HashJoin 12500.00 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -3230,7 +3230,7 @@
       {
         "SQL": "select exists(select /*+ SEMI_JOIN_REWRITE() */ * from t t1 where t1.a=t.a) from t",
         "Plan": [
-          "HashJoin 10000.00 root  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "HashJoin 10000.00 root  left outer semi join, left side:TableReader, equal:[eq(test.t.a, test.t.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -3241,7 +3241,7 @@
       {
         "SQL": "select * from t where exists (select /*+ SEMI_JOIN_REWRITE() */ 1 from t t1 where t1.a > t.a)",
         "Plan": [
-          "HashJoin 7992.00 root  CARTESIAN semi join, other cond:gt(test.t.a, test.t.a)",
+          "HashJoin 7992.00 root  CARTESIAN semi join, left side:TableReader, other cond:gt(test.t.a, test.t.a)",
           "├─TableReader(Build) 9990.00 root  data:Selection",
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",

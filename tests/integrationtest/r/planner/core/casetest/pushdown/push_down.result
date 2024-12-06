@@ -190,7 +190,7 @@ HashJoin	10000.00	root		inner join, equal:[eq(planner__core__casetest__pushdown_
     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select * from t left join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
+HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
 ├─Projection(Build)	8000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
 │ └─TableReader	8000.00	root		data:Selection
 │   └─Selection	8000.00	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
@@ -199,7 +199,7 @@ HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__push
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select * from t right join (select id-2 as b from t) A on A.b=t.id;
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		right outer join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
+HashJoin	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#25)]
 ├─Projection(Build)	10000.00	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#25
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -220,7 +220,7 @@ Projection	10000.00	root		Column#26, Column#13
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 desc format = 'brief' select A.id from t as A where exists (select 1 from t where t.id=A.id);
 id	estRows	task	access object	operator info
-HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, planner__core__casetest__pushdown__push_down.t.id)]
+HashJoin	7992.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, planner__core__casetest__pushdown__push_down.t.id)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__pushdown__push_down.t.id))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -229,7 +229,7 @@ HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__pushdown__p
     └─TableFullScan	10000.00	cop[tikv]	table:A	keep order:false, stats:pseudo
 desc format = 'brief' select A.id from t as A where not exists  (select 1 from t where t.id=A.id);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		anti semi join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, planner__core__casetest__pushdown__push_down.t.id)]
+HashJoin	8000.00	root		anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, planner__core__casetest__pushdown__push_down.t.id)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan

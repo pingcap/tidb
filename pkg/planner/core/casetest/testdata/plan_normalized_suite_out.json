@@ -55,7 +55,7 @@
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
           " Projection                 root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply                    root semi join, equal:eq(?, ?)",
+          " └─Apply                    root semi join, left side:Projection, equal:eq(?, ?)",
           "   ├─Projection             root cast(test.t1.a, decimal(10,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
           "   │ └─TableReader          root ",
           "   │   └─Selection          cop  gt(test.t1.b, ?)",
@@ -445,8 +445,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.a, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
@@ -454,8 +454,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.a, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), keep order:false"
         ]
       },
       {
