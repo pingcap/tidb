@@ -808,10 +808,12 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		}
 	}
 
-	schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
-	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
-	if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
-		minStartTS = schemaTS
+	if is.infoCache != nil {
+		schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
+		if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
+			minStartTS = schemaTS
+		}
 	}
 
 	is.minStartTS = kv.GetMinInnerTxnStartTS(now, startTSLowerLimit, minStartTS)
