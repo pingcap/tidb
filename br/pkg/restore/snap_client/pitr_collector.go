@@ -22,7 +22,6 @@ import (
 )
 
 type pitrCollectorRestorer struct {
-	restore.SstRestorer
 	// the context used for committing.
 	cx context.Context
 	// the context bound to the errgroup.
@@ -48,6 +47,10 @@ func (c *pitrCollector) createRestorer(ctx context.Context) *pitrCollectorRestor
 func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets ...restore.BatchBackupFileSet) error {
 	if !p.coll.enabled {
 		return nil
+	}
+
+	if err := p.coll.prepareMigIfNeeded(p.cx); err != nil {
+		return err
 	}
 
 	p.wg.Go(func() error {
@@ -101,6 +104,7 @@ type pitrCollector struct {
 	// Mutable state.
 	committing     committing
 	committingLock sync.Mutex
+	putMigOnce     sync.Once
 
 	// Delegates.
 	tso func(ctx context.Context) (uint64, error)
@@ -229,6 +233,13 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
 	// which leads to a leakage.
 	return c.persist(ctx)
+}
+
+func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
+	c.putMigOnce.Do(func() {
+		err = c.prepareMig(ctx)
+	})
+	return
 }
 
 func (c *pitrCollector) commit(ctx context.Context) error {
