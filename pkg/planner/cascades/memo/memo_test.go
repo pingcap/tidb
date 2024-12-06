@@ -17,13 +17,13 @@ package memo
 import (
 	"testing"
 
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMemo(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
@@ -46,7 +46,7 @@ func TestMemo(t *testing.T) {
 }
 
 func TestInsertGE(t *testing.T) {
-	ctx := plannercore.MockContext()
+	ctx := mock.NewContext()
 	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
