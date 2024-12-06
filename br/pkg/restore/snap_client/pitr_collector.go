@@ -82,7 +82,7 @@ func (p pitrCollectorRestorer) WaitUntilFinish() error {
 	if err != nil {
 		return errors.Annotate(err, "failed to wait on pitrCollector")
 	}
-	return errors.Annotatef(p.coll.persist(p.cx), "failed to persist the metadata of uploaded SSTs")
+	return errors.Annotatef(p.coll.persistExtraBackupMeta(p.cx), "failed to persist the metadata of uploaded SSTs")
 }
 
 // Close releases any resources associated with the restoration process.
@@ -102,24 +102,20 @@ type pitrCollector struct {
 	restoreUUID    uuid.UUID
 
 	// Mutable state.
-	committing     committing
-	committingLock sync.Mutex
-	putMigOnce     sync.Once
+	extraBackupMeta     extraBackupMeta
+	extraBackupMetaLock sync.Mutex
+	putMigOnce          sync.Once
 
 	// Delegates.
 	tso func(ctx context.Context) (uint64, error)
 }
 
-type committing struct {
+type extraBackupMeta struct {
 	msg      pb.ExtraFullBackup
 	rewrites map[int64]int64
 }
 
-func (c *committing) commit() {
-	c.msg.Finished = true
-}
-
-func (c *committing) genMsg() *pb.ExtraFullBackup {
+func (c *extraBackupMeta) genMsg() *pb.ExtraFullBackup {
 	msg := util.ProtoV1Clone(&c.msg)
 	for old, new := range c.rewrites {
 		msg.RewrittenTables = append(msg.RewrittenTables, &pb.RewrittenTableID{UpstreamOfUpstream: old, Upstream: new})
@@ -127,11 +123,10 @@ func (c *committing) genMsg() *pb.ExtraFullBackup {
 	return msg
 }
 
-// doWithCommittingLock edits the committing ExtraFullBackup.
-func (c *pitrCollector) doWithCommittingLock(f func()) {
-	c.committingLock.Lock()
+func (c *pitrCollector) doWithExtraBackupMetaLock(f func()) {
+	c.extraBackupMetaLock.Lock()
 	f()
-	c.committingLock.Unlock()
+	c.extraBackupMetaLock.Unlock()
 }
 
 // outputPath constructs the path by a relative path for outputting.
@@ -169,7 +164,7 @@ func (c *pitrCollector) PutSST(ctx context.Context, f *pb.File) error {
 	}
 
 	f.Name = out
-	c.doWithCommittingLock(func() { c.committing.msg.Files = append(c.committing.msg.Files, f) })
+	c.doWithExtraBackupMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
 	return nil
 }
 
@@ -179,8 +174,8 @@ func (c *pitrCollector) PutRewriteRule(_ context.Context, oldID int64, newID int
 		return nil
 	}
 	var err error
-	c.doWithCommittingLock(func() {
-		if oldVal, ok := c.committing.rewrites[oldID]; ok && oldVal != newID {
+	c.doWithExtraBackupMetaLock(func() {
+		if oldVal, ok := c.extraBackupMeta.rewrites[oldID]; ok && oldVal != newID {
 			err = errors.Annotatef(
 				berrors.ErrInvalidArgument,
 				"pitr coll rewrite rule conflict: we had %v -> %v, but you want rewrite to %v",
@@ -190,16 +185,16 @@ func (c *pitrCollector) PutRewriteRule(_ context.Context, oldID int64, newID int
 			)
 			return
 		}
-		c.committing.rewrites[oldID] = newID
+		c.extraBackupMeta.rewrites[oldID] = newID
 	})
 	return err
 }
 
-func (c *pitrCollector) persist(ctx context.Context) (err error) {
-	c.committingLock.Lock()
-	defer c.committingLock.Unlock()
+func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) {
+	c.extraBackupMetaLock.Lock()
+	defer c.extraBackupMetaLock.Unlock()
 
-	msg := c.committing.genMsg()
+	msg := c.extraBackupMeta.genMsg()
 	bs, err := msg.Marshal()
 	if err != nil {
 		return errors.Annotate(err, "failed to marsal the committing message")
@@ -227,12 +222,12 @@ func (c *pitrCollector) prepareMig(ctx context.Context) error {
 		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 
-	c.doWithCommittingLock(func() {
+	c.doWithExtraBackupMetaLock(func() {
 		c.resetCommitting()
 	})
 	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
 	// which leads to a leakage.
-	return c.persist(ctx)
+	return c.persistExtraBackupMeta(ctx)
 }
 
 func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
@@ -243,17 +238,22 @@ func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
 }
 
 func (c *pitrCollector) commit(ctx context.Context) error {
-	c.committing.commit()
-	return c.persist(ctx)
+	c.extraBackupMeta.msg.Finished = true
+	ts, err := c.tso(ctx)
+	if err != nil {
+		return err
+	}
+	c.extraBackupMeta.msg.AsIfTs = ts
+	return c.persistExtraBackupMeta(ctx)
 }
 
 func (c *pitrCollector) resetCommitting() {
-	c.committing = committing{
+	c.extraBackupMeta = extraBackupMeta{
 		rewrites: map[int64]int64{},
 	}
-	c.committing.msg.FilesPrefixHint = c.sstPath("")
-	c.committing.msg.Finished = false
-	c.committing.msg.BackupUuid = c.restoreUUID[:]
+	c.extraBackupMeta.msg.FilesPrefixHint = c.sstPath("")
+	c.extraBackupMeta.msg.Finished = false
+	c.extraBackupMeta.msg.BackupUuid = c.restoreUUID[:]
 }
 
 // PiTRCollDep is the dependencies of a PiTR collector.
