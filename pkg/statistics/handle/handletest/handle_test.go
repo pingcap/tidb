@@ -1414,6 +1414,7 @@ func TestInitStatsLite(t *testing.T) {
 	require.NoError(t, h.InitStatsLite(context.Background()))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
+	require.Equal(t, int(statistics.Version2), statsTbl1.StatsVer)
 	{
 		// internal.AssertTableEqual(t, statsTbl0, statsTbl1)
 		// statsTbl0 is loaded when the cache has pseudo table.
