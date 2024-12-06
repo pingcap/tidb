@@ -843,8 +843,8 @@ var funcs = map[string]functionClass{
 	// control functions
 	ast.If:     &ifFunctionClass{baseFunctionClass{ast.If, 3, 3}},
 	ast.Ifnull: &ifNullFunctionClass{baseFunctionClass{ast.Ifnull, 2, 2}},
-	ast.Nvl:    &NvlFunctionClass{baseFunctionClass{ast.Nvl, 2, 2}},
-	ast.Nvl2:   &Nvl2FunctionClass{baseFunctionClass{ast.If, 3, 3}},
+	ast.Nvl:    &nvlFunctionClass{baseFunctionClass{ast.Nvl, 2, 2}},
+	ast.Nvl2:   &nvl2FunctionClass{baseFunctionClass{ast.If, 3, 3}},
 
 	// miscellaneous functions
 	ast.Sleep:           &sleepFunctionClass{baseFunctionClass{ast.Sleep, 1, 1}},

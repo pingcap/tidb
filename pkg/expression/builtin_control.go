@@ -27,8 +27,8 @@ var (
 	_ functionClass = &caseWhenFunctionClass{}
 	_ functionClass = &ifFunctionClass{}
 	_ functionClass = &ifNullFunctionClass{}
-	_ functionClass = &NvlFunctionClass{}
-	_ functionClass = &Nvl2FunctionClass{}
+	_ functionClass = &nvlFunctionClass{}
+	_ functionClass = &nvl2FunctionClass{}
 )
 
 var (
@@ -907,7 +907,7 @@ func (b *builtinIfVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk
 	return b.args[2].EvalVectorFloat32(ctx, row)
 }
 
-type NvlFunctionClass struct {
+type nvlFunctionClass struct {
 	baseFunctionClass
 }
 
@@ -915,7 +915,7 @@ func evalTypeIsNumeric(t types.EvalType) bool {
 	return t == types.ETInt || t == types.ETReal || t == types.ETDecimal
 }
 
-func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *nvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -949,11 +949,11 @@ func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 	return sig, nil
 }
 
-type Nvl2FunctionClass struct {
+type nvl2FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *Nvl2FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+func (c *nvl2FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
