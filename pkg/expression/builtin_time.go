@@ -110,6 +110,8 @@ var (
 	_ functionClass = &extractFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
 	_ functionClass = &addTimeFunctionClass{}
+	_ functionClass = &addMonthFunctionClass{}
+	_ functionClass = &nextDayFunctionClass{}
 	_ functionClass = &convertTzFunctionClass{}
 	_ functionClass = &makeDateFunctionClass{}
 	_ functionClass = &makeTimeFunctionClass{}
@@ -807,6 +809,166 @@ func (b *builtinLastMonthSig) evalString(ctx EvalContext, row chunk.Row) (string
 	lastDayOfPreviousMonth := firstDayOfCurrentMonth.AddDate(0, 0, -1)
 	dateStr := lastDayOfPreviousMonth.Format("2006-01-02")
 	return dateStr, isNull, err
+}
+
+type addMonthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *addMonthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinAddMonthSig{bf}
+	return sig, nil
+}
+
+type builtinAddMonthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinAddMonthSig) Clone() builtinFunc {
+	newSig := &builtinAddMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinAddMonthSig.
+func (b *builtinAddMonthSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	date, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+	month, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+
+	orgTime, err := date.GoTime(time.UTC)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+	}
+
+	// AddDate() call should have already handle the end of month behavior consistency for us
+	resultTime, err := types.AddDate(0, month, 0, orgTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	// in case of datetime overflow
+	if resultTime.Year() == 0 {
+		hour, minute, second := resultTime.Clock()
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, resultTime.Nanosecond()/1000))
+		return date, false, nil
+	}
+
+	var result types.Time
+	result.SetCoreTime(types.FromGoTime(resultTime))
+	tc := typeCtx(ctx)
+	overflow, err := types.DateTimeIsOverflow(tc, date)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+	if overflow {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	return result, false, nil
+}
+
+type nextDayFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nextDayFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinNextDaySig{bf}
+	return sig, nil
+}
+
+type builtinNextDaySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNextDaySig) Clone() builtinFunc {
+	newSig := &builtinNextDaySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinNextDaySig.
+func (b *builtinNextDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	// need a map from string to actual weekdays
+	dayMap := map[string]time.Weekday{
+		"SUN": time.Sunday, "SUNDAY": time.Sunday,
+		"MON": time.Monday, "MONDAY": time.Monday,
+		"TUE": time.Tuesday, "TUESDAY": time.Tuesday,
+		"WED": time.Wednesday, "WEDNESDAY": time.Wednesday,
+		"THU": time.Thursday, "THURSDAY": time.Thursday,
+		"FRI": time.Friday, "FRIDAY": time.Friday,
+		"SAT": time.Saturday, "SATURDAY": time.Saturday,
+	}
+
+	date, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+	weekday, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+
+	// deal with case sensitivity
+	weekday = strings.ToUpper(weekday)
+
+	targetWeekday, valid := dayMap[weekday]
+	if !valid {
+		return types.ZeroTime, isNull, errors.Errorf("given weekday %s is not valid", weekday)
+	}
+	currentWeekday := date.Weekday()
+	daysToAdd := (int64(targetWeekday)-int64(currentWeekday)+6)%7 + 1
+
+	//calculate the exact date
+	orgTime, err := date.GoTime(time.UTC)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+	}
+
+	resultTime, err := types.AddDate(0, 0, daysToAdd, orgTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	// Ensure time is 00:00:00
+	resultTime.Truncate(24 * time.Hour)
+
+	// in case of datetime overflow
+	if resultTime.Year() == 0 {
+		hour, minute, second := resultTime.Clock()
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, resultTime.Nanosecond()/1000))
+		return date, false, nil
+	}
+
+	var result types.Time
+	result.SetCoreTime(types.FromGoTime(resultTime))
+
+	return result, false, nil
 }
 
 type dateFormatFunctionClass struct {

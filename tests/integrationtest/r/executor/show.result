@@ -591,6 +591,7 @@ show builtins;
 Supported_builtin_functions
 abs
 acos
+add_month
 adddate
 addtime
 aes_decrypt
@@ -770,6 +771,7 @@ monthname
 mul
 name_const
 ne
+next_day
 nextval
 not
 now
