@@ -942,7 +942,47 @@ func (c *NvlFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 		sig = &builtinIfNullStringSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullString)
 	default:
-		return nil, errors.Errorf("%s is not supported for converting", rtp.EvalType())
+		return nil, errors.Errorf("%s does not support implicit conversion", rtp.EvalType())
+	}
+	return sig, nil
+}
+
+type Nvl2FunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *Nvl2FunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
+	if err = c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	tp1, tp2 := args[1].GetType(ctx.GetEvalCtx()), args[2].GetType(ctx.GetEvalCtx())
+	evalTp1, evalTp2 := tp1.EvalType(), tp2.EvalType()
+	// if arg1 and arg2 have the same EvalType, or there ars all numeric, Call if() directly.
+	if evalTp1 == evalTp2 ||
+		(evalTypeIsNumeric(evalTp1) && evalTypeIsNumeric(evalTp2)) {
+		c := ifFunctionClass{baseFunctionClass{ast.If, 3, 3}}
+		return c.getFunction(ctx, args)
+	}
+
+	// if the type of arg1 is different from the type of arg2.
+	// just support type converting for string.
+	retTp := tp1
+	evalTps := retTp.EvalType()
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps,
+		args[0].GetType(ctx.GetEvalCtx()).Clone(), retTp.Clone(), retTp.Clone())
+	if err != nil {
+		return nil, err
+	}
+
+	retTp.AddFlag(bf.tp.GetFlag())
+	bf.tp = retTp
+	switch evalTps {
+	case types.ETString:
+		sig = &builtinIfStringSig{bf}
+		sig.setPbCode(tipb.ScalarFuncSig_IfString)
+	default:
+		return nil, errors.Errorf("%s does not support implicit conversion", tp2.EvalType())
 	}
 	return sig, nil
 }

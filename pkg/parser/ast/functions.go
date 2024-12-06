@@ -389,6 +389,7 @@ const (
 	AddMonth  = "add_month"
 	NextDay   = "next_day"
 	Nvl       = "nvl"
+	Nvl2      = "nvl2"
 )
 
 type FuncCallExprType int8

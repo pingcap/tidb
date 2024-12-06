@@ -370,4 +370,5 @@ var funcName2Alias = map[string]string{
 	"add_month":  ast.AddMonth,
 	"next_day":   ast.NextDay,
 	"nvl":        ast.Nvl,
+	"nvl2":       ast.Nvl2,
 }
