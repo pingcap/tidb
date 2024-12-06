@@ -179,7 +179,7 @@ func arithmeticDatetimePlusOrMinusNumeric(ctx BuildContext, args []Expression) b
 
 	tp1 := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	tp2 := args[1].GetType(ctx.GetEvalCtx()).EvalType()
-	if (tp1 == types.ETDatetime) && (tp2 == types.ETReal || tp2 == types.ETInt) {
+	if (tp1 == types.ETDatetime) && (tp2 == types.ETReal || tp2 == types.ETInt || tp2 == types.ETDecimal) {
 		return true
 	}
 	return false
