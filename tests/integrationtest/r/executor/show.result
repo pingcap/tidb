@@ -768,6 +768,7 @@ minute
 mod
 month
 monthname
+months_between
 mul
 name_const
 ne

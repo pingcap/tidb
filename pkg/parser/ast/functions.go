@@ -382,14 +382,15 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate    = "to_date"
-	LastMonth = "last_month"
-	ToNumber  = "to_number"
-	GetGUID   = "get_guid"
-	AddMonth  = "add_month"
-	NextDay   = "next_day"
-	Nvl       = "nvl"
-	Nvl2      = "nvl2"
+	ToDate        = "to_date"
+	LastMonth     = "last_month"
+	ToNumber      = "to_number"
+	GetGUID       = "get_guid"
+	AddMonth      = "add_month"
+	NextDay       = "next_day"
+	MonthsBetween = "months_between"
+	Nvl           = "nvl"
+	Nvl2          = "nvl2"
 )
 
 type FuncCallExprType int8

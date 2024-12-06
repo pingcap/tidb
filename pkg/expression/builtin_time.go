@@ -7197,3 +7197,57 @@ func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
 }
+
+type monthsBetweenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *monthsBetweenFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETDatetime, types.ETDatetime)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinMonthsBetweenSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinMonthsBetweenSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinMonthsBetweenSig.
+// See https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/MONTHS_BETWEEN.html
+func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	lhs, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	rhs, isNull, err := b.args[1].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
+		if invalidLHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs.String()))
+		}
+		if invalidRHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs.String()))
+		}
+		return 0, true, err
+	}
+
+	// Calculate the total number of complete months between the two dates.
+	integerMonth := float64((lhs.Year()-rhs.Year())*12 + (lhs.Month() - rhs.Month()))
+	// If lhs and rhs's day is the same day or the end of month, will not calculate the time part diff
+	if lhs.Day() == rhs.Day() || (types.GetLastDay(lhs.Year(), lhs.Month()) == lhs.Day() && types.GetLastDay(rhs.Year(), rhs.Month()) == rhs.Day()) {
+		return integerMonth, false, nil
+	}
+	// Calculate the fractional month difference based on the time difference in second unit first.
+	totalSeconds := (lhs.Day()-rhs.Day())*24*60*60 + (lhs.Hour()-rhs.Hour())*60*60 + (lhs.Minute()-rhs.Minute())*60 + (lhs.Second() - rhs.Second())
+	// Compute fractional months as a ratio of total seconds base on 31 days. And result needs to maintain a precision of eight decimal places.
+	decimalMonth := math.Round(float64(totalSeconds)/(31.0*24.0*60.0*60.0)*1e8) / 1e8
+	return integerMonth + decimalMonth, false, nil
+}
