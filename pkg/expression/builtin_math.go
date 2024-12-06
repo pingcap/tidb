@@ -20,6 +20,7 @@ package expression
 
 import (
 	"fmt"
+	"github.com/pkg/errors"
 	"hash/crc32"
 	"math"
 	"strconv"
@@ -60,6 +61,7 @@ var (
 	_ functionClass = &sinFunctionClass{}
 	_ functionClass = &tanFunctionClass{}
 	_ functionClass = &truncateFunctionClass{}
+	_ functionClass = &truncFunctionClass{}
 )
 
 var (
@@ -2077,4 +2079,45 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
+}
+
+type truncFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).GetType()
+
+	// TRUNC(datetime)
+	switch arg0Tp {
+	case mysql.TypeDatetime, mysql.TypeVarString:
+		if len(args) != 1 {
+			return nil, errors.Errorf("Wrong number of arguments for trunc(datetime), expected 1 but got %d", len(args))
+		}
+		// TRUNC(datetime) is equivalent to STR_TO_DATE(DATE(datetime), '%Y-%m-%d')
+		fc := dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}}
+		return fc.getFunction(ctx, args)
+	case mysql.TypeTiny, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeNewDecimal:
+		// TODO: is it possible that we encounter args longer than 2?
+		if len(args) > 2 {
+			return nil, errors.Errorf("Wrong number of arguments for trunc(num1[, num2]), expected 1 or 2 but got %d", len(args))
+		} else if len(args) == 2 {
+			// TODO: Check the type of the second argument?
+			// arg1Tp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
+			// if arg1Tp != types.ETInt {
+			// 	return nil, errors.Errorf("Invalid argument type of num2 %v for trunc(num1, num2)", arg1Tp)
+			// }
+		} else {
+			// TRUNC(num1) is equivalent to TRUNCATE(num1, 0)
+			args = append(args, &Constant{Value: types.NewDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)})
+		}
+		fc := truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}}
+		return fc.getFunction(ctx, args)
+	default:
+		return nil, errors.Errorf("invalid argument type %v", arg0Tp)
+	}
 }

@@ -863,6 +863,7 @@ to_number
 to_seconds
 translate
 trim
+trunc
 truncate
 ucase
 unaryminus

@@ -992,6 +992,7 @@ var funcs = map[string]functionClass{
 
 	// Oracle functions
 	ast.ToNumber: &toNumberFunctionClass{baseFunctionClass{ast.ToNumber, 1, 1}},
+	ast.Trunc:    &truncFunctionClass{baseFunctionClass{ast.Trunc, 1, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
