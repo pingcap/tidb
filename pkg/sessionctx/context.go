@@ -243,7 +243,10 @@ const (
 	LastExecuteDDL basicCtxType = 3
 )
 
-// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
-func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64) error {
-	return store.GetOracle().ValidateSnapshotReadTS(ctx, readTS, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+// ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp.
+// For read requests to the storage, the check can be implicitly performed when sending the RPC request. So this
+// function is only needed when it's not proper to delay the check to when RPC requests are being sent (e.g., `BEGIN`
+// statements that don't make reading operation immediately).
+func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64, isStaleRead bool) error {
+	return store.GetOracle().ValidateReadTS(ctx, readTS, isStaleRead, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }
