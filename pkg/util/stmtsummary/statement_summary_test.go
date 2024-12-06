@@ -149,6 +149,16 @@ func TestAddStatement(t *testing.T) {
 			SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 			MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 		},
+		StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
+			UnpackedBytesSentKVTotal:          stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
+			UnpackedBytesReceivedKVTotal:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
+			UnpackedBytesSentKVCrossZone:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
+			UnpackedBytesReceivedKVCrossZone:  stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
+			UnpackedBytesSentMPPTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
+			UnpackedBytesReceivedMPPTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
+			UnpackedBytesSentMPPCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
+			UnpackedBytesReceivedMPPCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
+		},
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -238,12 +248,18 @@ func TestAddStatement(t *testing.T) {
 				}, CalleeAddress: "202",
 			},
 		},
-		StmtCtx:           sc,
-		MemMax:            20000,
-		DiskMax:           20000,
-		StartTime:         time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
-		Succeed:           true,
-		RUDetail:          util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		StmtCtx:   sc,
+		MemMax:    20000,
+		DiskMax:   20000,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		Succeed:   true,
+		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		TiKVExecDetails: util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:     100,
+				UnpackedBytesReceivedKVTotal: 200,
+			},
+		},
 		ResourceGroupName: "rg1",
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
@@ -305,6 +321,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo2.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -389,6 +406,14 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
 		ResourceGroupName: "rg1",
+		TiKVExecDetails: util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:      1,
+				UnpackedBytesReceivedKVTotal:  300,
+				UnpackedBytesSentMPPTotal:     1,
+				UnpackedBytesReceivedMPPTotal: 300,
+			},
+		},
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
 	expectedSummaryElement.execCount++
@@ -423,6 +448,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(&stmtExecInfo3.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -576,7 +602,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
 			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
 			ssElement1.resourceGroupName != ssElement2.resourceGroupName ||
-			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary {
+			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary ||
+			ssElement1.StmtNetworkTrafficSummary != ssElement2.StmtNetworkTrafficSummary {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
@@ -696,6 +723,14 @@ func generateAnyExecInfo() *StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
+		TiKVExecDetails: util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:         10,
+				UnpackedBytesReceivedKVTotal:     1000,
+				UnpackedBytesReceivedKVCrossZone: 1,
+				UnpackedBytesSentKVCrossZone:     100,
+			},
+		},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
