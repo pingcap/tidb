@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -225,20 +226,50 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
+		type dbTables struct {
+			db   string
+			tbls []*model.TableInfo
+			err  error
+		}
+
 		dbs := is.AllSchemaNames()
+		results := make(chan dbTables, len(dbs))
+		var wg sync.WaitGroup
+
+		semaphore := make(chan struct{}, 16)
+
 		for _, db := range dbs {
-			// Ignore the memory and system database.
 			if util.IsMemOrSysDB(db.L) {
 				continue
 			}
 
-			tbls, err := is.SchemaTableInfos(context.Background(), db)
-			if err != nil {
-				return err
+			wg.Add(1)
+			go func(dbName pmodel.CIStr) {
+				defer wg.Done()
+				semaphore <- struct{}{}
+				defer func() { <-semaphore }()
+
+				tbls, err := is.SchemaTableInfos(context.Background(), dbName)
+				results <- dbTables{
+					db:   dbName.L,
+					tbls: tbls,
+					err:  err,
+				}
+			}(db)
+		}
+
+		go func() {
+			wg.Wait()
+			close(results)
+		}()
+
+		// 处理获取到的表信息
+		for result := range results {
+			if result.err != nil {
+				return result.err
 			}
 
-			// We need to check every partition of every table to see if it needs to be analyzed.
-			for _, tblInfo := range tbls {
+			for _, tblInfo := range result.tbls {
 				// If table locked, skip analyze all partitions of the table.
 				if _, ok := lockedTables[tblInfo.ID]; ok {
 					continue
@@ -254,8 +285,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 						tblInfo,
 						pq.statsHandle.GetTableStatsForAutoAnalyze(tblInfo),
 					)
-					err := pq.pushWithoutLock(job)
-					if err != nil {
+					if err := pq.pushWithoutLock(job); err != nil {
 						return err
 					}
 					continue
@@ -269,7 +299,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 					}
 				}
 				partitionStats := GetPartitionStats(pq.statsHandle, tblInfo, partitionDefs)
-				// If the prune mode is static, we need to analyze every partition as a separate table.
+
 				if pruneMode == variable.Static {
 					for pIDAndName, stats := range partitionStats {
 						job := jobFactory.CreateStaticPartitionAnalysisJob(
@@ -277,8 +307,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 							pIDAndName.ID,
 							stats,
 						)
-						err := pq.pushWithoutLock(job)
-						if err != nil {
+						if err := pq.pushWithoutLock(job); err != nil {
 							return err
 						}
 					}
@@ -288,8 +317,7 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 						pq.statsHandle.GetPartitionStatsForAutoAnalyze(tblInfo, tblInfo.ID),
 						partitionStats,
 					)
-					err := pq.pushWithoutLock(job)
-					if err != nil {
+					if err := pq.pushWithoutLock(job); err != nil {
 						return err
 					}
 				}
