@@ -20,7 +20,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pkg/errors"
 	"hash/crc32"
 	"math"
 	"strconv"
@@ -2096,7 +2095,7 @@ func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	switch arg0Tp {
 	case mysql.TypeDatetime, mysql.TypeVarString:
 		if len(args) != 1 {
-			return nil, errors.Errorf("Wrong number of arguments for trunc(datetime), expected 1 but got %d", len(args))
+			return nil, perrors.Errorf("Wrong number of arguments for trunc(datetime), expected 1 but got %d", len(args))
 		}
 		// TRUNC(datetime) is equivalent to STR_TO_DATE(DATE(datetime), '%Y-%m-%d')
 		fc := dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}}
@@ -2104,7 +2103,7 @@ func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	case mysql.TypeTiny, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeNewDecimal:
 		// TODO: is it possible that we encounter args longer than 2?
 		if len(args) > 2 {
-			return nil, errors.Errorf("Wrong number of arguments for trunc(num1[, num2]), expected 1 or 2 but got %d", len(args))
+			return nil, perrors.Errorf("Wrong number of arguments for trunc(num1[, num2]), expected 1 or 2 but got %d", len(args))
 		} else if len(args) == 2 {
 			// TODO: Check the type of the second argument?
 			// arg1Tp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
@@ -2118,6 +2117,6 @@ func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		fc := truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}}
 		return fc.getFunction(ctx, args)
 	default:
-		return nil, errors.Errorf("invalid argument type %v", arg0Tp)
+		return nil, perrors.Errorf("invalid argument type %v", arg0Tp)
 	}
 }

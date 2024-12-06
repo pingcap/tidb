@@ -41,7 +41,7 @@ func (e *ReloadExprPushdownBlacklistExec) Next(context.Context, *chunk.Chunk) er
 func LoadExprPushdownBlacklist(sctx sessionctx.Context) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnSysVar)
 	exec := sctx.GetRestrictedSQLExecutor()
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "SELECT HIGH_PRIORITY name, store_type FROM mysql.expr_pushdown_blacklist")
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name, store_type from mysql.expr_pushdown_blacklist")
 	if err != nil {
 		return err
 	}
