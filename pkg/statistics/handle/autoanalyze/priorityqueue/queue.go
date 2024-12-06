@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -206,6 +207,11 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
 // Note: Please hold the lock before calling this function.
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		// Get current timestamp from the session context.
+		currentTs, err := statsutil.GetStartTS(sctx)
+		if err != nil {
+			return err
+		}
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
 		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
@@ -215,13 +221,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		if err != nil {
 			return err
 		}
-		// Get current timestamp from the session context.
-		currentTs, err := statsutil.GetStartTS(sctx)
-		if err != nil {
-			return err
-		}
 		// Get the info schema after starting the transaction to avoid GC lifetime errors.
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
 		dbs := is.AllSchemaNames()
