@@ -644,6 +644,7 @@ date
 date_add
 date_format
 date_sub
+date_to_char
 datediff
 day
 dayname
@@ -862,6 +863,7 @@ timestamp
 timestampadd
 timestampdiff
 to_base64
+to_char
 to_date
 to_days
 to_number

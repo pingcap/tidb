@@ -191,9 +191,10 @@ const (
 	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions
-	ASCII           = "ascii"
-	Bin             = "bin"
-	Concat          = "concat"
+	ASCII  = "ascii"
+	Bin    = "bin"
+	Concat = "concat"
+
 	ConcatWS        = "concat_ws"
 	Convert         = "convert"
 	Elt             = "elt"
@@ -391,6 +392,8 @@ const (
 	MonthsBetween = "months_between"
 	Nvl           = "nvl"
 	Nvl2          = "nvl2"
+	ToChar        = "to_char"
+	DateToChar    = "date_to_char"
 )
 
 type FuncCallExprType int8
