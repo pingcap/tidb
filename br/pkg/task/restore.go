@@ -816,15 +816,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
-		PDCli:   mgr.GetPDClient(),
-		EtcdCli: mgr.GetDomain().GetEtcdClient(),
-		Storage: util.ProtoV1Clone(u),
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
 	}
@@ -940,6 +931,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			log.Info("wait for flush checkpoint...")
 			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
 		}()
+	}
+
+	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
+		PDCli:   mgr.GetPDClient(),
+		EtcdCli: mgr.GetDomain().GetEtcdClient(),
+		Storage: util.ProtoV1Clone(u),
+	})
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	sp := utils.BRServiceSafePoint{

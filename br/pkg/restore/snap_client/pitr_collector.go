@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -45,6 +46,10 @@ func (c *pitrCollector) createRestorer(ctx context.Context) *pitrCollectorRestor
 // GoRestore imports the specified backup file sets into TiKV asynchronously.
 // The onProgress function is called with progress updates as files are processed.
 func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets ...restore.BatchBackupFileSet) error {
+	if !p.coll.enabled {
+		return nil
+	}
+
 	p.wg.Go(func() error {
 		for _, fileSets := range batchFileSets {
 			for _, fileSet := range fileSets {
@@ -67,12 +72,22 @@ func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets .
 
 // WaitUntilFinish blocks until all pending restore files have completed processing.
 func (p pitrCollectorRestorer) WaitUntilFinish() error {
-	return errors.Annotate(p.wg.Wait(), "failed to wait on pitrCollector")
+	if !p.coll.enabled {
+		return nil
+	}
+	err := p.wg.Wait()
+	if err != nil {
+		return errors.Annotate(err, "failed to wait on pitrCollector")
+	}
+	return errors.Annotatef(p.coll.persist(p.cx), "failed to persist the metadata of uploaded SSTs")
 }
 
 // Close releases any resources associated with the restoration process.
 func (p pitrCollectorRestorer) Close() error {
-	return errors.Annotate(p.coll.Commit(p.cx), "failed to commit pitrCollector")
+	if !p.coll.enabled {
+		return nil
+	}
+	return errors.Annotate(p.coll.commit(p.cx), "failed to commit pitrCollector")
 }
 
 type pitrCollector struct {
@@ -81,6 +96,7 @@ type pitrCollector struct {
 	restoreStorage storage.ExternalStorage
 	name           string
 	enabled        bool
+	restoreUUID    uuid.UUID
 
 	// Mutable state.
 	committing     committing
@@ -93,6 +109,10 @@ type pitrCollector struct {
 type committing struct {
 	msg      pb.ExtraFullBackup
 	rewrites map[int64]int64
+}
+
+func (c *committing) commit() {
+	c.msg.Finished = true
 }
 
 func (c *committing) genMsg() *pb.ExtraFullBackup {
@@ -115,6 +135,14 @@ func (c *pitrCollector) outputPath(segs ...string) string {
 	return filepath.Join(append([]string{"v1", "ext_backups", c.name}, segs...)...)
 }
 
+func (c *pitrCollector) metaPath() string {
+	return c.outputPath("extbackupmeta")
+}
+
+func (c *pitrCollector) sstPath(name string) string {
+	return c.outputPath("sst_files", name)
+}
+
 // PutSST records an SST file.
 func (c *pitrCollector) PutSST(ctx context.Context, f *pb.File) error {
 	if !c.enabled {
@@ -122,7 +150,7 @@ func (c *pitrCollector) PutSST(ctx context.Context, f *pb.File) error {
 	}
 
 	f = util.ProtoV1Clone(f)
-	out := c.outputPath(f.GetName())
+	out := c.sstPath(f.Name)
 
 	copier, ok := c.taskStorage.(storage.Copier)
 	if !ok {
@@ -163,42 +191,58 @@ func (c *pitrCollector) PutRewriteRule(_ context.Context, oldID int64, newID int
 	return err
 }
 
+func (c *pitrCollector) persist(ctx context.Context) (err error) {
+	c.committingLock.Lock()
+	defer c.committingLock.Unlock()
+
+	msg := c.committing.genMsg()
+	bs, err := msg.Marshal()
+	if err != nil {
+		return errors.Annotate(err, "failed to marsal the committing message")
+	}
+	err = c.taskStorage.WriteFile(ctx, c.metaPath(), bs)
+	if err != nil {
+		return errors.Annotatef(err, "failed to put content to meta to %s", c.metaPath())
+	}
+	return nil
+}
+
 // Commit commits the collected SSTs to a migration.
-func (c *pitrCollector) Commit(ctx context.Context) error {
+func (c *pitrCollector) prepareMig(ctx context.Context) error {
 	if !c.enabled {
 		return nil
 	}
 
 	est := stream.MigrationExtension(c.taskStorage)
+
 	m := stream.NewMigration()
-	var msg *pb.ExtraFullBackup
-	tso, err := c.tso(ctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	m.ExtraFullBackupPaths = append(m.ExtraFullBackupPaths, c.metaPath())
 
-	c.doWithCommittingLock(func() {
-		msg = c.committing.genMsg()
-		c.committing.msg.AsIfTs = tso
-	})
-	m.ExtraFullBackups = append(m.ExtraFullBackups, msg)
-
-	_, err = est.AppendMigration(ctx, m)
+	_, err := est.AppendMigration(ctx, m)
 	if err != nil {
-		return errors.Trace(err)
+		return errors.Annotatef(err, "failed to add the extra backup at path %s", c.metaPath())
 	}
 
 	c.doWithCommittingLock(func() {
 		c.resetCommitting()
 	})
-	return nil
+	// Persist the metadata in case of SSTs were uploaded but the meta wasn't,
+	// which leads to a leakage.
+	return c.persist(ctx)
+}
+
+func (c *pitrCollector) commit(ctx context.Context) error {
+	c.committing.commit()
+	return c.persist(ctx)
 }
 
 func (c *pitrCollector) resetCommitting() {
 	c.committing = committing{
 		rewrites: map[int64]int64{},
 	}
-	c.committing.msg.FilesPrefixHint = c.outputPath()
+	c.committing.msg.FilesPrefixHint = c.sstPath("")
+	c.committing.msg.Finished = false
+	c.committing.msg.BackupUuid = c.restoreUUID[:]
 }
 
 // PiTRCollDep is the dependencies of a PiTR collector.

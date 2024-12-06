@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -152,6 +153,9 @@ type SnapClient struct {
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
 	pitrColl *pitrCollector
+	// restoreUUID is the UUID of this restore.
+	// restore from a checkpoint inherits the same restoreUUID.
+	restoreUUID uuid.UUID
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -323,6 +327,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
+		rc.restoreUUID = meta.RestoreUUID
 
 		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
 			return checkpointSetWithTableID, nil, errors.Errorf(
@@ -374,10 +379,13 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
+		restoreID := uuid.New()
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
+			RestoreUUID:       restoreID,
 		}
+		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
@@ -422,6 +430,7 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 		return errors.Trace(err)
 	}
 	rc.pitrColl = collector
+	collector.restoreUUID = rc.restoreUUID
 	rc.restorer = restore.Dual(rc.pitrColl.createRestorer(ctx), rc.restorer)
 	return nil
 }
