@@ -50,7 +50,6 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	local.RunInTest = true
 
@@ -400,6 +399,8 @@ func TestAddIndexDiskQuotaTS(t *testing.T) {
 	testAddIndexDiskQuotaTS(t, tk)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	testAddIndexDiskQuotaTS(t, tk)
+	// reset changed global variable
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 }
 
 func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
