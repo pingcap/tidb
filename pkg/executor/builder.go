@@ -2325,9 +2325,11 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 		case strings.ToLower(infoschema.TableStatementsSummary),
 			strings.ToLower(infoschema.TableStatementsSummaryHistory),
 			strings.ToLower(infoschema.TableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.TableTiDBStatementsStats),
 			strings.ToLower(infoschema.ClusterTableStatementsSummary),
 			strings.ToLower(infoschema.ClusterTableStatementsSummaryHistory),
-			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted):
+			strings.ToLower(infoschema.ClusterTableStatementsSummaryEvicted),
+			strings.ToLower(infoschema.ClusterTableTiDBStatementsStats):
 			var extractor *plannercore.StatementsSummaryExtractor
 			if v.Extractor != nil {
 				extractor = v.Extractor.(*plannercore.StatementsSummaryExtractor)

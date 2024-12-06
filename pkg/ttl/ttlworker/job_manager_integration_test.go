@@ -516,9 +516,10 @@ func TestRescheduleJobs(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+	m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
 		return true
 	})
+	defer m.TaskManager().ResizeWorkersToZero(t)
 	m.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
@@ -537,7 +538,8 @@ func TestRescheduleJobs(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 
 	// another manager should get this job, if the heart beat is not updated
-	anotherManager := ttlworker.NewJobManager("manager-2", nil, store, nil, nil)
+	anotherManager := ttlworker.NewJobManager("manager-2", dom.SysSessionPool(), store, nil, nil)
+	defer anotherManager.TaskManager().ResizeWorkersToZero(t)
 	anotherManager.TaskManager().ResizeWorkersWithSysVar()
 	require.NoError(t, anotherManager.InfoSchemaCache().Update(se))
 	require.NoError(t, anotherManager.TableStatusCache().Update(context.Background(), se))
@@ -584,7 +586,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 	}
 	for i, rb := range removeBehaviors {
 		se := sessionFactory()
-		m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+		m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
 			return true
 		})
 		m.TaskManager().ResizeWorkersWithSysVar()
@@ -613,6 +615,8 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 		table, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		m.DoGC(context.TODO(), se, now)
+
+		m.TaskManager().ResizeWorkersToZero(t)
 	}
 }
 
@@ -631,7 +635,7 @@ func TestJobTimeout(t *testing.T) {
 
 	se := sessionFactory()
 	now := se.Now()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+	m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
 		return true
 	})
 	m.TaskManager().ResizeWorkersWithSysVar()
@@ -640,7 +644,7 @@ func TestJobTimeout(t *testing.T) {
 	// submit job
 	require.NoError(t, m.SubmitJob(se, tableID, tableID, "request1"))
 	// set the worker to be empty, so none of the tasks will be scheduled
-	m.TaskManager().SetScanWorkers4Test([]ttlworker.Worker{})
+	m.TaskManager().ResizeWorkersToZero(t)
 
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
@@ -653,8 +657,10 @@ func TestJobTimeout(t *testing.T) {
 	// there is already a task
 	tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 
-	m2 := ttlworker.NewJobManager("manager-2", nil, store, nil, nil)
+	m2 := ttlworker.NewJobManager("manager-2", dom.SysSessionPool(), store, nil, nil)
 	m2.TaskManager().ResizeWorkersWithSysVar()
+	defer m2.TaskManager().ResizeWorkersToZero(t)
+
 	require.NoError(t, m2.InfoSchemaCache().Update(se))
 	require.NoError(t, m2.TableStatusCache().Update(context.Background(), se))
 	// schedule jobs
@@ -872,7 +878,7 @@ func TestJobMetrics(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 
 	se := sessionFactory()
-	m := ttlworker.NewJobManager("manager-1", nil, store, nil, func() bool {
+	m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
 		return true
 	})
 	m.TaskManager().ResizeWorkersWithSysVar()
@@ -880,7 +886,7 @@ func TestJobMetrics(t *testing.T) {
 	// submit job
 	require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, "request1"))
 	// set the worker to be empty, so none of the tasks will be scheduled
-	m.TaskManager().SetScanWorkers4Test([]ttlworker.Worker{})
+	m.TaskManager().ResizeWorkersToZero(t)
 
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
