@@ -274,8 +274,6 @@ const (
 	// control functions
 	If     = "if"
 	Ifnull = "ifnull"
-	Nvl    = "nvl"
-	Nullif = "nullif"
 
 	// miscellaneous functions
 	AnyValue        = "any_value"
@@ -381,6 +379,16 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// oracle functions.
+	ToDate    = "to_date"
+	LastMonth = "last_month"
+	ToNumber  = "to_number"
+	GetGUID   = "get_guid"
+	AddMonth  = "add_month"
+	NextDay   = "next_day"
+	Nvl       = "nvl"
+	Nullif    = "nullif"
 )
 
 type FuncCallExprType int8

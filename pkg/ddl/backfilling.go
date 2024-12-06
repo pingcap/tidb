@@ -708,8 +708,9 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -776,7 +777,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, job, avgRowSize)
+	err = executeAndClosePipeline(opCtx, pipe, job, bcCtx, avgRowSize)
 	if err != nil {
 		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 		if err1 != nil {
@@ -793,7 +794,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 
-func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) {
+func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
 	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
 	if opR == nil || opW == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
@@ -817,36 +818,50 @@ func adjustWorkerPoolSize(ctx context.Context, pipe *operator.AsyncPipeline, job
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(
-				job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())), avgRowSize)
-			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
-			if int32(targetReaderCnt) == currentReaderCnt && int32(targetWriterCnt) == currentWriterCnt {
-				continue
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
+				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
-			reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-			writer.TuneWorkerPoolSize(int32(targetWriterCnt))
-			logutil.DDLIngestLogger().Info("adjust ddl job config success",
-				zap.Int64("jobID", job.ID),
-				zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
-				zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+
+			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
+			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
+			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				logutil.DDLIngestLogger().Info("adjust ddl job config success",
+					zap.Int64("jobID", job.ID),
+					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
+					zap.Int32("index ingest operator count", writer.GetWorkerPoolSize()))
+			}
 		}
 	}
 }
 
-func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, avgRowSize int) error {
+func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) error {
 	err := pipe.Execute()
 	if err != nil {
 		return err
 	}
 
-	// Adjust worker pool size dynamically.
+	// Adjust worker pool size and max write speed dynamically.
+	var wg util.WaitGroupWrapper
+	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
+		wg.Add(1)
 		go func() {
-			adjustWorkerPoolSize(ctx, pipe, job, avgRowSize)
+			defer wg.Done()
+			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
 		}()
 	}
 
 	err = pipe.Close()
+
+	cancel()
+	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
 		return opErr
 	}

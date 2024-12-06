@@ -288,7 +288,6 @@ var funcName2Alias = map[string]string{
 	"user":                       ast.User,
 	"if":                         ast.If,
 	"ifnull":                     ast.Ifnull,
-	"nvl":                        ast.Nvl,
 	"nullif":                     ast.Nullif,
 	"any_value":                  ast.AnyValue,
 	"default_func":               ast.DefaultFunc,
@@ -362,4 +361,13 @@ var funcName2Alias = map[string]string{
 	"vec_l2_norm":                ast.VecL2Norm,
 	"vec_from_text":              ast.VecFromText,
 	"vec_as_text":                ast.VecAsText,
+
+	// oracle functions.
+	"to_date":    ast.ToDate,
+	"last_month": ast.LastMonth,
+	"to_number":  ast.ToNumber,
+	"get_guid":   ast.GetGUID,
+	"add_month":  ast.AddMonth,
+	"next_day":   ast.NextDay,
+	"nvl":        ast.Nvl,
 }
