@@ -374,8 +374,8 @@ func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
 	for i, c := range m.DestructPrefix {
 		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
 	}
-	for i, c := range m.ExtraFullBackups {
-		table.Add(fmt.Sprintf("extra_full_backups[%02d]", i), rd(c.FilesPrefixHint))
+	for i, c := range m.GetExtraFullBackupPaths() {
+		table.Add(fmt.Sprintf("extra_full_backups[%02d]", i), rd(c))
 	}
 	table.Add("truncate-to", rd(m.TruncatedTo))
 }
@@ -538,7 +538,7 @@ func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
 	out.TruncatedTo = max(m1.GetTruncatedTo(), m2.GetTruncatedTo())
 	out.DestructPrefix = append(out.DestructPrefix, m1.GetDestructPrefix()...)
 	out.DestructPrefix = append(out.DestructPrefix, m2.GetDestructPrefix()...)
-	out.ExtraFullBackups = append(out.ExtraFullBackups, m1.GetExtraFullBackups()...)
+	out.ExtraFullBackupPaths = append(out.ExtraFullBackupPaths, m1.GetExtraFullBackupPaths()...)
 	return out
 }
 
@@ -1093,15 +1093,7 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 		m.tryRemovePrefix(ctx, pfx, result)
 	}
 
-	for _, extraBackup := range mig.ExtraFullBackups {
-		if extraBackup.AsIfTs > mig.TruncatedTo {
-			result.NewBase.ExtraFullBackups = append(result.NewBase.ExtraFullBackups, extraBackup)
-		} else {
-			for _, pfx := range extraBackup.Files {
-				m.tryRemovePrefix(ctx, pfx.Name, result)
-			}
-		}
-	}
+	// TODO: Clean up the extra full backup SSTs.
 
 	result.NewBase.TruncatedTo = mig.TruncatedTo
 
@@ -1375,25 +1367,17 @@ func isEmptyMetadata(md *pb.Metadata) bool {
  */
 
 func hashMigration(m *pb.Migration) uint64 {
-	var crc64 uint64 = 0
+	var crc64Res uint64 = 0
 	for _, compaction := range m.Compactions {
-		crc64 ^= compaction.ArtifactsHash
+		crc64Res ^= compaction.ArtifactsHash
 	}
 	for _, metaEdit := range m.EditMeta {
-		crc64 ^= hashMetaEdit(metaEdit)
+		crc64Res ^= hashMetaEdit(metaEdit)
 	}
-	for _, extBkup := range m.ExtraFullBackups {
-		crc64 ^= hashExtraBackup(extBkup)
+	for _, extBkup := range m.ExtraFullBackupPaths {
+		crc64Res ^= crc64.Checksum([]byte(extBkup), crc64.MakeTable(crc64.ISO))
 	}
-	return crc64 ^ m.TruncatedTo
-}
-
-func hashExtraBackup(extBkup *pb.ExtraFullBackup) uint64 {
-	bs, err := extBkup.Marshal()
-	if err != nil {
-		panic(fmt.Sprintf("failed to marshal message, this shouldn't happen: %s", err))
-	}
-	return crc64.Checksum(bs, crc64.MakeTable(crc64.ISO))
+	return crc64Res ^ m.TruncatedTo
 }
 
 func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {

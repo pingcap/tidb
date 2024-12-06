@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
@@ -184,9 +185,14 @@ func (kit *LogBackupKit) forceFlush() {
 	kit.mustExec(func(ctx context.Context) error {
 		cfg := task.DefaultConfig()
 		cfg.PD = append(cfg.PD, config.GetGlobalConfig().Path)
-		return operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
+		err := operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
 			Config: cfg,
 		})
+		if err != nil {
+			log.Warn("It seems this version of TiKV doesn't support force flush, the test may be much more slower.",
+				logutil.ShortError(err))
+		}
+		return nil
 	})
 }
 
@@ -197,7 +203,7 @@ func (kit *LogBackupKit) forceFlushAndWait(taskName string) {
 		ckpt := kit.CheckpointTSOf(taskName)
 		log.Info("checkpoint", zap.Uint64("checkpoint", ckpt), zap.Uint64("ts", ts))
 		return ckpt >= ts
-	}, 21*time.Second, 1*time.Second)
+	}, 300*time.Second, 1*time.Second)
 	time.Sleep(6 * time.Second) // Wait the storage checkpoint uploaded...
 }
 

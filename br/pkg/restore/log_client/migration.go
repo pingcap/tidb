@@ -17,6 +17,7 @@ package logclient
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -144,7 +145,7 @@ func (builder *WithMigrationsBuilder) coarseGrainedFilter(mig *backuppb.Migratio
 func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigrations {
 	skipmap := make(metaSkipMap)
 	compactionDirs := make([]string, 0, 8)
-	fullBackups := make([]*backuppb.ExtraFullBackup, 0, 8)
+	fullBackups := make([]string, 0, 8)
 
 	for _, mig := range migs {
 		// TODO: deal with TruncatedTo and DestructPrefix
@@ -157,7 +158,7 @@ func (builder *WithMigrationsBuilder) Build(migs []*backuppb.Migration) WithMigr
 			compactionDirs = append(compactionDirs, c.Artifacts)
 		}
 
-		fullBackups = append(fullBackups, mig.ExtraFullBackups...)
+		fullBackups = append(fullBackups, mig.ExtraFullBackupPaths...)
 	}
 	withMigrations := WithMigrations{
 		skipmap:        skipmap,
@@ -214,7 +215,7 @@ func (mwm *MetaWithMigrations) Physicals(groupIndexIter GroupIndexIter) Physical
 type WithMigrations struct {
 	skipmap        metaSkipMap
 	compactionDirs []string
-	fullBackups    []*backuppb.ExtraFullBackup
+	fullBackups    []string
 }
 
 func (wm *WithMigrations) Metas(metaNameIter MetaNameIter) MetaMigrationsIter {
@@ -245,5 +246,26 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 }
 
 func (wm *WithMigrations) ExtraFullBackups(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.ExtraFullBackup] {
-	return iter.FromSlice(wm.fullBackups)
+	fullBackupDirIter := iter.FromSlice(wm.fullBackups)
+	return iter.TryMap(fullBackupDirIter, func(name string) (*backuppb.ExtraFullBackup, error) {
+		// name is the absolute path in external storage.
+		bkup, err := readExtraFullBackup(ctx, name, s)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to read backup at %s", name)
+		}
+		return bkup, nil
+	})
+}
+
+func readExtraFullBackup(ctx context.Context, name string, s storage.ExternalStorage) (*backuppb.ExtraFullBackup, error) {
+	reader, err := s.ReadFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var backup backuppb.ExtraFullBackup
+	if err := backup.Unmarshal(reader); err != nil {
+		return nil, err
+	}
+	return &backup, nil
 }
