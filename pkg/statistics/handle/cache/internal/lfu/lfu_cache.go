@@ -93,9 +93,6 @@ func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	if !ok {
 		return s.resultKeySet.Get(tid)
 	}
-	if tid%5 == 0 {
-		s.triggerEvict()
-	}
 	return result.(*statistics.Table), ok
 }
 
