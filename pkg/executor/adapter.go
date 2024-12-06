@@ -1935,7 +1935,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	// If it's a point get, different SQLs leads to different plans, so SQL digest
 	// is enough to distinguish different plans in this case.
 	var planDigest string
-	// todo: refactor this.
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
