@@ -17,6 +17,7 @@ package infoschema
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -57,6 +58,13 @@ func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 		r:                   r,
 		Data:                infoData,
 	}
+}
+
+// GetAndResetRecentInfoSchemaTS provides the min start ts for infosync.InfoSyncer.
+func (h *InfoCache) GetAndResetRecentInfoSchemaTS(now uint64) uint64 {
+	ret := atomic.LoadUint64(&h.Data.recentMinTS)
+	atomic.StoreUint64(&h.Data.recentMinTS, now)
+	return ret
 }
 
 // ReSize re-size the cache.
