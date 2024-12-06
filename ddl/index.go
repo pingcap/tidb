@@ -1679,7 +1679,11 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
+	pkNeedRestore := false
+	if copCtx.pkInfo != nil && copCtx.tblInfo.IsCommonHandle && copCtx.tblInfo.CommonHandleVersion != 0 {
+		pkNeedRestore = tables.NeedRestoredData(copCtx.pkInfo.Columns, copCtx.tblInfo.Columns)
+	}
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk, pkNeedRestore)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1691,7 +1695,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 
 func writeChunkToLocal(writer ingest.Writer,
 	index table.Index, copCtx *copContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, kv.Handle, error) {
+	copChunk *chunk.Chunk, pkNeedRestore bool) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
@@ -1701,7 +1705,7 @@ func writeChunkToLocal(writer ingest.Writer,
 	unlock := writer.LockForWrite()
 	defer unlock()
 	var restoreDataBuf []types.Datum
-	restore := tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
+	restore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, copCtx.tblInfo.Columns)
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(copCtx.handleOutputOffsets))
 	}
