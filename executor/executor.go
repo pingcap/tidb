@@ -2177,7 +2177,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		// For single-row INSERT statements, ignore non-strict mode
+		// See https://dev.mysql.com/doc/refman/5.7/en/constraint-invalid-data.html
+		isSingleInsert := len(stmt.Lists) == 1 || len(stmt.Setlist) > 0
+		sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		sc.BadNullAsWarning = (!vars.StrictSQLMode && !isSingleInsert) || stmt.IgnoreErr
 		// see https://dev.mysql.com/doc/refman/8.0/en/out-of-range-and-overflow.html
 		sc.OverflowAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
@@ -2305,6 +2309,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.InUpdateStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
@@ -2318,6 +2323,7 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.InDeleteStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	sc.NoDefaultAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
