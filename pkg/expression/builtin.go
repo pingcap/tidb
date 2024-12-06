@@ -757,6 +757,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBParseTso:         &tidbParseTsoFunctionClass{baseFunctionClass{ast.TiDBParseTso, 1, 1}},
 	ast.TiDBParseTsoLogical:  &tidbParseTsoLogicalFunctionClass{baseFunctionClass{ast.TiDBParseTsoLogical, 1, 1}},
 	ast.TiDBCurrentTso:       &tidbCurrentTsoFunctionClass{baseFunctionClass{ast.TiDBCurrentTso, 0, 0}},
+	ast.MonthsBetween:        &monthsBetweenFunctionClass{baseFunctionClass{ast.MonthsBetween, 2, 2}},
 
 	// string functions
 	ast.ASCII:           &asciiFunctionClass{baseFunctionClass{ast.ASCII, 1, 1}},
