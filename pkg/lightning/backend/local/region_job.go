@@ -39,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -320,6 +322,20 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		allPeers = append(allPeers, peer)
 	}
 	dataCommitTS := j.ingestData.GetTS()
+	intest.AssertFunc(func() bool {
+		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
+		now := time.Now()
+		if timeOfTS.After(now) {
+			return false
+		}
+		if now.Sub(timeOfTS) > 24*time.Hour {
+			return false
+		}
+		return true
+	}, "TS used in import should in [now-1d, now], but got %d", dataCommitTS)
+	if dataCommitTS == 0 {
+		return errors.New("data commitTS is 0")
+	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,

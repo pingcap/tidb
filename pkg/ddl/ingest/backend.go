@@ -296,8 +296,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ei.openedEngine.SetTS(newTS)
-	return nil
+	return bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.
