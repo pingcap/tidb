@@ -227,9 +227,9 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
 		type dbTables struct {
+			err  error
 			db   string
 			tbls []*model.TableInfo
-			err  error
 		}
 
 		dbs := is.AllSchemaNames()
@@ -263,7 +263,6 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 			close(results)
 		}()
 
-		// 处理获取到的表信息
 		for result := range results {
 			if result.err != nil {
 				return result.err
