@@ -71,7 +71,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 		}
 		return result, err
 	}
-	realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
+	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.NotNullCount(),
@@ -82,7 +82,7 @@ func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistCol
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -116,8 +116,8 @@ func getIndexRowCountForStatsV1(sctx planctx.PlanContext, coll *statistics.HistC
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
-			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt)
+			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -215,7 +215,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount int64) (float64, error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -264,7 +264,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -350,7 +350,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					histNDV -= int64(idx.TopN.Num())
 				}
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, histNDV, increaseFactor)
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 		}
 
 		if debugTrace {
@@ -374,7 +374,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
+func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -419,10 +419,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
 		//
 		// If the table hasn't been modified, it's safe to return 0.
-		newRows := float64(realtimeRowCount) - idx.TotalRowCount()
-		if newRows == 0 {
+		if modifyCount == 0 {
 			return 0
-		} else if newRows < 0 {
+		}
+		newRows := float64(realtimeRowCount) - idx.TotalRowCount()
+		if newRows < 0 {
 			newRows = float64(realtimeRowCount)
 		}
 		// ELSE calculate an approximate estimate based upon newly inserted rows.

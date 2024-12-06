@@ -1148,7 +1148,7 @@ func crossValidationSelectivity(
 			Collators:   []collate.Collator{idxPointRange.Collators[i]},
 		}
 
-		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, col.IsHandle)
+		rowCount, err := GetColumnRowCount(sctx, col, []*ranger.Range{&rang}, coll.RealtimeCount, coll.ModifyCount, col.IsHandle)
 		if err != nil {
 			return 0, 0, err
 		}

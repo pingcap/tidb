@@ -921,7 +921,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	realtimeRowCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -941,8 +941,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// If there are no modifications to the table, return 0 - since all of this logic is
-	// redundant if we get to the end and return the min - which includes zero
-	if increaseFactor == 0 {
+	// redundant if we get to the end and return the min - which includes zero,
+	// TODO: The exection here is if we are out of range due to sampling of the histograms - which
+	// may miss the lowest/highest values - and we are out of range without any modifications.
+	if modifyCount == 0 {
 		return 0
 	}
 
@@ -1079,9 +1081,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
-	addedRows := float64(0)
-	if increaseFactor > 1 {
-		addedRows = float64(realtimeRowCount) - hg.TotalRowCount()
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	if addedRows > 1 {
 		// Conservatively - use the larger of the left or right percent - since we are working with
 		// changes to the table since last Analyze - any out of range estimate is unreliable.
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
@@ -1093,7 +1094,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	return min(rowCount, addedRows)
+	// Use modifyCount as a final bound
+	return min(rowCount, float64(modifyCount))
 }
 
 // Copy deep copies the histogram.
