@@ -17,7 +17,6 @@ package cascades
 import (
 	"bytes"
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -49,7 +48,7 @@ func TestDeriveStats(t *testing.T) {
 	var input []string
 	var output []struct {
 		SQL string
-		Str string
+		Str []string
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -74,14 +73,11 @@ func TestDeriveStats(t *testing.T) {
 		mm := memo.NewMemo()
 		mm.Init(lp)
 		// check the stats state in memo group.
-		str := strings.Builder{}
 		b := &bytes.Buffer{}
+		sb := util.NewStrBuffer(b)
+		var strs []string
 		mm.ForEachGroup(func(g *memo.Group) {
-			if str.Len() != 0 {
-				str.WriteString("\n")
-			}
 			b.Reset()
-			sb := util.NewStrBuffer(b)
 			// record group
 			g.String(sb)
 			sb.WriteString(", ")
@@ -105,12 +101,12 @@ func TestDeriveStats(t *testing.T) {
 				sb.WriteString("}")
 			}
 			sb.Flush()
-			str.WriteString(b.String())
+			strs = append(strs, b.String())
 		})
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
-			output[i].Str = str.String()
+			output[i].Str = strs
 		})
-		require.Equal(t, output[i].Str, str.String(), "case i "+tt)
+		require.Equal(t, output[i].Str, strs, "case i "+tt)
 	}
 }
