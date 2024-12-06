@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
@@ -353,6 +354,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
@@ -587,6 +589,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 		},
 		logger: log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
@@ -1176,7 +1179,7 @@ func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
 
-func (m mockIngestData) GetTS() uint64 { return 0 }
+func (m mockIngestData) GetTS() uint64 { return oracle.GoTimeToTS(time.Now()) }
 
 func (m mockIngestData) IncRef() {}
 
@@ -1565,6 +1568,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err = db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -1708,6 +1712,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		regionSplitKeysCache: [][]byte{{1}, {11}},
 		regionSplitSize:      1 << 30,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// keys starts with 0 is meta keys, so we start with 1.
 	for i := byte(1); i <= 10; i++ {
