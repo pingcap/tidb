@@ -21,6 +21,7 @@ import (
 	"runtime/trace"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -76,6 +77,7 @@ var LookupTableTaskChannelSize int32 = 50
 // lookupTableTask is created from a partial result of an index request which
 // contains the handles in those index keys.
 type lookupTableTask struct {
+	id      int
 	handles []kv.Handle
 	rowIdx  []int // rowIdx represents the handle index for every row. Only used when keep order.
 	rows    []chunk.Row
@@ -1071,6 +1073,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			continue
 		}
 		task := w.buildTableTask(handles, retChunk)
+		task.id = taskID
 		taskID++
 		finishBuild := time.Now()
 		if w.idxLookup.partitionTableMode {
@@ -1090,9 +1093,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 				case <-e.finished:
 					return
 				default:
-					tracker := memory.NewTracker(taskID, -1)
-					tracker.AttachTo(e.memTracker)
-					execTableTask(e, task, tracker)
+					execTableTask(e, task)
 				}
 			})
 			w.resultCh <- task
@@ -1215,13 +1216,13 @@ func (w *indexWorker) buildTableTask(handles []kv.Handle, retChk *chunk.Chunk) *
 	return task
 }
 
-func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask, tracker *memory.Tracker) {
+func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask) {
 	var (
 		ctx    = e.workerCtx
 		region *trace.Region
 	)
 	if trace.IsEnabled() {
-		region = trace.StartRegion(ctx, "IndexLookUpTableTask")
+		region = trace.StartRegion(ctx, "IndexLookUpTableTask"+strconv.Itoa(task.id))
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -1233,6 +1234,8 @@ func execTableTask(e *IndexLookUpExecutor, task *lookupTableTask, tracker *memor
 			region.End()
 		}
 	}()
+	tracker := memory.NewTracker(task.id, -1)
+	tracker.AttachTo(e.memTracker)
 	w := &tableWorker{
 		idxLookup:       e,
 		finished:        e.finished,
