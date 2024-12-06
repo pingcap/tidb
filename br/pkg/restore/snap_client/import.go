@@ -183,6 +183,7 @@ func NewSnapFileImporterOptions(
 		metaClient:          metaClient,
 		importClient:        importClient,
 		backend:             backend,
+		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
