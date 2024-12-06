@@ -544,7 +544,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	// Check deleted table.
 	if len(rows) == 0 {
-		return nil, nil
+		return nil, errors.New("can not load table histograms from storage")
 	}
 	for _, row := range rows {
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
