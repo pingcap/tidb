@@ -748,7 +748,6 @@ func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col
 			defer w.sessPool.Put(sctx)
 			for _, pc := range tblInfo.Partition.Columns {
 				if strings.EqualFold(pc.L, col.Name.L) {
-					defer w.sessPool.Put(sctx)
 					err = checkPartitionColumnModifiable(sctx, tblInfo, col, newCol)
 					if err != nil {
 						return errors.Trace(err)
