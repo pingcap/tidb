@@ -36,9 +36,9 @@ go_test(
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
-        "//pkg/planner/core",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/testkit/testsetup",
+        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
