@@ -294,7 +294,7 @@ func deriveCollation(ctx BuildContext, funcName string, args []Expression, retTy
 	case ast.LastMonth:
 		charsetInfo, collation := ctx.GetCharsetInfo()
 		return &ExprCollation{args[0].Coercibility(), args[0].Repertoire(), charsetInfo, collation}, nil
-	case ast.DateFormat, ast.TimeFormat:
+	case ast.DateFormat, ast.TimeFormat, ast.ToChar, ast.DateToChar:
 		charsetInfo, collation := ctx.GetCharsetInfo()
 		return &ExprCollation{args[1].Coercibility(), args[1].Repertoire(), charsetInfo, collation}, nil
 	case ast.Cast:

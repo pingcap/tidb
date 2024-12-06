@@ -64,7 +64,7 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		return in, true
 	case *ast.FuncCallExpr:
 		switch n.FnName.L {
-		case ast.DateFormat, ast.LastMonth, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
+		case ast.DateFormat, ast.LastMonth, ast.ToChar, ast.DateToChar, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
 			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y'), last_month('2020-01-01') -- > last_month(?)
 			ret, _ := n.Args[0].Accept(pr)
 			n.Args[0] = ret.(ast.ExprNode)

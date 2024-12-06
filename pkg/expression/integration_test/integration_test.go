@@ -3053,6 +3053,14 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select maketime('', '', ''), maketime('h', 'm', 's');")
 	result.Check(testkit.Rows("00:00:00.000000 00:00:00.000000"))
 
+	// for to_char and date_to_char
+	tk.MustExec("drop table if exists tdate")
+	tk.MustExec("create table tdate(a datetime)")
+	tk.MustExec(`insert into tdate values ('2024-11-23 07:45:37')`)
+	tk.MustQuery(`select to_char(a, 'yyyymmdd'), date_to_char(a, 'yyyymmdd') from tdate`).Check(testkit.Rows("20241123 20241123"))
+	tk.MustQuery(`select to_char(a, 'Mm/YYyy dd'), date_to_char(a, 'Mm/YYyy dd') from tdate`).Check(testkit.Rows("11/2024 23 11/2024 23"))
+	tk.MustQuery(`select to_char(a, 'yyYy-Mm-dD hh24:mi:ss'), date_to_char(a, 'yyYy-Mm-dD hh24:mi:ss') from tdate`).Check(testkit.Rows("2024-11-23 07:45:37 2024-11-23 07:45:37"))
+
 	// for get_format
 	result = tk.MustQuery(`select GET_FORMAT(DATE,'USA'), GET_FORMAT(DATE,'JIS'), GET_FORMAT(DATE,'ISO'), GET_FORMAT(DATE,'EUR'),
 	GET_FORMAT(DATE,'INTERNAL'), GET_FORMAT(DATETIME,'USA') , GET_FORMAT(DATETIME,'JIS'), GET_FORMAT(DATETIME,'ISO'),
@@ -3325,6 +3333,17 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQueryToErr(`select last_month('2001-13-01')`)
 	tk.MustQueryToErr(`select last_month('2001-10-50')`)
 
+	// for add_month
+	tk.MustQuery(`select add_month('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08 00:00:00"))
+	tk.MustQuery(`select add_month('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08 00:00:00"))
+	tk.MustQuery(`select add_month('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+	tk.MustQuery(`select add_month('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+
+	// for next_day
+	tk.MustQuery(`select next_day('2024-12-31', 'TUE')`).Check(testkit.Rows("2025-01-07 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-05', 'Tuesday')`).Check(testkit.Rows("2024-12-10 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-31', 'sunday')`).Check(testkit.Rows("2025-01-05 00:00:00"))
+
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))
@@ -3511,6 +3530,22 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("-111112.100000"))
 	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
 	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	// months_between
+	tk.MustQuery(`select months_between(DATE('2023-01-01'),DATE('2023-01-01'))`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select months_between(DATE('2024-02-01'),DATE('2023-02-01'))`).Check(testkit.Rows("12"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-05-01'))`).Check(testkit.Rows("-3"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-02-28'))`).Check(testkit.Rows("-0.87096774"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-3.1775519"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-02-01'))`).Check(testkit.Rows("3.1775519"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-12-31'))`).Check(testkit.Rows("-7.79019004"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-31 12:05:55'),DATE('2003-02-28'))`).Check(testkit.Rows("3"))
+	_, err = tk.Exec(`select months_between(DATE('2003-02-01'))`)
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
 
 	tk.MustExec("drop table t2")
 }
