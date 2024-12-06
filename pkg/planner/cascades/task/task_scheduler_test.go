@@ -26,7 +26,7 @@ import (
 
 // TestSchedulerContext is defined to test scheduling logic here.
 type TestSchedulerContext struct {
-	ts *TaskStack
+	ts *Stack
 }
 
 func (t *TestSchedulerContext) getStack() base.Stack {

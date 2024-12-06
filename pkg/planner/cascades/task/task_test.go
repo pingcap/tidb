@@ -38,11 +38,11 @@ func (t *TestTaskImpl) Desc(w util.StrBufferWriter) {
 
 func TestTaskStack(t *testing.T) {
 	newSS := newTaskStack()
-	// size of pointer to TaskStack{}
+	// size of pointer to Stack{}
 	require.Equal(t, int64(unsafe.Sizeof(newSS)), int64(8))
-	// size of pointer to TaskStack.[]Task, cap + len + addr
+	// size of pointer to Stack.[]Task, cap + len + addr
 	require.Equal(t, int64(unsafe.Sizeof(newSS.tasks)), int64(24))
-	// size of pointer to TaskStack's first element Task[0]
+	// size of pointer to Stack's first element Task[0]
 	newSS.Push(nil)
 	newSS.Push(&TestTaskImpl{a: 1})
 	newSS.Push(nil)
@@ -54,9 +54,9 @@ func TestTaskStack(t *testing.T) {
 
 func TestTaskFunctionality(t *testing.T) {
 	taskTaskPool := stackPool.Get()
-	require.Equal(t, len(taskTaskPool.(*TaskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*TaskStack).tasks), 4)
-	ts := taskTaskPool.(*TaskStack)
+	require.Equal(t, len(taskTaskPool.(*Stack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*Stack).tasks), 4)
+	ts := taskTaskPool.(*Stack)
 	ts.Push(&TestTaskImpl{a: 1})
 	ts.Push(&TestTaskImpl{a: 2})
 	one := ts.Pop()
@@ -82,7 +82,7 @@ func TestTaskFunctionality(t *testing.T) {
 	stackPool.Put(taskTaskPool)
 
 	// require again.
-	ts = stackPool.Get().(*TaskStack)
+	ts = stackPool.Get().(*Stack)
 	require.Equal(t, len(ts.tasks), 4)
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
@@ -111,7 +111,7 @@ func TestTaskFunctionality(t *testing.T) {
 
 	// self destroy.
 	ts.Destroy()
-	ts = stackPool.Get().(*TaskStack)
+	ts = stackPool.Get().(*Stack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
 }
