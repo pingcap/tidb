@@ -330,10 +330,10 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	testKit.MustExec("insert into t select a+10 from t where a <= 10")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
-	statsTblnew := h.GetTableStats(table.Meta())
+	statsTblNew := h.GetTableStats(table.Meta())
 
 	// Search for a not found value based upon statistics - count should be >= 10 and <=40
-	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblnew.RealtimeCount, statsTbl.ModifyCount, false)
+	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
 	require.Truef(t, count < 41, "expected: between 10 to 40, got: %v", count)
 	require.Truef(t, count > 9, "expected: between 10 to 40, got: %v", count)
