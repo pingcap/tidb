@@ -1410,6 +1410,15 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+<<<<<<< HEAD:br/pkg/lightning/backend/local/local.go
+=======
+			var peers []*metapb.Peer
+			// in unit test, we may not have the real peers
+			if job.region != nil && job.region.Region != nil {
+				peers = job.region.Region.GetPeers()
+			}
+			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243)):pkg/lightning/backend/local/local.go
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()

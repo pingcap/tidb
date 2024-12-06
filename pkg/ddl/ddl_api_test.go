@@ -46,6 +46,7 @@ func TestGetDDLJobs(t *testing.T) {
 
 	cnt := 10
 	jobs := make([]*model.Job, cnt)
+	ctx := context.Background()
 	var currJobs2 []*model.Job
 	for i := 0; i < cnt; i++ {
 		jobs[i] = &model.Job{
@@ -56,7 +57,7 @@ func TestGetDDLJobs(t *testing.T) {
 		err := addDDLJobs(sess, txn, jobs[i])
 		require.NoError(t, err)
 
-		currJobs, err := ddl.GetAllDDLJobs(sess)
+		currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 		require.NoError(t, err)
 		require.Len(t, currJobs, i+1)
 
@@ -74,7 +75,7 @@ func TestGetDDLJobs(t *testing.T) {
 		require.Len(t, currJobs2, i+1)
 	}
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 
 	for i, job := range jobs {
@@ -90,6 +91,7 @@ func TestGetDDLJobs(t *testing.T) {
 
 func TestGetDDLJobsIsSort(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	ctx := context.Background()
 
 	sess := testkit.NewTestKit(t, store).Session()
 	_, err := sess.Execute(context.Background(), "begin")
@@ -107,7 +109,7 @@ func TestGetDDLJobsIsSort(t *testing.T) {
 	// insert add index jobs to AddIndexJobListKey queue
 	enQueueDDLJobs(t, sess, txn, model.ActionAddIndex, 5, 10)
 
-	currJobs, err := ddl.GetAllDDLJobs(sess)
+	currJobs, err := ddl.GetAllDDLJobs(ctx, sess)
 	require.NoError(t, err)
 	require.Len(t, currJobs, 15)
 

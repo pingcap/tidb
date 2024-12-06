@@ -629,18 +629,135 @@ func makeupDecodeColMap(sessCtx sessionctx.Context, dbName model.CIStr, t table.
 	return decodeColMap, nil
 }
 
+<<<<<<< HEAD
 func setSessCtxLocation(sctx sessionctx.Context, tzLocation *model.TimeZoneLocation) error {
 	// It is set to SystemLocation to be compatible with nil LocationInfo.
 	tz := *timeutil.SystemLocation()
 	if sctx.GetSessionVars().TimeZone == nil {
 		sctx.GetSessionVars().TimeZone = &tz
+=======
+const backfillTaskChanSize = 128
+
+func (dc *ddlCtx) runAddIndexInLocalIngestMode(
+	ctx context.Context,
+	sessPool *sess.Pool,
+	t table.PhysicalTable,
+	reorgInfo *reorgInfo,
+) error {
+	// TODO(tangenta): support adjust worker count dynamically.
+	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+		return errors.Trace(err)
+	}
+	job := reorgInfo.Job
+	opCtx, cancel := NewLocalOperatorCtx(ctx, job.ID)
+	defer cancel()
+
+	idxCnt := len(reorgInfo.elements)
+	indexIDs := make([]int64, 0, idxCnt)
+	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	uniques := make([]bool, 0, idxCnt)
+	hasUnique := false
+	for _, e := range reorgInfo.elements {
+		indexIDs = append(indexIDs, e.ID)
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, e.ID)
+		if indexInfo == nil {
+			logutil.DDLIngestLogger().Warn("index info not found",
+				zap.Int64("jobID", job.ID),
+				zap.Int64("tableID", t.Meta().ID),
+				zap.Int64("indexID", e.ID))
+			return errors.Errorf("index info not found: %d", e.ID)
+		}
+		indexInfos = append(indexInfos, indexInfo)
+		uniques = append(uniques, indexInfo.Unique)
+		hasUnique = hasUnique || indexInfo.Unique
+	}
+
+	//nolint: forcetypeassert
+	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	bcCtx, err := ingest.LitBackCtxMgr.Register(
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, job.RealStartTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer ingest.LitBackCtxMgr.Unregister(job.ID)
+
+	cpMgr, err := ingest.NewCheckpointManager(
+		ctx,
+		sessPool,
+		reorgInfo.PhysicalTableID,
+		job.ID,
+		indexIDs,
+		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
+		dc.store.(kv.StorageWithPD).GetPDClient(),
+	)
+	if err != nil {
+		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err))
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 	} else {
 		*sctx.GetSessionVars().TimeZone = tz
 	}
+<<<<<<< HEAD
 	if tzLocation != nil {
 		loc, err := tzLocation.GetLocation()
 		if err != nil {
 			return errors.Trace(err)
+=======
+
+	reorgCtx := dc.getReorgCtx(job.ID)
+	rowCntListener := &localRowCntListener{
+		prevPhysicalRowCnt: reorgCtx.getRowCount(),
+		reorgCtx:           reorgCtx,
+		counter: metrics.BackfillTotalCounter.WithLabelValues(
+			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+	}
+
+	sctx, err := sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer sessPool.Put(sctx)
+	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+
+	engines, err := bcCtx.Register(indexIDs, uniques, t)
+	if err != nil {
+		logutil.DDLIngestLogger().Error("cannot register new engine",
+			zap.Int64("jobID", job.ID),
+			zap.Error(err),
+			zap.Int64s("index IDs", indexIDs))
+		return errors.Trace(err)
+	}
+	pipe, err := NewAddIndexIngestPipeline(
+		opCtx,
+		dc.store,
+		sessPool,
+		bcCtx,
+		engines,
+		job.ID,
+		t,
+		indexInfos,
+		reorgInfo.StartKey,
+		reorgInfo.EndKey,
+		job.ReorgMeta,
+		avgRowSize,
+		importConc,
+		cpMgr,
+		rowCntListener,
+	)
+	if err != nil {
+		return err
+	}
+	err = executeAndClosePipeline(opCtx, pipe)
+	if err != nil {
+		err1 := bcCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
+		if err1 != nil {
+			logutil.DDLIngestLogger().Error("unregister engine failed",
+				zap.Int64("jobID", job.ID),
+				zap.Error(err1),
+				zap.Int64s("index IDs", indexIDs))
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 		}
 		*sctx.GetSessionVars().TimeZone = *loc
 	}

@@ -131,7 +131,11 @@ func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
+<<<<<<< HEAD
 func (*MockBackendCtx) Flush(_ int64, _ FlushMode) (flushed bool, imported bool, err error) {
+=======
+func (*MockBackendCtx) Flush(context.Context, FlushMode) (flushed, imported bool, err error) {
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 	return false, false, nil
 }
 

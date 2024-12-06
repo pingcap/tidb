@@ -102,7 +102,12 @@ func TestPauseOnWriteConflict(t *testing.T) {
 }
 
 func TestPauseFailedOnCommit(t *testing.T) {
+<<<<<<< HEAD
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
+=======
+	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
+	ctx := context.Background()
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -131,7 +136,7 @@ func TestPauseFailedOnCommit(t *testing.T) {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockCommitFailedOnDDLCommand"))
 			}()
 			jobID.Store(job.ID)
-			jobErrs, pauseErr = ddl.PauseJobs(tk2.Session(), []int64{jobID.Load()})
+			jobErrs, pauseErr = ddl.PauseJobs(ctx, tk2.Session(), []int64{jobID.Load()})
 		}
 		adminMutex.Unlock()
 	}

@@ -116,6 +116,7 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return nil
 }
 
+<<<<<<< HEAD
 // FinishImport imports all the key-values in engine into the storage, collects the duplicate errors if any, and
 // removes the engine from the backend context.
 func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Table) error {
@@ -175,6 +176,10 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return false, false, dbterror.ErrIngestFailed.FastGenByArgs("ingest engine not found")
 	}
 
+=======
+// Flush implements FlushController.
+func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error) {
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 	shouldFlush, shouldImport := bc.checkFlush(mode)
 	if !shouldFlush {
 		return false, false, nil
@@ -204,6 +209,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		if err != nil {
 			return true, false, err
 		}
+<<<<<<< HEAD
 		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
 		defer func() {
 			err = mu.Unlock(bc.ctx)
@@ -211,6 +217,31 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
 			} else {
 				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
+=======
+		if release != nil {
+			defer release()
+		}
+	}
+
+	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
+		if MockDMLExecutionStateBeforeImport != nil {
+			MockDMLExecutionStateBeforeImport()
+		}
+	})
+
+	for indexID, ei := range bc.engines {
+		if err = bc.unsafeImportAndReset(ctx, ei); err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				idxInfo := model.FindIndexInfoByID(bc.tbl.Meta().Indices, indexID)
+				if idxInfo == nil {
+					logutil.Logger(bc.ctx).Error(
+						"index not found",
+						zap.Int64("indexID", indexID))
+					err = tikv.ErrKeyExists
+				} else {
+					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tbl.Meta())
+				}
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 			}
 			err = se.Close()
 			if err != nil {
@@ -225,9 +256,15 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 	return true, true, nil
 }
 
+<<<<<<< HEAD
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
+=======
+const distributedLockLease = 10 // Seconds
+
+func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 	logger := log.FromContext(bc.ctx).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
@@ -236,16 +273,41 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
+<<<<<<< HEAD
 	if err := ei.closedEngine.Import(bc.ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
+=======
+	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
+		logger.Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 			zap.String("usage info", bc.diskRoot.UsageInfo()))
 		return err
 	}
 
+<<<<<<< HEAD
 	err := bc.backend.ResetEngine(bc.ctx, ei.uuid)
 	if err != nil {
 		logutil.Logger(bc.ctx).Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
 		err1 := ei.closedEngine.Cleanup(bc.ctx)
+=======
+	resetFn := bc.backend.ResetEngineSkipAllocTS
+	mgr := bc.GetCheckpointManager()
+	if mgr == nil {
+		// disttask case, no need to refresh TS.
+		//
+		// TODO(lance6716): for disttask local sort case, we need to use a fixed TS. But
+		// it doesn't have checkpoint, so we need to find a way to save TS.
+		resetFn = bc.backend.ResetEngine
+	}
+
+	err := resetFn(ctx, ei.uuid)
+	failpoint.Inject("mockResetEngineFailed", func() {
+		err = fmt.Errorf("mock reset engine failed")
+	})
+	if err != nil {
+		logger.Error(LitErrResetEngineFail, zap.Int64("index ID", ei.indexID))
+		err1 := closedEngine.Cleanup(bc.ctx)
+>>>>>>> bad2ecd6b08 (ddl: refine some context usage (#56243))
 		if err1 != nil {
 			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err1),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
