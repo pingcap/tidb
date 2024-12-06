@@ -164,7 +164,7 @@ func (mm *Memo) Init(plan base.LogicalPlan) *GroupExpression {
 
 // ForEachGroup traverse the inside group expression with f call on them each.
 func (mm *Memo) ForEachGroup(f func(g *Group) bool) {
-	next := true
+	var next bool
 	for elem := mm.GetGroups().Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*Group)
 		next = f(expr)
