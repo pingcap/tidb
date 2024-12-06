@@ -1650,9 +1650,11 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	err = tk.ExecToErr("insert t1 VALUES (5, 5) ON DUPLICATE KEY UPDATE col1 = null")
 	require.EqualError(t, err, table.ErrColumnCantNull.GenWithStackByArgs("col1").Error())
 
+	tk.MustExec("insert t1 VALUES (5, 5), (6, null) ON DUPLICATE KEY UPDATE col1 = null")
+
 	tk.MustExec("insert into t1 select * from t2")
 	tk.MustExec("insert into t1 values(2, null), (3, 3), (4, 4)")
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
-	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
+	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|", "6|"))
 }

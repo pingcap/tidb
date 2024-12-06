@@ -1311,17 +1311,10 @@ func TestIssue18681(t *testing.T) {
 	require.NotNil(t, ld)
 
 	deleteSQL := "delete from load_data_test"
-<<<<<<< HEAD
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
-=======
-	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
-	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
-	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
-	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
-	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
->>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477))
+	ctx.GetSessionVars().StmtCtx.NoDefaultAsWarning = true
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()

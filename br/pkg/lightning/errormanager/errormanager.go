@@ -88,8 +88,8 @@ const (
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
@@ -121,13 +121,8 @@ const (
 	`
 
 	insertIntoConflictErrorData = `
-<<<<<<< HEAD:br/pkg/lightning/errormanager/errormanager.go
 		INSERT INTO %s.` + ConflictErrorTableName + `
 		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
-=======
-		INSERT IGNORE INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, kv_type)
->>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/lightning/errormanager/errormanager.go
 		VALUES
 	`
 
