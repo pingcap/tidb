@@ -3500,7 +3500,7 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-05-01'))`).Check(testkit.Rows("-3"))
 	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-02-28'))`).Check(testkit.Rows("-0.87096774"))
 	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
-	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('TIMESTAMP-05-06 12:05:55'))`).Check(testkit.Rows("-3.1775519"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-3.1775519"))
 	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-02-01'))`).Check(testkit.Rows("3.1775519"))
 	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
 	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-12-31'))`).Check(testkit.Rows("-9"))
