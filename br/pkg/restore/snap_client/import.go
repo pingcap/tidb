@@ -183,7 +183,6 @@ func NewSnapFileImporterOptions(
 		metaClient:          metaClient,
 		importClient:        importClient,
 		backend:             backend,
-		rewriteMode:         rewriteMode,
 		tikvStores:          tikvStores,
 		concurrencyPerStore: concurrencyPerStore,
 		createCallBacks:     createCallbacks,
@@ -213,6 +212,9 @@ func NewSnapFileImporter(
 	kvMode KvMode,
 	options *SnapFileImporterOptions,
 ) (*SnapFileImporter, error) {
+	if options.concurrencyPerStore == 0 {
+		return nil, errors.New("concurrencyPerStore must be greater than 0")
+	}
 	fileImporter := &SnapFileImporter{
 		apiVersion: apiVersion,
 		kvMode:     kvMode,

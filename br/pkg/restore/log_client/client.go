@@ -152,6 +152,7 @@ func NewSstRestoreManager(
 	storeCount uint,
 	createCheckpointSessionFn func() (glue.Session, error),
 ) (*SstRestoreManager, error) {
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	// This poolSize is similar to full restore, as both workflows are comparable.
 	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
 	poolSize := concurrencyPerStore * 32 * storeCount
@@ -166,14 +167,12 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.checkpointRunner = checkpointRunner
 	}
-	// TODO implement checkpoint
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
 	return s, nil
 }
 
@@ -182,14 +181,13 @@ type LogClient struct {
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
 
-	cipher              *backuppb.CipherInfo
-	pdClient            pd.Client
-	pdHTTPClient        pdhttp.Client
-	clusterID           uint64
-	dom                 *domain.Domain
-	tlsConf             *tls.Config
-	keepaliveConf       keepalive.ClientParameters
-	concurrencyPerStore uint
+	cipher        *backuppb.CipherInfo
+	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
+	clusterID     uint64
+	dom           *domain.Domain
+	tlsConf       *tls.Config
+	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -294,6 +292,8 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
 		}
 	}()
+
+	log.Info("[Compacted SST Restore] Start to restore SST files", zap.Int("sst-file-count", len(backupFileSets)))
 
 	// To optimize performance and minimize cross-region downloads,
 	// we are currently opting for a single restore approach instead of batch restoration.
@@ -422,7 +422,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
