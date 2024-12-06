@@ -11,6 +11,7 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/types",
+        "//pkg/util/intest",
         "//pkg/util/stringutil",
         "//pkg/util/tracing",
     ],
