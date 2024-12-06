@@ -195,7 +195,7 @@ func (*BaseTaskExecutor) Init(_ context.Context) error {
 }
 
 // Ctx returns the context of the task executor.
-// TODO: remove it when add-index.taskexecutor.Init don't depends on it.
+// TODO: remove it when add-index.taskexecutor.Init don't depend on it.
 func (e *BaseTaskExecutor) Ctx() context.Context {
 	return e.ctx
 }
@@ -240,20 +240,29 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		if e.stepExec != nil {
-			if newTask.Concurrency != oldTask.Concurrency {
-				if !e.slotMgr.exchange(&oldTask.TaskBase, &newTask.TaskBase) {
-					e.logger.Info("task concurrency modified, but not enough slots, executor exit",
-						zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
-					return
-				}
-				e.logger.Info("task concurrency modified",
+		if newTask.Concurrency != oldTask.Concurrency {
+			if !e.slotMgr.exchange(&oldTask.TaskBase, &newTask.TaskBase) {
+				e.logger.Info("task concurrency modified, but not enough slots, executor exit",
 					zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
-				newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+				return
+			}
+			e.logger.Info("task concurrency modified",
+				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
+			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+
+			if e.stepExec != nil {
 				execute.ModifyResource(e.stepExec, newResource)
 			}
-			if bytes.Compare(oldTask.Meta, newTask.Meta) != 0 {
-				e.logger.Info("task meta modified, notify step executor")
+		}
+		if bytes.Compare(oldTask.Meta, newTask.Meta) != 0 {
+			e.logger.Info("task meta modified",
+				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
+				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
+			// when task switch to next step, task meta might change too, but in
+			// this case step executor will be recreated, so we only notify it
+			// when it's still running the same step.
+			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
+				e.logger.Info("notify step executor to update task meta")
 				if err2 := e.stepExec.TaskMetaModified(newTask); err2 != nil {
 					e.logger.Info("notify step executor failed, will recreate it", zap.Error(err2))
 					e.cleanStepExecutor()

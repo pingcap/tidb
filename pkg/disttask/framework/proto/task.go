@@ -16,6 +16,7 @@ package proto
 
 import (
 	"cmp"
+	"fmt"
 	"time"
 )
 
@@ -154,6 +155,12 @@ func (t *TaskBase) Compare(other *TaskBase) int {
 		return r
 	}
 	return cmp.Compare(t.ID, other.ID)
+}
+
+// String implements fmt.Stringer interface.
+func (t *TaskBase) String() string {
+	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, concurrency: %d, target scope: %s, create time: %s}",
+		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.Concurrency, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
 }
 
 // Task represents the task of distributed framework.

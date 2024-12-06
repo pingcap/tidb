@@ -50,6 +50,9 @@ type StepExecutor interface {
 	// the returned error will not affect task/subtask state, it's only logged,
 	// so don't put code that's prone to error in it.
 	Cleanup(context.Context) error
+	// TaskMetaModified is called when the task meta is modified, if any error
+	// happen, framework might recreate the step executor, so don't put code
+	// that's prone to error in it.
 	TaskMetaModified(newTask *proto.Task) error
 }
 
@@ -121,5 +124,8 @@ func ModifyResource(exec StepExecutor, resource *proto.StepResource) {
 	}
 	e := reflect.ValueOf(exec)
 	info := e.FieldByName(stepExecFrameworkInfoName)
-	info.Interface().(*frameworkInfo).resource.Store(resource)
+	// mock generated code don't have this field.
+	if info.IsValid() {
+		info.Interface().(*frameworkInfo).resource.Store(resource)
+	}
 }

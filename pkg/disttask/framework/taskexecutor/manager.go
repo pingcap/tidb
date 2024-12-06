@@ -189,6 +189,13 @@ func (m *Manager) handleTasksLoop() {
 	}
 }
 
+// we handle tasks by their rank which is defined by Task.Compare.
+// Manager will make sure task with higher rank is run before tasks of lower rank,
+// when there are not enough slots, we might preempt the tasks with lower rank,
+// i.e. to cancel their task executor directly, so it's possible some subtask of
+// those tasks are half done, they have to rerun when the task is scheduled again.
+// when there is no enough slots to run a task even after considers preemption,
+// tasks with lower rank can run.
 func (m *Manager) handleTasks() {
 	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
 	// or 'paused', then they are not executable, if it's 'running', it should be
@@ -230,15 +237,24 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower rank if current task is waiting tasks free.
+			m.logger.Info("need to preempt tasks of lower rank", zap.Stringer("task", task.TaskBase),
+				zap.Stringers("preemptedTasks", tasksNeedFree))
+			// do not handle the tasks with lower rank if current task is waiting
+			// other tasks to free slots to make sure the order of running.
 			break
 		}
 
 		if !canAlloc {
+			// try to run tasks of lower rank
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.startTaskExecutor(task.TaskBase)
+		if !m.startTaskExecutor(task.TaskBase) {
+			// we break to make sure the order of running.
+			// it's possible some other lower rank tasks alloc more slots at
+			// runtime, in this case we should try preempt them in next iteration.
+			break
+		}
 	}
 }
 
@@ -307,17 +323,19 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 }
 
 // startTaskExecutor handles a runnable task.
-func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted bool) {
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
 		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
-		return
+		return false
 	}
 	if !m.slotManager.alloc(&task.TaskBase) {
-		return
+		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
+			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int("remaining-slots", m.slotManager.availableSlots()))
+		return false
 	}
-	executorStarted := false
 	defer func() {
 		// free the slot if executor not started.
 		if !executorStarted {
@@ -329,7 +347,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.failSubtask(err, task.ID, nil)
-		return
+		return false
 	}
 	executor := factory(m.ctx, task, Param{
 		taskTable: m.taskTable,
@@ -340,13 +358,12 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
-		return
+		return false
 	}
 	m.addTaskExecutor(executor)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
 		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
 		zap.Int("remaining-slots", m.slotManager.availableSlots()))
-	executorStarted = true
 	m.executorWG.RunWithLog(func() {
 		defer func() {
 			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
@@ -357,6 +374,7 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 		}()
 		executor.Run()
 	})
+	return true
 }
 
 func (m *Manager) getNodeResource() *nodeResource {
