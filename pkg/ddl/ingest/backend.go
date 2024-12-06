@@ -239,30 +239,7 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return true, false, err
 	}
 
-<<<<<<< HEAD
 	return true, true, nil
-=======
-	var newTS uint64
-	if mgr := bc.GetCheckpointManager(); mgr != nil {
-		// for local disk case, we need to refresh TS because duplicate detection
-		// requires each ingest to have a unique TS.
-		//
-		// TODO(lance6716): there's still a chance that data is imported but because of
-		// checkpoint is low-watermark, the data will still be imported again with
-		// another TS after failover. Need to refine the checkpoint mechanism.
-		newTS, err = mgr.refreshTSAndUpdateCP()
-		if err == nil {
-			for _, ei := range bc.engines {
-				err = bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
-				if err != nil {
-					return false, false, err
-				}
-			}
-		}
-	}
-
-	return true, true, err
->>>>>>> 098213a1800 (lightning, ddl: set TS to engineMeta after ResetEngineSkipAllocTS (#57998))
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
@@ -319,8 +296,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ei.openedEngine.SetTS(newTS)
-	return nil
+	return bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.

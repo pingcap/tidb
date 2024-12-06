@@ -39,11 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/codec"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
->>>>>>> 098213a1800 (lightning, ddl: set TS to engineMeta after ResetEngineSkipAllocTS (#57998))
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

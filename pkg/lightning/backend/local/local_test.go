@@ -59,11 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
-<<<<<<< HEAD
-=======
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
->>>>>>> 098213a1800 (lightning, ddl: set TS to engineMeta after ResetEngineSkipAllocTS (#57998))
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
