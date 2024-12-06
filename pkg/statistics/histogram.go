@@ -942,7 +942,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// If there are no modifications to the table, return 0 - since all of this logic is
 	// redundant if we get to the end and return the min - which includes zero,
-	// TODO: The exection here is if we are out of range due to sampling of the histograms - which
+	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
 	// may miss the lowest/highest values - and we are out of range without any modifications.
 	if modifyCount == 0 {
 		return 0
