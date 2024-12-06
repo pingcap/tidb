@@ -735,7 +735,6 @@ func preCheckPartitionModifiableColumn(sctx sessionctx.Context, t table.Table, c
 	return nil
 }
 
-// err := postCheckPartitionModifiableColumn(w, t, jobCtx, tblInfo, oldCol, newCol)
 func postCheckPartitionModifiableColumn(w *worker, tblInfo *model.TableInfo, col, newCol *model.ColumnInfo) error {
 	// Check that the column change does not affect the partitioning column
 	// It must keep the same type, int [unsigned], [var]char, date[time]
