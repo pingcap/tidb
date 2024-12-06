@@ -4210,3 +4210,55 @@ func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (
 		return nil, errors.Errorf("invaild argument type %v", arg0Tp)
 	}
 }
+
+type toNumberFunctionClass struct {
+	baseFunctionClass
+}
+
+// TO_NUMBER converts expr to a value of NUMBER data type.
+// If expr is NUMBER, then the function returns expr. If expr evaluates to null, then the function returns null. Otherwise, the function converts expr to a NUMBER value.
+// - If you specify an expr of CHAR, VARCHAR2, NCHAR, or NVARCHAR2 data type, then you can optionally specify the format model fmt.
+// - If you specify an expr of BINARY_FLOAT or BINARY_DOUBLE data type, then you cannot specify a format model because a float can be interpreted only by its internal representation.
+// - If you specify an expr of type BOOLEAN, then TRUE will be converted to 1 and FALSE will be converted to 0. You cannot specify a format model with inputs of type BOOLEAN.
+func (c *toNumberFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+
+	argTp := args[0].GetType(ctx.GetEvalCtx())
+	if argTp.EvalType() == types.ETString {
+		bf.tp.SetFlen(mysql.MaxRealWidth)
+	} else {
+		bf.tp.SetFlen(argTp.GetFlen())
+	}
+	sig := &builtinToNumberSig{bf}
+	return sig, nil
+}
+
+type builtinToNumberSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinToNumberSig) Clone() builtinFunc {
+	newSig := &builtinToNumberSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalReal evals a TO_NUMBER(expr) function.
+// simply use strconv.ParseFloat to convert string.
+func (b *builtinToNumberSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, err
+	}
+	num, err := strconv.ParseFloat(str, 64)
+	if err != nil {
+		return 0, true, nil
+	}
+	return num, false, nil
+}

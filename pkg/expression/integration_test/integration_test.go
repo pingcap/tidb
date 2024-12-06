@@ -2033,6 +2033,27 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	))
 }
 
+func TestToNumber(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a INT, b DECIMAL(10,2), c VARCHAR(10), d text)")
+
+	tk.MustExec("insert into t values(1, 1.1, '1', '1a')")
+	tk.MustExec("insert into t values(2, 2.2, '2.2', '2.b')")
+	tk.MustExec("insert into t values(3, 3.3, '3.33', '3.3c')")
+	tk.MustExec("insert into t values(4, 4.4, '4.444', '4.44d')")
+	tk.MustExec("insert into t values(5, 5.5, '5.5555', '5555e')")
+
+	tk.MustQuery("select to_number(a), to_number(b), to_number(c), to_number(d) from t").Check(testkit.Rows(
+		"1 1.1 1 <nil>",
+		"2 2.2 2.2 <nil>",
+		"3 3.3 3.33 <nil>",
+		"4 4.4 4.444 <nil>",
+		"5 5.5 5.5555 <nil>",
+	))
+}
+
 func TestCompareBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -3294,6 +3315,17 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQueryToErr(`select last_month('2001-13-01')`)
 	tk.MustQueryToErr(`select last_month('2001-10-50')`)
 
+	// for add_month
+	tk.MustQuery(`select add_month('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08 00:00:00"))
+	tk.MustQuery(`select add_month('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08 00:00:00"))
+	tk.MustQuery(`select add_month('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+	tk.MustQuery(`select add_month('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+
+	// for next_day
+	tk.MustQuery(`select next_day('2024-12-31', 'TUE')`).Check(testkit.Rows("2025-01-07 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-05', 'Tuesday')`).Check(testkit.Rows("2024-12-10 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-31', 'sunday')`).Check(testkit.Rows("2025-01-05 00:00:00"))
+
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
 	result.Check(testkit.Rows("1 1 1 1"))
@@ -3480,6 +3512,22 @@ func TestTimeBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("-111112.100000"))
 	result = tk.MustQuery(`select distinct -((d+ INTERVAL 1 HOUR_MICROSECOND)) from t2;`)
 	result.Check(testkit.Rows("-20000103000000.100000"))
+
+	// months_between
+	tk.MustQuery(`select months_between(DATE('2023-01-01'),DATE('2023-01-01'))`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select months_between(DATE('2024-02-01'),DATE('2023-02-01'))`).Check(testkit.Rows("12"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-05-01'))`).Check(testkit.Rows("-3"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),DATE('2003-02-28'))`).Check(testkit.Rows("-0.87096774"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(DATE('2003-02-01'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-3.1775519"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-02-01'))`).Check(testkit.Rows("3.1775519"))
+	tk.MustQuery(`select months_between(DATE('2003-01-06'),TIMESTAMP('2003-05-06 12:05:55'))`).Check(testkit.Rows("-4"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-06 12:05:55'),DATE('2003-12-31'))`).Check(testkit.Rows("-7.79019004"))
+	tk.MustQuery(`select months_between(TIMESTAMP('2003-05-31 12:05:55'),DATE('2003-02-28'))`).Check(testkit.Rows("3"))
+	_, err = tk.Exec(`select months_between(DATE('2003-02-01'))`)
+	require.Error(t, err)
+	terr := errors.Cause(err).(*terror.Error)
+	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
 
 	tk.MustExec("drop table t2")
 }

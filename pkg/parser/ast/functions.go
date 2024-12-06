@@ -383,10 +383,15 @@ const (
 	SetVal  = "setval"
 
 	// oracle functions.
-	ToDate     = "to_date"
-	LastMonth  = "last_month"
-	ToChar     = "to_char"
-	DateToChar = "date_to_char"
+	ToDate        = "to_date"
+	LastMonth     = "last_month"
+	ToNumber      = "to_number"
+	GetGUID       = "get_guid"
+	AddMonth      = "add_month"
+	NextDay       = "next_day"
+	MonthsBetween = "months_between"
+	ToChar        = "to_char"
+	DateToChar    = "date_to_char"
 )
 
 type FuncCallExprType int8

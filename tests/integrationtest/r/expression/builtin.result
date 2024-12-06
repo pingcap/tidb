@@ -3172,6 +3172,12 @@ uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:al
 uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}';
 uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'	uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'	uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'	uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'	uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}'
 1	1	1	1	1
+select get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}',
+get_guid() REGEXP '[[:alnum:]]{32}',get_guid() REGEXP '[[:alnum:]]{32}';
+get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'	get_guid() REGEXP '[[:alnum:]]{32}'
+1	1	1	1	1	1	1	1
 select sleep(1);
 sleep(1)
 0
