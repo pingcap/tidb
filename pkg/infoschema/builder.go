@@ -907,6 +907,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	b.sortAllTablesByID()
 
+	b.initMisc(dbInfos, policies, resourceGroups)
+
 	return nil
 }
 
