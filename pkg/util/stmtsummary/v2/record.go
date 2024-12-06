@@ -691,7 +691,26 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
+		LazyInfo:          &mockLazyInfo{},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
+}
+
+type mockLazyInfo struct{}
+
+func (a *mockLazyInfo) GetOriginalSQL() string {
+	return ""
+}
+
+func (a *mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
+	return "", "", nil
+}
+
+func (a *mockLazyInfo) GetBinaryPlan() string {
+	return ""
+}
+
+func (a *mockLazyInfo) GetPlanDigest() string {
+	return ""
 }
