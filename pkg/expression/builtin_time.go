@@ -7218,6 +7218,12 @@ type builtinMonthsBetweenSig struct {
 	baseBuiltinFunc
 }
 
+func (b *builtinMonthsBetweenSig) Clone() builtinFunc {
+	newSig := &builtinMonthsBetweenSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
 // evalReal evals a builtinMonthsBetweenSig.
 // See https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/MONTHS_BETWEEN.html
 func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {

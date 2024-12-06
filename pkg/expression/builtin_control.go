@@ -27,6 +27,8 @@ var (
 	_ functionClass = &caseWhenFunctionClass{}
 	_ functionClass = &ifFunctionClass{}
 	_ functionClass = &ifNullFunctionClass{}
+	_ functionClass = &NvlFunctionClass{}
+	_ functionClass = &Nvl2FunctionClass{}
 )
 
 var (

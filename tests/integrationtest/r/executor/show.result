@@ -777,6 +777,8 @@ nextval
 not
 now
 nulleq
+nvl
+nvl2
 oct
 octet_length
 old_password
