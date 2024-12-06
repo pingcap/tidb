@@ -17,6 +17,7 @@ package cascades
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -76,10 +77,16 @@ func TestDeriveStats(t *testing.T) {
 		b := &bytes.Buffer{}
 		sb := util.NewStrBuffer(b)
 		var strs []string
-		mm.ForEachGroup(func(g *memo.Group) {
+		mm.ForEachGroup(func(g *memo.Group) bool {
 			b.Reset()
 			// record group
 			g.String(sb)
+			sb.WriteString(", ")
+			// record first ge
+			g.ForEachGE(func(ge *memo.GroupExpression) bool {
+				ge.String(sb)
+				return false
+			})
 			sb.WriteString(", ")
 			// record group stats
 			logicProp := g.GetLogicalProperty()
@@ -90,7 +97,8 @@ func TestDeriveStats(t *testing.T) {
 				if logicProp.Stats == nil {
 					sb.WriteString("stats:nil,")
 				} else {
-					sb.WriteString("stats:{" + logicProp.Stats.String() + "}")
+					statsStr := fmt.Sprintf("count %v, ColNDVs %v, GroupNDVs %v", logicProp.Stats.RowCount, logicProp.Stats.ColNDVs, logicProp.Stats.GroupNDVs)
+					sb.WriteString("stats:{" + statsStr + "}")
 				}
 				sb.WriteString(", ")
 				if logicProp.Schema == nil {
@@ -102,6 +110,7 @@ func TestDeriveStats(t *testing.T) {
 			}
 			sb.Flush()
 			strs = append(strs, b.String())
+			return true
 		})
 		testdata.OnRecord(func() {
 			output[i].SQL = tt

@@ -153,10 +153,14 @@ func (g *Group) String(w util.StrBufferWriter) {
 }
 
 // ForEachGE traverse the inside group expression with f call on them each.
-func (g *Group) ForEachGE(f func(ge *GroupExpression)) {
+func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
+	next := true
 	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*GroupExpression)
-		f(expr)
+		next = f(expr)
+		if !next {
+			break
+		}
 	}
 }
 
