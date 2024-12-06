@@ -4017,6 +4017,7 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 		pipelined:                       s.usePipelinedDmlOrWarn(ctx),
 		pipelinedFlushConcurrency:       s.GetSessionVars().PipelinedFlushConcurrency,
 		pipelinedResolveLockConcurrency: s.GetSessionVars().PipelinedResolveLockConcurrency,
+		pipelinedFlushSpeedRatio:        s.GetSessionVars().PipelinedFlushRateRatio,
 	})
 	return nil
 }

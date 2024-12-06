@@ -3427,20 +3427,35 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope:          ScopeGlobal | ScopeSession,
-		Name:           TiDBPipelinedDMLResourcePolicy,
-		Value:          DefTiDBPipelinedDmlResourcePolicy,
-		Type:           TypeEnum,
-		PossibleValues: []string{StrategyPerformance, StrategyConservation},
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBPipelinedDMLResourcePolicy,
+		Value: DefTiDBPipelinedDmlResourcePolicy,
+		Type:  TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
 			switch val {
 			case StrategyPerformance:
 				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 128
 				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 8
+				s.PipelinedDMLConfig.PipelinedFlushRateRatio = 1
 			case StrategyConservation:
 				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 2
 				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 2
+				s.PipelinedDMLConfig.PipelinedFlushRateRatio = 1
 			default:
+				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 128
+				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 8
+				extractFloat := func(s string) (float64, bool) {
+					var value float64
+					n, err := fmt.Sscanf(s, "custom{write_flow_ratio:%f}", &value)
+					if err != nil || n != 1 {
+						return 0, false
+					}
+					return value, true
+				}
+				if r, ok := extractFloat(strings.ToLower(val)); ok {
+					s.PipelinedDMLConfig.PipelinedFlushRateRatio = r
+					return nil
+				}
 				return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
 			}
 			return nil

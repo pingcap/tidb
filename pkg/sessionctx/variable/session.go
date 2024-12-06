@@ -3192,6 +3192,9 @@ type PipelinedDMLConfig struct {
 
 	// PipelinedResolveLockConcurrency indicates the number of concurrent worker for pipelined resolve lock.
 	PipelinedResolveLockConcurrency int
+
+	// PipelinedFlushRateRatio throttles the rate of pipelined flush. 1 = no throttle.
+	PipelinedFlushRateRatio float64
 }
 
 const (

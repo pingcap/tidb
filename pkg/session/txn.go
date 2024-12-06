@@ -664,6 +664,7 @@ type txnFuture struct {
 	pipelined                       bool
 	pipelinedFlushConcurrency       int
 	pipelinedResolveLockConcurrency int
+	pipelinedFlushSpeedRatio        float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -677,6 +678,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 				tikv.WithPipelinedTxn(
 					tf.pipelinedFlushConcurrency,
 					tf.pipelinedResolveLockConcurrency,
+					tf.pipelinedFlushSpeedRatio,
 				),
 			)
 		}
@@ -690,7 +692,8 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	if tf.pipelined {
 		return tf.store.Begin(
 			tikv.WithTxnScope(tf.txnScope),
-			tikv.WithPipelinedTxn(tf.pipelinedFlushConcurrency, tf.pipelinedResolveLockConcurrency),
+			tikv.WithPipelinedTxn(tf.pipelinedFlushConcurrency,
+				tf.pipelinedResolveLockConcurrency, tf.pipelinedFlushSpeedRatio),
 		)
 	}
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))

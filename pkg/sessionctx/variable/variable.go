@@ -102,6 +102,8 @@ const (
 	// StrategyConservation is a choice of variable TiDBPipelinedDMLResourcePolicy,
 	// a rather conservative policy
 	StrategyConservation = "CONSERVATION"
+	// StrategyCustom is a choice of variable TiDBPipelinedDMLResourcePolicy,
+	StrategyCustom = "CUSTOM"
 )
 
 // Global config name list.
