@@ -197,6 +197,10 @@ func newMockTxn() Transaction {
 // mockStorage is used to start a must commit-failed txn.
 type mockStorage struct{}
 
+func (s *mockStorage) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
+	return 0, nil
+}
+
 func (s *mockStorage) GetOption(k any) (any, bool) {
 	return nil, false
 }

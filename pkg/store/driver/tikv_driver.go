@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -122,6 +123,16 @@ func (d *TiKVDriver) setDefaultAndOptions(options ...Option) {
 	}
 }
 
+// NewEtcdSafePointKVWithKeyspacePrefixIfNeeded is used to add etcd namespace with keyspace prefix,
+// if the current keyspace use keyspace level GC.
+func NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs []string, codec tikv.Codec, tlsConfig *tls.Config) (*tikv.EtcdSafePointKV, error) {
+	var etcdNameSpace string
+	if keyspace.IsKeyspaceUseKeyspaceLevelGC(codec.GetKeyspaceMeta()) {
+		etcdNameSpace = keyspace.MakeKeyspaceEtcdNamespace(codec)
+	}
+	return tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig, tikv.WithPrefix(etcdNameSpace))
+}
+
 // OpenWithOptions is used by other program that use tidb as a library, to avoid modifying GlobalConfig
 // unspecified options will be set to global config
 func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv.Storage, err error) {
@@ -187,11 +198,6 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		return nil, errors.Trace(err)
 	}
 
-	spkv, err = tikv.NewEtcdSafePointKV(etcdAddrs, tlsConfig)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	// ---------------- keyspace logic  ----------------
 	var (
 		pdClient *tikv.CodecPDClient
@@ -214,6 +220,11 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		tikv.WithSecurity(d.security),
 		tikv.WithCodec(codec),
 	)
+
+	spkv, err = NewEtcdSafePointKVWithKeyspacePrefixIfNeeded(etcdAddrs, codec, tlsConfig)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
@@ -393,6 +404,12 @@ func (s *tikvStore) GetSnapshot(ver kv.Version) kv.Snapshot {
 func (s *tikvStore) CurrentVersion(txnScope string) (kv.Version, error) {
 	ver, err := s.KVStore.CurrentTimestamp(txnScope)
 	return kv.NewVersion(ver), derr.ToTiDBErr(err)
+}
+
+// CurrentAllTSOKeyspaceGroupMinTs returns a minimum timestamp from all TSO keyspace groups.
+func (s *tikvStore) CurrentAllTSOKeyspaceGroupMinTs() (uint64, error) {
+	ts, err := s.KVStore.CurrentAllTSOKeyspaceGroupMinTs()
+	return ts, derr.ToTiDBErr(err)
 }
 
 // ShowStatus returns the specified status of the storage

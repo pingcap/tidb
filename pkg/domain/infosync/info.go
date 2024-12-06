@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -126,6 +127,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	tikvCodec             tikv.Codec
 }
 
 // ServerInfo is server static information.
@@ -224,6 +226,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		tikvCodec:         codec,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -735,12 +738,23 @@ func (is *InfoSyncer) GetMinStartTS() uint64 {
 	return is.minStartTS
 }
 
+func (is *InfoSyncer) getMinStartTsEtcdCli() *clientv3.Client {
+	if keyspace.IsKeyspaceUseKeyspaceLevelGC(is.tikvCodec.GetKeyspaceMeta()) {
+		// If the current keyspace uses keyspace level GC,
+		// we should use the etcd namespace with the keyspace prefix
+		// to access the etcd key for min start timestamp of the current keyspace.
+		return is.etcdCli
+	}
+	return is.unprefixedEtcdCli
+}
+
 // storeMinStartTS stores self server min start timestamp to etcd.
 func (is *InfoSyncer) storeMinStartTS(ctx context.Context) error {
-	if is.unprefixedEtcdCli == nil {
+	minStartTsEtcdCli := is.getMinStartTsEtcdCli()
+	if minStartTsEtcdCli == nil {
 		return nil
 	}
-	return util.PutKVToEtcd(ctx, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
+	return util.PutKVToEtcd(ctx, minStartTsEtcdCli, keyOpDefaultRetryCnt, is.minStartTSPath,
 		strconv.FormatUint(is.minStartTS, 10),
 		clientv3.WithLease(is.session.Lease()))
 }
