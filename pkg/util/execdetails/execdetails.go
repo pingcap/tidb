@@ -1539,6 +1539,7 @@ func (e *RuntimeStatsColl) GetRootStats(planID int) *RootRuntimeStats {
 	return runtimeStats
 }
 
+// GetPlanActRows returns the actual rows of the plan.
 func (e *RuntimeStatsColl) GetPlanActRows(planID int) int64 {
 	e.mu.Lock()
 	defer e.mu.Unlock()

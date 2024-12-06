@@ -2023,11 +2023,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	stmtsummaryv2.Add(stmtExecInfo)
 }
 
+// GetOriginalSQL implements StmtExecLazyInfo interface.
 func (a *ExecStmt) GetOriginalSQL() string {
 	stmt := a.getLazyStmtText()
 	return stmt.String()
 }
 
+// GetEncodedPlan implements StmtExecLazyInfo interface.
 func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
 	defer func() {
 		e = recover()
@@ -2043,6 +2045,7 @@ func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {
 	return
 }
 
+// GetBinaryPlan implements StmtExecLazyInfo interface.
 func (a *ExecStmt) GetBinaryPlan() string {
 	if variable.GenerateBinaryPlan.Load() {
 		return getBinaryPlan(a.Ctx)
@@ -2050,13 +2053,13 @@ func (a *ExecStmt) GetBinaryPlan() string {
 	return ""
 }
 
+// GetPlanDigest implements StmtExecLazyInfo interface.
 func (a *ExecStmt) GetPlanDigest() string {
 	if a.Plan.TP() == plancodec.TypePointGet {
 		_, planDigest := GetPlanDigest(a.Ctx.GetSessionVars().StmtCtx)
 		return planDigest.String()
-	} else {
-		return ""
 	}
+	return ""
 }
 
 // GetTextToLog return the query text to log.

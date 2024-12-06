@@ -275,6 +275,7 @@ type StmtExecInfo struct {
 	LazyInfo StmtExecLazyInfo
 }
 
+// StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
 type StmtExecLazyInfo interface {
 	GetOriginalSQL() string
 	GetEncodedPlan() (string, string, any)
