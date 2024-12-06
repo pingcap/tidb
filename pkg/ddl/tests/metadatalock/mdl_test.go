@@ -1001,6 +1001,7 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
+// TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
 func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	defer ingesttestutil.InjectMockBackendMgr(t, store)()
@@ -1057,7 +1058,6 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 					tk.MustExec(`commit`)
 					tk.MustExec(`begin`)
 					tk.MustExec(`set @a=4;`)
-					tk.MustExec(`set @a=4;`)
 					tk.MustExec(`execute delete_stmt using @a;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 					tk.MustExec(`set @a=4, @b=4;`)
@@ -1066,6 +1066,7 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 					tk.MustExec(`commit`)
 
 					tk.MustExec("begin")
+					// Activate txn.
 					tk.MustExec("select * from t2")
 					first = false
 					tk3.MustExec("insert into test.t values(10000, 1000)")
@@ -1079,7 +1080,6 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 		tk.MustExec(`execute delete_stmt using @a;`)
 		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustExec(`execute insert_stmt using @a, @b;`)
-		//tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustExec("commit")
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
@@ -1093,7 +1093,6 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	}()
 
 	ch <- struct{}{}
-
 	wg.Wait()
 
 	tk.MustExec("admin check table t")
