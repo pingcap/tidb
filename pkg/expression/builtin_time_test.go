@@ -3735,3 +3735,60 @@ func TestLastMonth(t *testing.T) {
 		require.Equal(t, test.expect, result)
 	}
 }
+
+func TestAddMonth(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		date     string
+		addition int
+		expect   string
+	}{
+		{"2024-04-08", -3, "2024-01-08 00:00:00"},
+		{"2024-04-08", 12, "2025-04-08 00:00:00"},
+		{"2024-12-31", 2, "2025-02-28 00:00:00"},
+		{"2025-04-30", -2, "2025-02-28 00:00:00"},
+	}
+
+	fc := funcs[ast.AddMonth]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewDatum(test.date),
+			types.NewDatum(test.addition),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}
+
+func TestNextDay(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		date    string
+		weekday string
+		expect  string
+	}{
+		{"2024-12-31", "TUE", "2025-01-07 00:00:00"},
+		{"2024-12-05", "Tuesday", "2024-12-10 00:00:00"},
+		{"2024-12-31", "sunday", "2025-01-05 00:00:00"},
+	}
+
+	fc := funcs[ast.NextDay]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewDatum(test.date),
+			types.NewDatum(test.weekday),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}
