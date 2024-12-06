@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	metamodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -352,7 +353,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	// To pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 
 	getStatsHealthy := func() int {
 		rows := tk.MustQuery("show stats_healthy where db_name = 'test' and table_name = 't'").Rows()
@@ -508,46 +509,6 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
 
-// Test the case that after ALTER TABLE happens, the pointer to the column info/index info should be refreshed.
-func TestColAndIdxExistenceMapChangedAfterAlterTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	h := dom.StatsHandle()
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index iab(a,b));")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	tk.MustExec("insert into t value(1,1);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	tk.MustExec("analyze table t;")
-	is := dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	statsTbl := h.GetTableStats(tblInfo)
-	colA := tblInfo.Columns[0]
-	colInfo := statsTbl.ColAndIdxExistenceMap.GetCol(colA.ID)
-	require.Equal(t, colA, colInfo)
-
-	tk.MustExec("alter table t modify column a double")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-	is = dom.InfoSchema()
-	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo = tbl.Meta()
-	newColA := tblInfo.Columns[0]
-	require.NotEqual(t, colA.ID, newColA.ID)
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-	tk.MustExec("analyze table t;")
-	require.NoError(t, h.Update(context.Background(), is))
-	statsTbl = h.GetTableStats(tblInfo)
-	colInfo = statsTbl.ColAndIdxExistenceMap.GetCol(newColA.ID)
-	require.Equal(t, newColA, colInfo)
-}
-
 func TestTableLastAnalyzeVersion(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
@@ -578,7 +539,8 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a)")
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
-	// We don't handle the ADD INDEX event in the HandleDDLEvent.
+	e := <-h.DDLEventCh()
+	require.Equal(t, metamodel.ActionAddIndex, e.GetType())
 	require.Equal(t, 0, len(h.DDLEventCh()))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
@@ -606,7 +568,6 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec("set tidb_enable_global_index = true")
 	tk.MustExec("set tidb_analyze_version = 1")
 	tk.MustExec("set global tidb_enable_historical_stats = true")
 	defer tk.MustExec("set global tidb_enable_historical_stats = default")
@@ -628,4 +589,26 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	}
 	// Each analyze will only generate one record
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
+}
+
+func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int);")
+	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("insert into t values (1, 1);")
+	err := dom.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	tk.MustExec("alter table t add column c int default 1;")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
+	tk.MustExec("select * from t where a = 1 or b = 1 or c = 1;")
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	result := tk.MustQuery("show stats_meta where table_name = 't'")
+	require.Len(t, result.Rows(), 1)
+	// The last analyze time.
+	require.Equal(t, "<nil>", result.Rows()[0][6])
 }

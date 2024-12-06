@@ -42,6 +42,7 @@ import (
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tipb/go-tipb"
@@ -97,6 +98,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	if len(tasks) == 0 {
 		return nil
+	}
+	tableAndPartitionIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.TableID)
+		if tableID.IsPartitionTable() {
+			tableAndPartitionIDs = append(tableAndPartitionIDs, tableID.PartitionID)
+		}
 	}
 
 	// Get the min number of goroutines for parallel execution.
@@ -168,12 +177,24 @@ TASKLOOP:
 		}
 	}
 
+	if intest.InTest {
+		for {
+			stop := true
+			failpoint.Inject("mockStuckAnalyze", func() {
+				stop = false
+			})
+			if stop {
+				break
+			}
+		}
+	}
+
 	// Update analyze options to mysql.analyze_options for auto analyze.
 	err = e.saveV2AnalyzeOpts()
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	return statsHandle.Update(ctx, infoSchema)
+	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {

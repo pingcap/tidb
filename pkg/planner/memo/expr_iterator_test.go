@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -222,11 +222,11 @@ func TestExprIterWithEngineType(t *testing.T) {
 	g2.Insert(NewGroupExpr(logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}}.Init(ctx, 0)))
 	g2.Insert(NewGroupExpr(logicalop.LogicalLimit{Count: 3}.Init(ctx, 0)))
 
-	flashGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(ctx, 0))
+	flashGather := NewGroupExpr(logicalop.TiKVSingleGather{}.Init(ctx, 0))
 	flashGather.Children = append(flashGather.Children, g1)
 	g3 := NewGroupWithSchema(flashGather, schema).SetEngineType(pattern.EngineTiDB)
 
-	tikvGather := NewGroupExpr(plannercore.TiKVSingleGather{}.Init(ctx, 0))
+	tikvGather := NewGroupExpr(logicalop.TiKVSingleGather{}.Init(ctx, 0))
 	tikvGather.Children = append(tikvGather.Children, g2)
 	g3.Insert(tikvGather)
 

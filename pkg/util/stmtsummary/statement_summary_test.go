@@ -22,14 +22,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -83,71 +85,75 @@ func TestAddStatement(t *testing.T) {
 	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
-		beginTime:            now + 60,
-		endTime:              now + 1860,
-		sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
-		samplePlan:           samplePlan,
-		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
-		execCount:            1,
-		sumLatency:           stmtExecInfo1.TotalLatency,
-		maxLatency:           stmtExecInfo1.TotalLatency,
-		minLatency:           stmtExecInfo1.TotalLatency,
-		sumParseLatency:      stmtExecInfo1.ParseLatency,
-		maxParseLatency:      stmtExecInfo1.ParseLatency,
-		sumCompileLatency:    stmtExecInfo1.CompileLatency,
-		maxCompileLatency:    stmtExecInfo1.CompileLatency,
-		sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
-		maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
-		maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
-		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
-		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
-		sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-		maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-		sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-		maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-		sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-		maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-		sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-		maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-		sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-		maxPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-		sumCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-		maxCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-		sumLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-		maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-		sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-		maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-		sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
-		maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
-		sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
-		maxWriteSize:         stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
-		sumPrewriteRegionNum: int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum),
-		maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
-		sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
-		maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		backoffTypes:         make(map[string]int),
-		sumMem:               stmtExecInfo1.MemMax,
-		maxMem:               stmtExecInfo1.MemMax,
-		sumDisk:              stmtExecInfo1.DiskMax,
-		maxDisk:              stmtExecInfo1.DiskMax,
-		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
-		firstSeen:            stmtExecInfo1.StartTime,
-		lastSeen:             stmtExecInfo1.StartTime,
-		StmtRUSummary: StmtRUSummary{
-			SumRRU:            stmtExecInfo1.RUDetail.RRU(),
-			MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
-			SumWRU:            stmtExecInfo1.RUDetail.WRU(),
-			MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
-			SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-			MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+		beginTime: now + 60,
+		endTime:   now + 1860,
+		stmtSummaryStats: stmtSummaryStats{
+			sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
+			samplePlan:           samplePlan,
+			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
+			execCount:            1,
+			sumLatency:           stmtExecInfo1.TotalLatency,
+			maxLatency:           stmtExecInfo1.TotalLatency,
+			minLatency:           stmtExecInfo1.TotalLatency,
+			sumParseLatency:      stmtExecInfo1.ParseLatency,
+			maxParseLatency:      stmtExecInfo1.ParseLatency,
+			sumCompileLatency:    stmtExecInfo1.CompileLatency,
+			maxCompileLatency:    stmtExecInfo1.CompileLatency,
+			sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
+			sumCopProcessTime:    stmtExecInfo1.CopTasks.TotProcessTime,
+			maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
+			maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
+			sumCopWaitTime:       stmtExecInfo1.CopTasks.TotWaitTime,
+			maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
+			maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
+			sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+			maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+			sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+			maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+			sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
+			maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
+			sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+			maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+			sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+			maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+			sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
+			maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
+			sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
+			maxPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
+			sumCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
+			maxCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
+			sumLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
+			maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
+			sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
+			maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
+			sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
+			maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
+			sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
+			maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
+			sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
+			maxWriteSize:         stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
+			sumPrewriteRegionNum: int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum),
+			maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
+			sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
+			maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
+			backoffTypes:         make(map[string]int),
+			sumMem:               stmtExecInfo1.MemMax,
+			maxMem:               stmtExecInfo1.MemMax,
+			sumDisk:              stmtExecInfo1.DiskMax,
+			maxDisk:              stmtExecInfo1.DiskMax,
+			sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
+			firstSeen:            stmtExecInfo1.StartTime,
+			lastSeen:             stmtExecInfo1.StartTime,
+			StmtRUSummary: StmtRUSummary{
+				SumRRU:            stmtExecInfo1.RUDetail.RRU(),
+				MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
+				SumWRU:            stmtExecInfo1.RUDetail.WRU(),
+				MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
+				SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+			},
+			resourceGroupName: stmtExecInfo1.ResourceGroupName,
 		},
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	history := list.New()
@@ -185,10 +191,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    20000,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
+			TotProcessTime:    40000,
 			AvgWaitTime:       200,
 			P90WaitTime:       2000,
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
+			TotWaitTime:       40000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  180,
@@ -253,8 +261,10 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo2.CompileLatency
 	expectedSummaryElement.maxCompileLatency = stmtExecInfo2.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo2.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo2.CopTasks.TotProcessTime
 	expectedSummaryElement.maxCopProcessTime = stmtExecInfo2.CopTasks.MaxProcessTime
 	expectedSummaryElement.maxCopProcessAddress = stmtExecInfo2.CopTasks.MaxProcessAddress
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo2.CopTasks.TotWaitTime
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
 	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
@@ -328,10 +338,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    300,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
+			TotProcessTime:    200,
 			AvgWaitTime:       20,
 			P90WaitTime:       200,
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
+			TotWaitTime:       40,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  18,
@@ -395,6 +407,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo3.CopTasks.TotProcessTime
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo3.CopTasks.TotWaitTime
 	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
 	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
@@ -533,8 +547,10 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumCompileLatency != ssElement2.sumCompileLatency ||
 			ssElement1.maxCompileLatency != ssElement2.maxCompileLatency ||
 			ssElement1.sumNumCopTasks != ssElement2.sumNumCopTasks ||
+			ssElement1.sumCopProcessTime != ssElement2.sumCopProcessTime ||
 			ssElement1.maxCopProcessTime != ssElement2.maxCopProcessTime ||
 			ssElement1.maxCopProcessAddress != ssElement2.maxCopProcessAddress ||
+			ssElement1.sumCopWaitTime != ssElement2.sumCopWaitTime ||
 			ssElement1.maxCopWaitTime != ssElement2.maxCopWaitTime ||
 			ssElement1.maxCopWaitAddress != ssElement2.maxCopWaitAddress ||
 			ssElement1.sumProcessTime != ssElement2.sumProcessTime ||
@@ -634,10 +650,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
+			TotProcessTime:    10000,
 			AvgWaitTime:       100,
 			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
+			TotWaitTime:       1000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  80,
@@ -693,6 +711,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 		Succeed:           true,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
+		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
@@ -798,12 +817,14 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 		AvgQueuedRcTimeStr,
 		MaxQueuedRcTimeStr,
 		ResourceGroupName,
+		AvgTidbCPUTimeStr,
+		AvgTikvCPUTimeStr,
 	}
 	cols := make([]*model.ColumnInfo, len(columnNames))
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   model.NewCIStr(columnNames[i]),
+			Name:   pmodel.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}
@@ -857,7 +878,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	match(t, datums[0], expectedDatum...)
 	datums = reader.GetStmtSummaryHistoryRows()
@@ -907,7 +928,7 @@ func TestToDatum(t *testing.T) {
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
 		f, f, 0, 0, 0, "", "", "", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
-		stmtExecInfo1.ResourceGroupName}
+		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	expectedDatum[4] = stmtExecInfo2.Digest
 	match(t, datums[0], expectedDatum...)
 	match(t, datums[1], expectedEvictedDatum...)
@@ -931,7 +952,7 @@ func TestAddStatementParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
@@ -941,7 +962,7 @@ func TestAddStatementParallel(t *testing.T) {
 		require.Len(t, datums, loops)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	wg.Wait()
@@ -970,7 +991,7 @@ func TestMaxStmtCount(t *testing.T) {
 	// 100 digests
 	stmtExecInfo1 := generateAnyExecInfo()
 	loops := 100
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -993,7 +1014,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a bigger value.
 	require.Nil(t, ssMap.SetMaxStmtCount(50))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1001,7 +1022,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// Change to a smaller value.
 	require.Nil(t, ssMap.SetMaxStmtCount(10))
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}
@@ -1067,12 +1088,12 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with different digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 			ssMap.AddStatement(stmtExecInfo1)
 		}
 	}
-	for i := 0; i < threads; i++ {
+	for range threads {
 		wg.Run(addStmtFunc)
 	}
 
@@ -1171,7 +1192,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		stmtExecInfo1 := generateAnyExecInfo()
 
 		// Add 32 times with same digest.
-		for i := 0; i < loops; i++ {
+		for i := range loops {
 			// Sometimes enable it and sometimes disable it.
 			err := ssMap.SetEnabled(i%2 == 0)
 			require.NoError(t, err)
@@ -1183,7 +1204,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < threads; i++ {
+	for range threads {
 		go addStmtFunc()
 	}
 	// Ensure that there's no deadlocks.
@@ -1294,7 +1315,7 @@ func TestSummaryHistory(t *testing.T) {
 		planDigest:        stmtExecInfo1.PlanDigest,
 		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	for i := 0; i < 11; i++ {
+	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1332,7 +1353,7 @@ func TestSummaryHistory(t *testing.T) {
 		require.NoError(t, err)
 	}()
 	// insert first digest
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		ssMap.beginTimeForCurInterval = now + int64(i)*10
 		ssMap.AddStatement(stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1467,7 +1488,7 @@ func TestAccessPrivilege(t *testing.T) {
 	loops := 32
 	stmtExecInfo1 := generateAnyExecInfo()
 
-	for i := 0; i < loops; i++ {
+	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
 		ssMap.AddStatement(stmtExecInfo1)
 	}

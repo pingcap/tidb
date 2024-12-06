@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -159,10 +159,11 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	}
 
 	var rows [][]types.Datum
-	if isCurrentTable(e.table.Name.O) {
+	if isCumulativeTable(e.table.Name.O) {
+		rows = reader.GetStmtSummaryCumulativeRows()
+	} else if isCurrentTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCurrentRows()
-	}
-	if isHistoryTable(e.table.Name.O) {
+	} else if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
 	}
 	return newSimpleRowsReader(rows), nil
@@ -345,7 +346,18 @@ func isClusterTable(originalTableName string) bool {
 	switch originalTableName {
 	case infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted:
+		infoschema.ClusterTableStatementsSummaryEvicted,
+		infoschema.ClusterTableTiDBStatementsStats:
+		return true
+	}
+
+	return false
+}
+
+func isCumulativeTable(originalTableName string) bool {
+	switch originalTableName {
+	case infoschema.TableTiDBStatementsStats,
+		infoschema.ClusterTableTiDBStatementsStats:
 		return true
 	}
 

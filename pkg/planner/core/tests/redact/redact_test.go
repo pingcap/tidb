@@ -17,7 +17,6 @@ package redact
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -36,7 +35,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
 	tk.MustExec("CREATE TABLE person (id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,name VARCHAR(255) NOT NULL,address_info JSON,city_no INT AS (JSON_EXTRACT(address_info, '$.city_no')) VIRTUAL,KEY(city_no));")
 
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "employee")
+	testkit.SetTiFlashReplica(t, dom, "test", "employee")
 	// ---------------------------------------------------------------------------
 	// tidb_redact_log=MARKER
 	// ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustQuery("explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
 			"Projection_7 2.50 root  ‹1›->Column#5",
-			"└─HashJoin_9 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
+			"└─HashJoin_9 2.50 root  left outer join, left side:Batch_Point_Get_10, equal:[eq(test.t.a, test.tlist.a)]",
 			"  ├─Batch_Point_Get_10(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
 			"  └─TableReader_13(Probe) 20.00 root partition:dual data:Selection_12",
 			"    └─Selection_12 20.00 cop[tikv]  in(test.tlist.a, ‹12›, ‹13›), not(isnull(test.tlist.a))",
@@ -118,7 +117,7 @@ func TestRedactExplain(t *testing.T) {
 	tk.MustQuery("explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13)").
 		Check(testkit.Rows(
 			"Projection_7 2.50 root  ?->Column#5",
-			"└─HashJoin_9 2.50 root  left outer join, equal:[eq(test.t.a, test.tlist.a)]",
+			"└─HashJoin_9 2.50 root  left outer join, left side:Batch_Point_Get_10, equal:[eq(test.t.a, test.tlist.a)]",
 			"  ├─Batch_Point_Get_10(Build) 2.00 root table:t handle:[12 13], keep order:false, desc:false",
 			"  └─TableReader_13(Probe) 20.00 root partition:dual data:Selection_12",
 			"    └─Selection_12 20.00 cop[tikv]  in(test.tlist.a, ?, ?), not(isnull(test.tlist.a))",
@@ -221,14 +220,14 @@ func TestJoinNotSupportedByTiFlash(t *testing.T) {
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	tk.MustExec("set session tidb_redact_log=ON")
 	tk.MustQuery("explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100").Check(testkit.Rows(
-		"MergeJoin 2.00 root  left outer join, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ?)",
+		"MergeJoin 2.00 root  left outer join, left side:IndexReader, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ?)",
 		"├─IndexReader(Build) 2.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 2.00 cop[tikv] table:b, index:idx(id, bit_col, datetime_col) keep order:true",
 		"└─IndexReader(Probe) 2.00 root  index:IndexFullScan",
 		"  └─IndexFullScan 2.00 cop[tikv] table:a, index:idx(id, bit_col, datetime_col) keep order:true"))
 	tk.MustExec("set session tidb_redact_log=MARKER")
 	tk.MustQuery("explain format = 'brief' select * from table_1 a left join table_1 b on a.id = b.id and dayofmonth(a.datetime_col) > 100").Check(testkit.Rows(
-		"MergeJoin 2.00 root  left outer join, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ‹100›)",
+		"MergeJoin 2.00 root  left outer join, left side:IndexReader, left key:test.table_1.id, right key:test.table_1.id, left cond:gt(dayofmonth(test.table_1.datetime_col), ‹100›)",
 		"├─IndexReader(Build) 2.00 root  index:IndexFullScan",
 		"│ └─IndexFullScan 2.00 cop[tikv] table:b, index:idx(id, bit_col, datetime_col) keep order:true",
 		"└─IndexReader(Probe) 2.00 root  index:IndexFullScan",
@@ -246,8 +245,8 @@ func TestRedactTiFlash(t *testing.T) {
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 	// Create virtual tiflash replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range_d64")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range_d64")
 
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 	tk.MustExec("set session tidb_redact_log=ON")

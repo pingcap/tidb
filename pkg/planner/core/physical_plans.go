@@ -21,11 +21,13 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -50,6 +52,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
+
+//go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
 
 var (
 	_ base.PhysicalPlan = &PhysicalSelection{}
@@ -154,26 +158,31 @@ type PhysicalTableReader struct {
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
 }
 
+// LoadTableStats loads the stats of the table read by this plan.
+func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
+	ts := p.TablePlans[0].(*PhysicalTableScan)
+	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+}
+
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
 	PruningConds   []expression.Expression
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
 }
 
 const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartInfo{}))
 
-// Clone clones the PhysPlanPartInfo.
-func (pi *PhysPlanPartInfo) Clone() *PhysPlanPartInfo {
+func (pi *PhysPlanPartInfo) cloneForPlanCache() *PhysPlanPartInfo {
 	if pi == nil {
 		return nil
 	}
 	cloned := new(PhysPlanPartInfo)
-	cloned.PruningConds = util.CloneExprs(pi.PruningConds)
-	cloned.PartitionNames = util.CloneCIStrs(pi.PartitionNames)
-	cloned.Columns = util.CloneCols(pi.Columns)
-	cloned.ColumnNames = util.CloneFieldNames(pi.ColumnNames)
+	cloned.PruningConds = cloneExpressionsForPlanCache(pi.PruningConds, nil)
+	cloned.PartitionNames = pi.PartitionNames
+	cloned.Columns = cloneColumnsForPlanCache(pi.Columns, nil)
+	cloned.ColumnNames = pi.ColumnNames
 	return cloned
 }
 
@@ -197,6 +206,11 @@ func (pi *PhysPlanPartInfo) MemoryUsage() (sum int64) {
 		sum += colName.MemoryUsage()
 	}
 	return
+}
+
+// SetTablePlanForTest sets tablePlan field for test usage only
+func (p *PhysicalTableReader) SetTablePlanForTest(pp base.PhysicalPlan) {
+	p.tablePlan = pp
 }
 
 // GetTablePlan exports the tablePlan.
@@ -259,7 +273,7 @@ func setMppOrBatchCopForTableScan(curPlan base.PhysicalPlan) {
 }
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
-func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
+func GetPhysicalIndexReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
 	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
@@ -268,7 +282,7 @@ func GetPhysicalIndexReader(sg *TiKVSingleGather, schema *expression.Schema, sta
 }
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
-func GetPhysicalTableReader(sg *TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
+func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PlanPartInfo = &PhysPlanPartInfo{
 		PruningConds:   sg.Source.AllConds,
@@ -722,11 +736,11 @@ type PhysicalIndexScan struct {
 	Index      *model.IndexInfo `plan-cache-clone:"shallow"`
 	IdxCols    []*expression.Column
 	IdxColLens []int
-	Ranges     []*ranger.Range
+	Ranges     []*ranger.Range     `plan-cache-clone:"shallow"`
 	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName     model.CIStr         `plan-cache-clone:"shallow"`
+	DBName     pmodel.CIStr        `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
@@ -865,7 +879,7 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName         model.CIStr
+	DBName         pmodel.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
@@ -897,10 +911,10 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName  model.CIStr         `plan-cache-clone:"shallow"`
-	Ranges  []*ranger.Range
+	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
+	Ranges  []*ranger.Range     `plan-cache-clone:"shallow"`
 
-	TableAsName *model.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -948,6 +962,19 @@ type PhysicalTableScan struct {
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
+
+	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+}
+
+// VectorIndexExtra is the extra information for vector index.
+type VectorIndexExtra struct {
+	// Note: Even if IndexInfo is not nil, it doesn't mean the VectorSearch push down
+	// will happen because optimizer will explore all available vector indexes and fill them
+	// in IndexInfo, and later invalid plans are filtered out according to a topper executor.
+	IndexInfo *model.IndexInfo
+
+	// Not nil if there is an VectorSearch push down.
+	PushDownQueryInfo *tipb.ANNQueryInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1326,21 +1353,21 @@ func (p *basePhysicalJoin) cloneForPlanCacheWithSelf(newCtx base.PlanContext, ne
 	}
 	cloned.physicalSchemaProducer = *base
 	cloned.JoinType = p.JoinType
-	cloned.LeftConditions = util.CloneExprs(p.LeftConditions)
-	cloned.RightConditions = util.CloneExprs(p.RightConditions)
-	cloned.OtherConditions = util.CloneExprs(p.OtherConditions)
+	cloned.LeftConditions = cloneExpressionsForPlanCache(p.LeftConditions, nil)
+	cloned.RightConditions = cloneExpressionsForPlanCache(p.RightConditions, nil)
+	cloned.OtherConditions = cloneExpressionsForPlanCache(p.OtherConditions, nil)
 	cloned.InnerChildIdx = p.InnerChildIdx
-	cloned.OuterJoinKeys = util.CloneCols(p.OuterJoinKeys)
-	cloned.InnerJoinKeys = util.CloneCols(p.InnerJoinKeys)
-	cloned.LeftJoinKeys = util.CloneCols(p.LeftJoinKeys)
-	cloned.RightJoinKeys = util.CloneCols(p.RightJoinKeys)
+	cloned.OuterJoinKeys = cloneColumnsForPlanCache(p.OuterJoinKeys, nil)
+	cloned.InnerJoinKeys = cloneColumnsForPlanCache(p.InnerJoinKeys, nil)
+	cloned.LeftJoinKeys = cloneColumnsForPlanCache(p.LeftJoinKeys, nil)
+	cloned.RightJoinKeys = cloneColumnsForPlanCache(p.RightJoinKeys, nil)
 	cloned.IsNullEQ = make([]bool, len(p.IsNullEQ))
 	copy(cloned.IsNullEQ, p.IsNullEQ)
 	for _, d := range p.DefaultValues {
 		cloned.DefaultValues = append(cloned.DefaultValues, *d.Clone())
 	}
-	cloned.LeftNAJoinKeys = util.CloneCols(p.LeftNAJoinKeys)
-	cloned.RightNAJoinKeys = util.CloneCols(p.RightNAJoinKeys)
+	cloned.LeftNAJoinKeys = cloneColumnsForPlanCache(p.LeftNAJoinKeys, nil)
+	cloned.RightNAJoinKeys = cloneColumnsForPlanCache(p.RightNAJoinKeys, nil)
 	return cloned, true
 }
 
@@ -1450,10 +1477,36 @@ type PhysicalHashJoin struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 }
 
-// CanUseHashJoinV2 returns true if current join is supported by hash join v2
-func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
+	// nullaware join
+	if len(p.LeftNAJoinKeys) > 0 {
+		return false
+	}
+	// cross join
+	if len(p.LeftJoinKeys) == 0 {
+		return false
+	}
+	// join with null equal condition
+	for _, value := range p.IsNullEQ {
+		if value {
+			return false
+		}
+	}
 	switch p.JoinType {
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
+	if !p.isGAForHashJoinV2() && !joinversion.UseHashJoinV2ForNonGAJoin {
+		return false
+	}
+	switch p.JoinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false
@@ -2680,8 +2733,8 @@ type PhysicalCTE struct {
 	SeedPlan  base.PhysicalPlan
 	RecurPlan base.PhysicalPlan
 	CTE       *logicalop.CTEClass
-	cteAsName model.CIStr
-	cteName   model.CIStr
+	cteAsName pmodel.CIStr
+	cteName   pmodel.CIStr
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender

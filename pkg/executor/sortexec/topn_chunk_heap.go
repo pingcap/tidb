@@ -16,11 +16,16 @@ package sortexec
 
 import (
 	"container/heap"
+	"context"
+	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/stretchr/testify/require"
 )
 
 // topNChunkHeap implements heap.Interface.
@@ -152,4 +157,23 @@ func (h *topNChunkHeap) Pop() any {
 
 func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
+}
+
+// TestKillSignalInTopN is for test
+func TestKillSignalInTopN(t *testing.T, topnExec *TopNExec) {
+	ctx := context.Background()
+	err := topnExec.Open(ctx)
+	require.NoError(t, err)
+
+	chkHeap := &topNChunkHeap{}
+	// Offset of heap in worker should be 0, as we need to spill all data
+	chkHeap.init(topnExec, topnExec.memTracker, topnExec.Limit.Offset+topnExec.Limit.Count, 0, topnExec.greaterRow, topnExec.RetFieldTypes())
+	srcChk := exec.TryNewCacheChunk(topnExec.Children(0))
+	err = exec.Next(ctx, topnExec.Children(0), srcChk)
+	require.NoError(t, err)
+	chkHeap.rowChunks.Add(srcChk)
+
+	topnExec.Ctx().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	err = topnExec.spillHelper.spillHeap(chkHeap)
+	require.Error(t, err, exeerrors.ErrQueryInterrupted.GenWithStackByArgs())
 }

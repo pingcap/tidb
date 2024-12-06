@@ -16,6 +16,7 @@ package importer
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/pingcap/errors"
 	ropts "github.com/pingcap/tidb/lightning/pkg/importer/opts"
@@ -42,6 +43,7 @@ type PrecheckItemBuilder struct {
 	preInfoGetter PreImportInfoGetter
 	checkpointsDB checkpoints.DB
 	pdAddrsGetter func(context.Context) []string
+	targetDB      *sql.DB
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
@@ -91,7 +93,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdHTTPCli), gerr
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdHTTPCli, targetDB), gerr
 }
 
 // NewPrecheckItemBuilder creates a new PrecheckItemBuilder
@@ -101,6 +103,7 @@ func NewPrecheckItemBuilder(
 	preInfoGetter PreImportInfoGetter,
 	checkpointsDB checkpoints.DB,
 	pdHTTPCli pdhttp.Client,
+	targetDB *sql.DB,
 ) *PrecheckItemBuilder {
 	pdAddrsGetter := func(context.Context) []string {
 		return []string{cfg.TiDB.PdAddr}
@@ -125,6 +128,7 @@ func NewPrecheckItemBuilder(
 		preInfoGetter: preInfoGetter,
 		checkpointsDB: checkpointsDB,
 		pdAddrsGetter: pdAddrsGetter,
+		targetDB:      targetDB,
 	}
 }
 
@@ -157,6 +161,8 @@ func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (p
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
 	case precheck.CheckTargetUsingCDCPITR:
 		return NewCDCPITRCheckItem(b.cfg, b.pdAddrsGetter), nil
+	case precheck.CheckPDTiDBFromSameCluster:
+		return NewPDTiDBFromSameClusterCheckItem(b.targetDB, b.pdAddrsGetter), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

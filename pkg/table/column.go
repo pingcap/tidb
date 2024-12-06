@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -493,6 +493,11 @@ func CheckOnce(cols []*Column) error {
 // Otherwise, it will return a ErrColumnCantNull when error.
 func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error {
 	if (mysql.HasNotNullFlag(c.GetFlag()) || mysql.HasPreventNullInsertFlag(c.GetFlag())) && data.IsNull() {
+		if c.FieldType.EvalType().IsVectorKind() {
+			// Vector(N) is a special case because it does not have zero values as a fallback.
+			// So we always reject NULLs in NotNull context even if SQL mode is not strict.
+			return errors.Errorf("VECTOR column '%s' cannot be null", c.Name)
+		}
 		if rowCntInLoadData > 0 {
 			return ErrWarnNullToNotnull.GenWithStackByArgs(c.Name, rowCntInLoadData)
 		}
@@ -506,7 +511,10 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // error is ErrWarnNullToNotnull.
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
+func (c *Column) HandleBadNull(
+	ec errctx.Context,
+	d *types.Datum,
+	rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
 		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
@@ -549,7 +557,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx expression.BuildContext, c
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
+		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupNoDefault) != errctx.LevelError
 		if !ignoreErr {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}

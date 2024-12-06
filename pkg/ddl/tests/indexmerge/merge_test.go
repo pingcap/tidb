@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -122,6 +122,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk.MustExec("create table t (c1 int);")
+	tk.MustExec("insert into t values (1);")
 	// Force onCreateIndex use the txn-merge process.
 	ingest.LitInitialized = false
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
@@ -138,7 +139,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 			runDML = true
 			tblID = job.TableID
 			idxID = idx.ID
-			_, checkErr = tk2.Exec("insert into t values (1);")
+			_, checkErr = tk2.Exec("insert into t values (2);")
 		}
 	})
 	tk.MustExec("alter table t add unique index idx(c1);")
@@ -146,8 +147,8 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t;")
-	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t use index (idx);").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select * from t ignore index (idx);").Check(testkit.Rows("1", "2"))
 
 	snap := store.GetSnapshot(kv.MaxVersion)
 	iter, err := snap.Iter(tablecodec.GetTableIndexKeyRange(tblID, idxID))
@@ -595,6 +596,8 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	// Don't skip merging temp index, otherwise MockDMLExecutionMerging will not execute.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		if t.Failed() {
@@ -830,4 +833,101 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 2", "2 1 2"))
+}
+
+func TestAddUniqueIndexFalsePositiveDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a bigint DEFAULT '-13202', 
+        b varchar(221) NOT NULL DEFAULT 'dup',
+        unique key exist_idx(b),
+        PRIMARY KEY (a));`)
+	tk.MustExec("INSERT INTO t VALUES (1,'1'), (2,'dup');")
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	ddl.MockDMLExecution = func() {
+		_, err := tk1.Exec("replace into `t` values (3, 'dup');")
+		assert.NoError(t, err)
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecution", "1*return(true)->return(false)")
+
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexSkipReorgCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+
+	skipTableReorg := false
+	skipTempIdxReorg := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", func() {
+		skipTableReorg = true
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip", func() {
+		skipTempIdxReorg = true
+	})
+	tk.MustExec("alter table t add index idx1(a);")
+	require.True(t, skipTableReorg)
+	require.True(t, skipTempIdxReorg)
+
+	skipTableReorg = false
+	skipTempIdxReorg = false
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("alter table t add index idx2(a);")
+	require.False(t, skipTableReorg)
+	require.True(t, skipTempIdxReorg)
+
+	skipTableReorg = false
+	skipTempIdxReorg = false
+	var runDML bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+		if t.Failed() || runDML {
+			return
+		}
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec("insert into t values (2);")
+			runDML = true
+		}
+	})
+	tk.MustExec("alter table t add index idx3(a);")
+	require.False(t, skipTableReorg)
+	require.False(t, skipTempIdxReorg)
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1", "2"))
+	tk.MustExec("admin check table t;")
+}
+
+func TestAddIndexInsertAfterReorgSkipCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t values (1);")
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("1"))
+	tk.MustExec("admin check table t;")
+	err := failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterCheckTableReorgCanSkip")
+	require.NoError(t, err)
+
+	tk.MustExec("truncate table t;")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterCheckTempIndexReorgCanSkip", func() {
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("insert into t values (2);")
+	})
+	tk.MustExec("alter table t add index idx2(a);")
+	tk.MustQuery("select * from t;").Check(testkit.Rows("2"))
+	tk.MustExec("admin check table t;")
 }

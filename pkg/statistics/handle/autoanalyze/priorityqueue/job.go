@@ -40,17 +40,24 @@ type Indicators struct {
 	// TableSize is the table size in rows * len(columns).
 	TableSize float64
 	// LastAnalysisDuration is the duration from the last analysis to now.
-	// In seconds.
 	LastAnalysisDuration time.Duration
 }
 
+// SuccessJobHook is the successHook function that will be called after the job is completed.
+type SuccessJobHook func(job AnalysisJob)
+
+// FailureJobHook is the failureHook function that will be called after the job is failed.
+type FailureJobHook func(job AnalysisJob, mustRetry bool)
+
 // AnalysisJob is the interface for the analysis job.
 type AnalysisJob interface {
-	// IsValidToAnalyze checks whether the table is valid to analyze.
-	// It checks the last failed analysis duration and the average analysis duration.
-	// If the last failed analysis duration is less than 2 times the average analysis duration,
-	// we skip this table to avoid too much failed analysis.
-	IsValidToAnalyze(
+	// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+	// Returns (true, "") if the job is valid and ready to run.
+	// Returns (false, reason) if the job should be skipped, where reason explains why:
+	// - Schema/table/partition doesn't exist
+	// - Table is not partitioned (for partition jobs)
+	// - Recent failed analysis (within 2x avg duration) to avoid queue blocking
+	ValidateAndPrepare(
 		sctx sessionctx.Context,
 	) (bool, string)
 
@@ -72,8 +79,30 @@ type AnalysisJob interface {
 	// GetIndicators gets the indicators of the job.
 	GetIndicators() Indicators
 
+	// SetIndicators sets the indicators of the job.
+	SetIndicators(indicators Indicators)
+
+	// GetTableID gets the table ID of the job.
+	GetTableID() int64
+
+	// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+	RegisterSuccessHook(hook SuccessJobHook)
+
+	// RegisterFailureHook registers a failureHook function that will be called after the job is marked as failed.
+	RegisterFailureHook(hook FailureJobHook)
+
+	// AsJSON converts the job to a JSON object.
+	AsJSON() statstypes.AnalysisJobJSON
+
 	fmt.Stringer
 }
+
+const (
+	schemaNotExist      = "schema does not exist"
+	tableNotExist       = "table does not exist"
+	notPartitionedTable = "table is not a partitioned table"
+	partitionNotExist   = "partition does not exist"
+)
 
 // isValidToAnalyze checks whether the table is valid to analyze.
 // It checks the last failed analysis duration and the average analysis duration.
@@ -153,4 +182,19 @@ func isValidToAnalyze(
 	}
 
 	return true, ""
+}
+
+// IsDynamicPartitionedTableAnalysisJob checks whether the job is a dynamic partitioned table analysis job.
+func IsDynamicPartitionedTableAnalysisJob(job AnalysisJob) bool {
+	_, ok := job.(*DynamicPartitionedTableAnalysisJob)
+	return ok
+}
+
+// asJSONIndicators converts the indicators to a JSON object.
+func asJSONIndicators(indicators Indicators) statstypes.IndicatorsJSON {
+	return statstypes.IndicatorsJSON{
+		ChangePercentage:     fmt.Sprintf("%.2f%%", indicators.ChangePercentage*100),
+		TableSize:            fmt.Sprintf("%.2f", indicators.TableSize),
+		LastAnalysisDuration: fmt.Sprintf("%v", indicators.LastAnalysisDuration),
+	}
 }

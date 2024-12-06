@@ -23,12 +23,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +46,7 @@ func (e *executor) checkDeleteRangeCnt(job *model.Job) {
 		panic(err)
 	}
 	if actualCnt != expectedCnt {
-		panic(fmt.Sprintf("expect delete range count %d, actual count %d", expectedCnt, actualCnt))
+		panic(fmt.Sprintf("expect delete range count %d, actual count %d for job type '%s'", expectedCnt, actualCnt, job.Type.String()))
 	}
 }
 
@@ -85,46 +84,48 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 	}
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(tableIDs), nil
-	case model.ActionDropTable, model.ActionTruncateTable:
-		var startKey kv.Key
-		var physicalTableIDs []int64
-		var ruleIDs []string
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		return len(args.AllDroppedTableIDs), nil
+	case model.ActionDropTable:
+		args, err := model.GetFinishedDropTableArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(physicalTableIDs) + 1, nil
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+		return len(args.OldPartitionIDs) + 1, nil
+	case model.ActionTruncateTable, model.ActionTruncateTablePartition:
+		args, err := model.GetFinishedTruncateTableArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(physicalTableIDs), nil
+		if job.Type == model.ActionTruncateTable {
+			return len(args.OldPartitionIDs) + 1, nil
+		}
+		return len(args.OldPartitionIDs), nil
+	case model.ActionDropTablePartition, model.ActionReorganizePartition,
+		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		args, err := model.GetFinishedTablePartitionArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		return len(args.OldPhysicalTblIDs) + len(args.OldGlobalIndexes), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		indexID := make([]int64, 1)
-		ifExists := make([]bool, 1)
-		isGlobal := make([]bool, 0, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID[0], &ifExists[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs, &isGlobal); err != nil {
-				var unique bool
-				if err := job.DecodeArgs(&unique); err == nil {
-					// The first argument is bool means nothing need to be added to delete-range table.
-					return 0, nil
-				}
-				return 0, errors.Trace(err)
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			_, err := model.GetModifyIndexArgs(job)
+			if err == nil {
+				// There are nothing need to be added to delete-range table.
+				return 0, nil
 			}
+			return 0, errors.Trace(err)
 		}
+
 		ret := 0
-		for i := 0; i < len(indexID); i++ {
-			num := mathutil.Max(len(partitionIDs), 1) // Add temporary index to del-range table.
-			if len(isGlobal) != 0 && isGlobal[i] {
+		for _, arg := range args.IndexArgs {
+			num := max(len(args.PartitionIDs), 1) // Add temporary index to del-range table.
+			if arg.IsGlobal {
 				num = 1 // Global index only has one del-range.
 			}
 			if job.State == model.JobStateRollbackDone {
@@ -134,34 +135,30 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return ret, nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		var indexName any
-		ifNotExists := make([]bool, 1)
-		indexID := make([]int64, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifNotExists[0], &indexID[0], &partitionIDs); err != nil {
-			if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
-				return 0, errors.Trace(err)
-			}
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			return 0, errors.Trace(err)
 		}
-		return mathutil.Max(len(partitionIDs), 1), nil
+		// If it's a vector index, it needn't to store key ranges to gc_delete_range.
+		if args.IndexArgs[0].IsVector {
+			return 0, nil
+		}
+		return max(len(args.PartitionIDs), 1), nil
 	case model.ActionDropColumn:
-		var colName model.CIStr
-		var ifExists bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetTableColumnArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * len(indexIDs), nil
+
+		physicalCnt := max(len(args.PartitionIDs), 1)
+		return physicalCnt * len(args.IndexIDs), nil
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		physicalCnt := mathutil.Max(len(partitionIDs), 1)
-		return physicalCnt * ctx.deduplicateIdxCnt(indexIDs), nil
+		physicalCnt := max(len(args.PartitionIDs), 1)
+		return physicalCnt * ctx.deduplicateIdxCnt(args.IndexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
 		for i, sub := range job.MultiSchemaInfo.SubJobs {

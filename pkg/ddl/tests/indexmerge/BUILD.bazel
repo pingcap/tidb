@@ -9,7 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 20,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/ddl",
@@ -19,7 +19,7 @@ go_test(
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/autoid",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

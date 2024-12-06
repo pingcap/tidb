@@ -23,7 +23,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -100,7 +100,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cli := utiltest.NewFakePDClient(allStores, false, nil)
+	cli := split.NewFakePDClient(allStores, false, nil)
 	defer func() {
 		local.SetGetSplitConfFromStoreFunc(local.GetSplitConfFromStore)
 	}()

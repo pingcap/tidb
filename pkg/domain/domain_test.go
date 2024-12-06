@@ -94,7 +94,7 @@ func TestInfo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop", `return(true)`))
 	require.NoError(t, dom.Init(sysMockFactory, nil))
-	require.NoError(t, dom.Start())
+	require.NoError(t, dom.Start(ddl.Bootstrap))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/NoDDLDispatchLoop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL"))
 
@@ -181,8 +181,8 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext(), nil)
-	dom.autoAnalyzeWorker(nil)
+	dom.updateStatsWorker(mock.NewContext())
+	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
 	err = counter.Write(pb)

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
@@ -35,70 +34,25 @@ import (
 
 // LogicalProjection represents a select fields plan.
 type LogicalProjection struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression
+	Exprs []expression.Expression `hash64-equals:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
 	// Currently it is "true" only when the current sql query is a "DO" statement.
 	// See "https://dev.mysql.com/doc/refman/5.7/en/do.html" for more detail.
-	CalculateNoDelay bool
+	CalculateNoDelay bool `hash64-equals:"true"`
 
 	// Proj4Expand is used for expand to project same column reference, while these
 	// col may be filled with null so we couldn't just eliminate this projection itself.
-	Proj4Expand bool
+	Proj4Expand bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalProjection.
 func (p LogicalProjection) Init(ctx base.PlanContext, qbOffset int) *LogicalProjection {
 	p.BaseLogicalPlan = NewBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
 	return &p
-}
-
-// *************************** start implementation of HashEquals interface ****************************
-
-// Hash64 implements the base.Hash64.<0th> interface.
-func (p *LogicalProjection) Hash64(h base2.Hasher) {
-	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
-	// like schema and names are lost.
-	p.LogicalSchemaProducer.Hash64(h)
-	// todo: if we change the logicalProjection's Expr definition as:Exprs []memo.ScalarOperator[any],
-	// we should use like below:
-	// for _, one := range p.Exprs {
-	//		one.Hash64(one)
-	// }
-	// otherwise, we would use the belowing code.
-	//for _, one := range p.Exprs {
-	//	one.Hash64(h)
-	//}
-	h.HashBool(p.CalculateNoDelay)
-	h.HashBool(p.Proj4Expand)
-}
-
-// Equals implements the base.HashEquals.<1st> interface.
-func (p *LogicalProjection) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
-	proj, ok := other.(*LogicalProjection)
-	if !ok {
-		return false
-	}
-	// todo: LogicalSchemaProducer should implement HashEquals interface, otherwise, its self elements
-	// like schema and names are lost.
-	if !p.LogicalSchemaProducer.Equals(&proj.LogicalSchemaProducer) {
-		return false
-	}
-	//for i, one := range p.Exprs {
-	//	if !one.(memo.ScalarOperator[any]).Equals(other.Exprs[i]) {
-	//		return false
-	//	}
-	//}
-	if p.CalculateNoDelay != proj.CalculateNoDelay {
-		return false
-	}
-	return p.Proj4Expand == proj.Proj4Expand
 }
 
 // *************************** start implementation of Plan interface **********************************

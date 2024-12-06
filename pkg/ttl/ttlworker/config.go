@@ -18,6 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 const jobManagerLoopTickerInterval = 10 * time.Second
@@ -32,7 +35,21 @@ const ttlJobTimeout = 6 * time.Hour
 
 const taskManagerLoopTickerInterval = time.Minute
 const ttlTaskHeartBeatTickerInterval = time.Minute
-const ttlGCInterval = time.Hour
+const ttlGCInterval = 10 * time.Minute
+
+func getCheckJobInterval() time.Duration {
+	failpoint.Inject("check-job-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return jobManagerLoopTickerInterval
+}
+
+func getJobManagerLoopSyncTimerInterval() time.Duration {
+	failpoint.Inject("sync-timer", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return time.Second
+}
 
 func getUpdateInfoSchemaCacheInterval() time.Duration {
 	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
@@ -55,6 +72,13 @@ func getResizeWorkersInterval() time.Duration {
 	return resizeWorkersInterval
 }
 
+func getTaskManagerLoopCheckTaskInterval() time.Duration {
+	failpoint.Inject("check-task-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return time.Second * 5
+}
+
 func getTaskManagerLoopTickerInterval() time.Duration {
 	failpoint.Inject("task-manager-loop-interval", func(val failpoint.Value) time.Duration {
 		return time.Duration(val.(int))
@@ -67,4 +91,26 @@ func getTaskManagerHeartBeatExpireInterval() time.Duration {
 		return time.Duration(val.(int))
 	})
 	return 2 * ttlTaskHeartBeatTickerInterval
+}
+
+func getCheckJobTriggeredInterval() time.Duration {
+	failpoint.Inject("check-job-triggered-interval", func(val failpoint.Value) time.Duration {
+		return time.Duration(val.(int))
+	})
+	return 2 * time.Second
+}
+
+func getScanSplitCnt(store kv.Storage) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		return splitScanCount
+	}
+
+	if cache := tikvStore.GetRegionCache(); cache != nil {
+		if tikvCnt := len(cache.GetStoresByType(tikvrpc.TiKV)); tikvCnt > splitScanCount {
+			return tikvCnt
+		}
+	}
+
+	return splitScanCount
 }

@@ -21,7 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -39,7 +40,7 @@ func TestRowSizeInMPP(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
 	require.True(t, exists)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 	require.NoError(t, err)

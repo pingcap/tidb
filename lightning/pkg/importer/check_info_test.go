@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -413,6 +413,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			preInfoGetter,
 			nil,
 			nil,
+			nil,
 		)
 		preInfoGetter.dbInfosCache = rc.dbInfos
 		err = rc.checkCSVHeader(ctx)
@@ -465,6 +466,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		cfg,
 		dbMetas,
 		preInfoGetter,
+		nil,
 		nil,
 		nil,
 	)
@@ -623,6 +625,7 @@ func TestLocalResource(t *testing.T) {
 		cfg,
 		nil,
 		preInfoGetter,
+		nil,
 		nil,
 		nil,
 	)

@@ -19,17 +19,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -51,26 +49,14 @@ type CreatedTable struct {
 	OldTable    *metautil.Table
 }
 
+type PhysicalTable struct {
+	NewPhysicalID int64
+	OldPhysicalID int64
+	RewriteRules  *restoreutils.RewriteRules
+}
+
 func defaultOutputTableChan() chan *CreatedTable {
 	return make(chan *CreatedTable, defaultChannelSize)
-}
-
-// TableWithRange is a CreatedTable that has been bind to some of key ranges.
-type TableWithRange struct {
-	CreatedTable
-
-	// Range has been rewrited by rewrite rules.
-	Range []rtree.RangeStats
-}
-
-type TableIDWithFiles struct {
-	TableID int64
-
-	Files []*backuppb.File
-	// RewriteRules is the rewrite rules for the specify table.
-	// because these rules belongs to the *one table*.
-	// we can hold them here.
-	RewriteRules *restoreutils.RewriteRules
 }
 
 func concurrentHandleTablesCh(
@@ -133,7 +119,7 @@ func (rc *SnapClient) GoValidateChecksum(
 			elapsed := time.Since(start)
 			summary.CollectSuccessUnit("table checksum", 1, elapsed)
 		}()
-		err := rc.execChecksum(c, tbl, kvClient, concurrency)
+		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}

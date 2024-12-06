@@ -55,10 +55,10 @@ func InitTableTestWithCancel(t *testing.T) (*storage.TaskManager, context.Contex
 func getResourcePool(t *testing.T) (kv.Storage, *pools.ResourcePool) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
-	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		tk := testkit.NewTestKit(t, store)
 		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	}, 10, 10, time.Second)
 
 	t.Cleanup(func() {
 		pool.Close()

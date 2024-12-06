@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,7 +54,7 @@ func TestToPhysicalPlan(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "db",
 			TableInfo: &model.TableInfo{
-				Name: model.NewCIStr("tb"),
+				Name: pmodel.NewCIStr("tb"),
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,

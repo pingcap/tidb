@@ -995,7 +995,6 @@ insert into test_gc_read_1(a, b) values (1, null);
 insert into test_gc_read_2(a, b) values (1, null);
 
 # TestSelectPartition
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists th, tr, tl;
 create table th (a int, b int) partition by hash(a) partitions 3;
 create table tr (a int, b int)
@@ -1046,7 +1045,6 @@ select * from tscalar where c1 in (40);
 select * from tscalar where c1 in (-40);
 select * from tscalar where c1 in (-40, -40);
 select * from tscalar where c1 in (-1);
-set @@session.tidb_enable_list_partition = default;
 
 # TestPrepareLoadData
 -- error 1295
@@ -1426,7 +1424,6 @@ set sql_mode = default;
 
 # TestSelectHashPartitionTable
 drop table if exists th;
-set @@session.tidb_enable_table_partition = '1';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
@@ -1434,7 +1431,6 @@ select b from th order by a;
 select * from th where a=-2;
 select * from th where a=5;
 drop table if exists th;
-set @@session.tidb_enable_table_partition = default;
 
 # TestSelectView
 drop table if exists view_t;
@@ -2108,8 +2104,8 @@ insert tdouble values (10.23);
 set sql_mode = '';
 insert t values ();
 show warnings;
+-- error 1048
 insert t values (null);
-show warnings;
 insert ignore t values (null);
 show warnings;
 insert t select null;
@@ -2627,12 +2623,12 @@ create table t (id bigint key,b int);
 split table t by (10),(20),(30);
 insert into t values (0,0),(10,10),(20,20),(30,30);
 alter table t add index idx1(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 insert into t values (1,0),(2,10),(3,20),(4,30);
 alter table t add index idx2(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 # TestSummaryFailedUpdate
@@ -2708,6 +2704,9 @@ connection default;
 --replace_regex /server: .*session: .*/server: <server> session: <session>/
 --error 8020
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection conn1;
+unlock tables;
 
 disconnect conn1;
 unlock tables;

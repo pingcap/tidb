@@ -118,7 +118,17 @@ func TestVersion(t *testing.T) {
 	tbl1, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
-	h, err := handle.NewHandle(testKit.Session(), testKit2.Session(), time.Millisecond, do.SysSessionPool(), do.SysProcTracker(), do.NextConnID, do.ReleaseConnID)
+	h, err := handle.NewHandle(
+		testKit.Session(),
+		testKit2.Session(),
+		time.Millisecond,
+		is,
+		do.SysSessionPool(),
+		do.SysProcTracker(),
+		do.DDLNotifier(),
+		do.NextConnID,
+		do.ReleaseConnID,
+	)
 	defer func() {
 		h.Close()
 	}()
@@ -687,16 +697,16 @@ func TestStaticPartitionPruneMode(t *testing.T) {
 					partition p1 values less than (22))`)
 	tk.MustExec(`insert into t values (1), (2), (3), (10), (11)`)
 	tk.MustExec(`analyze table t`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 	tk.MustExec(`insert into t values (4), (5), (6)`)
 	tk.MustExec(`analyze table t partition p0`)
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Dynamic) + "'")
-	require.True(t, tk.MustNoGlobalStats("t"))
+	tk.MustNoGlobalStats("t")
 	tk.MustExec("set @@tidb_partition_prune_mode='" + string(variable.Static) + "'")
 }
 
@@ -1401,9 +1411,10 @@ func TestInitStatsLite(t *testing.T) {
 	checkAllEvicted(t, statsTbl0)
 
 	h.Clear()
-	require.NoError(t, h.InitStatsLite(context.Background(), is))
+	require.NoError(t, h.InitStatsLite(context.Background()))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
+	require.Equal(t, int(statistics.Version2), statsTbl1.StatsVer)
 	{
 		// internal.AssertTableEqual(t, statsTbl0, statsTbl1)
 		// statsTbl0 is loaded when the cache has pseudo table.
@@ -1417,7 +1428,7 @@ func TestInitStatsLite(t *testing.T) {
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
 	tk.MustExec("explain select * from t where b > 1")
-	require.NoError(t, h.LoadNeededHistograms())
+	require.NoError(t, h.LoadNeededHistograms(is))
 	statsTbl2 := h.GetTableStats(tblInfo)
 	colBStats1 := statsTbl2.GetCol(colBID)
 	colCStats := statsTbl2.GetCol(colCID)
@@ -1478,4 +1489,32 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 		require.True(t, idx.IsStatsInitialized())
 		return false
 	})
+}
+
+func TestStatsCacheUpdateTimeout(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_skip_missing_partition_stats = 1")
+	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
+	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t partition p0, p1")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	globalStats := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats.RealtimeCount))
+	require.Equal(t, 2, int(globalStats.ModifyCount))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/util/ExecRowsTimeout"))
+	}()
+	require.Error(t, h.Update(context.Background(), dom.InfoSchema()))
+	globalStats2 := h.GetTableStats(tblInfo)
+	require.Equal(t, 6, int(globalStats2.RealtimeCount))
+	require.Equal(t, 2, int(globalStats2.ModifyCount))
 }

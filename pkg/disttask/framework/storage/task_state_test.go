@@ -15,13 +15,21 @@
 package storage_test
 
 import (
+	"cmp"
+	"context"
 	"errors"
+	"slices"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -125,4 +133,150 @@ func TestTaskState(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
+}
+
+func TestModifyTask(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
+
+	id, err := gm.CreateTask(ctx, "key1", "test", 4, "", []byte("test"))
+	require.NoError(t, err)
+
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStateReverting,
+	}), storage.ErrTaskStateNotAllow)
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, 123123123, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}), storage.ErrTaskNotFound)
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStatePaused,
+	}), storage.ErrTaskChanged)
+
+	// task changed in middle of modifying
+	ch := make(chan struct{})
+	var wg tidbutil.WaitGroupWrapper
+	var counter atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeMoveToModifying", func() {
+		if counter.Add(1) == 1 {
+			<-ch
+			<-ch
+		}
+	})
+	task, err := gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePending, task.State)
+	subtasks := make([]*proto.Subtask, 0, 4)
+	for i := 0; i < 4; i++ {
+		subtasks = append(subtasks, proto.NewSubtask(proto.StepOne, task.ID, task.Type,
+			":4000", task.Concurrency, proto.EmptyMeta, i+1))
+	}
+	wg.Run(func() {
+		ch <- struct{}{}
+		require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+		ch <- struct{}{}
+	})
+	require.ErrorIs(t, gm.ModifyTaskByID(ctx, id, &proto.ModifyParam{
+		PrevState: proto.TaskStatePending,
+	}), storage.ErrTaskChanged)
+	wg.Wait()
+
+	// move to 'modifying' success
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	param := proto.ModifyParam{
+		PrevState: proto.TaskStateRunning,
+		Modifications: []proto.Modification{
+			{Type: proto.ModifyConcurrency, To: 2},
+		},
+	}
+	require.NoError(t, gm.ModifyTaskByID(ctx, id, &param))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateModifying, task.State)
+	require.Equal(t, param, task.ModifyParam)
+
+	// modified
+	gotSubtasks, err := gm.GetSubtasksWithHistory(ctx, task.ID, proto.StepOne)
+	require.NoError(t, err)
+	slices.SortFunc(gotSubtasks, func(i, j *proto.Subtask) int {
+		return cmp.Compare(i.Ordinal, j.Ordinal)
+	})
+	require.Len(t, gotSubtasks, len(subtasks))
+	require.NoError(t, gm.FinishSubtask(ctx, gotSubtasks[0].ExecID, gotSubtasks[0].ID, nil))
+	require.NoError(t, gm.StartSubtask(ctx, gotSubtasks[1].ID, gotSubtasks[1].ExecID))
+	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `update mysql.tidb_background_subtask set state='paused' where id=%?`,
+			gotSubtasks[2].ID)
+		return err
+	}))
+	task.Concurrency = 2
+	task.Meta = []byte("modified")
+	require.NoError(t, gm.ModifiedTask(ctx, task))
+	checkTaskAfterModify(ctx, t, gm, task.ID,
+		2, []byte("modified"), []int{4, 2, 2, 2},
+	)
+
+	// task state changed before move to 'modified'
+	param = proto.ModifyParam{
+		PrevState: proto.TaskStateRunning,
+		Modifications: []proto.Modification{
+			{Type: proto.ModifyConcurrency, To: 3},
+		},
+	}
+	require.NoError(t, gm.ModifyTaskByID(ctx, id, &param))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateModifying, task.State)
+	require.Equal(t, param, task.ModifyParam)
+	ch = make(chan struct{})
+	wg = tidbutil.WaitGroupWrapper{}
+	var called bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeModifiedTask", func() {
+		if called {
+			return
+		}
+		called = true
+		<-ch
+		<-ch
+	})
+	taskClone := *task
+	wg.Run(func() {
+		ch <- struct{}{}
+		// NOTE: this will NOT happen in real case, because the task can NOT move
+		// to 'modifying' again to change modify params.
+		// here just to show that if another client finishes modifying, our modify
+		// will skip silently.
+		taskClone.Concurrency = 5
+		taskClone.Meta = []byte("modified-other")
+		require.NoError(t, gm.ModifiedTask(ctx, &taskClone))
+		ch <- struct{}{}
+	})
+	task.Concurrency = 3
+	task.Meta = []byte("modified2")
+	require.NoError(t, gm.ModifiedTask(ctx, task))
+	wg.Wait()
+	checkTaskAfterModify(ctx, t, gm, task.ID,
+		5, []byte("modified-other"), []int{4, 5, 5, 5},
+	)
+}
+
+func checkTaskAfterModify(
+	ctx context.Context, t *testing.T, gm *storage.TaskManager, taskID int64,
+	expectConcurrency int, expectedMeta []byte, expectedSTConcurrencies []int) {
+	task, err := gm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
+	require.Equal(t, expectConcurrency, task.Concurrency)
+	require.Equal(t, expectedMeta, task.Meta)
+	require.Equal(t, proto.ModifyParam{}, task.ModifyParam)
+	gotSubtasks, err := gm.GetSubtasksWithHistory(ctx, task.ID, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, gotSubtasks, len(expectedSTConcurrencies))
+	slices.SortFunc(gotSubtasks, func(i, j *proto.Subtask) int {
+		return cmp.Compare(i.Ordinal, j.Ordinal)
+	})
+	for i, expected := range expectedSTConcurrencies {
+		require.Equal(t, expected, gotSubtasks[i].Concurrency)
+	}
 }

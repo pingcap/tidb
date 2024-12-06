@@ -15,8 +15,8 @@
 package session
 
 import (
-	planctx "github.com/pingcap/tidb/pkg/planner/context"
-	planctximpl "github.com/pingcap/tidb/pkg/planner/contextimpl"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/plannersession"
 )
 
 var _ planctx.PlanContext = &planContextImpl{}
@@ -26,13 +26,13 @@ var _ planctx.PlanContext = &planContextImpl{}
 // the `session` here to make it safe for casting.
 type planContextImpl struct {
 	*session
-	*planctximpl.PlanCtxExtendedImpl
+	*plannersession.PlanCtxExtended
 }
 
 // NewPlanContextImpl creates a new PlanContextImpl.
 func newPlanContextImpl(s *session) *planContextImpl {
 	return &planContextImpl{
-		session:             s,
-		PlanCtxExtendedImpl: planctximpl.NewPlanCtxExtendedImpl(s),
+		session:         s,
+		PlanCtxExtended: plannersession.NewPlanCtxExtended(s),
 	}
 }

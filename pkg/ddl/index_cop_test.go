@@ -23,7 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -37,7 +38,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 	tk.MustExec("use test")
 
 	testFetchRows := func(db, tb, idx string) ([]kv.Handle, [][]types.Datum) {
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(tb))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)

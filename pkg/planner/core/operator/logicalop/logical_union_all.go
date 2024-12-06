@@ -29,7 +29,7 @@ import (
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 }
 
 // Init initializes LogicalUnionAll.
@@ -48,7 +48,7 @@ func (p *LogicalUnionAll) PredicatePushDown(predicates []expression.Expression, 
 		newExprs := make([]expression.Expression, 0, len(predicates))
 		newExprs = append(newExprs, predicates...)
 		retCond, newChild := proj.PredicatePushDown(newExprs, opt)
-		utilfuncp.AddSelection(p, newChild, retCond, i, opt)
+		addSelection(p, newChild, retCond, i, opt)
 	}
 	return nil, p
 }

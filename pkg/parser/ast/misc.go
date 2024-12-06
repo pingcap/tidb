@@ -61,6 +61,7 @@ var (
 	_ StmtNode = &PlanReplayerStmt{}
 	_ StmtNode = &CompactTableStmt{}
 	_ StmtNode = &SetResourceGroupStmt{}
+	_ StmtNode = &TrafficStmt{}
 
 	_ Node = &PrivElem{}
 	_ Node = &VariableAssignment{}
@@ -72,9 +73,6 @@ const (
 	ReadUncommitted = "READ-UNCOMMITTED"
 	Serializable    = "SERIALIZABLE"
 	RepeatableRead  = "REPEATABLE-READ"
-
-	PumpType    = "PUMP"
-	DrainerType = "DRAINER"
 )
 
 // Transaction mode constants.
@@ -415,6 +413,112 @@ func (n *PlanReplayerStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Stmt = node.(StmtNode)
+	return v.Leave(n)
+}
+
+// TrafficOpType is traffic operation type.
+type TrafficOpType int
+
+const (
+	TrafficOpCapture TrafficOpType = iota
+	TrafficOpReplay
+	TrafficOpShow
+	TrafficOpCancel
+)
+
+// TrafficOptionType is traffic option type.
+type TrafficOptionType int
+
+const (
+	// capture options
+	TrafficOptionDuration TrafficOptionType = iota
+	TrafficOptionEncryptionMethod
+	TrafficOptionCompress
+	// replay options
+	TrafficOptionUsername
+	TrafficOptionPassword
+	TrafficOptionSpeed
+	TrafficOptionReadOnly
+)
+
+// TrafficStmt is traffic operation statement.
+type TrafficStmt struct {
+	stmtNode
+	OpType  TrafficOpType
+	Options []*TrafficOption
+	Dir     string
+}
+
+// TrafficOption is traffic option.
+type TrafficOption struct {
+	OptionType TrafficOptionType
+	FloatValue ValueExpr
+	StrValue   string
+	BoolValue  bool
+}
+
+// Restore implements Node interface.
+func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
+	switch n.OpType {
+	case TrafficOpCapture:
+		ctx.WriteKeyWord("TRAFFIC CAPTURE TO ")
+		ctx.WriteString(n.Dir)
+		for _, option := range n.Options {
+			ctx.WritePlain(" ")
+			switch option.OptionType {
+			case TrafficOptionDuration:
+				ctx.WriteKeyWord("DURATION ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionEncryptionMethod:
+				ctx.WriteKeyWord("ENCRYPTION_METHOD ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionCompress:
+				ctx.WriteKeyWord("COMPRESS ")
+				ctx.WritePlain("= ")
+				ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", option.BoolValue)))
+			}
+		}
+	case TrafficOpReplay:
+		ctx.WriteKeyWord("TRAFFIC REPLAY FROM ")
+		ctx.WriteString(n.Dir)
+		for _, option := range n.Options {
+			ctx.WritePlain(" ")
+			switch option.OptionType {
+			case TrafficOptionUsername:
+				ctx.WriteKeyWord("USER ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionPassword:
+				ctx.WriteKeyWord("PASSWORD ")
+				ctx.WritePlain("= ")
+				ctx.WriteString(option.StrValue)
+			case TrafficOptionSpeed:
+				ctx.WriteKeyWord("SPEED ")
+				ctx.WritePlain("= ")
+				ctx.WritePlainf("%v", option.FloatValue.GetValue())
+			case TrafficOptionReadOnly:
+				ctx.WriteKeyWord("READONLY ")
+				ctx.WritePlain("= ")
+				ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", option.BoolValue)))
+			}
+		}
+	case TrafficOpShow:
+		ctx.WriteKeyWord("SHOW TRAFFIC JOBS")
+	case TrafficOpCancel:
+		ctx.WriteKeyWord("CANCEL TRAFFIC JOBS")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*TrafficStmt)
 	return v.Leave(n)
 }
 
@@ -2005,6 +2109,77 @@ func (n *StringOrUserVar) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(n)
 }
 
+// RecommendIndexOption is the option for recommend index.
+type RecommendIndexOption struct {
+	Option string
+	Value  ValueExpr
+}
+
+// RecommendIndexStmt is a statement to recommend index.
+type RecommendIndexStmt struct {
+	stmtNode
+
+	Action  string
+	SQL     string
+	ID      int64
+	Options []RecommendIndexOption
+}
+
+func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("RECOMMEND INDEX")
+	switch n.Action {
+	case "run":
+		ctx.WriteKeyWord(" RUN")
+		if n.SQL != "" {
+			ctx.WriteKeyWord(" FOR ")
+			ctx.WriteString(n.SQL)
+		}
+		if len(n.Options) > 0 {
+			ctx.WriteKeyWord(" WITH ")
+			for i, opt := range n.Options {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				ctx.WriteKeyWord(opt.Option)
+				ctx.WritePlain(" = ")
+				if err := opt.Value.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+				}
+			}
+		}
+	case "show":
+		ctx.WriteKeyWord(" SHOW")
+	case "apply":
+		ctx.WriteKeyWord(" APPLY ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "ignore":
+		ctx.WriteKeyWord(" IGNORE ")
+		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
+	case "set":
+		ctx.WriteKeyWord(" SET ")
+		for i, opt := range n.Options {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteKeyWord(opt.Option)
+			ctx.WritePlain(" = ")
+			if err := opt.Value.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore RecommendIndexStmt.Options[%d]", i)
+			}
+		}
+	}
+	return nil
+}
+
+func (n *RecommendIndexStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RecommendIndexStmt)
+	return v.Leave(n)
+}
+
 // CreateBindingStmt creates sql binding hint.
 type CreateBindingStmt struct {
 	stmtNode
@@ -2401,6 +2576,7 @@ const (
 	AdminSetBDRRole
 	AdminShowBDRRole
 	AdminUnsetBDRRole
+	AdminAlterDDLJob
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2417,40 +2593,6 @@ const (
 	BDRRoleSecondary BDRRole = "secondary"
 	BDRRoleNone      BDRRole = ""
 )
-
-// DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
-	ddlType, ok := model.ActionBDRMap[action]
-	switch role {
-	case BDRRolePrimary:
-		if !ok {
-			return true
-		}
-
-		// Can't add unique index on primary role.
-		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
-			len(job.Args) >= 1 && job.Args[0].(bool) {
-			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
-			return true
-		}
-
-		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
-			return false
-		}
-	case BDRRoleSecondary:
-		if !ok {
-			return true
-		}
-		if ddlType == model.UnmanagementDDL {
-			return false
-		}
-	default:
-		// if user do not set bdr role, we will not deny any ddl as `none`
-		return false
-	}
-
-	return true
-}
 
 type StatementScope int
 
@@ -2523,6 +2665,25 @@ type LimitSimple struct {
 	Offset uint64
 }
 
+type AlterJobOption struct {
+	// Name is the name of the option, will be converted to lower case during parse.
+	Name string
+	// only literal is allowed, we use ExprNode to support negative number
+	Value ExprNode
+}
+
+func (l *AlterJobOption) Restore(ctx *format.RestoreCtx) error {
+	if l.Value == nil {
+		ctx.WritePlain(l.Name)
+	} else {
+		ctx.WritePlain(l.Name + " = ")
+		if err := l.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterJobOption")
+		}
+	}
+	return nil
+}
+
 // AdminStmt is the struct for Admin statement.
 type AdminStmt struct {
 	stmtNode
@@ -2533,13 +2694,14 @@ type AdminStmt struct {
 	JobIDs    []int64
 	JobNumber int64
 
-	HandleRanges   []HandleRange
-	ShowSlow       *ShowSlow
-	Plugins        []string
-	Where          ExprNode
-	StatementScope StatementScope
-	LimitSimple    LimitSimple
-	BDRRole        BDRRole
+	HandleRanges    []HandleRange
+	ShowSlow        *ShowSlow
+	Plugins         []string
+	Where           ExprNode
+	StatementScope  StatementScope
+	LimitSimple     LimitSimple
+	BDRRole         BDRRole
+	AlterJobOptions []*AlterJobOption
 }
 
 // Restore implements Node interface.
@@ -2703,6 +2865,18 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SHOW BDR ROLE")
 	case AdminUnsetBDRRole:
 		ctx.WriteKeyWord("UNSET BDR ROLE")
+	case AdminAlterDDLJob:
+		ctx.WriteKeyWord("ALTER DDL JOBS ")
+		ctx.WritePlainf("%d", n.JobNumber)
+		for i, option := range n.AlterJobOptions {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			ctx.WritePlain(" ")
+			if err := option.Restore(ctx); err != nil {
+				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
+			}
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -3751,12 +3925,12 @@ type TableOptimizerHint struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/optimizer-hints.html#optimizer-hints-execution-time
 	// - MAX_EXECUTION_TIME  => uint64
 	// - MEMORY_QUOTA        => int64
-	// - QUERY_TYPE          => model.CIStr
+	// - QUERY_TYPE          => CIStr
 	//
 	// Time Range is used to hint the time range of inspection tables
 	// e.g: select /*+ time_range('','') */ * from information_schema.inspection_result.
 	// - TIME_RANGE          => ast.HintTimeRange
-	// - READ_FROM_STORAGE   => model.CIStr
+	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
 	HintData interface{}

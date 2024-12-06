@@ -56,13 +56,21 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	intest.Assert(false, "Hash64 should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Hash64 should not be called directly")
+	}
 	h.HashInt(p.ID())
 }
 
 // Equals implements HashEquals.<1st> interface.
 func (p *BaseLogicalPlan) Equals(other any) bool {
-	intest.Assert(false, "Equals should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Equals should not be called directly")
+	}
 	if other == nil {
 		return false
 	}
@@ -122,7 +130,7 @@ func (p *BaseLogicalPlan) PredicatePushDown(predicates []expression.Expression, 
 	}
 	child := p.children[0]
 	rest, newChild := child.PredicatePushDown(predicates, opt)
-	utilfuncp.AddSelection(p.self, newChild, rest, 0, opt)
+	addSelection(p.self, newChild, rest, 0, opt)
 	return nil, p.self
 }
 
@@ -142,7 +150,7 @@ func (p *BaseLogicalPlan) PruneColumns(parentUsedCols []*expression.Column, opt 
 // FindBestTask implements LogicalPlan.<3rd> interface.
 func (p *BaseLogicalPlan) FindBestTask(prop *property.PhysicalProperty, planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp) (bestTask base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask(p, prop, planCounter, opt)
+	return utilfuncp.FindBestTask4BaseLogicalPlan(p, prop, planCounter, opt)
 }
 
 // BuildKeyInfo implements LogicalPlan.<4th> interface.
@@ -151,12 +159,12 @@ func (p *BaseLogicalPlan) BuildKeyInfo(_ *expression.Schema, _ []*expression.Sch
 	for i := range p.children {
 		childMaxOneRow[i] = p.children[i].MaxOneRow()
 	}
-	p.maxOneRow = utilfuncp.HasMaxOneRowUtil(p.self, childMaxOneRow)
+	p.maxOneRow = HasMaxOneRow(p.self, childMaxOneRow)
 }
 
 // PushDownTopN implements the LogicalPlan.<5th> interface.
 func (p *BaseLogicalPlan) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
-	return utilfuncp.PushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
+	return pushDownTopNForBaseLogicalPlan(p, topNLogicalPlan, opt)
 }
 
 // DeriveTopN implements the LogicalPlan.<6th> interface.
@@ -309,7 +317,7 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 // For TiFlash, it will check whether the operator is supported, but note that the check
 // might be inaccurate.
 func (p *BaseLogicalPlan) CanPushToCop(storeTp kv.StoreType) bool {
-	return utilfuncp.CanPushToCopImpl(p, storeTp, false)
+	return CanPushToCopImpl(p, storeTp, false)
 }
 
 // ExtractFD implements LogicalPlan.<22nd> interface.

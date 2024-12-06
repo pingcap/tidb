@@ -28,7 +28,7 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -256,7 +256,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 				return errors.Trace(err)
 			}
 			startKey, endKey := r.Range()
-			logutil.DDLLogger().Info("delRange emulator complete task", zap.String("category", "ddl"),
+			logutil.DDLLogger().Info("delRange emulator complete task",
 				zap.Int64("jobID", r.JobID),
 				zap.Int64("elementID", r.ElementID),
 				zap.Stringer("startKey", startKey),
@@ -282,10 +282,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
 	switch job.Type {
 	case model.ActionDropSchema:
-		var tableIDs []int64
-		if err := job.DecodeArgs(&tableIDs); err != nil {
+		args, err := model.GetFinishedDropSchemaArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		tableIDs := args.AllDroppedTableIDs
 		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
 			batchEnd := len(tableIDs)
 			if batchEnd > i+batchInsertDeleteRangeSize {
@@ -295,15 +296,14 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-	case model.ActionDropTable, model.ActionTruncateTable:
+	case model.ActionDropTable:
 		tableID := job.TableID
 		// The startKey here is for compatibility with previous versions, old version did not endKey so don't have to deal with.
-		var startKey kv.Key
-		var physicalTableIDs []int64
-		var ruleIDs []string
-		if err := job.DecodeArgs(&startKey, &physicalTableIDs, &ruleIDs); err != nil {
+		args, err := model.GetFinishedDropTableArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		physicalTableIDs := args.OldPartitionIDs
 		if len(physicalTableIDs) > 0 {
 			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "drop table: partition table IDs"); err != nil {
 				return errors.Trace(err)
@@ -312,40 +312,66 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
 		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "drop table: table ID"))
-	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
-		model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-		var physicalTableIDs []int64
-		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
+	case model.ActionTruncateTable:
+		tableID := job.TableID
+		args, err := model.GetFinishedTruncateTableArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, physicalTableIDs, ea, "reorganize/drop partition: physical table ID(s)"))
-	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
-	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		allIndexIDs := make([]int64, 1)
-		ifExists := make([]bool, 1)
-		isGlobal := make([]bool, 0, 1)
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&allIndexIDs[0], &ifExists[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&allIndexIDs, &ifExists, &partitionIDs, &isGlobal); err != nil {
+		oldPartitionIDs := args.OldPartitionIDs
+		if len(oldPartitionIDs) > 0 {
+			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, oldPartitionIDs, ea, "truncate table: partition table IDs"); err != nil {
 				return errors.Trace(err)
 			}
 		}
+		// always delete the table range, even when it's a partitioned table where
+		// it may contain global index regions.
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "truncate table: table ID"))
+	case model.ActionDropTablePartition:
+		args, err := model.GetFinishedTablePartitionArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "drop partition: physical table ID(s)"))
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		// Delete dropped partitions, as well as replaced global indexes.
+		args, err := model.GetFinishedTablePartitionArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, idx := range args.OldGlobalIndexes {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, idx.TableID, []int64{idx.IndexID}, ea, "reorganize partition, replaced global indexes"); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "reorganize partition: physical table ID(s)"))
+	case model.ActionTruncateTablePartition:
+		args, err := model.GetTruncateTableArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPartitionIDs, ea, "truncate partition: physical table ID(s)"))
+	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
 		// Determine the physicalIDs to be added.
 		physicalIDs := []int64{job.TableID}
-		if len(partitionIDs) > 0 {
-			physicalIDs = partitionIDs
+		if len(args.PartitionIDs) > 0 {
+			physicalIDs = args.PartitionIDs
 		}
-		for i, indexID := range allIndexIDs {
+		for _, indexArg := range args.IndexArgs {
 			// Determine the index IDs to be added.
-			tempIdxID := tablecodec.TempIndexPrefix | indexID
+			tempIdxID := tablecodec.TempIndexPrefix | indexArg.IndexID
 			var indexIDs []int64
 			if job.State == model.JobStateRollbackDone {
-				indexIDs = []int64{indexID, tempIdxID}
+				indexIDs = []int64{indexArg.IndexID, tempIdxID}
 			} else {
 				indexIDs = []int64{tempIdxID}
 			}
-			if len(isGlobal) != 0 && isGlobal[i] {
+			if indexArg.IsGlobal {
 				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "add index: physical table ID(s)"); err != nil {
 					return errors.Trace(err)
 				}
@@ -358,19 +384,18 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
-		tableID := job.TableID
-		var indexName any
-		var partitionIDs []int64
-		ifExists := make([]bool, 1)
-		allIndexIDs := make([]int64, 1)
-		if err := job.DecodeArgs(&indexName, &ifExists[0], &allIndexIDs[0], &partitionIDs); err != nil {
-			if err = job.DecodeArgs(&indexName, &ifExists, &allIndexIDs, &partitionIDs); err != nil {
-				return errors.Trace(err)
-			}
+		args, err := model.GetFinishedModifyIndexArgs(job)
+		if err != nil {
+			return errors.Trace(err)
 		}
+
+		tableID := job.TableID
+		partitionIDs := args.PartitionIDs
+		indexIDs := []int64{args.IndexArgs[0].IndexID}
+
 		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
 		if len(partitionIDs) == 0 {
-			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, allIndexIDs, ea, "drop index: table ID"))
+			return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, tableID, indexIDs, ea, "drop index: table ID"))
 		}
 		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 			if val.(bool) {
@@ -378,34 +403,32 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 			}
 		})
 		for _, pid := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, allIndexIDs, ea, "drop index: partition table ID"); err != nil {
+			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop index: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
 	case model.ActionDropColumn:
-		var colName model.CIStr
-		var ifExists bool
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&colName, &ifExists, &indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetTableColumnArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
-		if len(indexIDs) > 0 {
-			if len(partitionIDs) == 0 {
-				return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, indexIDs, ea, "drop column: table ID"))
+
+		if len(args.IndexIDs) > 0 {
+			if len(args.PartitionIDs) == 0 {
+				return errors.Trace(doBatchDeleteIndiceRange(ctx, wrapper, job.ID, job.TableID, args.IndexIDs, ea, "drop column: table ID"))
 			}
-			for _, pid := range partitionIDs {
-				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, indexIDs, ea, "drop column: partition table ID"); err != nil {
+			for _, pid := range args.PartitionIDs {
+				if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, pid, args.IndexIDs, ea, "drop column: partition table ID"); err != nil {
 					return errors.Trace(err)
 				}
 			}
 		}
 	case model.ActionModifyColumn:
-		var indexIDs []int64
-		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexIDs, &partitionIDs); err != nil {
+		args, err := model.GetFinishedModifyColumnArgs(job)
+		if err != nil {
 			return errors.Trace(err)
 		}
+		indexIDs, partitionIDs := args.IndexIDs, args.PartitionIDs
 		if len(indexIDs) == 0 {
 			return nil
 		}

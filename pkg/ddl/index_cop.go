@@ -19,15 +19,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -46,11 +47,13 @@ func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
 		return errors.Trace(err)
 	}
 	defer se.Rollback()
-	var startTS uint64
-	sessVars := se.GetSessionVars()
-	sessVars.TxnCtxMu.Lock()
-	startTS = sessVars.TxnCtx.StartTS
-	sessVars.TxnCtxMu.Unlock()
+
+	txn, err := se.Txn()
+	if err != nil {
+		return err
+	}
+	startTS := txn.StartTS()
+	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
 	return f(startTS)
 }
 

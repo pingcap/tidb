@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -55,7 +56,7 @@ type PrepareExec struct {
 
 	ID         uint32
 	ParamCount int
-	Fields     []*ast.ResultField
+	Fields     []*resolve.ResultField
 	Stmt       any
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor

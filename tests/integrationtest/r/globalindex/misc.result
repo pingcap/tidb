@@ -1,4 +1,3 @@
-set tidb_enable_global_index=true;
 drop table if exists test_global;
 create table test_global ( a int, b int, c int, unique key p_b(b) global)
 partition by range( a ) (
@@ -19,14 +18,14 @@ partition by range( a ) (
 partition p1 values less than (10),
 partition p2 values less than (20)
 );
-Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 drop table if exists test_global;
 create table test_global ( a int, b int, c int, primary key p_b_c(b, c) /*T![clustered_index] CLUSTERED */ GLOBAL)
 partition by range( a ) (
 partition p1 values less than (10),
 partition p2 values less than (20)
 );
-Error 1503 (HY000): A CLUSTERED INDEX must include all columns in the table's partitioning function
+Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 drop table if exists test_global;
 create table test_global ( a int, b int, c int, primary key (b) /*T![clustered_index] NONCLUSTERED */ GLOBAL)
 partition by range( a ) (
@@ -185,8 +184,8 @@ create table t (a int, b int, unique key idx_b (b) global) partition by hash (a)
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx_b` (`b`) /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3
@@ -200,32 +199,32 @@ PARTITION BY HASH (`a`) PARTITIONS 3;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx_b` (`b`) /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3
 alter table t partition by key (b) partitions 3;
-Error 8200 (HY000): DDL job rollback, error msg: Unsupported PARTITION BY, index 'idx_b' is unique and contains all partitioning columns, but has Global Index set
+alter table t partition by key (b) partitions 3 update indexes (idx_b GLOBAL);
+alter table t partition by key (b) partitions 3 update indexes (idx_b LOCAL);
 alter table t partition by hash (a) partitions 3 update indexes (idx_b LOCAL);
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table t partition by hash (a) partitions 3 update indexes (idx_b GLOBAL);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx_b` (`b`) /*T![global_index] GLOBAL */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3
 alter table t partition by hash (b) partitions 3 update indexes(idx_b global);
-Error 8200 (HY000): DDL job rollback, error msg: Unsupported PARTITION BY, index 'idx_b' is unique and contains all partitioning columns, but has Global Index set
 alter table t partition by hash (b) partitions 3 update indexes(idx_b local);
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx_b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`b`) PARTITIONS 3
@@ -233,9 +232,18 @@ alter table t partition by key (b) partitions 3;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int(11) DEFAULT NULL,
-  `b` int(11) DEFAULT NULL,
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
   UNIQUE KEY `idx_b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`b`) PARTITIONS 3
 drop table t;
+drop table if exists t;
+create table t (a int, b varchar(255), c varchar (255), primary key (a,b), unique key (c) global) partition by list columns (a,b) (partition p0 values in ((1,"1"),(2,"2"),(3,"3")), partition p1 values in ((100,"100"),(101,"101"),(102,"102"),DEFAULT));
+insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102);
+select * from t;
+a	b	c
+1	1	1
+101	101	101
+102	102	102
+2	2	2

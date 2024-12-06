@@ -38,8 +38,8 @@ type stmtSummaryByDigestEvictedElement struct {
 	beginTime int64
 	// endTime is the end time of current interval
 	endTime int64
-	// digestKeyMap contains *Kinds* of digest being evicted
-	digestKeyMap map[string]struct{}
+	// count is the number of digest being evicted
+	count int64
 	// otherSummary contains summed up information of evicted elements
 	otherSummary *stmtSummaryByDigestElement
 }
@@ -54,16 +54,17 @@ func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
 // spawn a new pointer to stmtSummaryByDigestEvictedElement
 func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtSummaryByDigestEvictedElement {
 	return &stmtSummaryByDigestEvictedElement{
-		beginTime:    beginTime,
-		endTime:      endTime,
-		digestKeyMap: make(map[string]struct{}),
+		beginTime: beginTime,
+		endTime:   endTime,
 		otherSummary: &stmtSummaryByDigestElement{
-			beginTime:    beginTime,
-			endTime:      endTime,
-			authUsers:    make(map[string]struct{}),
-			minLatency:   time.Duration(math.MaxInt64),
-			backoffTypes: make(map[string]int),
-			firstSeen:    time.Unix(endTime, 0),
+			beginTime: beginTime,
+			endTime:   endTime,
+			stmtSummaryStats: stmtSummaryStats{
+				authUsers:    make(map[string]struct{}),
+				minLatency:   time.Duration(math.MaxInt64),
+				backoffTypes: make(map[string]int),
+				firstSeen:    time.Unix(endTime, 0),
+			},
 		},
 	}
 }
@@ -153,7 +154,7 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 // add an evicted record to stmtSummaryByDigestEvictedElement
 func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
-		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
+		seElement.count++
 		addInfo(seElement.otherSummary, digestValue)
 	}
 }
@@ -199,7 +200,7 @@ func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []type
 	datum := types.MakeDatums(
 		types.NewTime(types.FromGoTime(time.Unix(seElement.beginTime, 0)), mysql.TypeTimestamp, 0),
 		types.NewTime(types.FromGoTime(time.Unix(seElement.endTime, 0)), mysql.TypeTimestamp, 0),
-		int64(len(seElement.digestKeyMap)),
+		seElement.count,
 	)
 	return datum
 }
@@ -379,6 +380,8 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumPDTotal += addWith.sumPDTotal
 	addTo.sumBackoffTotal += addWith.sumBackoffTotal
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
+	addTo.sumTidbCPU += addWith.sumTidbCPU
+	addTo.sumTikvCPU += addWith.sumTikvCPU
 
 	addTo.sumErrors += addWith.sumErrors
 

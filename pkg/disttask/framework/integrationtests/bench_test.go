@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -113,11 +115,13 @@ func prepareForBenchTest(b *testing.B) {
 	var err error
 	store, err := d.Open("tikv://" + *testkit.WithTiKV)
 	require.NoError(b, err)
-
+	config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	require.NoError(b, ddl.StartOwnerManager(context.Background(), store))
 	var dom *domain.Domain
 	dom, err = session.BootstrapSession(store)
 	defer func() {
 		dom.Close()
+		ddl.CloseOwnerManager()
 		err := store.Close()
 		require.NoError(b, err)
 		view.Stop()
@@ -158,7 +162,7 @@ func registerTaskTypeForBench(c *testutil.TestDXFContext) {
 	).AnyTimes()
 	schedulerExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 
-	testutil.RegisterTaskMetaWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
+	registerExampleTaskWithDXFCtx(c, schedulerExt, func(ctx context.Context, subtask *proto.Subtask) error {
 		select {
 		case <-ctx.Done():
 			taskManager, err := storage.GetTaskManager()

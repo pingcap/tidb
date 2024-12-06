@@ -71,6 +71,11 @@ func (tp JoinType) IsSemiJoin() bool {
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
+// IsInnerJoin returns if this joiner is a inner joiner
+func (tp JoinType) IsInnerJoin() bool {
+	return tp == InnerJoin
+}
+
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
@@ -93,9 +98,9 @@ func (tp JoinType) String() string {
 
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	JoinType      JoinType
+	JoinType      JoinType `hash64-equals:"true"`
 	Reordered     bool
 	CartesianJoin bool
 	StraightJoin  bool
@@ -107,12 +112,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction
-	LeftConditions  expression.CNFExprs
-	RightConditions expression.CNFExprs
-	OtherConditions expression.CNFExprs
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -284,8 +289,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt 
 	rightCond = expression.RemoveDupExprs(rightCond)
 	leftRet, lCh := p.Children()[0].PredicatePushDown(leftCond, opt)
 	rightRet, rCh := p.Children()[1].PredicatePushDown(rightCond, opt)
-	utilfuncp.AddSelection(p, lCh, leftRet, 0, opt)
-	utilfuncp.AddSelection(p, rCh, rightRet, 1, opt)
+	addSelection(p, lCh, leftRet, 0, opt)
+	addSelection(p, rCh, rightRet, 1, opt)
 	p.updateEQCond()
 	ruleutil.BuildKeyInfoPortal(p)
 	return ret, p.Self()
@@ -369,12 +374,13 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
+	topnEliminated := false
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
-		p.Children()[0] = p.pushDownTopNToChild(topN, 0, opt)
+		p.Children()[0], topnEliminated = p.pushDownTopNToChild(topN, 0, opt)
 		p.Children()[1] = p.Children()[1].PushDownTopN(nil, opt)
 	case RightOuterJoin:
-		p.Children()[1] = p.pushDownTopNToChild(topN, 1, opt)
+		p.Children()[1], topnEliminated = p.pushDownTopNToChild(topN, 1, opt)
 		p.Children()[0] = p.Children()[0].PushDownTopN(nil, opt)
 	default:
 		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
@@ -382,6 +388,11 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optimi
 
 	// The LogicalJoin may be also a LogicalApply. So we must use self to set parents.
 	if topN != nil {
+		if topnEliminated && len(topN.ByItems) > 0 {
+			sort := LogicalSort{ByItems: topN.ByItems}.Init(p.SCtx(), p.QueryBlockOffset())
+			sort.SetChildren(p.Self())
+			return sort
+		}
 		return topN.AttachChild(p.Self(), opt)
 	}
 	return p.Self()
@@ -1047,10 +1058,25 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	}
 	lChild := p.Children()[0]
 	rChild := p.Children()[1]
+	lSchema := lChild.Schema()
+	rSchema := rChild.Schema()
+	// parentused col = t2.a
+	// leftChild schema = t1.a(t2.a) + and others
+	// rightChild schema = t3 related + and others
+	if join, ok := lChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			lSchema = join.FullSchema
+		}
+	}
+	if join, ok := rChild.(*LogicalJoin); ok {
+		if join.FullSchema != nil {
+			rSchema = join.FullSchema
+		}
+	}
 	for _, col := range parentUsedCols {
-		if lChild.Schema().Contains(col) {
+		if lSchema != nil && lSchema.Contains(col) {
 			leftCols = append(leftCols, col)
-		} else if rChild.Schema().Contains(col) {
+		} else if rSchema != nil && rSchema.Contains(col) {
 			rightCols = append(rightCols, col)
 		}
 	}
@@ -1063,22 +1089,61 @@ func (p *LogicalJoin) MergeSchema() {
 }
 
 // pushDownTopNToChild will push a topN to one child of join. The idx stands for join child index. 0 is for left child.
-func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) base.LogicalPlan {
+// When it's outer join and there's unique key information. The TopN can be totally pushed down to the join.
+// We just need reserve the ORDER informaion
+func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool) {
 	if topN == nil {
-		return p.Children()[idx].PushDownTopN(nil, opt)
+		return p.Children()[idx].PushDownTopN(nil, opt), false
 	}
 
 	for _, by := range topN.ByItems {
 		cols := expression.ExtractColumns(by.Expr)
 		for _, col := range cols {
 			if !p.Children()[idx].Schema().Contains(col) {
-				return p.Children()[idx].PushDownTopN(nil, opt)
+				return p.Children()[idx].PushDownTopN(nil, opt), false
 			}
+		}
+	}
+	count, offset := topN.Count+topN.Offset, uint64(0)
+	selfEliminated := false
+	if p.JoinType == LeftOuterJoin {
+		innerChild := p.Children()[1]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[1].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		// If it's unique key(unique with not null), we can push the offset down safely whatever the join key is normal eq or nulleq.
+		// If the join key is nulleq, then we can only push the offset down when the inner side is unique key.
+		// Only when the join key is normal eq, we can push the offset down when the inner side is unique(could be null).
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+			selfEliminated = true
+		}
+	} else if p.JoinType == RightOuterJoin {
+		innerChild := p.Children()[0]
+		innerJoinKey := make([]*expression.Column, 0, len(p.EqualConditions))
+		isNullEQ := false
+		for _, eqCond := range p.EqualConditions {
+			innerJoinKey = append(innerJoinKey, eqCond.GetArgs()[0].(*expression.Column))
+			if eqCond.FuncName.L == ast.NullEQ {
+				isNullEQ = true
+			}
+		}
+		if innerChild.Schema().IsUnique(true, innerJoinKey...) ||
+			(!isNullEQ && innerChild.Schema().IsUnique(false, innerJoinKey...)) {
+			count, offset = topN.Count, topN.Offset
+			selfEliminated = true
 		}
 	}
 
 	newTopN := LogicalTopN{
-		Count:            topN.Count + topN.Offset,
+		Count:            count,
+		Offset:           offset,
 		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
 		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
@@ -1086,7 +1151,7 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *optim
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
 	}
 	appendTopNPushDownJoinTraceStep(p, newTopN, idx, opt)
-	return p.Children()[idx].PushDownTopN(newTopN, opt)
+	return p.Children()[idx].PushDownTopN(newTopN, opt), selfEliminated
 }
 
 // Add a new selection between parent plan and current plan with candidate predicates
