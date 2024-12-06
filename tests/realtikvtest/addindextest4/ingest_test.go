@@ -408,7 +408,7 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt=1;")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
