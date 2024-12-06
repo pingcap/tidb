@@ -55,19 +55,12 @@ type stmtSummaryByDigestKey struct {
 	hash []byte
 }
 
-var hashBytesPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 0, 256)
-	},
-}
-
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *stmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		buf := hashBytesPool.Get().([]byte)
-		key.hash = buf[:0]
+		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
@@ -382,7 +375,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
-	hashBytesPool.Put(key.hash)
 }
 
 // Clear removes all statement summaries.
