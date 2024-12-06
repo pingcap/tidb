@@ -2025,8 +2025,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 }
 
 func (a *ExecStmt) GetOriginalSQL() string {
-	lazy := a.getLazyStmtText()
-	return lazy.String()
+	stmt := a.getLazyStmtText()
+	return stmt.String()
 }
 
 func (a *ExecStmt) GetEncodedPlan() (p string, h string, e any) {

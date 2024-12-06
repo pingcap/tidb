@@ -268,6 +268,7 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
+	hashBytesPool.Put(k.hash)
 }
 
 // Evicted returns the number of statements evicted for the current
@@ -461,12 +462,19 @@ type stmtKey struct {
 	hash []byte
 }
 
+var hashBytesPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0, 256)
+	},
+}
+
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
 func (k *stmtKey) Hash() []byte {
 	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest)+len(k.resourceGroupName))
+		buf := hashBytesPool.Get().([]byte)
+		k.hash = buf[:0]
 		k.hash = append(k.hash, hack.Slice(k.digest)...)
 		k.hash = append(k.hash, hack.Slice(k.schemaName)...)
 		k.hash = append(k.hash, hack.Slice(k.prevDigest)...)
