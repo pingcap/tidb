@@ -183,3 +183,8 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, ski
 		}
 	}
 }
+
+// TriggerEvict triggers the cache to evict some items.
+func (sc *StatsCache) TriggerEvict() {
+	sc.c.TriggerEvict()
+}
