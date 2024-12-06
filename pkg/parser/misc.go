@@ -521,6 +521,7 @@ var tokenMap = map[string]int{
 	"LONG":                     long,
 	"LONGBLOB":                 longblobType,
 	"LONGTEXT":                 longtextType,
+	"LOOP":                     loop,
 	"LOW_PRIORITY":             lowPriority,
 	"MASTER":                   master,
 	"MATCH":                    match,

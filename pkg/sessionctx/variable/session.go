@@ -1639,6 +1639,12 @@ type SessionVars struct {
 	// OptimizerFixControl control some details of the optimizer behavior through the tidb_opt_fix_control variable.
 	OptimizerFixControl map[uint64]string
 
+	// in call procedure status
+	inCallProcedure struct {
+		inCall bool
+		num    int
+	}
+
 	// FastCheckTable is used to control whether fast check table is enabled.
 	FastCheckTable bool
 
@@ -2902,6 +2908,11 @@ func (s *SessionVars) SetResourceGroupName(groupName string) {
 		metrics.ConnGauge.WithLabelValues(groupName).Inc()
 	}
 	s.ResourceGroupName = groupName
+}
+
+// GetCallProcedure get procedure flag.
+func (s *SessionVars) GetCallProcedure() bool {
+	return s.inCallProcedure.inCall
 }
 
 // TableDelta stands for the changed count for one table or partition.

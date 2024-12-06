@@ -19,7 +19,7 @@
 # And make sure these backup data can restore through newly BR tools to newly cluster.
 
 set -o pipefail
-./prepare_tools.sh
+which bazel_collect || ./prepare_tools.sh
 GOROOTPATH=$(go env GOPATH)/bin/
 export PATH=${GOROOTPATH}:$PATH
 make bazel_coverage_test

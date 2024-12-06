@@ -149,6 +149,7 @@ var Keywords = []KeywordsType{
 	{"LONG", true, "reserved"},
 	{"LONGBLOB", true, "reserved"},
 	{"LONGTEXT", true, "reserved"},
+	{"LOOP", true, "reserved"},
 	{"LOW_PRIORITY", true, "reserved"},
 	{"MATCH", true, "reserved"},
 	{"MAXVALUE", true, "reserved"},

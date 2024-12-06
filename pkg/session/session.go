@@ -1373,6 +1373,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 
 	p := parserPool.Get().(*parser.Parser)
+	if s.sessionVars.GetCallProcedure() {
+		p.InProcedure()
+		defer p.OutProcedure()
+	}
 	defer parserPool.Put(p)
 
 	sqlMode := s.sessionVars.SQLMode

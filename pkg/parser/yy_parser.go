@@ -94,11 +94,20 @@ type Parser struct {
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+	inProcedure           bool
 
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
 	yyVAL  *yySymType
+}
+
+func (p *Parser) InProcedure() {
+	p.inProcedure = true
+}
+
+func (p *Parser) OutProcedure() {
+	p.inProcedure = false
 }
 
 func yySetOffset(yyVAL *yySymType, offset int) {
