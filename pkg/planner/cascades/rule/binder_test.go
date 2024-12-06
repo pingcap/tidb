@@ -29,6 +29,7 @@ import (
 
 func TestBinderSuccess(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -63,6 +64,7 @@ func TestBinderSuccess(t *testing.T) {
 
 func TestBinderFail(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -86,7 +88,7 @@ func TestBinderFail(t *testing.T) {
 	holder := binder.Next()
 	require.Nil(t, holder)
 	buf.Flush()
-	require.Equal(t, b.String(), "GE:DataSource_1{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{}\n")
 
 	s1 := logicalop.LogicalLimit{}.Init(ctx, 0)
 	s1.SetChildren(t1)
@@ -117,11 +119,12 @@ func TestBinderFail(t *testing.T) {
 	holder = binder.Next()
 	require.Nil(t, holder)
 	buf.Flush()
-	require.Equal(t, b.String(), "GE:Limit_4{inputs:1}\n")
+	require.Equal(t, b.String(), "GE:Limit_-4{GID:1}\n")
 }
 
 func TestBinderTopNode(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -142,6 +145,7 @@ func TestBinderTopNode(t *testing.T) {
 
 func TestBinderOneNode(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 
 	mm := memo.NewMemo()
@@ -158,6 +162,7 @@ func TestBinderOneNode(t *testing.T) {
 
 func TestBinderSubTreeMatch(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
@@ -201,6 +206,7 @@ func TestBinderSubTreeMatch(t *testing.T) {
 
 func TestBinderMultiNext(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
@@ -289,15 +295,16 @@ func TestBinderMultiNext(t *testing.T) {
 	// when G3 is exhausted, and next gE will be nil, and next() loop will enter next round with stack info popped as
 	// G2(id(1)) which is what the third line comes from, and the next round will start from G2.next element starting
 	// as G2(id(4)) which is the prefix of the fourth and fifth stack info.
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{} -> GE:DataSource_5{}\n"+
-		"GE:DataSource_1{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_5{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{} -> GE:DataSource_-5{}\n"+
+		"GE:DataSource_-1{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-5{}\n")
 }
 
 func TestBinderAny(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
@@ -373,10 +380,10 @@ func TestBinderAny(t *testing.T) {
 	// In a conclusion: the Group matched with Any pattern only generate the first group expression since we don't
 	// care what the concrete group expression it is. Because the final generated group expression if any, will be
 	// substituted ANY pattern with the referred group at last not a concrete one group expression inside.
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{}\n"+
-		"GE:DataSource_4{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_4{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{}\n"+
+		"GE:DataSource_-4{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-4{}\n")
 }
 
 func TestBinderMultiAny(t *testing.T) {
@@ -444,6 +451,6 @@ func TestBinderMultiAny(t *testing.T) {
 	//  G2{t1,t3}   G3{t2,t4}
 	//        ▴ (already matched, pop stack)
 	// final state: empty stack
-	require.Equal(t, b.String(), "GE:DataSource_1{} -> GE:DataSource_2{}\n"+
-		"GE:DataSource_1{}\n")
+	require.Equal(t, b.String(), "GE:DataSource_-1{} -> GE:DataSource_-2{}\n"+
+		"GE:DataSource_-1{}\n")
 }

@@ -16,6 +16,7 @@ package baseimpl
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"strconv"
 	"unsafe"
 
@@ -39,7 +40,13 @@ type Plan struct {
 
 // NewBasePlan creates a new base plan.
 func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
-	id := ctx.GetSessionVars().PlanID.Add(1)
+	delta := int32(1)
+	if ctx.GetSessionVars().MockPlan {
+		delta = int32(-1)
+		intest.Assert(ctx.GetSessionVars().PlanID.Load() <= 0)
+	}
+	intest.Assert(ctx.GetSessionVars().PlanID.Load() >= 0)
+	id := ctx.GetSessionVars().PlanID.Add(delta)
 	return Plan{
 		tp:      tp,
 		id:      int(id),
