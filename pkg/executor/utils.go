@@ -139,8 +139,11 @@ type gopool struct {
 	tasks   atomic.Int32
 	workers atomic.Int32
 
+	// TolerablePendingTasks is the number of tasks that can be tolerated in the queue, that is, the pool won't spawn a
+	// new goroutine if the number of tasks is less than this number.
 	TolerablePendingTasks int32
-	MaxWorkers            int32
+	// MaxWorkers is the maximum number of workers that the pool can spawn.
+	MaxWorkers int32
 }
 
 func (p *gopool) submit(f func()) {
