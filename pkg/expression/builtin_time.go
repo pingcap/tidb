@@ -1017,6 +1017,8 @@ func (b *builtinDateFormatSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "0", false, nil
 	}
 
+	formatMask = convertFormatFromOracelToMysql(formatMask)
+
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
 		// 0 | 0.0 should be converted to null without warnings

@@ -84,6 +84,7 @@ var (
 	_ functionClass = &instrFunctionClass{}
 	_ functionClass = &loadFileFunctionClass{}
 	_ functionClass = &weightStringFunctionClass{}
+	_ functionClass = &toCharFunctionClass{}
 )
 
 var (
@@ -4166,6 +4167,48 @@ func buildTranslateMap4Binary(from, to []byte) map[byte]uint16 {
 		mp[from[idx]] = uint16(to[idx])
 	}
 	return mp
+}
+
+type toCharFunctionClass struct {
+	baseFunctionClass
+}
+
+// toCharFunctionClass is used to return a builtin function to execute Oracle to_char function.
+// The corresponding MySQL implementation will be called based on the parameters Internally.
+// See comments in function for detail.
+func (c *toCharFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).GetType()
+
+	switch arg0Tp {
+	// TO_CHAR(datetime, fmt)
+	// https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CHAR-datetime.html
+	case mysql.TypeDatetime:
+		if len(args) != 2 {
+			return nil, errors.Errorf("Wrong number of arguments for to_char(datetime), expect 2 but got %d", len(args))
+		}
+		fc := dateFormatFunctionClass{baseFunctionClass{ast.DateFormat, 2, 2}}
+		return fc.getFunction(ctx, args)
+	// TO_CHAR(number)
+	// https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/TO_CHAR-number.html
+	case mysql.TypeTiny, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24:
+		// TODO: you can add second argument fmt later
+		if len(args) == 2 {
+			return nil, errors.Errorf("Wrong number of arguments for to_char(number), expect 1 but got %d", len(args))
+		}
+		tp := types.NewFieldType(mysql.TypeVarString)
+		tp.SetCharset(mysql.UTF8MB4Charset)
+		tp.SetCollate(mysql.UTF8MB4GeneralCICollation)
+
+		fc := &castAsStringFunctionClass{baseFunctionClass{ast.Cast, 1, 1}, tp, false}
+		return fc.getFunction(ctx, args)
+	default:
+		// TODO: you can add more supported type here
+		return nil, errors.Errorf("invaild argument type %v", arg0Tp)
+	}
 }
 
 type toNumberFunctionClass struct {
