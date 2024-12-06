@@ -1838,6 +1838,8 @@ func (b *builtinDateFormatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			continue
 		}
 
+		formatMask = convertFormatFromOracelToMysql(formatMask)
+
 		if t.InvalidZero() {
 			// MySQL compatibility, #11203
 			// 0 | 0.0 should be converted to null without warnings

@@ -191,9 +191,10 @@ const (
 	TiDBCurrentTso       = "tidb_current_tso"
 
 	// string functions
-	ASCII           = "ascii"
-	Bin             = "bin"
-	Concat          = "concat"
+	ASCII  = "ascii"
+	Bin    = "bin"
+	Concat = "concat"
+
 	ConcatWS        = "concat_ws"
 	Convert         = "convert"
 	Elt             = "elt"
@@ -380,6 +381,17 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// oracle functions.
+	ToDate        = "to_date"
+	LastMonth     = "last_month"
+	ToNumber      = "to_number"
+	GetGUID       = "get_guid"
+	AddMonth      = "add_month"
+	NextDay       = "next_day"
+	MonthsBetween = "months_between"
+	ToChar        = "to_char"
+	DateToChar    = "date_to_char"
 )
 
 type FuncCallExprType int8

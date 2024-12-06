@@ -78,6 +78,7 @@ var (
 	_ functionClass = &dateLiteralFunctionClass{}
 	_ functionClass = &dateDiffFunctionClass{}
 	_ functionClass = &timeDiffFunctionClass{}
+	_ functionClass = &lastMonthFunctionClass{}
 	_ functionClass = &dateFormatFunctionClass{}
 	_ functionClass = &hourFunctionClass{}
 	_ functionClass = &minuteFunctionClass{}
@@ -98,6 +99,7 @@ var (
 	_ functionClass = &fromUnixTimeFunctionClass{}
 	_ functionClass = &getFormatFunctionClass{}
 	_ functionClass = &strToDateFunctionClass{}
+	_ functionClass = &toDateFunctionClass{}
 	_ functionClass = &sysDateFunctionClass{}
 	_ functionClass = &currentDateFunctionClass{}
 	_ functionClass = &currentTimeFunctionClass{}
@@ -108,6 +110,8 @@ var (
 	_ functionClass = &extractFunctionClass{}
 	_ functionClass = &unixTimestampFunctionClass{}
 	_ functionClass = &addTimeFunctionClass{}
+	_ functionClass = &addMonthFunctionClass{}
+	_ functionClass = &nextDayFunctionClass{}
 	_ functionClass = &convertTzFunctionClass{}
 	_ functionClass = &makeDateFunctionClass{}
 	_ functionClass = &makeTimeFunctionClass{}
@@ -760,6 +764,213 @@ func convertStringToDuration(tc types.Context, str string, fsp int) (d types.Dur
 	return types.StrToDuration(tc, str, fsp)
 }
 
+type lastMonthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *lastMonthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	// The output is fixed to YYYY-MM-DD
+	bf.tp.SetFlen(10)
+	sig := &builtinLastMonthSig{bf}
+	return sig, nil
+}
+
+type builtinLastMonthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinLastMonthSig) Clone() builtinFunc {
+	newSig := &builtinLastMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalString evals a builtinLastMonthSig.
+func (b *builtinLastMonthSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	t, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+
+	curDate, err := time.Parse("2006-01-02", t)
+	if err != nil {
+		return "", isNull, errors.Errorf("can not parse time %s in YYYY-MM-DD format", t)
+	}
+
+	// We first get the first day of this month, then get the last day of last month.
+	firstDayOfCurrentMonth := time.Date(curDate.Year(), curDate.Month(), 1, 0, 0, 0, 0, curDate.Location())
+	lastDayOfPreviousMonth := firstDayOfCurrentMonth.AddDate(0, 0, -1)
+	dateStr := lastDayOfPreviousMonth.Format("2006-01-02")
+	return dateStr, isNull, err
+}
+
+type addMonthFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *addMonthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinAddMonthSig{bf}
+	return sig, nil
+}
+
+type builtinAddMonthSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinAddMonthSig) Clone() builtinFunc {
+	newSig := &builtinAddMonthSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinAddMonthSig.
+func (b *builtinAddMonthSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	date, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+	month, isNull, err := b.args[1].EvalInt(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+
+	orgTime, err := date.GoTime(time.UTC)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+	}
+
+	// AddDate() call should have already handle the end of month behavior consistency for us
+	resultTime, err := types.AddDate(0, month, 0, orgTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	// in case of datetime overflow
+	if resultTime.Year() == 0 {
+		hour, minute, second := resultTime.Clock()
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, resultTime.Nanosecond()/1000))
+		return date, false, nil
+	}
+
+	var result types.Time
+	result.SetCoreTime(types.FromGoTime(resultTime))
+	tc := typeCtx(ctx)
+	overflow, err := types.DateTimeIsOverflow(tc, date)
+	if err := handleInvalidTimeError(ctx, err); err != nil {
+		return types.ZeroTime, true, err
+	}
+	if overflow {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	return result, false, nil
+}
+
+type nextDayFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *nextDayFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinNextDaySig{bf}
+	return sig, nil
+}
+
+type builtinNextDaySig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinNextDaySig) Clone() builtinFunc {
+	newSig := &builtinNextDaySig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals a builtinNextDaySig.
+func (b *builtinNextDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	// need a map from string to actual weekdays
+	dayMap := map[string]time.Weekday{
+		"SUN": time.Sunday, "SUNDAY": time.Sunday,
+		"MON": time.Monday, "MONDAY": time.Monday,
+		"TUE": time.Tuesday, "TUESDAY": time.Tuesday,
+		"WED": time.Wednesday, "WEDNESDAY": time.Wednesday,
+		"THU": time.Thursday, "THURSDAY": time.Thursday,
+		"FRI": time.Friday, "FRIDAY": time.Friday,
+		"SAT": time.Saturday, "SATURDAY": time.Saturday,
+	}
+
+	date, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+	weekday, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, isNull, handleInvalidTimeError(ctx, err)
+	}
+
+	// deal with case sensitivity
+	weekday = strings.ToUpper(weekday)
+
+	targetWeekday, valid := dayMap[weekday]
+	if !valid {
+		return types.ZeroTime, isNull, errors.Errorf("given weekday %s is not valid", weekday)
+	}
+	currentWeekday := date.Weekday()
+	daysToAdd := (int64(targetWeekday)-int64(currentWeekday)+6)%7 + 1
+
+	//calculate the exact date
+	orgTime, err := date.GoTime(time.UTC)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
+	}
+
+	resultTime, err := types.AddDate(0, 0, daysToAdd, orgTime)
+	if err != nil {
+		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
+	}
+
+	// Ensure time is 00:00:00
+	resultTime.Truncate(24 * time.Hour)
+
+	// in case of datetime overflow
+	if resultTime.Year() == 0 {
+		hour, minute, second := resultTime.Clock()
+		date.SetCoreTime(types.FromDate(0, 0, 0, hour, minute, second, resultTime.Nanosecond()/1000))
+		return date, false, nil
+	}
+
+	var result types.Time
+	result.SetCoreTime(types.FromGoTime(resultTime))
+
+	return result, false, nil
+}
+
 type dateFormatFunctionClass struct {
 	baseFunctionClass
 }
@@ -805,6 +1016,8 @@ func (b *builtinDateFormatSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	if formatMask == "0" {
 		return "0", false, nil
 	}
+
+	formatMask = convertFormatFromOracelToMysql(formatMask)
 
 	if t.InvalidZero() {
 		// MySQL compatibility, #11203
@@ -1844,6 +2057,39 @@ func (b *builtinGetFormatSig) evalString(ctx EvalContext, row chunk.Row) (string
 	return res, false, nil
 }
 
+type toDateFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *toDateFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	bf.setDecimalAndFlenForDatetime(types.MinFsp)
+	sig := &builtinStrToDateDatetimeSig{bf}
+	sig.setPbCode(tipb.ScalarFuncSig_StrToDateDatetime)
+	return sig, nil
+}
+
+func convertFormatFromOracelToMysql(format string) string {
+	re := regexp.MustCompile(`(?i)YYYY`)
+	newFormat := re.ReplaceAllString(format, "%Y")
+	re = regexp.MustCompile(`(?i)MM`)
+	newFormat = re.ReplaceAllString(newFormat, "%m")
+	re = regexp.MustCompile(`(?i)DD`)
+	newFormat = re.ReplaceAllString(newFormat, "%d")
+	re = regexp.MustCompile(`(?i)hh24:mi:ss`)
+	newFormat = re.ReplaceAllString(newFormat, "%H:%i:%s")
+
+	logutil.BgLogger().Info("convert format from oracel to mysql", zap.String("src", format), zap.String("dst", newFormat))
+	return newFormat
+}
+
 type strToDateFunctionClass struct {
 	baseFunctionClass
 }
@@ -1954,10 +2200,13 @@ func (b *builtinStrToDateDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+
 	format, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
 	}
+	format = convertFormatFromOracelToMysql(format)
+
 	var t types.Time
 	tc := typeCtx(ctx)
 	succ := t.StrToDate(tc, date, format)
@@ -6949,4 +7198,58 @@ func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 	tso, _ := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
+}
+
+type monthsBetweenFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *monthsBetweenFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETDatetime, types.ETDatetime)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinMonthsBetweenSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinMonthsBetweenSig struct {
+	baseBuiltinFunc
+}
+
+// evalReal evals a builtinMonthsBetweenSig.
+// See https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/MONTHS_BETWEEN.html
+func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
+	lhs, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	rhs, isNull, err := b.args[1].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return 0, isNull, handleInvalidTimeError(ctx, err)
+	}
+	if invalidLHS, invalidRHS := lhs.InvalidZero(), rhs.InvalidZero(); invalidLHS || invalidRHS {
+		if invalidLHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, lhs.String()))
+		}
+		if invalidRHS {
+			err = handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, rhs.String()))
+		}
+		return 0, true, err
+	}
+
+	// Calculate the total number of complete months between the two dates.
+	integerMonth := float64((lhs.Year()-rhs.Year())*12 + (lhs.Month() - rhs.Month()))
+	// If lhs and rhs's day is the same day or the end of month, will not calculate the time part diff
+	if lhs.Day() == rhs.Day() || (types.GetLastDay(lhs.Year(), lhs.Month()) == lhs.Day() && types.GetLastDay(rhs.Year(), rhs.Month()) == rhs.Day()) {
+		return integerMonth, false, nil
+	}
+	// Calculate the fractional month difference based on the time difference in second unit first.
+	totalSeconds := (lhs.Day()-rhs.Day())*24*60*60 + (lhs.Hour()-rhs.Hour())*60*60 + (lhs.Minute()-rhs.Minute())*60 + (lhs.Second() - rhs.Second())
+	// Compute fractional months as a ratio of total seconds base on 31 days. And result needs to maintain a precision of eight decimal places.
+	decimalMonth := math.Round(float64(totalSeconds)/(31.0*24.0*60.0*60.0)*1e8) / 1e8
+	return integerMonth + decimalMonth, false, nil
 }

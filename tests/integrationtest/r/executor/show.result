@@ -591,6 +591,7 @@ show builtins;
 Supported_builtin_functions
 abs
 acos
+add_month
 adddate
 addtime
 aes_decrypt
@@ -643,6 +644,7 @@ date
 date_add
 date_format
 date_sub
+date_to_char
 datediff
 day
 dayname
@@ -674,6 +676,7 @@ from_days
 from_unixtime
 ge
 get_format
+get_guid
 get_lock
 getparam
 greatest
@@ -733,6 +736,7 @@ json_unquote
 json_valid
 last_day
 last_insert_id
+last_month
 lastval
 lcase
 le
@@ -765,9 +769,11 @@ minute
 mod
 month
 monthname
+months_between
 mul
 name_const
 ne
+next_day
 nextval
 not
 now
@@ -855,7 +861,10 @@ timestamp
 timestampadd
 timestampdiff
 to_base64
+to_char
+to_date
 to_days
+to_number
 to_seconds
 translate
 trim

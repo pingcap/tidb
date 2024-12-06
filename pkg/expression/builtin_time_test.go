@@ -2170,6 +2170,58 @@ func TestTimestampDiff(t *testing.T) {
 	require.True(t, d.IsNull())
 }
 
+func TestMonthsBetween(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		t1     string
+		t2     string
+		expect float64
+	}{
+		{"2023-01-01", "2023-01-01", 0},
+		{"2004-02-01", "2003-02-01", 12},
+		{"2003-02-01", "2003-05-01", -3},
+		// different year/month/day
+		{"2003-02-01", "2003-02-28", -0.87096774},
+		{"2001-05-15", "2001-04-16", 0.96774194},
+		{"2002-05-01", "2001-01-01", 16},
+		{"1996-02-02", "1995-01-01", 13.03225806},
+		{"1996-02-02", "1995-01-03", 12.96774194},
+		{"1996-02-02", "1995-03-01", 11.03225806},
+		{"1994-02-02", "1995-01-01", -10.96774194},
+		{"1996-02-02", "1995-04-04", 9.93548387},
+		{"1993-10-03", "1995-04-10", -18.22580645},
+		{"1993-02-28", "1995-04-10", -25.41935484},
+		{"1993-02-1", "1995-04-10", -26.29032258},
+		// different timestamp
+		{"2003-01-06", "2003-05-06 12:05:55", -4},
+		{"2003-03-31 12:05:55", "2003-12-31", -9},
+		{"2003-05-31 12:05:55", "2003-02-28", 3},
+		{"2003-02-01", "2003-05-06 12:05:55", -3.1775519},
+		{"2003-05-06 12:05:55", "2003-02-01", 3.1775519},
+		// illegal data/timestamp
+		{"2003-00-01", "2003-05-01", 0},
+		{"2003-02-01", "2003-05-00", 0},
+		{"2003-02-01", "2003-0 5-01", 0},
+		{"2003-0 2-01", "2003-05-01", 0},
+		{"2003-02-01 12:0 5:55", "2003-05-01", 0},
+		{"2003-02-01", "2003-05-01 12:0 5:55", 0},
+	}
+
+	fc := funcs[ast.MonthsBetween]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewStringDatum(test.t1),
+			types.NewStringDatum(test.t2),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, test.expect, d.GetFloat64())
+	}
+}
+
 func TestUnixTimestamp(t *testing.T) {
 	ctx := createContext(t)
 	// Test UNIX_TIMESTAMP().
@@ -3658,4 +3710,85 @@ func TestCurrentTso(t *testing.T) {
 	tso, _ := ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	require.Equal(t, itso, n, v.Kind())
+}
+
+func TestLastMonth(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		param  string
+		expect string
+	}{
+		{"2020-01-01", "2019-12-31"},
+		{"2020-02-01", "2020-01-31"},
+		{"2020-12-31", "2020-11-30"},
+		{"2020-05-05", "2020-04-30"},
+	}
+
+	fc := funcs[ast.LastMonth]
+	for _, test := range tests {
+		dat := []types.Datum{types.NewDatum(test.param)}
+		f, err := fc.getFunction(ctx, datumsToConstants(dat))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}
+
+func TestAddMonth(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		date     string
+		addition int
+		expect   string
+	}{
+		{"2024-04-08", -3, "2024-01-08 00:00:00"},
+		{"2024-04-08", 12, "2025-04-08 00:00:00"},
+		{"2024-12-31", 2, "2025-02-28 00:00:00"},
+		{"2025-04-30", -2, "2025-02-28 00:00:00"},
+	}
+
+	fc := funcs[ast.AddMonth]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewDatum(test.date),
+			types.NewDatum(test.addition),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}
+
+func TestNextDay(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		date    string
+		weekday string
+		expect  string
+	}{
+		{"2024-12-31", "TUE", "2025-01-07 00:00:00"},
+		{"2024-12-05", "Tuesday", "2024-12-10 00:00:00"},
+		{"2024-12-31", "sunday", "2025-01-05 00:00:00"},
+	}
+
+	fc := funcs[ast.NextDay]
+	for _, test := range tests {
+		args := []types.Datum{
+			types.NewDatum(test.date),
+			types.NewDatum(test.weekday),
+		}
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
 }
