@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"math"
 	"time"
 
@@ -42,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
