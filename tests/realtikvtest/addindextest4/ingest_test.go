@@ -50,6 +50,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set global tidb_enable_dist_task = 0")
 
 	local.RunInTest = true
 
