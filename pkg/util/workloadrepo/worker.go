@@ -335,7 +335,7 @@ func (w *worker) start() error {
 		return errors.New("etcd client required for workload repository")
 	}
 
-	stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -354,7 +354,7 @@ func (w *worker) stop() {
 
 	w.cancel()
 	w.wg.Wait()
-	stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(true)
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(true)
 
 	if w.owner != nil {
 		w.owner.Close()
