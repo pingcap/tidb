@@ -190,14 +190,14 @@ func TestGoPool(t *testing.T) {
 		list = append(list, i)
 		lock.Unlock()
 	}
-	clear := func() {
+	clean := func() {
 		lock.Lock()
 		list = list[:0]
 		lock.Unlock()
 	}
 
 	t.Run("SingleWorker", func(t *testing.T) {
-		clear()
+		clean()
 		pool := &gopool{
 			TolerablePendingTasks: 0,
 			MaxWorkers:            1,
@@ -222,7 +222,7 @@ func TestGoPool(t *testing.T) {
 	})
 
 	t.Run("TwoWorkers", func(t *testing.T) {
-		clear()
+		clean()
 		pool := &gopool{
 			TolerablePendingTasks: 0,
 			MaxWorkers:            2,
@@ -247,7 +247,7 @@ func TestGoPool(t *testing.T) {
 	})
 
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
-		clear()
+		clean()
 		pool := &gopool{
 			TolerablePendingTasks: 1,
 			MaxWorkers:            2,
