@@ -442,9 +442,31 @@ func (rc *LogClient) InitClients(
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	ctx context.Context,
 ) (map[string]struct{}, error) {
-	// get sst checkpoint to skip repeated files
 	sstCheckpointSets := make(map[string]struct{})
-	// TODO initial checkpoint
+
+	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+		// get sst checkpoint to skip repeated files
+		checkpointSetWithTableID := make(map[int64]map[string]struct{})
+		// we need to load the checkpoint data for the following restore
+		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+			checkpointSet, exists := checkpointSetWithTableID[tableID]
+			if !exists {
+				checkpointSet = make(map[string]struct{})
+				checkpointSetWithTableID[tableID] = checkpointSet
+			}
+			checkpointSet[v.Name] = struct{}{}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// initialize the checkpoint metadata since it is the first time to restore.
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return sstCheckpointSets, nil
 }
 
