@@ -190,12 +190,12 @@ func (m *Manager) handleTasksLoop() {
 }
 
 // we handle tasks by their rank which is defined by Task.Compare.
-// Manager will make sure task with higher rank is run before tasks of lower rank,
-// when there are not enough slots, we might preempt the tasks with lower rank,
+// Manager will make sure task with high ranking is run before tasks of low ranking,
+// when there are not enough slots, we might preempt the tasks with low ranking,
 // i.e. to cancel their task executor directly, so it's possible some subtask of
 // those tasks are half done, they have to rerun when the task is scheduled again.
 // when there is no enough slots to run a task even after considers preemption,
-// tasks with lower rank can run.
+// tasks with low ranking can run.
 func (m *Manager) handleTasks() {
 	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
 	// or 'paused', then they are not executable, if it's 'running', it should be
@@ -237,21 +237,21 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			m.logger.Info("need to preempt tasks of lower rank", zap.Stringer("task", task.TaskBase),
+			m.logger.Info("need to preempt tasks of low ranking", zap.Stringer("task", task.TaskBase),
 				zap.Stringers("preemptedTasks", tasksNeedFree))
-			// do not handle the tasks with lower rank if current task is waiting
+			// do not handle the tasks with low ranking if current task is waiting
 			// other tasks to free slots to make sure the order of running.
 			break
 		}
 
 		if !canAlloc {
-			// try to run tasks of lower rank
+			// try to run tasks of low ranking
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
 		if !m.startTaskExecutor(task.TaskBase) {
 			// we break to make sure the order of running.
-			// it's possible some other lower rank tasks alloc more slots at
+			// it's possible some other low ranking tasks alloc more slots at
 			// runtime, in this case we should try preempt them in next iteration.
 			break
 		}

@@ -28,7 +28,7 @@ type slotManager struct {
 	// taskID2Index maps from task ID to index of the task in executorTasks.
 	taskID2Index map[int64]int
 	// executorTasks is used to record the tasks that is running on the executor,
-	// the slice is sorted in reverse task order.
+	// the slice is sorted in reverse task rank order.
 	executorTasks []*proto.TaskBase
 
 	capacity int

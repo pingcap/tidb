@@ -153,7 +153,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	ch := make(chan struct{})
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(*proto.StepResource) {
+	mockInternalExecutor.EXPECT().Run().DoAndReturn(func(*proto.StepResource) {
 		<-ch
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(&proto.Task{TaskBase: *task}, nil)
@@ -201,7 +201,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutors[task1.ID].EXPECT().GetTaskBase().Return(task1).Times(2)
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any())
+	mockInternalExecutors[task1.ID].EXPECT().Run()
 	mockInternalExecutors[task1.ID].EXPECT().Close()
 	// task2
 	mockTaskTable.EXPECT().CancelSubtask(m.ctx, m.id, task2.ID)
@@ -256,7 +256,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		Return([]*storage.TaskExecInfo{{TaskBase: task1}}, nil)
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutor.EXPECT().Run().DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 	m.handleTasks()
@@ -352,7 +352,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
 	// task1 start running
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Run().DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
@@ -377,7 +377,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	// task1 start running
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Run().DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
@@ -412,12 +412,12 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 5. available is enough, task3/task2 alloc success,
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task2.ID).Return(&proto.Task{TaskBase: *task2}, nil)
 	mockInternalExecutors[task2.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task2.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task2.ID].EXPECT().Run().DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task3.ID).Return(&proto.Task{TaskBase: *task3}, nil)
 	mockInternalExecutors[task3.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task3.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task3.ID].EXPECT().Run().DoAndReturn(func(_ *proto.StepResource) error {
 		return <-ch
 	})
 
