@@ -727,7 +727,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
-		defer trace.StartRegion(ctx, "IndexLookUpIndexWorker").End()
+		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
 		worker := &indexWorker{
 			idxLookup:       e,
 			finished:        e.finished,
