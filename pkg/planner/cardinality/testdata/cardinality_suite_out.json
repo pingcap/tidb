@@ -2560,21 +2560,6 @@
                             "realtimeRowCount": 3080
                           },
                           {
-                            "commonPrefix": 0,
-                            "lScalar": -1.7976931348623157e+308,
-                            "rScalar": -1500,
-                            "unsigned": false
-                          },
-                          {
-                            "boundL": -7000,
-                            "boundR": 11000,
-                            "histL": -1000,
-                            "histR": 5000,
-                            "lPercent": 0.8402777777777778,
-                            "rPercent": 0,
-                            "rowCount": 1294.0277777777778
-                          },
-                          {
                             "Result": 0
                           }
                         ]
@@ -2856,21 +2841,6 @@
                                 "lDatum": "KindBytes \\x01",
                                 "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
                                 "realtimeRowCount": 3080
-                              },
-                              {
-                                "commonPrefix": 0,
-                                "lScalar": 72057594037927940,
-                                "rScalar": 252201579132747780,
-                                "unsigned": false
-                              },
-                              {
-                                "boundL": 252201579132747740,
-                                "boundR": 252201579132747840,
-                                "histL": 252201579132747780,
-                                "histR": 252201579132747800,
-                                "lPercent": 1,
-                                "rPercent": 0,
-                                "rowCount": 1540
                               },
                               {
                                 "Result": 0
@@ -3605,13 +3575,13 @@
                             "rowCount": 1105.760693125558
                           },
                           {
-                            "Result": 1100
+                            "Result": 100
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1100,
+                          "RowCount": 100,
                           "Type": "Range"
                         }
                       }
@@ -3619,7 +3589,7 @@
                   },
                   {
                     "Name": "a",
-                    "Result": 1100
+                    "Result": 100
                   }
                 ]
               },
