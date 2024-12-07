@@ -271,6 +271,10 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 	return txn.StartTS(), nil
 }
 
+func (p *baseTxnContextProvider) usePresetStartTS() bool {
+	return p.constStartTS != 0 || p.sctx.GetSessionVars().SnapshotTS != 0
+}
+
 // ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
@@ -308,7 +312,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	}
 
 	// verify start_ts is later than any previous commit_ts in the session
-	if sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
+	if !p.usePresetStartTS() && sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
 		logutil.BgLogger().Panic("check session lastCommitTS failed",
 			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
 			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
