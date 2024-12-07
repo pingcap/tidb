@@ -472,8 +472,11 @@ func (s *SyncExecDetails) CopTasksDetails() CopTasksDetails {
 	if n == 0 {
 		return d
 	}
-	d.AvgProcessTime = s.execDetails.TimeDetail.ProcessTime / time.Duration(n)
-	d.AvgWaitTime = s.execDetails.TimeDetail.WaitTime / time.Duration(n)
+	d.TotProcessTime = s.execDetails.TimeDetail.ProcessTime
+	d.AvgProcessTime = d.TotProcessTime / time.Duration(n)
+
+	d.TotWaitTime = s.execDetails.TimeDetail.WaitTime
+	d.AvgWaitTime = d.TotWaitTime / time.Duration(n)
 
 	d.P90ProcessTime = time.Duration((s.detailsSummary.ProcessTimePercentile.GetPercentile(0.9)))
 	d.MaxProcessTime = s.detailsSummary.ProcessTimePercentile.GetMax().D
@@ -515,11 +518,13 @@ type CopTasksDetails struct {
 	P90ProcessTime    time.Duration
 	MaxProcessAddress string
 	MaxProcessTime    time.Duration
+	TotProcessTime    time.Duration
 
 	AvgWaitTime    time.Duration
 	P90WaitTime    time.Duration
 	MaxWaitAddress string
 	MaxWaitTime    time.Duration
+	TotWaitTime    time.Duration
 
 	MaxBackoffTime    map[string]time.Duration
 	MaxBackoffAddress map[string]string
@@ -1431,14 +1436,10 @@ func (e *BasicRuntimeStats) String() string {
 	closeTime := e.close.Load()
 	str.WriteString(fmt.Sprintf("%stime:", timePrefix))
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
-	if openTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
-		str.WriteString(FormatDuration(time.Duration(openTime)))
-	}
-	if closeTime >= int64(time.Millisecond) {
-		str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
-		str.WriteString(FormatDuration(time.Duration(closeTime)))
-	}
+	str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
+	str.WriteString(FormatDuration(time.Duration(openTime)))
+	str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
+	str.WriteString(FormatDuration(time.Duration(closeTime)))
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
 	return str.String()

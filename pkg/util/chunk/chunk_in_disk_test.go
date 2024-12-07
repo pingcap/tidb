@@ -66,7 +66,7 @@ func checkChunk(t *testing.T, chk1, chk2 *Chunk) {
 	}
 }
 
-func TestDataInDiskByChunks(t *testing.T) {
+func testImpl(t *testing.T, isNewChunk bool) {
 	numChk, numRow := 100, 1000
 	chks, fields := initChunks(numChk, numRow)
 	addAuxDataForChunks(chks)
@@ -78,9 +78,29 @@ func TestDataInDiskByChunks(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	chk := NewEmptyChunk(fields)
+	var err error
 	for i := range numChk {
-		chk, err := dataInDiskByChunks.GetChunk(i)
+		if isNewChunk {
+			chk, err = dataInDiskByChunks.GetChunk(i)
+		} else {
+			chk.Reset()
+			err = dataInDiskByChunks.FillChunk(i, chk)
+		}
 		require.NoError(t, err)
 		checkChunk(t, chk, chks[i])
 	}
+}
+
+func testGetChunk(t *testing.T) {
+	testImpl(t, true)
+}
+
+func testFillChunk(t *testing.T) {
+	testImpl(t, false)
+}
+
+func TestDataInDiskByChunks(t *testing.T) {
+	testGetChunk(t)
+	testFillChunk(t)
 }

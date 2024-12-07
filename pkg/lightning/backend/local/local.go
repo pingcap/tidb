@@ -1602,10 +1602,23 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use OpenedEngine.SetTS to set a valid TS before import
+// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
+}
+
+// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// This is typically called after persisting the chosen TS of the engine to make
+// sure TS is not changed after task failover.
+func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
+	if e == nil {
+		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+	}
+	defer e.unlock()
+	e.engineMeta.TS = ts
+	return e.saveEngineMeta()
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.

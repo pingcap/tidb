@@ -45,6 +45,7 @@ go_library(
         "//pkg/util/table-filter",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pkg_errors//:errors",
         "@org_golang_x_sync//singleflight",
         "@org_uber_go_zap//:zap",
     ],

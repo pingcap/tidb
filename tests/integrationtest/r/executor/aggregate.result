@@ -544,7 +544,7 @@ explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count
 id	estRows	task	access object	operator info
 Projection	8000.00	root		executor__aggregate.customer.c_custkey, Column#18
 └─HashAgg	8000.00	root		group by:executor__aggregate.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(executor__aggregate.customer.c_custkey)->executor__aggregate.customer.c_custkey
-  └─HashJoin	10000.00	root		left outer join, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
+  └─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
     └─HashAgg(Probe)	6400.00	root		group by:executor__aggregate.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(executor__aggregate.orders.o_custkey)->executor__aggregate.orders.o_custkey
@@ -2032,9 +2032,9 @@ sum(a)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from tes
 explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
-└─Apply	1.00	root		CARTESIAN left outer join
-  ├─Apply(Build)	1.00	root		CARTESIAN left outer join
-  │ ├─Apply(Build)	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:Apply
+  ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:Apply
+  │ ├─Apply(Build)	1.00	root		CARTESIAN left outer join, left side:HashAgg
   │ │ ├─HashAgg(Build)	1.00	root		funcs:sum(Column#28)->Column#9, funcs:firstrow(Column#29)->executor__aggregate.test.a
   │ │ │ └─Projection	10000.00	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column#28, executor__aggregate.test.a->Column#29
   │ │ │   └─TableReader	10000.00	root		data:TableFullScan
