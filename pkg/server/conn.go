@@ -1393,7 +1393,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		if cc.server.health.Load() {
 			return cc.writeOK(ctx)
 		}
-		return errors.New("ping refused, because unhealthy (shutting down?)")
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
