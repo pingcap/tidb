@@ -707,6 +707,7 @@ import (
 	briefType             "BRIEF"
 	burstable             "BURSTABLE"
 	cast                  "CAST"
+	compress              "COMPRESS"
 	constraints           "CONSTRAINTS"
 	cooldown              "COOLDOWN"
 	copyKwd               "COPY"
@@ -763,7 +764,9 @@ import (
 	priority              "PRIORITY"
 	processedKeys         "PROCESSED_KEYS"
 	queryLimit            "QUERY_LIMIT"
+	readOnly              "READ_ONLY"
 	recent                "RECENT"
+	replay                "REPLAY"
 	replayer              "REPLAYER"
 	restoredTS            "RESTORED_TS"
 	ru                    "RU"
@@ -772,6 +775,7 @@ import (
 	s3                    "S3"
 	schedule              "SCHEDULE"
 	similar               "SIMILAR"
+	speed                 "SPEED"
 	staleness             "STALENESS"
 	startTime             "START_TIME"
 	startTS               "START_TS"
@@ -804,6 +808,7 @@ import (
 	tokudbZlib            "TOKUDB_ZLIB"
 	tokudbZstd            "TOKUDB_ZSTD"
 	top                   "TOP"
+	traffic               "TRAFFIC"
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
@@ -1065,6 +1070,7 @@ import (
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
+	TrafficStmt                "Traffic capture/replay statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -1372,6 +1378,10 @@ import (
 	TextStringList                         "text string list"
 	TimeUnit                               "Time unit for 'DATE_ADD', 'DATE_SUB', 'ADDDATE', 'SUBDATE', 'EXTRACT'"
 	TimestampUnit                          "Time unit for 'TIMESTAMPADD' and 'TIMESTAMPDIFF'"
+	TrafficCaptureOpt                      "Traffic capture option"
+	TrafficCaptureOptList                  "Traffic capture option list"
+	TrafficReplayOpt                       "Traffic replay option"
+	TrafficReplayOptList                   "Traffic replay option list"
 	LockType                               "Table locks type"
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
@@ -7167,6 +7177,7 @@ NotKeywordToken:
 |	"BIT_XOR"
 |	"BRIEF"
 |	"CAST"
+|	"COMPRESS"
 |	"COPY"
 |	"CURTIME"
 |	"CURDATE"
@@ -7189,6 +7200,7 @@ NotKeywordToken:
 |	"MAX"
 |	"NOW"
 |	"RECENT"
+|	"REPLAY"
 |	"REPLAYER"
 |	"RUNNING"
 |	"PLACEMENT"
@@ -7196,7 +7208,9 @@ NotKeywordToken:
 |	"PLAN_CACHE"
 |	"POSITION"
 |	"PREDICATE"
+|	"READ_ONLY"
 |	"S3"
+|	"SPEED"
 |	"STRICT"
 |	"SUBDATE"
 |	"SUBSTRING"
@@ -7223,6 +7237,7 @@ NotKeywordToken:
 |	"TOKUDB_ZLIB"
 |	"TOKUDB_ZSTD"
 |	"TOP"
+|	"TRAFFIC"
 |	"TRIM"
 |	"NEXT_ROW_ID"
 |	"EXPR_PUSHDOWN_BLACKLIST"
@@ -8341,6 +8356,10 @@ FunctionCallNonKeyword:
 			FnName: model.NewCIStr($1),
 			Args:   []ast.ExprNode{$3, $5, $7},
 		}
+	}
+|	"COMPRESS" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr($1), Args: $3.([]ast.ExprNode)}
 	}
 
 GetFormatSelector:
@@ -12300,6 +12319,7 @@ Statement:
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
 |	CancelImportStmt
+|	TrafficStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -15760,6 +15780,109 @@ PlanReplayerDumpOpt:
 |	"WITH" "STATS" AsOfClause
 	{
 		$$ = $3.(*ast.AsOfClause)
+	}
+
+/********************************************************************
+ *
+ * Traffic Statement
+ *
+ * Examples:
+ * TRAFFIC CAPTURE TO "/tmp/traffic" DURATION="1h" ENCRYPTION_METHOD="aes256-ctr" COMPRESS=true
+ * TRAFFIC REPLAY FROM "/tmp/traffic" USER="u1" PASSWORD="123456" SPEED=1.0 READ_ONLY=true
+ *******************************************************************/
+TrafficStmt:
+	"TRAFFIC" "CAPTURE" "TO" stringLit TrafficCaptureOptList
+	{
+		x := &ast.TrafficStmt{
+			OpType: ast.TrafficOpCapture,
+			Dir:    $4,
+		}
+		if $5 != nil {
+			x.Options = $5.([]*ast.TrafficOption)
+		}
+
+		$$ = x
+	}
+|	"TRAFFIC" "REPLAY" "FROM" stringLit TrafficReplayOptList
+	{
+		x := &ast.TrafficStmt{
+			OpType: ast.TrafficOpReplay,
+			Dir:    $4,
+		}
+		if $5 != nil {
+			x.Options = $5.([]*ast.TrafficOption)
+		}
+
+		$$ = x
+	}
+|	"SHOW" "TRAFFIC" "JOBS"
+	{
+		$$ = &ast.TrafficStmt{
+			OpType: ast.TrafficOpShow,
+		}
+	}
+|	"CANCEL" "TRAFFIC" "JOBS"
+	{
+		$$ = &ast.TrafficStmt{
+			OpType: ast.TrafficOpCancel,
+		}
+	}
+
+TrafficCaptureOptList:
+	TrafficCaptureOpt
+	{
+		$$ = []*ast.TrafficOption{$1.(*ast.TrafficOption)}
+	}
+|	TrafficCaptureOptList TrafficCaptureOpt
+	{
+		$$ = append($1.([]*ast.TrafficOption), $2.(*ast.TrafficOption))
+	}
+
+TrafficCaptureOpt:
+	"DURATION" EqOpt stringLit
+	{
+		_, err := time.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The DURATION option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionDuration, StrValue: $3}
+	}
+|	"ENCRYPTION_METHOD" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionEncryptionMethod, StrValue: $3}
+	}
+|	"COMPRESS" EqOpt Boolean
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionCompress, BoolValue: $3.(bool)}
+	}
+
+TrafficReplayOptList:
+	TrafficReplayOpt
+	{
+		$$ = []*ast.TrafficOption{$1.(*ast.TrafficOption)}
+	}
+|	TrafficReplayOptList TrafficReplayOpt
+	{
+		$$ = append($1.([]*ast.TrafficOption), $2.(*ast.TrafficOption))
+	}
+
+TrafficReplayOpt:
+	"USER" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionUsername, StrValue: $3}
+	}
+|	"PASSWORD" EqOpt stringLit
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionPassword, StrValue: $3}
+	}
+|	"SPEED" EqOpt NumLiteral
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionSpeed, FloatValue: ast.NewValueExpr($3, "", "")}
+	}
+|	"READ_ONLY" EqOpt Boolean
+	{
+		$$ = &ast.TrafficOption{OptionType: ast.TrafficOptionReadOnly, BoolValue: $3.(bool)}
 	}
 
 /* Stored PROCEDURE parameter declaration list */

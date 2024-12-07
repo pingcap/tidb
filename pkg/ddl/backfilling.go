@@ -327,7 +327,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		// we will never cancel the job once there is panic in bf.BackfillData.
 		// Because reorgRecordTask may run a long time,
 		// we should check whether this ddl job is still runnable.
-		err := d.isReorgRunnable(jobID, false)
+		err := d.isReorgRunnable(d.ctx, false)
 		if err != nil {
 			result.err = err
 			return result
@@ -677,8 +677,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	t table.PhysicalTable,
 	reorgInfo *reorgInfo,
 ) error {
-	// TODO(tangenta): support adjust worker count dynamically.
-	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
 		return errors.Trace(err)
 	}
 	job := reorgInfo.Job
@@ -921,7 +920,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 ) (err error) {
 	startKey, endKey := reorgInfo.StartKey, reorgInfo.EndKey
 
-	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
+	if err := dc.isReorgRunnable(ctx, false); err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {

@@ -21,6 +21,7 @@ import (
 	"math"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -108,9 +109,6 @@ func AutoRandomRangeBitsNormalize(rangeBits int) (ret uint64, err error) {
 	}
 	return uint64(rangeBits), nil
 }
-
-// Test needs to change it, so it's a variable.
-var step = int64(30000)
 
 // AllocatorType is the type of allocator for generating auto-id. Different type of allocators use different key-value pairs.
 type AllocatorType uint8
@@ -274,14 +272,18 @@ type allocator struct {
 	sequence      *model.SequenceInfo
 }
 
-// GetStep is only used by tests
+// Test needs to change it, so it's a variable.
+// Don't use it directly, use the GetStep/SetStep function.
+var defaultStep = int64(30000)
+
+// GetStep gets the defautStep value.
 func GetStep() int64 {
-	return step
+	return atomic.LoadInt64(&defaultStep)
 }
 
 // SetStep is only used by tests
 func SetStep(s int64) {
-	step = s
+	atomic.StoreInt64(&defaultStep, s)
 }
 
 // Base implements autoid.Allocator Base interface.
@@ -565,7 +567,7 @@ func NextStep(curStep int64, consumeDur time.Duration) int64 {
 	})
 	failpoint.Inject("mockAutoIDChange", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(step)
+			failpoint.Return(GetStep())
 		}
 	})
 
@@ -627,7 +629,7 @@ func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 		dbID:          dbID,
 		tbID:          tbID,
 		isUnsigned:    isUnsigned,
-		step:          step,
+		step:          GetStep(),
 		lastAllocTime: time.Now(),
 		allocType:     allocType,
 	}
@@ -646,7 +648,7 @@ func NewAllocator(r Requirement, dbID, tbID int64, isUnsigned bool,
 			// Now that the autoid and rowid allocator are separated, the AUTO_ID_CACHE 1 setting should not make
 			// the rowid allocator do not use cache.
 			alloc.customStep = false
-			alloc.step = step
+			alloc.step = GetStep()
 		}
 	}
 
