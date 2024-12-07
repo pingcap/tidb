@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 722.5083333101078
+        "Count": 742.7583333101078
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1638.8937391478842
+        "Count": 1659.1437391478842
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1641.0576419798163
+        "Count": 1638.0576419798163
       },
       {
         "Start": 200,
@@ -134,24 +134,24 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 3.33 root  data:Selection",
-          "└─Selection 3.33 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 1003.33 root  data:Selection",
+          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a < 300",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  lt(test.t.a, 300)",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 670.00 root  data:Selection",
-          "└─Selection 670.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1670.00 root  data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -166,16 +166,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  ge(test.t.a, 900)",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 1000.00 root  data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -198,40 +198,40 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 330.00 root  data:Selection",
-          "└─Selection 330.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 793.20 root  data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 458.19 root  data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 832.77 root  data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 459.03 root  data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 1.00 root  data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 834.45 root  data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -242,24 +242,24 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 10.00 root  data:Selection",
-          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 5.00 root  data:Selection",
+          "└─Selection 5.00 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 1010.00 root  data:Selection",
-          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1005.00 root  data:Selection",
+          "└─Selection 1005.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 5.00 root  data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 1.00 root  data:Selection",
+          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -857,24 +857,24 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 3.33 root partition:p0 data:Selection",
-          "└─Selection 3.33 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 1003.33 root partition:p0 data:Selection",
+          "└─Selection 1003.33 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a < 300",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  lt(test.t.a, 300)",
+          "TableReader 1000.00 root partition:p0 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 670.00 root partition:p0,p1 data:Selection",
-          "└─Selection 670.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1670.00 root partition:p0,p1 data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -889,16 +889,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "TableReader 1.00 root partition:p3,p4 data:Selection",
-          "└─Selection 1.00 cop[tikv]  ge(test.t.a, 900)",
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 1.00 root partition:p3,p4 data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -921,40 +921,40 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 800 and a < 1000",
         "Result": [
-          "TableReader 330.00 root partition:p3 data:Selection",
-          "└─Selection 330.00 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
+          "TableReader 793.20 root partition:p3 data:Selection",
+          "└─Selection 793.20 cop[tikv]  gt(test.t.a, 800), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1000",
         "Result": [
-          "TableReader 1.00 root partition:p3 data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
+          "TableReader 458.19 root partition:p3 data:Selection",
+          "└─Selection 458.19 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1000)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "TableReader 1.00 root partition:p3,p4 data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "TableReader 832.77 root partition:p3,p4 data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 200 and a < 300",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
+          "TableReader 459.03 root partition:p0 data:Selection",
+          "└─Selection 459.03 cop[tikv]  gt(test.t.a, 200), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 100 and a < 300",
         "Result": [
-          "TableReader 1.00 root partition:p0 data:Selection",
-          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
+          "TableReader 834.45 root partition:p0 data:Selection",
+          "└─Selection 834.45 cop[tikv]  gt(test.t.a, 100), lt(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -1532,7 +1532,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1601,7 +1601,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2461,7 +2461,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2598,7 +2598,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1098
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
