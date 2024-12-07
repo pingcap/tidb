@@ -613,6 +613,11 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+
+	// Set healthy. This is used by graceful shutdown
+	// and is used in the response for ComPing and the
+	// /status HTTP endpoint
+	server.health.Store(true)
 	defer server.Close()
 
 	cc := &clientConn{
