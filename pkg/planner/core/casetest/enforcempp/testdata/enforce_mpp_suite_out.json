@@ -623,7 +623,7 @@
           "└─ExchangeSender_50 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection_49 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "      └─HashJoin_46 10000.00 mpp[tiflash]  left outer semi join, left side:TableFullScan_24, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver_27(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
@@ -638,7 +638,7 @@
           "└─ExchangeSender_50 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_8 8000.00 mpp[tiflash]  test.t.a",
           "    └─Selection_49 8000.00 mpp[tiflash]  or(gt(test.t.a, 1), Column#3)",
-          "      └─HashJoin_46 10000.00 mpp[tiflash]  anti left outer semi join, equal:[eq(test.t.a, test.t.a)]",
+          "      └─HashJoin_46 10000.00 mpp[tiflash]  anti left outer semi join, left side:TableFullScan_24, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver_27(Build) 10000.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "        │   └─TableFullScan_25 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
@@ -649,7 +649,7 @@
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
-          "MergeJoin_10 8000.00 root  anti semi join, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
+          "MergeJoin_10 8000.00 root  anti semi join, left side:TableReader_23, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
           "├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
           "│ └─TableFullScan_25 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
           "└─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
@@ -1556,7 +1556,7 @@
         "Plan": [
           "TableReader_29 8000.00 root  MppVersion: 2, data:ExchangeSender_28",
           "└─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a)]",
+          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1569,7 +1569,7 @@
         "Plan": [
           "TableReader_30 8000.00 root  MppVersion: 2, data:ExchangeSender_29",
           "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1582,7 +1582,7 @@
         "Plan": [
           "TableReader_29 8000.00 root  MppVersion: 2, data:ExchangeSender_28",
           "└─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
+          "  └─HashJoin_27 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1595,7 +1595,7 @@
         "Plan": [
           "TableReader_30 8000.00 root  MppVersion: 2, data:ExchangeSender_29",
           "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
+          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1608,7 +1608,7 @@
         "Plan": [
           "TableReader_29 10000.00 root  MppVersion: 2, data:ExchangeSender_28",
           "└─ExchangeSender_28 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a)]",
+          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1621,7 +1621,7 @@
         "Plan": [
           "TableReader_30 10000.00 root  MppVersion: 2, data:ExchangeSender_29",
           "└─ExchangeSender_29 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1634,7 +1634,7 @@
         "Plan": [
           "TableReader_29 10000.00 root  MppVersion: 2, data:ExchangeSender_28",
           "└─ExchangeSender_28 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
+          "  └─HashJoin_27 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_11, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)]",
           "    ├─ExchangeReceiver_14(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_12 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
@@ -1647,7 +1647,7 @@
         "Plan": [
           "TableReader_30 10000.00 root  MppVersion: 2, data:ExchangeSender_29",
           "└─ExchangeSender_29 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
+          "  └─HashJoin_28 10000.00 mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a) eq(test.t.b, test.s.b)], other cond:lt(test.t.c, test.s.c)",
           "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
