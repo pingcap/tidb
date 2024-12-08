@@ -699,18 +699,18 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 type mockLazyInfo struct{}
 
-func (_ *mockLazyInfo) GetOriginalSQL() string {
+func (*mockLazyInfo) GetOriginalSQL() string {
 	return ""
 }
 
-func (_ *mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
+func (*mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
 	return "", "", nil
 }
 
-func (_ *mockLazyInfo) GetBinaryPlan() string {
+func (*mockLazyInfo) GetBinaryPlan() string {
 	return ""
 }
 
-func (_ *mockLazyInfo) GetPlanDigest() string {
+func (*mockLazyInfo) GetPlanDigest() string {
 	return ""
 }
