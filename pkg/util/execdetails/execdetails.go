@@ -1498,7 +1498,7 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 		}
 	}
 	if !found {
-		stats.groupRss = append(stats.groupRss, info.Clone())
+		stats.groupRss = append(stats.groupRss, info)
 	}
 }
 
