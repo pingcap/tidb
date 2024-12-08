@@ -536,7 +536,7 @@ type CopTasksDetails struct {
 
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.
 func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
-	if d.NumCopTasks == 0 {
+	if d == nil || d.NumCopTasks == 0 {
 		return
 	}
 	fields = make([]zap.Field, 0, 10)
