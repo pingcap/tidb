@@ -858,7 +858,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context) {
-	if len(it.tasks) == 1 && len(it.tasks[0].batchTaskList) == 0 {
+	if len(it.tasks) == 1 {
 		it.liteWorker = &liteCopIteratorWorker{
 			ctx:    ctx, // the ctx contains some info(such as rpc interceptor), this ctx is used for handle cop task later.
 			worker: newCopIteratorWorker(it, nil),
@@ -1157,13 +1157,25 @@ func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
 	}()
 
 	worker := it.liteWorker.worker
-	taskCtx := it.liteWorker.ctx
 	backoffermap := make(map[uint64]*Backoffer)
-	for len(it.tasks) > 0 {
+	for {
+		for len(it.respChan) > 0 {
+			select {
+			case resp = <-it.respChan:
+				return resp
+			default:
+			}
+		}
+		if len(it.tasks) == 0 {
+			return nil
+		}
 		curTask := it.tasks[0]
-		respCh := make(chan *copResponse, 2+len(curTask.batchTaskList))
+		if cap(it.respChan) < (len(curTask.batchTaskList) + 2) {
+			it.respChan = make(chan *copResponse, 2+len(curTask.batchTaskList))
+		}
+		respCh := it.respChan
 		curTask.respChan = respCh
-		bo := chooseBackoffer(taskCtx, backoffermap, curTask, worker)
+		bo := chooseBackoffer(it.liteWorker.ctx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
@@ -1175,16 +1187,7 @@ func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-		select {
-		case resp = <-respCh:
-			if resp != nil {
-				return resp
-			}
-		default:
-			continue
-		}
 	}
-	return nil
 }
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
