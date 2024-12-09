@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
@@ -249,6 +250,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
+		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
 		if !m.startTaskExecutor(task.TaskBase) {
 			// we break to make sure the order of running.
 			// it's possible some other low ranking tasks alloc more slots at
