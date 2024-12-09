@@ -156,6 +156,8 @@ type HashAggExec struct {
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	invalidMemoryUsageForTrackingTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -208,6 +210,7 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			if e.memTracker.BytesConsumed() < 0 {
 				logutil.BgLogger().Warn("Memory tracker's counter is invalid", zap.Int64("counter", e.memTracker.BytesConsumed()))
+				e.invalidMemoryUsageForTrackingTest = true
 			}
 			e.memTracker.ReplaceBytesUsed(0)
 		}
@@ -870,4 +873,9 @@ func (e *HashAggExec) IsSpillTriggeredForTest() bool {
 		}
 	}
 	return false
+}
+
+// IsInvalidMemoryUsageTrackingForTest is for test
+func (e *HashAggExec) IsInvalidMemoryUsageTrackingForTest() bool {
+	return e.invalidMemoryUsageForTrackingTest
 }
