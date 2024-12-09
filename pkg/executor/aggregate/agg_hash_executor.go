@@ -443,14 +443,12 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		err   error
 	)
 
-	mSize := chk.MemoryUsage()
+	
 
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
 		}
-
-		e.memTracker.Consume(-mSize)
 
 		// Wait for the finish of all partial workers
 		e.inflightChunkSync.Wait()
@@ -480,13 +478,16 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			chk = input.chk
 		}
 
+		mSize := chk.MemoryUsage()
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
+			e.memTracker.Consume(-mSize)
 			return
 		}
 
 		if chk.NumRows() == 0 {
+			e.memTracker.Consume(-mSize)
 			return
 		}
 
@@ -496,6 +497,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
+			e.memTracker.Consume(-mSize)
 			return
 		}
 	}
