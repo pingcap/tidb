@@ -1074,10 +1074,6 @@ func (rc *LogClient) RestoreAndRewriteMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
-
 	log.Info("start to restore meta files",
 		zap.Int("total files", len(files)),
 		zap.Int("default files", len(filesInDefaultCF)),
