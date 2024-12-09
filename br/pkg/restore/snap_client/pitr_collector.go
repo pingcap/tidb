@@ -130,6 +130,16 @@ func (c *extraBackupMeta) genMsg() *pb.ExtraFullBackup {
 	return msg
 }
 
+func (c *pitrCollector) close() error {
+	if !c.enabled {
+		return nil
+	}
+
+	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return c.commit(cx)
+}
+
 func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) error {
 	if !c.enabled {
 		return nil

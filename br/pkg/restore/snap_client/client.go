@@ -433,6 +433,9 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 	rc.pitrColl = collector
 	collector.restoreUUID = rc.restoreUUID
 	rc.importer.beforeIngestCallbacks = append(rc.importer.beforeIngestCallbacks, collector.onBatch)
+	rc.importer.closeCallbacks = append(rc.importer.closeCallbacks, func(sfi *SnapFileImporter) error {
+		return collector.close()
+	})
 	return nil
 }
 
