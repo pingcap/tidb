@@ -16,11 +16,8 @@ package core
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
 	"math"
 	"time"
->>>>>>> 6b17068d75f (planner: fix incorrectly using the schema for plan cache (#57964))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
