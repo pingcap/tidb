@@ -125,7 +125,7 @@ type Data struct {
 	tableInfoResident *btree.BTreeG[tableInfoItem]
 
 	// the minimum ts of the recent used infoschema
-	recentMinTS uint64
+	recentMinTS atomic.Uint64
 }
 
 type tableInfoItem struct {
@@ -829,11 +829,11 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 // reports the min TS to info.InfoSyncer.
 func (is *infoschemaV2) keepAlive() {
 	for {
-		v := atomic.LoadUint64(&is.Data.recentMinTS)
+		v := is.Data.recentMinTS.Load()
 		if v <= is.ts {
 			break
 		}
-		succ := atomic.CompareAndSwapUint64(&is.Data.recentMinTS, v, is.ts)
+		succ := is.Data.recentMinTS.CompareAndSwap(v, is.ts)
 		if succ {
 			break
 		}
