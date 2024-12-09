@@ -157,7 +157,18 @@ type HashAggExec struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *HashAggExec) Close() error {
+func (e *HashAggExec) Close() (err error) {
+	defer func() {
+		err = e.BaseExecutor.Close()
+		failpoint.Inject("injectHashAggClosePanic", func(val failpoint.Value) {
+			if enabled := val.(bool); enabled {
+				if e.Ctx().GetSessionVars().ConnectionID != 0 {
+					panic(errors.New("test"))
+				}
+			}
+		})
+	}()
+
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -214,14 +225,6 @@ func (e *HashAggExec) Close() error {
 		}
 	}
 
-	err := e.BaseExecutor.Close()
-	failpoint.Inject("injectHashAggClosePanic", func(val failpoint.Value) {
-		if enabled := val.(bool); enabled {
-			if e.Ctx().GetSessionVars().ConnectionID != 0 {
-				panic(errors.New("test"))
-			}
-		}
-	})
 	return err
 }
 
