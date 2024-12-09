@@ -289,6 +289,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
+	memUsage := int64(0)
+
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -316,6 +318,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			inflightChunkSync:    e.inflightChunkSync,
 		}
 
+		memUsage += e.partialWorkers[i].chk.MemoryUsage()
+
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
 		for j := 0; j < finalConcurrency; j++ {
 			e.partialWorkers[i].BInMaps[j] = 0
@@ -332,8 +336,11 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
+		memUsage += input.chk.MemoryUsage()
 		e.inputCh <- input
 	}
+
+	e.memTracker.Consume(memUsage)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
@@ -442,8 +449,6 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
-
-	
 
 	defer func() {
 		if r := recover(); r != nil {
