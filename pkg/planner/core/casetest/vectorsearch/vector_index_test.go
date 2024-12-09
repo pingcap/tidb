@@ -87,6 +87,8 @@ func TestTiFlashANNIndex(t *testing.T) {
 	}
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.HandleDDLEvent(<-handle.DDLEventCh()))
 	tk.MustExec("analyze table t1")
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
