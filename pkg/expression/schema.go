@@ -47,7 +47,7 @@ func (ki KeyInfo) String() string {
 type Schema struct {
 	Columns []*Column
 	PKOrUK  []KeyInfo // this fields stores the primary key or unique key.
-	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// NullableUK stores those unique indexes that allow null values, but Keys does not allow null values.
 	// Since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	NullableUK []KeyInfo
 }
@@ -67,7 +67,7 @@ func (s *Schema) String() string {
 		ukStrs = append(ukStrs, key.String())
 	}
 	return "Column: [" + strings.Join(colStrs, ",") +
-		"] PKorUK: [" + strings.Join(strs, ",") +
+		"] PKOrUK: [" + strings.Join(strs, ",") +
 		"] NullableUK: [" + strings.Join(ukStrs, ",") + "]"
 }
 
