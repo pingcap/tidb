@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -45,8 +46,9 @@ func registerExampleTask(t testing.TB, ctrl *gomock.Controller, schedulerExt sch
 	if runSubtaskFn == nil {
 		runSubtaskFn = getCommonSubtaskRunFn(testContext)
 	}
-	stepExecutor := testutil.GetCommonStepExecutor(ctrl, runSubtaskFn)
-	executorExt := testutil.GetCommonTaskExecutorExt(ctrl, stepExecutor)
+	executorExt := testutil.GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
+		return testutil.GetCommonStepExecutor(ctrl, task.Step, runSubtaskFn), nil
+	})
 	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(ctrl))
 }
 
@@ -174,7 +176,9 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	schedulerExt := testutil.GetMockBasicSchedulerExt(c.MockCtrl)
 	stepExec := mockexecute.NewMockStepExecutor(c.MockCtrl)
 	stepExec.EXPECT().Init(gomock.Any()).Return(errors.New("mockExecSubtaskInitEnvErr")).AnyTimes()
-	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, stepExec)
+	executorExt := testutil.GetCommonTaskExecutorExt(c.MockCtrl, func(task *proto.Task) (execute.StepExecutor, error) {
+		return stepExec, nil
+	})
 	testutil.RegisterExampleTask(t, schedulerExt, executorExt, testutil.GetCommonCleanUpRoutine(c.MockCtrl))
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)

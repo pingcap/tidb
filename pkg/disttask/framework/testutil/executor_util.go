@@ -19,12 +19,15 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"go.uber.org/mock/gomock"
 )
 
 // InitTaskExecutor inits all mock components for TaskExecutor.
 func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
-	executorExt := GetCommonTaskExecutorExt(ctrl, GetCommonStepExecutor(ctrl, runSubtaskFn))
+	executorExt := GetCommonTaskExecutorExt(ctrl, func(task *proto.Task) (execute.StepExecutor, error) {
+		return GetCommonStepExecutor(ctrl, task.Step, runSubtaskFn), nil
+	})
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
