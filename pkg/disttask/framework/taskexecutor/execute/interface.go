@@ -123,6 +123,9 @@ func ModifyResource(exec StepExecutor, resource *proto.StepResource) {
 		return
 	}
 	e := reflect.ValueOf(exec)
+	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {
+		e = e.Elem()
+	}
 	info := e.FieldByName(stepExecFrameworkInfoName)
 	// mock generated code don't have this field.
 	if info.IsValid() {

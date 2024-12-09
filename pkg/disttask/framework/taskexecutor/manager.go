@@ -379,8 +379,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted b
 	return true
 }
 
-func (m *Manager) getNodeResource() *nodeResource {
-	return newNodeResource(m.totalCPU, m.totalMem)
+func (m *Manager) getNodeResource() *NodeResource {
+	return NewNodeResource(m.totalCPU, m.totalMem)
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
@@ -436,19 +436,23 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 	return err1
 }
 
-type nodeResource struct {
+// NodeResource is the resource of the node.
+// exported for test.
+type NodeResource struct {
 	totalCPU int
 	totalMem int64
 }
 
-func newNodeResource(totalCPU int, totalMem int64) *nodeResource {
-	return &nodeResource{
+// NewNodeResource creates a new NodeResource.
+// exported for test.
+func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
+	return &NodeResource{
 		totalCPU: totalCPU,
 		totalMem: totalMem,
 	}
 }
 
-func (nr *nodeResource) getStepResource(concurrency int) *proto.StepResource {
+func (nr *NodeResource) getStepResource(concurrency int) *proto.StepResource {
 	return &proto.StepResource{
 		CPU: proto.NewAllocatable(int64(concurrency)),
 		// same proportion as CPU

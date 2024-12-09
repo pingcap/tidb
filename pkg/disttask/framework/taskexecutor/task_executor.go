@@ -60,9 +60,19 @@ var (
 type Param struct {
 	taskTable TaskTable
 	slotMgr   *slotManager
-	nodeRc    *nodeResource
+	nodeRc    *NodeResource
 	// id, it's the same as server id now, i.e. host:port.
 	execID string
+}
+
+// NewParamForTest creates a new Param for test.
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeResource, execID string) Param {
+	return Param{
+		taskTable: taskTable,
+		slotMgr:   slotMgr,
+		nodeRc:    nodeRc,
+		execID:    execID,
+	}
 }
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
@@ -240,20 +250,7 @@ func (e *BaseTaskExecutor) Run() {
 			e.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		if newTask.Concurrency != oldTask.Concurrency {
-			if !e.slotMgr.exchange(&oldTask.TaskBase, &newTask.TaskBase) {
-				e.logger.Info("task concurrency modified, but not enough slots, executor exit",
-					zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
-				return
-			}
-			e.logger.Info("task concurrency modified",
-				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
-			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
 
-			if e.stepExec != nil {
-				execute.ModifyResource(e.stepExec, newResource)
-			}
-		}
 		if bytes.Compare(oldTask.Meta, newTask.Meta) != 0 {
 			e.logger.Info("task meta modified",
 				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
@@ -268,6 +265,21 @@ func (e *BaseTaskExecutor) Run() {
 					e.cleanStepExecutor()
 					continue
 				}
+			}
+		}
+		if newTask.Concurrency != oldTask.Concurrency {
+			if !e.slotMgr.exchange(&newTask.TaskBase) {
+				e.logger.Info("task concurrency modified, but not enough slots, executor exit",
+					zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
+				return
+			}
+			e.logger.Info("task concurrency modified",
+				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency),
+				zap.Int("availableSlots", e.slotMgr.availableSlots()))
+			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+
+			if e.stepExec != nil {
+				execute.ModifyResource(e.stepExec, newResource)
 			}
 		}
 

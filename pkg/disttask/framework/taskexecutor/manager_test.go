@@ -465,7 +465,7 @@ func TestSlotManagerInManager(t *testing.T) {
 			if task.ID == task1.ID {
 				newTask3 := *task3
 				newTask3.Concurrency = 8
-				require.True(t, m.slotManager.exchange(task3, &newTask3))
+				require.True(t, m.slotManager.exchange(&newTask3))
 				require.Equal(t, 2, m.slotManager.availableSlots())
 			}
 		},

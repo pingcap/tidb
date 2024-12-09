@@ -125,7 +125,7 @@ func TestSlotManagerExchangeSlots(t *testing.T) {
 
 	t.Run("not exist", func(t *testing.T) {
 		sm := newSlotManager(16)
-		require.False(t, sm.exchange(task1, &proto.TaskBase{ID: 1, Concurrency: 8}))
+		require.False(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 8}))
 	})
 
 	t.Run("exchange for more slots but not enough", func(t *testing.T) {
@@ -133,7 +133,7 @@ func TestSlotManagerExchangeSlots(t *testing.T) {
 		require.True(t, sm.alloc(task1))
 		require.Equal(t, 4, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
 		require.Equal(t, 12, sm.availableSlots())
-		require.False(t, sm.exchange(task1, &proto.TaskBase{ID: 1, Concurrency: 32}))
+		require.False(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 32}))
 		require.Equal(t, 4, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
 		require.Equal(t, 12, sm.availableSlots())
 	})
@@ -142,17 +142,22 @@ func TestSlotManagerExchangeSlots(t *testing.T) {
 		sm := newSlotManager(16)
 		require.True(t, sm.alloc(task1))
 		require.Equal(t, 12, sm.availableSlots())
-		require.True(t, sm.exchange(task1, &proto.TaskBase{ID: 1, Concurrency: 8}))
+		require.True(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 8}))
 		require.Len(t, sm.executorTasks, 1)
 		require.Equal(t, 8, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
 		require.Equal(t, 8, sm.availableSlots())
 	})
 
-	t.Run("exchange for less slots", func(t *testing.T) {
+	t.Run("exchange for less slots, and exchange twice with same concurrency", func(t *testing.T) {
 		sm := newSlotManager(16)
 		require.True(t, sm.alloc(task1))
 		require.Equal(t, 12, sm.availableSlots())
-		require.True(t, sm.exchange(task1, &proto.TaskBase{ID: 1, Concurrency: 2}))
+		require.True(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 2}))
+		require.Len(t, sm.executorTasks, 1)
+		require.Equal(t, 2, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
+		require.Equal(t, 14, sm.availableSlots())
+		// exchange again, no change
+		require.True(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 2}))
 		require.Len(t, sm.executorTasks, 1)
 		require.Equal(t, 2, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
 		require.Equal(t, 14, sm.availableSlots())
@@ -165,7 +170,7 @@ func TestSlotManagerExchangeSlots(t *testing.T) {
 		canAlloc, tasksNeedFree := sm.canAlloc(task2)
 		require.True(t, canAlloc)
 		require.Empty(t, tasksNeedFree)
-		require.True(t, sm.exchange(task1, &proto.TaskBase{ID: 1, Concurrency: 10}))
+		require.True(t, sm.exchange(&proto.TaskBase{ID: 1, Concurrency: 10}))
 		require.Len(t, sm.executorTasks, 1)
 		require.Equal(t, 10, sm.executorTasks[sm.taskID2Index[task1.ID]].Concurrency)
 		require.Equal(t, 6, sm.availableSlots())
