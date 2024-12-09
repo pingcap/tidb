@@ -858,8 +858,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
-	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.LoadUint32(tryCopLiteWorker) == 0 {
-		atomic.StoreUint32(tryCopLiteWorker, 1)
+	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.CompareAndSwapUint32(tryCopLiteWorker, 0, 1) {
 		it.liteWorker = &liteCopIteratorWorker{
 			ctx:    ctx, // the ctx contains some info(such as rpc interceptor), this ctx is used for handle cop task later.
 			worker: newCopIteratorWorker(it, nil),
