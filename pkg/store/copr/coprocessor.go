@@ -1089,7 +1089,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
-		resp = it.liteSendReq()
+		resp = it.liteSendReq(ctx)
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
@@ -1145,11 +1145,11 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (it *copIterator) liteSendReq() (resp *copResponse) {
+func (it *copIterator) liteSendReq(ctx context.Context) (resp *copResponse) {
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("copIteratorWork meet panic",
+			logutil.Logger(ctx).Error("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp = &copResponse{err: util2.GetRecoverError(r)}
@@ -1157,13 +1157,13 @@ func (it *copIterator) liteSendReq() (resp *copResponse) {
 	}()
 
 	worker := it.liteWorker.worker
-	ctx := it.liteWorker.ctx
+	taskCtx := it.liteWorker.ctx
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
-		respCh := make(chan *copResponse, 2)
+		respCh := make(chan *copResponse, 2+len(curTask.batchTaskList))
 		curTask.respChan = respCh
-		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		bo := chooseBackoffer(taskCtx, backoffermap, curTask, worker)
 		tasks, err := worker.handleTaskOnce(bo, curTask, respCh)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
