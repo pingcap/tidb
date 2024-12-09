@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/xitongsys/parquet-go/source"
 
 	"github.com/joechenrh/arrow-go/v18/parquet"
 	"github.com/joechenrh/arrow-go/v18/parquet/file"
@@ -40,6 +39,7 @@ const (
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
+	defaultBufSize            = 64 * 1024
 	// jan011970 is the date of unix epoch in julian day,
 	jan011970 = 2440588
 	secPerDay = 24 * 60 * 60
@@ -59,6 +59,17 @@ type readBuffer struct {
 	int64Buffer         []int64
 	int96Buffer         []parquet.Int96
 	boolBuffer          []bool
+}
+
+func (rb *readBuffer) Init(size int) {
+	rb.fixedLenArrayBuffer = make([]parquet.FixedLenByteArray, size)
+	rb.float32Buffer = make([]float32, size)
+	rb.float64Buffer = make([]float64, size)
+	rb.byteArrayBuffer = make([]parquet.ByteArray, size)
+	rb.int32Buffer = make([]int32, size)
+	rb.int64Buffer = make([]int64, size)
+	rb.int96Buffer = make([]parquet.Int96, size)
+	rb.boolBuffer = make([]bool, size)
 }
 
 // convertedType is older representation of the logical type in parquet
@@ -116,6 +127,104 @@ func formatTime(v int64, unit string, format, utcFormat string) string {
 	return t.UTC().Format(utcFormat)
 }
 
+// bytesReaderWrapper is a wrapper of bytes.Reader.
+type bytesReaderWrapper struct {
+	*bytes.Reader
+	rawBytes []byte
+	// current file path
+	path string
+}
+
+func (*bytesReaderWrapper) Close() error {
+	return nil
+}
+
+func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
+	return 0, errors.New("unsupported operation")
+}
+
+func (r *bytesReaderWrapper) Open(name string) (storage.ReadSeekCloser, error) {
+	if len(name) > 0 && name != r.path {
+		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
+	}
+	return &bytesReaderWrapper{
+		Reader:   bytes.NewReader(r.rawBytes),
+		rawBytes: r.rawBytes,
+		path:     r.path,
+	}, nil
+}
+
+// parquetFileWrapper is a wrapper for storage.ReadSeekCloser
+// It implements io.ReaderAt interface to read parquet file using arrow-go.
+type parquetFileWrapper struct {
+	ctx context.Context
+
+	storage.ReadSeekCloser
+	lastOff int64
+	bufSize int
+	buf     []byte
+
+	// current file path and store, used to open file
+	store storage.ExternalStorage
+	path  string
+}
+
+func (pf *parquetFileWrapper) InitBuffer(bufSize int) {
+	pf.bufSize = bufSize
+	pf.buf = make([]byte, bufSize)
+}
+
+// ReadAt implemement ReaderAt interface
+func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
+	// We want to minimize the number of Seek call as much as possible,
+	// since the underlying reader may require reopening the file.
+	gap := int(off - pf.lastOff)
+	if gap < 0 || gap > pf.bufSize {
+		if _, err := pf.Seek(off, io.SeekStart); err != nil {
+			return 0, err
+		}
+	} else {
+		pf.buf = pf.buf[:gap]
+		if _, err := pf.Read(pf.buf); err != nil {
+			return 0, err
+		}
+	}
+
+	n, err := pf.Read(p)
+	pf.lastOff = off + int64(n)
+	return n, err
+}
+
+// Seek implemement Seeker interface
+func (pf *parquetFileWrapper) Seek(offset int64, whence int) (int64, error) {
+	newOffset, err := pf.ReadSeekCloser.Seek(offset, whence)
+	pf.lastOff = newOffset
+	return newOffset, err
+}
+
+func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
+	return 0, errors.New("unsupported operation")
+}
+
+func (pf *parquetFileWrapper) Open(name string) (storage.ReadSeekCloser, error) {
+	if len(name) == 0 {
+		name = pf.path
+	}
+	reader, err := pf.store.Open(pf.ctx, name, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	newPf := &parquetFileWrapper{
+		ReadSeekCloser: reader,
+		store:          pf.store,
+		ctx:            pf.ctx,
+		path:           name,
+	}
+	newPf.InitBuffer(64 * 1024)
+	return newPf, nil
+}
+
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
@@ -124,7 +233,7 @@ type ParquetParser struct {
 	columnNames []string
 
 	colReaders []file.ColumnChunkReader
-	colBuffers []readBuffer
+	colBuffers []*readBuffer
 	rows       [][]types.Datum
 	curIdx     int
 	avail      int
@@ -137,10 +246,9 @@ type ParquetParser struct {
 	curRows          int
 	totalRows        int
 
-	lastRow Row
-	logger  log.Logger
-
-	readSeekCloser ReadSeekCloser
+	readBytes int64
+	lastRow   Row
+	logger    log.Logger
 }
 
 func (p *ParquetParser) setStringData(readNum, col, offset int) {
@@ -223,7 +331,7 @@ func (p *ParquetParser) setDecimalData(readNum, col, offset int) error {
 	decimal := p.colMetas[col].decimalMeta
 
 	for i := 0; i < readNum; i++ {
-		if colTp == parquet.Types.Int32 || colTp == parquet.Types.Int32 {
+		if colTp == parquet.Types.Int64 || colTp == parquet.Types.Int32 {
 			v := p.colBuffers[col].int64Buffer[i]
 			if colTp == parquet.Types.Int32 {
 				v = int64(p.colBuffers[col].int32Buffer[i])
@@ -261,6 +369,34 @@ func (p *ParquetParser) setBoolData(readNum, col, offset int) {
 	}
 }
 
+func (p *ParquetParser) setFloat32Data(readNum, col, offset int) {
+	buf := p.colBuffers[col].float32Buffer
+	for i := 0; i < readNum; i++ {
+		p.rows[offset+i][col].SetFloat32(buf[i])
+	}
+}
+
+func (p *ParquetParser) setFloat64Data(readNum, col, offset int) {
+	buf := p.colBuffers[col].float64Buffer
+	for i := 0; i < readNum; i++ {
+		p.rows[offset+i][col].SetFloat64(buf[i])
+	}
+}
+
+func (p *ParquetParser) setFixedByteArrayData(readNum, col, offset int) {
+	buf := p.colBuffers[col].fixedLenArrayBuffer
+	for i := 0; i < readNum; i++ {
+		p.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
+	}
+}
+
+func (p *ParquetParser) setByteArrayData(readNum, col, offset int) {
+	buf := p.colBuffers[col].byteArrayBuffer
+	for i := 0; i < readNum; i++ {
+		p.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
+	}
+}
+
 func (p *ParquetParser) setInt96Data(readNum, col, offset int) {
 	// FYI: https://github.com/apache/spark/blob/d66a4e82eceb89a274edeb22c2fb4384bed5078b/sql/core/src/main/scala/org/apache/spark/sql/execution/datasources/parquet/ParquetWriteSupport.scala#L171-L178
 	// INT96 timestamp layout
@@ -285,10 +421,14 @@ func (p *ParquetParser) Init() error {
 
 	numCols := p.reader.MetaData().Schema.NumColumns()
 	p.colReaders = make([]file.ColumnChunkReader, numCols)
-	p.colBuffers = make([]readBuffer, numCols)
+	p.colBuffers = make([]*readBuffer, numCols)
 	p.rows = make([][]types.Datum, batchReadRowSize)
 	for i := range p.rows {
 		p.rows[i] = make([]types.Datum, numCols)
+	}
+	for i := range p.colBuffers {
+		p.colBuffers[i] = &readBuffer{}
+		p.colBuffers[i].Init(batchReadRowSize)
 	}
 
 	return nil
@@ -358,7 +498,8 @@ func (p *ParquetParser) readInGroup(num, dataOffset int) (int, error) {
 	req := int64(num)
 	for i, col := range p.colReaders {
 		buf := p.colBuffers[i]
-		switch col.Type() {
+		physicalTp := col.Type()
+		switch physicalTp {
 		case parquet.Types.FixedLenByteArray:
 			total, _, err = col.(*file.FixedLenByteArrayColumnChunkReader).ReadBatch(req, buf.fixedLenArrayBuffer, nil, nil)
 		case parquet.Types.Float:
@@ -381,16 +522,30 @@ func (p *ParquetParser) readInGroup(num, dataOffset int) (int, error) {
 			return 0, errors.Trace(err)
 		}
 
-		// Parse data according to converted type
-		if col.Type() == parquet.Types.Boolean {
-			p.setBoolData(num, i, dataOffset)
-			continue
-		} else if col.Type() == parquet.Types.Int96 {
-			p.setInt96Data(num, i, dataOffset)
+		meta := p.colMetas[i]
+
+		// If we can't get converted type, just use physical type
+		if physicalTp == parquet.Types.Boolean || physicalTp == parquet.Types.Int96 || meta.converted == schema.ConvertedTypes.None {
+			switch physicalTp {
+			case parquet.Types.Boolean:
+				p.setBoolData(num, i, dataOffset)
+			case parquet.Types.Int32:
+				p.setInt32Data(num, i, dataOffset)
+			case parquet.Types.Int64:
+				p.setInt64Data(num, i, dataOffset)
+			case parquet.Types.Int96:
+				p.setInt96Data(num, i, dataOffset)
+			case parquet.Types.Float:
+				p.setFloat32Data(num, i, dataOffset)
+			case parquet.Types.Double:
+				p.setFloat64Data(num, i, dataOffset)
+			case parquet.Types.ByteArray:
+				p.setByteArrayData(num, i, dataOffset)
+			case parquet.Types.FixedLenByteArray:
+				p.setFixedByteArrayData(num, i, dataOffset)
+			}
 			continue
 		}
-
-		meta := p.colMetas[i]
 
 		switch meta.converted {
 		case schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
@@ -426,8 +581,9 @@ func (p *ParquetParser) Pos() (pos int64, rowID int64) {
 	return int64(p.curRows), p.lastRow.RowID
 }
 
-// SetPos sets the position in a parquet file.
-// It implements the Parser interface.
+// SetPos implements the Parser interface.
+// For parquet file, this interface will read and discard the first `pos` rows,
+// and set the current row ID to `rowID`
 func (p *ParquetParser) SetPos(pos int64, rowID int64) error {
 	p.lastRow.RowID = rowID
 	if pos < int64(p.curRows) {
@@ -440,9 +596,10 @@ func (p *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet it's parquet file's reader current position.
+// For parquet it's nonsense to read the position of internal reader,
+// thus it will return the number of rows read
 func (pp *ParquetParser) ScannedPos() (int64, error) {
-	return pp.readSeekCloser.Seek(0, io.SeekCurrent)
+	return int64(pp.curRows), nil
 }
 
 // Close closes the parquet file of the parser.
@@ -501,77 +658,13 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 	pp.lastRow.RowID = rowID
 }
 
-// readerWrapper is a used for implement `source.ParquetFile`
-type readerWrapper struct {
-	ReadSeekCloser
-	store storage.ExternalStorage
-	ctx   context.Context
-	// current file path
-	path string
-}
-
-func (*readerWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (r *readerWrapper) Open(name string) (source.ParquetFile, error) {
-	if len(name) == 0 {
-		name = r.path
-	}
-	reader, err := r.store.Open(r.ctx, name, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &readerWrapper{
-		ReadSeekCloser: reader,
-		store:          r.store,
-		ctx:            r.ctx,
-		path:           name,
-	}, nil
-}
-
-func (*readerWrapper) Create(_ string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
-
-// bytesReaderWrapper is a wrapper of bytes.Reader used for implement `source.ParquetFile`
-type bytesReaderWrapper struct {
-	*bytes.Reader
-	rawBytes []byte
-	// current file path
-	path string
-}
-
-func (*bytesReaderWrapper) Close() error {
-	return nil
-}
-
-func (*bytesReaderWrapper) Create(_ string) (source.ParquetFile, error) {
-	return nil, errors.New("unsupported operation")
-}
-
-func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
-	return 0, errors.New("unsupported operation")
-}
-
-func (r *bytesReaderWrapper) Open(name string) (source.ParquetFile, error) {
-	if len(name) > 0 && name != r.path {
-		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
-	}
-	return &bytesReaderWrapper{
-		Reader:   bytes.NewReader(r.rawBytes),
-		rawBytes: r.rawBytes,
-		path:     r.path,
-	}, nil
-}
-
 // OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	path string,
 	size int64,
-) (source.ParquetFile, error) {
+) (storage.ReadSeekCloser, error) {
 	if size <= smallParquetFileThreshold {
 		fileBytes, err := store.ReadFile(ctx, path)
 		if err != nil {
@@ -588,24 +681,15 @@ func OpenParquetReader(
 	if err != nil {
 		return nil, err
 	}
-	return &readerWrapper{
+
+	pf := &parquetFileWrapper{
 		ReadSeekCloser: r,
 		store:          store,
 		ctx:            ctx,
 		path:           path,
-	}, nil
-}
-
-// readParquetFileRowCount reads the parquet file row count.
-// It is a special func to fetch parquet file row count fast.
-// TODO(joechnerh): implement this
-func readParquetFileRowCount(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
-) (int64, error) {
-	return 0, nil
+	}
+	pf.InitBuffer(defaultBufSize)
+	return pf, nil
 }
 
 // ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
@@ -618,41 +702,13 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
+
+	reader, err := file.NewParquetReader(&parquetFileWrapper{ReadSeekCloser: r})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return numberRows, nil
-}
 
-type parquetFileOpener struct {
-	storage.ReadSeekCloser
-	lastOff int64
-	bufSize int
-	buf     []byte
-}
-
-func (pf *parquetFileOpener) InitBuffer(bufSize int) {
-	pf.bufSize = bufSize
-	pf.buf = make([]byte, bufSize)
-}
-
-func (pf *parquetFileOpener) ReadAt(p []byte, off int64) (n int, err error) {
-	// We want to minimize the number of Seek call as much as possible,
-	// since the underlying reader may require reopening the file.
-	gap := int(off - pf.lastOff)
-	if gap < 0 || gap > pf.bufSize {
-		if _, err := pf.Seek(off, io.SeekStart); err != nil {
-			return 0, err
-		}
-	} else {
-		pf.buf = pf.buf[:gap]
-		if _, err := pf.Read(pf.buf); err != nil {
-			return 0, err
-		}
-	}
-
-	return pf.Read(p)
+	return reader.MetaData().NumRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
@@ -662,20 +718,19 @@ func NewParquetParser(
 	r storage.ReadSeekCloser,
 	path string,
 ) (*ParquetParser, error) {
-	// check to avoid wrapping twice
-	wrapper, ok := r.(source.ParquetFile)
+
+	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
-		wrapper = &readerWrapper{
+		wrapper := &parquetFileWrapper{
 			ReadSeekCloser: r,
 			store:          store,
 			ctx:            ctx,
 			path:           path,
 		}
+		wrapper.InitBuffer(64 * 1024)
 	}
 
-	nr := &parquetFileOpener{ReadSeekCloser: r}
-	nr.InitBuffer(64 * 1024)
-	reader, err := file.NewParquetReader(nr)
+	reader, err := file.NewParquetReader(wrapper)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -698,11 +753,10 @@ func NewParquetParser(
 	}
 
 	parser := &ParquetParser{
-		reader:         reader,
-		colMetas:       columnMetas,
-		columnNames:    columnNames,
-		logger:         log.FromContext(ctx),
-		readSeekCloser: wrapper,
+		reader:      reader,
+		colMetas:    columnMetas,
+		columnNames: columnNames,
+		logger:      log.FromContext(ctx),
 	}
 	parser.Init()
 
