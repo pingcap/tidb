@@ -137,7 +137,14 @@ func (c *pitrCollector) close() error {
 
 	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	return c.commit(cx)
+
+	if summary.OnceSucceed() {
+		return errors.Annotate(c.commit(cx), "failed to commit pitrCollector")
+	}
+
+	log.Warn("Backup not success, put a half-finished metadata to the log backup.",
+		zap.Stringer("uuid", c.restoreUUID))
+	return errors.Annotatef(c.persistExtraBackupMeta(cx), "failed to persist the meta")
 }
 
 func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) error {
