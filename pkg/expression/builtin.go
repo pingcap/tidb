@@ -779,7 +779,7 @@ var funcs = map[string]functionClass{
 	ast.FindInSet:       &findInSetFunctionClass{baseFunctionClass{ast.FindInSet, 2, 2}},
 	ast.Hex:             &hexFunctionClass{baseFunctionClass{ast.Hex, 1, 1}},
 	ast.InsertFunc:      &insertFunctionClass{baseFunctionClass{ast.InsertFunc, 4, 4}},
-	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 2}},
+	ast.Instr:           &instrFunctionClass{baseFunctionClass{ast.Instr, 2, 4}},
 	ast.Lcase:           &lowerFunctionClass{baseFunctionClass{ast.Lcase, 1, 1}},
 	ast.Left:            &leftFunctionClass{baseFunctionClass{ast.Left, 2, 2}},
 	ast.Length:          &lengthFunctionClass{baseFunctionClass{ast.Length, 1, 1}},

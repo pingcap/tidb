@@ -3740,10 +3740,14 @@ func (c *instrFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETString, types.ETString)
+
+	argTps := []types.EvalType{types.ETString, types.ETString, types.ETInt, types.ETInt}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, argTps[:len(args)]...)
+
 	if err != nil {
 		return nil, err
 	}
+
 	bf.tp.SetFlen(11)
 	if bf.collation == charset.CollationBin {
 		sig := &builtinInstrSig{bf}
@@ -3771,8 +3775,93 @@ func (b *builtinInstrSig) Clone() builtinFunc {
 	return newSig
 }
 
-// evalInt evals INSTR(str,substr).
+// Find nth occurrence of substring in given string.
+// Search starts from the `position` character to the last character.
+func findNthOccurrence(str, sub string, position, n int) int {
+	currentPos := position
+	for i := 0; i < n; i++ {
+		currentPos = strings.Index(str[currentPos:], sub)
+		if currentPos == -1 {
+			return -1
+		}
+		currentPos += position
+		currentPos++
+	}
+	return currentPos - 1
+}
+
+// Find nth occurrence of substring in given string.
+// Search starts from the last `position` character to the first character.
+func findLastOccurrence(str, sub string, position, n int) int {
+	subLen := len(sub)
+	currentPos := len(str) - max(position, subLen)
+	if subLen == 0 || len(str) == 0 || currentPos < 0 {
+		return -1
+	}
+
+	count := 0
+	for ; currentPos >= 0; currentPos-- {
+		if str[currentPos:currentPos+subLen] == sub {
+			count++
+			if count == n {
+				return currentPos
+			}
+		}
+	}
+
+	return -1
+}
+
+// Find nth occurrence of substring in given string.
+// Search starts from the `position` rune to the last rune.
+func findNthOccurrenceUTF8(str, sub string, position, n int) int {
+	currentPos := 0
+	runes := []rune(str)
+	for i := 0; i < position; i++ {
+		currentPos += len(string(runes[i]))
+	}
+
+	for i := 0; i < n; i++ {
+		newPos := strings.Index(str[currentPos:], sub)
+		if newPos == -1 {
+			return -1
+		}
+		currentPos += (newPos + 1)
+	}
+	return currentPos - 1
+}
+
+// Find nth occurrence of substring in given string.
+// Search starts from the last `position` rune to the first rune.
+func findLastOccurrenceUTF8(str, sub string, position, n int) int {
+	runes := []rune(str)
+	subRunes := []rune(sub)
+	if position > len(runes) || len(sub) > len(str) {
+		return -1
+	}
+
+	cut := max(len(subRunes), position)
+	currentPos := len(str)
+	for i := 1; i <= cut; i++ {
+		currentPos -= len(string(runes[len(runes)-i]))
+	}
+
+	count := 0
+	for ; currentPos >= 0; currentPos-- {
+		if str[currentPos:currentPos+len(sub)] == sub {
+			count++
+			if count == n {
+				return currentPos
+			}
+		}
+	}
+
+	return -1
+}
+
+// evalInt evals INSTR(str,substr,[position],[occurrence]).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_instr
+// and https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/INSTR.html
 func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	str, IsNull, err := b.args[0].EvalString(ctx, row)
 	if IsNull || err != nil {
@@ -3787,7 +3876,36 @@ func (b *builtinInstrUTF8Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 		substr = strings.ToLower(substr)
 	}
 
-	idx := strings.Index(str, substr)
+	position := int64(1)
+	if len(b.args) >= 3 {
+		position, IsNull, err = b.args[2].EvalInt(ctx, row)
+		if IsNull || err != nil {
+			return 0, true, err
+		}
+	}
+
+	if position == 0 {
+		return int64(0), false, nil
+	}
+
+	occurrences := int64(1)
+	if len(b.args) >= 4 {
+		occurrences, IsNull, err = b.args[3].EvalInt(ctx, row)
+		if IsNull || err != nil {
+			return 0, true, err
+		}
+		if occurrences <= 0 {
+			return 0, true, errors.Errorf("Occurrence should not be negative, got %d", occurrences)
+		}
+	}
+
+	var idx int
+	if position > 0 {
+		idx = findNthOccurrenceUTF8(str, substr, int(position-1), int(occurrences))
+	} else {
+		idx = findLastOccurrenceUTF8(str, substr, int(-position), int(occurrences))
+	}
+
 	if idx == -1 {
 		return 0, false, nil
 	}
@@ -3807,10 +3925,36 @@ func (b *builtinInstrSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, true, err
 	}
 
-	idx := strings.Index(str, substr)
-	if idx == -1 {
-		return 0, false, nil
+	position := int64(1)
+	if len(b.args) >= 3 {
+		position, IsNull, err = b.args[2].EvalInt(ctx, row)
+		if IsNull || err != nil {
+			return 0, true, err
+		}
 	}
+
+	if position == 0 {
+		return int64(0), false, nil
+	}
+
+	occurrences := int64(1)
+	if len(b.args) >= 4 {
+		occurrences, IsNull, err = b.args[3].EvalInt(ctx, row)
+		if IsNull || err != nil {
+			return 0, true, err
+		}
+		if occurrences <= 0 {
+			return 0, true, errors.Errorf("Occurrence should not be negative, got %d", occurrences)
+		}
+	}
+
+	var idx int
+	if position > 0 {
+		idx = findNthOccurrence(str, substr, int(position-1), int(occurrences))
+	} else {
+		idx = findLastOccurrence(str, substr, int(-position), int(occurrences))
+	}
+
 	return int64(idx + 1), false, nil
 }
 
