@@ -115,10 +115,29 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		e.is = is
-
 		var err error
+		// InTxn() should be true in most of the cases.
+		// Because the transaction should have been activated in MemTableReaderExec Open().
+		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
+		// Because it could DATA RACE here and in Open() it's safe.
+		if sctx.GetSessionVars().InTxn() {
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// When the excutor is built from tidb coprocessor request, the transaction is not valid.
+			// Then InTxn() is false.
+			//
+			// What's the difference between using latest infoschema and using snapshot infoschema?
+			// A query *should* use the infoschema of the txn start ts, but it's still safe to use the latest.
+			// If now it's 12:00:00, the ts of the latest infoschema might be 11:59:30 or 11:52:12 or anything.
+			// Say, default GC interval is 10min, the ts of the latest infoschema is 11:52:12.
+			// Then the valid lifetime range on infoschema API become [11:52:12, 12:12:12) using latest infoschema,
+			// but it should be [12:00:00, 12:10:00) if using the snapshot infoschema.
+			e.is = sctx.GetInfoSchema().(infoschema.InfoSchema)
+		}
+
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			err = e.setDataFromSchemata(sctx)
@@ -177,7 +196,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(ctx, sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, e.is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
@@ -211,7 +230,9 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
 		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx)
+			err = e.setDataFromPlanCache(ctx, sctx, false)
+		case infoschema.ClusterTableTiDBPlanCache:
+			err = e.setDataFromPlanCache(ctx, sctx, true)
 		}
 		if err != nil {
 			return nil, err
@@ -834,6 +855,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 	}
 	e.rows = rows
 	return nil
@@ -1200,6 +1224,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
@@ -3453,9 +3481,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	if !ok {
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
-	// send request to tiflash, timeout is 1s
+	// send request to tiflash, use 5 minutes as per-request timeout
 	instanceID := e.instanceIDs[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
+	timeout := time.Duration(5*60) * time.Second
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3916,7 +3945,7 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx sessionctx.Context, cluster bool) (err error) {
 	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
 	rows := make([][]types.Datum, 0, len(values))
 	for _, v := range values {
@@ -3944,6 +3973,12 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 			types.NewTime(types.FromGoTime(lastTime), mysql.TypeTimestamp, types.DefaultFsp)))
 
 		rows = append(rows, row)
+	}
+
+	if cluster {
+		if rows, err = infoschema.AppendHostInfoToRows(sctx, rows); err != nil {
+			return err
+		}
 	}
 
 	e.rows = rows

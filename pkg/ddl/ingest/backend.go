@@ -226,7 +226,6 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 			return true, false, err
 		}
 	}
-
 	return true, true, err
 }
 
@@ -239,7 +238,11 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 		zap.String("usage info", bc.diskRoot.UsageInfo()))
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
-	bc.backend.SetIngestTS(ei.uuid, bc.ingestTS.Load())
+	err := bc.backend.SetTSBeforeImportEngine(ei.uuid, bc.ingestTS.Load())
+	if err != nil {
+		logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
+		return err
+	}
 
 	regionSplitSize := int64(lightning.SplitRegionSize) * int64(lightning.MaxSplitRegionSizeRatio)
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
@@ -250,7 +253,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 	}
 
 	// TS will be set before local backend import. We don't need to alloc a new one when reset.
-	err := bc.backend.ResetEngineSkipAllocTS(ctx, ei.uuid)
+	err = bc.backend.ResetEngineSkipAllocTS(ctx, ei.uuid)
 	failpoint.Inject("mockResetEngineFailed", func() {
 		err = fmt.Errorf("mock reset engine failed")
 	})

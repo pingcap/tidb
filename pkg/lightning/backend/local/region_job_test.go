@@ -25,6 +25,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -534,6 +535,11 @@ func TestCancelBalancer(t *testing.T) {
 	cancel()
 	<-done
 	jobWg.Wait()
+}
+
+func TestNewWriteRequest(T *testing.T) {
+	req := newWriteRequest(&sst.SSTMeta{}, "", "")
+	require.Equal(T, req.Context.TxnSource, uint64(kv.LightningPhysicalImportTxnSource))
 }
 
 func TestStoreBalancerNoRace(t *testing.T) {

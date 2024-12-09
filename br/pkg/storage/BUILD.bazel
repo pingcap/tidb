@@ -77,6 +77,7 @@ go_library(
         "@org_golang_google_api//transport/http",
         "@org_golang_x_net//http2",
         "@org_golang_x_oauth2//google",
+        "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",

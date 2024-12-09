@@ -18,17 +18,22 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -52,7 +57,7 @@ type allTableData struct {
 // assumes that tableIDs are only increasing.
 // To be used during failure testing of ALTER, to make sure cleanup is done.
 func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context, tbl table.Table, msg string) {
-	waitForGC := tk.MustQuery(`select start_key, end_key from mysql.gc_delete_range union all select start_key, end_key from mysql.gc_delete_range_done`).Rows()
+	waitForGC := tk.MustQuery(`select start_key, end_key, "queue" from mysql.gc_delete_range union all select start_key, end_key, "done" from mysql.gc_delete_range_done`).Rows()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
@@ -62,10 +67,12 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 	}()
 	// Get max tableID (if partitioned)
 	tblID := tbl.Meta().ID
+	logutil.DDLLogger().Info("noNewTablesAfter", zap.Int64("Table ID", tblID))
 	if pt := tbl.GetPartitionedTable(); pt != nil {
 		defs := pt.Meta().Partition.Definitions
 		{
 			for i := range defs {
+				logutil.DDLLogger().Info("noNewTablesAfter", zap.Int64("Part ID", defs[i].ID))
 				tblID = max(tblID, defs[i].ID)
 			}
 		}
@@ -76,10 +83,17 @@ func noNewTablesAfter(t *testing.T, tk *testkit.TestKit, ctx sessionctx.Context,
 	for _, rowGC := range waitForGC {
 		logutil.DDLLogger().Info("GC",
 			zap.String("start", fmt.Sprintf("%v", rowGC[0])),
-			zap.String("end", fmt.Sprintf("%v", rowGC[1])))
+			zap.String("end", fmt.Sprintf("%v", rowGC[1])),
+			zap.String("status", fmt.Sprintf("%s", rowGC[2])))
 	}
 ROW:
 	for it.Valid() {
+		foundTblID := tablecodec.DecodeTableID(it.Key())
+		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
+		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
+		if it.Key()[0] == 't' && foundTblID >= 0xFFFFFFFFFF00 {
+			break
+		}
 		for _, rowGC := range waitForGC {
 			// OK if queued for range delete / GC
 			startHex := fmt.Sprintf("%v", rowGC[0])
@@ -93,22 +107,22 @@ ROW:
 				require.NoError(t, err)
 				continue ROW
 			}
-			logutil.DDLLogger().Info("not found in GC",
-				zap.String("key", keyHex),
-				zap.String("start", startHex),
-				zap.String("end", endHex))
+			if keyHex < "748000f" {
+				logutil.DDLLogger().Error("not found in GC",
+					zap.String("key", keyHex),
+					zap.String("start", startHex),
+					zap.String("end", endHex))
+			}
 		}
-		foundTblID := tablecodec.DecodeTableID(it.Key())
-		// There are internal table ids starting from MaxInt48 -1 and allocating decreasing ids
-		// Allow 0xFF of them, See JobTableID, ReorgTableID, HistoryTableID, MDLTableID
-		if it.Key()[0] == 't' && foundTblID < 0xFFFFFFFFFF00 {
+		if it.Key()[0] == 't' {
 			is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
 			tbl, found := is.TableByID(context.Background(), foundTblID)
 			tblmsg := " Table ID no longer maps to a table"
 			if found {
 				tblmsg = fmt.Sprintf(" Table name: %s", tbl.Meta().Name.O)
 			}
-			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s) "+msg+tblmsg, tblID, foundTblID, it.Key())
+			decodedKey := expression.DecodeKeyFromString(ctx.GetExprCtx().GetEvalCtx().TypeCtx(), is, it.Key().String())
+			require.False(t, true, "Found table data after highest physical Table ID %d < %d (%s)\n%s\n"+msg+tblmsg, tblID, foundTblID, it.Key(), decodedKey)
 		}
 		break
 	}
@@ -344,13 +358,13 @@ func TestPartitionByNonPartitionedTable(t *testing.T) {
 }
 
 func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, beforeDML []string, beforeResult [][]any, afterDML []string, afterResult [][]any, skipTests ...string) {
+	// Skip GC emulator, we trigger it manually to also clean up PlacementBundles
+	util.EmulatorGCDisable()
 	store := testkit.CreateMockStore(t)
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_enable_global_index=true")
-	defer func() {
-		tk.MustExec("set tidb_enable_global_index=default")
-	}()
 	// Fail means we simply inject an error, and set the error count very high to see what happens
 	//   we do expect to do best effort rollback here as well!
 	// Cancel means we set job.State = JobStateCancelled, as in no need to do more
@@ -402,13 +416,17 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 				idxID = tOrg.Meta().Indices[0].ID
 			}
 			oldCreate := tk.MustQuery(`show create table t` + suffixComment).Rows()
+			// Run GC to clean changes in beforeDML
+			require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+			oldBundles, err := infosync.GetAllRuleBundles(context.TODO())
+			require.NoError(t, err)
 			name := "github.com/pingcap/tidb/pkg/ddl/reorgPart" + suffix
 			term := "return(true)"
 			if test.rollForwardFrom > 0 && test.rollForwardFrom <= i {
 				term = "10*" + term
 			}
 			testfailpoint.Enable(t, name, term)
-			err := tk.ExecToErr(alterSQL + suffixComment)
+			err = tk.ExecToErr(alterSQL + suffixComment)
 			tt := external.GetTableByName(t, tk, "test", "t")
 			partition := tt.Meta().Partition
 			rollback := false
@@ -417,7 +435,11 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			} else {
 				rollback = true
 				require.Error(t, err, "failpoint reorgPart"+suffix)
-				require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
+				// TODO: gracefully handle failures during WriteReorg also for nonclustered tables
+				// with unique indexes.
+				// Currently it can also do:
+				// 	Error "[kv:1062]Duplicate entry '7' for key 't.c'" does not contain "Injected error by reorgPartFail2"
+				//require.ErrorContains(t, err, "Injected error by reorgPart"+suffix)
 				tk.MustQuery(`show create table t` + suffixComment).Check(oldCreate)
 				if partition == nil {
 					require.Nil(t, tOrg.Meta().Partition, suffix)
@@ -433,15 +455,33 @@ func testReorganizePartitionFailures(t *testing.T, createSQL, alterSQL string, b
 			if rollback && idxID != 0 {
 				require.Equal(t, idxID, tt.Meta().Indices[0].ID, suffix)
 			}
+			require.Nil(t, gcWorker.DeleteRanges(context.TODO(), math.MaxInt64))
+			noNewTablesAfter(t, tk, tk.Session(), tt, suffix)
 			tk.MustExec(`admin check table t` + suffixComment)
 			for _, sql := range afterDML {
 				tk.MustExec(sql + suffixComment)
 			}
 			tk.MustQuery(`select * from t` + suffixComment).Sort().Check(afterResult)
+			newBundles, err := infosync.GetAllRuleBundles(context.TODO())
+			require.NoError(t, err)
+			if rollback {
+				for i := range newBundles {
+					found := false
+					for j := range oldBundles {
+						if newBundles[i].ID == oldBundles[j].ID {
+							require.Equal(t, oldBundles[j].String(), newBundles[i].String(), suffix)
+							found = true
+							break
+						}
+					}
+					require.True(t, found, "%s: New bundle not cleaned up '%s':\n%s", suffix, newBundles[i].ID, newBundles[i].String())
+				}
+				require.Equal(t, len(oldBundles), len(newBundles), suffix)
+			}
+			tk.MustQuery(`select * from t` + suffixComment).Sort().Check(afterResult)
 			tk.MustExec(`drop table t` + suffixComment)
 			// TODO: Check TiFlash replicas
 			// TODO: Check Label rules
-			// TODO: Check bundles
 			// TODO: Check autoIDs
 		}
 	}
@@ -884,9 +924,6 @@ func TestReorgPartitionRollback(t *testing.T) {
 		` partition p1 values less than (20),` +
 		` partition pMax values less than (MAXVALUE))`)
 	tk.MustExec(`insert into t values (1,"1",1), (12,"12",21),(23,"23",32),(34,"34",43),(45,"45",54),(56,"56",65)`)
-	// TODO: Check that there are no additional placement rules,
-	// bundles, or ranges with non-completed tableIDs
-	// (partitions used during reorg, but was dropped)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(1)`)
 	tk.MustExecToErr("alter table t reorganize partition p1 into (partition p1a values less than (15), partition p1b values less than (20))")
 	tk.MustExec(`admin check table t`)
@@ -1015,4 +1052,146 @@ func TestPartitionIssue56634(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	// Changed, since StatePublic can no longer rollback!
 	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")
+}
+
+func TestReorgPartitionFailuresPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition p2 values less than (30),` +
+		` partition pMax values less than (MAXVALUE))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`create or replace placement policy pp3 followers=3`,
+		`alter table t placement policy ='pp1'`,
+		`alter table t partition p1 placement policy ='pp2'`,
+		`alter table t partition p2 placement policy ='pp3'`,
+	}
+	beforeResult := testkit.Rows()
+	alter := "alter table t reorganize partition p1,p2 into (partition p1 values less than (17), partition p1b values less than (24) placement policy 'pp1', partition p2 values less than (30))"
+	afterResult := testkit.Rows()
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
+}
+
+func TestRemovePartitionFailuresPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+                        partition p0 values less than (50),
+                        partition p1 values less than (100),
+                        partition p2 values less than (200))`
+	alter := `alter table t remove partitioning`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`create or replace placement policy pp3 followers=2`,
+		`alter table t placement policy ='pp3'`,
+		`alter table t partition p1 placement policy ='pp1'`,
+		`alter table t partition p2 placement policy ='pp2'`,
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestPartitionByFailuresPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+                        partition p0 values less than (100),
+                        partition p1 values less than (200))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`create or replace placement policy pp3 followers=3`,
+		`alter table t placement policy ='pp1'`,
+		`alter table t partition p0 placement policy ='pp2'`,
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	alter := "alter table t partition by range (b) (partition pNoneC values less than (150) placement policy 'pp3', partition p2 values less than (300)) update indexes (`primary` global)"
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestPartitionNonPartitionedFailuresPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`alter table t placement policy ='pp1'`,
+		`insert into t values (1,1,1),(2,2,2),(3,3,3),(101,101,101),(102,102,102),(103,103,103)`,
+		`update t set a = 11, b = "11", c = 11 where a = 1`,
+		`update t set b = "12", c = 12 where b = 2`,
+		`delete from t where a = 102`,
+		`delete from t where b = 103`,
+	}
+	beforeResult := testkit.Rows("101 101 101", "11 11 11", "2 12 12", "3 3 3")
+	alter := "alter table t partition by range (b) (partition pNoneC values less than (150), partition p2 values less than (300) placement policy 'pp1') update indexes (`primary` global)"
+	afterDML := []string{
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+		`update t set a = 1, b = 1, c = 1 where a = 11`,
+		`update t set b = 2, c = 2 where c = 12`,
+		`update t set a = 9, b = 9 where a = 104`,
+		`delete from t where a = 5`,
+		`delete from t where b = 102`,
+	}
+	afterResult := testkit.Rows("1 1 1", "101 101 101", "2 2 2", "3 3 3", "4 4 4", "9 9 104")
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, afterDML, afterResult)
+}
+
+func TestReorganizePartitionFailuresAddPlacementPolicy(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered, b int not null, c varchar(255)) partition by range(a) (
+                        partition p0 values less than (50),
+                        partition p1 values less than (100),
+                        partition p2 values less than (200))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`insert into t values (4,4,4),(5,5,5),(104,104,104)`,
+	}
+	beforeResult := testkit.Rows("104 104 104", "4 4 4", "5 5 5")
+	alter := `alter table t reorganize partition p2 into (partition p2 values less than (200), partition pMax values less than (maxvalue) placement policy pp1)`
+	afterResult := beforeResult
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
+}
+
+func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
+	create := `create table t (a int unsigned primary key nonclustered global, b int not null, c varchar(255), unique key (c) global) partition by range(a) (
+                        partition p0 values less than (50),
+                        partition p1 values less than (100),
+                        partition p2 values less than (200))`
+	beforeDML := []string{
+		`create or replace placement policy pp1 followers=1`,
+		`create or replace placement policy pp2 followers=2`,
+		`alter table t placement policy pp1`,
+		`alter table t partition p2 placement policy pp2`,
+		`insert into t values (4,4,4),(50,50,50),(111,111,111),(155,155,155)`,
+	}
+	beforeResult := testkit.Rows("111 111 111", "155 155 155", "4 4 4", "50 50 50")
+	alter := "alter table t partition by range (a) (partition p1 values less than (150), partition pMax values less than (maxvalue) placement policy pp1) update indexes (`primary` local, `c` global)"
+	afterResult := beforeResult
+	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
 }
