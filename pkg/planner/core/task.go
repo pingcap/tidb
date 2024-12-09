@@ -1438,8 +1438,8 @@ func BuildFinalModeAggregation(
 // If there is no avg, nothing is changed and return nil.
 func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema := expression.NewSchema()
-	newSchema.Keys = p.schema.Keys
-	newSchema.UniqueKeys = p.schema.UniqueKeys
+	newSchema.PKOrUK = p.schema.PKOrUK
+	newSchema.NullableUK = p.schema.NullableUK
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
 	// add agg functions schema

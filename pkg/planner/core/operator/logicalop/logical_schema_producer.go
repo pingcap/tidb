@@ -148,13 +148,13 @@ func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Co
 
 // BuildKeyInfo implements LogicalPlan.BuildKeyInfo interface.
 func (s *LogicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = nil
+	selfSchema.PKOrUK = nil
 	s.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
 
 	// default implementation for plans has only one child: proprgate child keys
 	// multi-children plans are likely to have particular implementation.
 	if len(childSchema) == 1 {
-		for _, key := range childSchema[0].Keys {
+		for _, key := range childSchema[0].PKOrUK {
 			indices := selfSchema.ColumnsIndices(key)
 			if indices == nil {
 				continue
@@ -163,7 +163,7 @@ func (s *LogicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 			for _, i := range indices {
 				newKey = append(newKey, selfSchema.Columns[i])
 			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 		}
 	}
 }

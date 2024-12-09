@@ -264,7 +264,7 @@ func (a *AggregationPushDownSolver) tryToPushDownAgg(oldAgg *logicalop.LogicalAg
 		return child, nil
 	}
 	tmpSchema := expression.NewSchema(gbyCols...)
-	for _, key := range child.Schema().Keys {
+	for _, key := range child.Schema().PKOrUK {
 		if tmpSchema.ColumnsIndices(key) != nil { // gby item need to be covered by key.
 			return child, nil
 		}
@@ -427,7 +427,7 @@ func (*AggregationPushDownSolver) pushAggCrossUnion(agg *logicalop.LogicalAggreg
 	// e.g. Union distinct will add a aggregation like `select join_agg_0, join_agg_1, join_agg_2 from t group by a, b, c` above UnionAll.
 	// And the pushed agg will be something like `select a, b, c, a, b, c from t group by a, b, c`. So if we just return child as join does,
 	// this will cause error during executor phase.
-	for _, key := range unionChild.Schema().Keys {
+	for _, key := range unionChild.Schema().PKOrUK {
 		if tmpSchema.ColumnsIndices(key) != nil {
 			if ok, proj := ConvertAggToProj(newAgg, newAgg.Schema()); ok {
 				proj.SetChildren(unionChild)

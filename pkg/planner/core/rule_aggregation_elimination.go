@@ -69,7 +69,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.Children()[0].Schema().Keys {
+	for _, key := range agg.Children()[0].Schema().PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -109,14 +109,14 @@ func (*aggregationEliminateChecker) tryToEliminateDistinct(agg *logicalop.Logica
 				distinctByUniqueKey := false
 				schemaByDistinct := expression.NewSchema(cols...)
 				var uniqueKey expression.KeyInfo
-				for _, key := range agg.Children()[0].Schema().Keys {
+				for _, key := range agg.Children()[0].Schema().PKOrUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key
 						break
 					}
 				}
-				for _, key := range agg.Children()[0].Schema().UniqueKeys {
+				for _, key := range agg.Children()[0].Schema().NullableUK {
 					if schemaByDistinct.ColumnsIndices(key) != nil {
 						distinctByUniqueKey = true
 						uniqueKey = key

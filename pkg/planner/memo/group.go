@@ -220,7 +220,7 @@ func (g *Group) BuildKeyInfo() {
 	if len(childSchema) == 1 {
 		// For UnaryPlan(such as Selection, Limit ...), we can set the child's unique key as its unique key.
 		// If the GroupExpr is a schemaProducer, schema.Keys will be reset below in `BuildKeyInfo()`.
-		g.Prop.Schema.Keys = childSchema[0].Keys
+		g.Prop.Schema.PKOrUK = childSchema[0].PKOrUK
 	}
 	e.ExprNode.BuildKeyInfo(g.Prop.Schema, childSchema)
 	g.Prop.MaxOneRow = e.ExprNode.MaxOneRow() || logicalop.HasMaxOneRow(e.ExprNode, childMaxOneRow)
