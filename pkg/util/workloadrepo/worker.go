@@ -304,12 +304,12 @@ func (w *worker) startRepository(ctx context.Context) func() {
 			case <-ticker.C:
 				if w.owner.IsOwner() {
 					logutil.BgLogger().Info("repository has owner!")
-					if err := w.createAllTables(ctx); err != nil {
+					if err := w.createAllTables(ctx, time.Now()); err != nil {
 						logutil.BgLogger().Error("workload repository cannot create tables", zap.NamedError("err", err))
 					}
 				}
 
-				if !w.checkTablesExists(ctx) {
+				if !w.checkTablesExists(ctx, time.Now()) {
 					continue
 				}
 

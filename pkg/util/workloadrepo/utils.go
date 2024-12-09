@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-func generatePartitionDef(sb *strings.Builder, col string) {
+func generatePartitionDef(sb *strings.Builder, col string, now time.Time) {
 	fmt.Fprintf(sb, " PARTITION BY RANGE( TO_DAYS(%s) ) (", col)
 	// tbInfo is nil, retval must be false
-	_, _ = generatePartitionRanges(sb, nil)
+	_, _ = generatePartitionRanges(sb, nil, now)
 	fmt.Fprintf(sb, ")")
 }
 
@@ -40,8 +40,7 @@ func parsePartitionName(part string) (time.Time, error) {
 	return time.ParseInLocation("p20060102", part, time.Local)
 }
 
-func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo) (bool, error) {
-	now := time.Now()
+func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now time.Time) (bool, error) {
 	firstPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	if tbInfo != nil {
 		pi := tbInfo.GetPartitionInfo()

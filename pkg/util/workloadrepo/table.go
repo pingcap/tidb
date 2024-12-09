@@ -99,7 +99,7 @@ func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 	return nil
 }
 
-func (w *worker) createAllTables(ctx context.Context) error {
+func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
@@ -128,12 +128,12 @@ func (w *worker) createAllTables(ctx context.Context) error {
 		if tbl.tableType == metadataTable {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "BEGIN_TIME")
+			generatePartitionDef(sb, "BEGIN_TIME", now)
 			createStmt = sb.String()
 		} else {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "TS")
+			generatePartitionDef(sb, "TS", now)
 			createStmt = sb.String()
 		}
 
@@ -142,16 +142,14 @@ func (w *worker) createAllTables(ctx context.Context) error {
 		}
 	}
 
-	return createAllPartitions(ctx, sess, is)
+	return createAllPartitions(ctx, sess, is, now)
 }
 
-// checkTablesExists will check if all tables are created and if the work is bootstrapped.
-func (w *worker) checkTablesExists(ctx context.Context) bool {
+func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-	now := time.Now()
 	return slice.AllOf(workloadTables, func(i int) bool {
 		return checkTableExistsByIS(ctx, is, workloadTables[i].destTable, now)
 	})

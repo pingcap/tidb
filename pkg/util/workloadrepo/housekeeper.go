@@ -39,7 +39,7 @@ func calcNextTick(now time.Time) time.Duration {
 	return next.Sub(now)
 }
 
-func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *repositoryTable, sess sessionctx.Context) error {
+func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *repositoryTable, sess sessionctx.Context, now time.Time) error {
 	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 	if err != nil {
 		logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
@@ -49,7 +49,7 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 
 	sb := &strings.Builder{}
 	sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
-	skip, err := generatePartitionRanges(sb, tbInfo)
+	skip, err := generatePartitionRanges(sb, tbInfo, now)
 	if err != nil {
 		return err
 	}
@@ -64,9 +64,9 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 	return nil
 }
 
-func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
+func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
 	for _, tbl := range workloadTables {
-		if err := createPartition(ctx, is, &tbl, sess); err != nil {
+		if err := createPartition(ctx, is, &tbl, sess, now); err != nil {
 			return err
 		}
 	}
@@ -149,7 +149,7 @@ func (w *worker) getHouseKeeper(ctx context.Context, fn func(time.Time) time.Dur
 				is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 
 				// create new partitions
-				if err := createAllPartitions(ctx, sess, is); err != nil {
+				if err := createAllPartitions(ctx, sess, is, now); err != nil {
 					continue
 				}
 
