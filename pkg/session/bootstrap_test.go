@@ -2543,14 +2543,15 @@ func TestNullKeyspaceEtcdNamespace(t *testing.T) {
 
 func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix bool) {
 	integration.BeforeTestExternal(t)
-	var opts mockstore.MockTiKVStoreOption
 	var store kv.Storage
 	var err error
 	if keyspaceMeta != nil {
-		opts = mockstore.WithKeyspaceMeta(keyspaceMeta)
-		store, err = mockstore.NewMockStore(opts)
+		store, err = mockstore.NewMockStore(
+			mockstore.WithKeyspaceMeta(keyspaceMeta),
+			mockstore.WithStoreType(mockstore.EmbedUnistore),
+		)
 	} else {
-		store, err = mockstore.NewMockStore()
+		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	}
 	require.NoError(t, err)
 	defer func() {
@@ -2571,22 +2572,22 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	require.NoError(t, err)
 	defer dom.Close()
 
-	checkETCDNameSpace(t, dom, "/testkey", isHasPrefix)
+	checkETCDNameSpace(t, dom, isHasPrefix)
 }
 
-func checkETCDNameSpace(t *testing.T, dom *domain.Domain, testKey string, isHasPrefix bool) {
+func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
 	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(dom.Store().GetCodec())
-
+	testKeyWithoutPrefix := "/testkey"
 	testVal := "test"
-
 	var expectTestKey string
 	if isHasPrefix {
-		expectTestKey = namespacePrefix + testKey
+		expectTestKey = namespacePrefix + testKeyWithoutPrefix
 	} else {
-		expectTestKey = testKey
+		expectTestKey = testKeyWithoutPrefix
 	}
 
-	_, err := dom.EtcdClient().Put(context.Background(), testKey, testVal)
+	// Put key value into etcd.
+	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
 	require.NoError(t, err)
 
 	// Use expectTestKey to get the key from etcd.
@@ -2595,9 +2596,9 @@ func checkETCDNameSpace(t *testing.T, dom *domain.Domain, testKey string, isHasP
 	require.Equal(t, len(getResp.Kvs), 1)
 
 	if isHasPrefix {
-		getResp, err = dom.UnprefixedEtcdCli().Get(context.Background(), testKey)
+		getResp, err = dom.UnprefixedEtcdCli().Get(context.Background(), testKeyWithoutPrefix)
 		require.NoError(t, err)
-		require.Equal(t, len(getResp.Kvs), 0)
+		require.Equal(t, 0, len(getResp.Kvs))
 	}
 }
 
