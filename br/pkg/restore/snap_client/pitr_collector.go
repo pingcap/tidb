@@ -59,17 +59,8 @@ func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets .
 
 	p.wg.Go(func() error {
 		for _, fileSets := range batchFileSets {
-			for _, fileSet := range fileSets {
-				for _, file := range fileSet.SSTFiles {
-					if err := p.coll.putSST(p.ecx, file); err != nil {
-						return errors.Annotatef(err, "failed to put sst %s", file.GetName())
-					}
-				}
-				for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
-					if err := p.coll.putRewriteRule(p.ecx, hint.Origin, hint.Rewritten); err != nil {
-						return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)
-					}
-				}
+			if err := p.coll.onBatch(p.cx, fileSets); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -137,6 +128,45 @@ func (c *extraBackupMeta) genMsg() *pb.ExtraFullBackup {
 		msg.RewrittenTables = append(msg.RewrittenTables, &pb.RewrittenTableID{UpstreamOfUpstream: old, Upstream: new})
 	}
 	return msg
+}
+
+func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) error {
+	if !c.enabled {
+		return nil
+	}
+
+	if err := c.prepareMigIfNeeded(ctx); err != nil {
+		return err
+	}
+
+	eg, ectx := errgroup.WithContext(ctx)
+	for _, fileSet := range fileSets {
+		for _, file := range fileSet.SSTFiles {
+			file := file
+			eg.Go(func() error {
+				if err := c.putSST(ectx, file); err != nil {
+					return errors.Annotatef(err, "failed to put sst %s", file.GetName())
+				}
+				return nil
+			})
+		}
+		for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
+			hint := hint
+			eg.Go(func() error {
+				if err := c.putRewriteRule(ectx, hint.Origin, hint.Rewritten); err != nil {
+					return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)
+				}
+				return nil
+			})
+		}
+	}
+
+	err := eg.Wait()
+	if err != nil {
+		return err
+	}
+
+	return errors.Annotatef(c.persistExtraBackupMeta(ctx), "failed to persist backup meta when finishing batch")
 }
 
 func (c *pitrCollector) doWithExtraBackupMetaLock(f func()) {

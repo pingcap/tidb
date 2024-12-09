@@ -77,6 +77,7 @@ const minBatchDdlSize = 1
 
 type SnapClient struct {
 	restorer restore.SstRestorer
+	importer *SnapFileImporter
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
@@ -431,7 +432,7 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 	}
 	rc.pitrColl = collector
 	collector.restoreUUID = rc.restoreUUID
-	rc.restorer = restore.Dual(rc.pitrColl.createRestorer(ctx), rc.restorer)
+	rc.importer.beforeIngestCallbacks = append(rc.importer.beforeIngestCallbacks, collector.onBatch)
 	return nil
 }
 
@@ -545,7 +546,6 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
-	var fileImporter *SnapFileImporter
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
 		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
@@ -556,20 +556,20 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			mode = Txn
 		}
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		fileImporter, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
+		rc.importer, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
-		rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+		rc.restorer = restore.NewSimpleSstRestorer(ctx, rc.importer, rc.workerPool, nil)
 	} else {
 		// or create a fileImporter with the cluster API version
-		fileImporter, err = NewSnapFileImporter(
+		rc.importer, err = NewSnapFileImporter(
 			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, rc.checkpointRunner)
+		rc.restorer = restore.NewMultiTablesRestorer(ctx, rc.importer, rc.workerPool, rc.checkpointRunner)
 	}
 	return nil
 }

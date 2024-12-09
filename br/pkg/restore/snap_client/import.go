@@ -141,7 +141,8 @@ type SnapFileImporter struct {
 	downloadTokensMap *storeTokenChannelMap
 	ingestTokensMap   *storeTokenChannelMap
 
-	closeCallbacks []func(*SnapFileImporter) error
+	closeCallbacks        []func(*SnapFileImporter) error
+	beforeIngestCallbacks []func(context.Context, restore.BatchBackupFileSet) error
 
 	concurrencyPerStore uint
 
@@ -369,6 +370,12 @@ func (importer *SnapFileImporter) Import(
 	ctx context.Context,
 	backupFileSets ...restore.BackupFileSet,
 ) error {
+	for i, cb := range importer.beforeIngestCallbacks {
+		if err := cb(ctx, backupFileSets); err != nil {
+			return errors.Annotatef(err, "failed to executing the callback #%d", i)
+		}
+	}
+
 	// Rewrite the start key and end key of file to scan regions
 	startKey, endKey, err := importer.getKeyRangeForFiles(backupFileSets)
 	if err != nil {
