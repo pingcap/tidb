@@ -790,7 +790,6 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 			mvccInputRows:             summary.GetTiflashScanContext().GetMvccInputRows(),
 			mvccInputBytes:            summary.GetTiflashScanContext().GetMvccInputBytes(),
 			mvccOutputRows:            summary.GetTiflashScanContext().GetMvccOutputRows(),
-			lmSkipRows:                summary.GetTiflashScanContext().GetLmSkipRows(),
 			totalBuildBitmapMs:        summary.GetTiflashScanContext().GetTotalBuildBitmapMs(),
 			totalBuildInputStreamMs:   summary.GetTiflashScanContext().GetTotalBuildInputstreamMs(),
 			staleReadRegions:          summary.GetTiflashScanContext().GetStaleReadRegions(),
@@ -985,7 +984,6 @@ type TiFlashScanContext struct {
 	mvccInputRows             uint64
 	mvccInputBytes            uint64
 	mvccOutputRows            uint64
-	lmSkipRows                uint64
 	totalBuildBitmapMs        uint64
 	totalBuildInputStreamMs   uint64
 	staleReadRegions          uint64
@@ -1030,7 +1028,6 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		mvccInputRows:             context.mvccInputRows,
 		mvccInputBytes:            context.mvccInputBytes,
 		mvccOutputRows:            context.mvccOutputRows,
-		lmSkipRows:                context.lmSkipRows,
 		totalBuildBitmapMs:        context.totalBuildBitmapMs,
 		totalBuildInputStreamMs:   context.totalBuildInputStreamMs,
 		staleReadRegions:          context.staleReadRegions,
@@ -1100,7 +1097,6 @@ func (context *TiFlashScanContext) String() string {
 		"mvcc_input_rows:%d, "+
 		"mvcc_input_bytes:%d, "+
 		"mvcc_output_rows:%d, "+
-		"lm_skip_rows:%d, "+
 		"local_regions:%d, "+
 		"remote_regions:%d, "+
 		"tot_learner_read:%dms, "+
@@ -1129,7 +1125,6 @@ func (context *TiFlashScanContext) String() string {
 		context.mvccInputRows,
 		context.mvccInputBytes,
 		context.mvccOutputRows,
-		context.lmSkipRows,
 		context.localRegions,
 		context.remoteRegions,
 		context.totalLearnerReadMs,
@@ -1181,7 +1176,6 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.mvccInputRows += other.mvccInputRows
 	context.mvccInputBytes += other.mvccInputBytes
 	context.mvccOutputRows += other.mvccOutputRows
-	context.lmSkipRows += other.lmSkipRows
 	context.totalBuildBitmapMs += other.totalBuildBitmapMs
 	context.totalBuildInputStreamMs += other.totalBuildInputStreamMs
 	context.staleReadRegions += other.staleReadRegions
