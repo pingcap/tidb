@@ -335,7 +335,7 @@ func buildIntoAccessPath(
 	// produce several partial paths).
 	//partialPaths := make([]*util.AccessPath, 0, len(indexMergePath.indexMergeORPartialPaths))
 
-	var allAllPaths [][][]*util.AccessPath
+	allAllPaths := make([][][]*util.AccessPath, 0, len(indexMergePath.indexMergeORPartialPaths))
 
 	// for each partial path
 	for _, unfinishedPathList := range indexMergePath.indexMergeORPartialPaths {
