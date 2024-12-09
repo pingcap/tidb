@@ -274,6 +274,17 @@ func (w *worker) readInstanceID() error {
 	return nil
 }
 
+func fillInTableNames() {
+	for rtIdx := range workloadTables {
+		rt := &workloadTables[rtIdx]
+		if rt.table != "" {
+			if rt.destTable == "" {
+				rt.destTable = "HIST_" + rt.table
+			}
+		}
+	}
+}
+
 func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -284,14 +295,7 @@ func (w *worker) startRepository(ctx context.Context) func() {
 		}
 		ticker := time.NewTicker(time.Second)
 
-		for rtIdx := range workloadTables {
-			rt := &workloadTables[rtIdx]
-			if rt.table != "" {
-				if rt.destTable == "" {
-					rt.destTable = "HIST_" + rt.table
-				}
-			}
-		}
+		fillInTableNames()
 
 		for {
 			select {
