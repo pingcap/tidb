@@ -121,6 +121,7 @@ go_library(
         "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
         "//pkg/util/tracing",
+        "@com_gitee_trisia_gotlcp//tlcp",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

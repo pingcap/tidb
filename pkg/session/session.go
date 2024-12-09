@@ -36,6 +36,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -366,6 +367,13 @@ func (s *session) SetTLSState(tlsState *tls.ConnectionState) {
 	// If user is not connected via TLS, then tlsState == nil.
 	if tlsState != nil {
 		s.sessionVars.TLSConnectionState = tlsState
+	}
+}
+
+func (s *session) SetTLCPState(tlcpState *tlcp.ConnectionState) {
+	// If user is not connected via TLS, then tlsState == nil.
+	if tlcpState != nil {
+		s.sessionVars.TLCPConnectionState = tlcpState
 	}
 }
 

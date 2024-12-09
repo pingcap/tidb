@@ -47,6 +47,7 @@ import (
 	"time"
 	"unsafe"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -118,6 +119,7 @@ const defaultCapability = mysql.ClientLongPassword | mysql.ClientLongFlag |
 type Server struct {
 	cfg               *config.Config
 	tlsConfig         unsafe.Pointer // *tls.Config
+	tlcpConfig        unsafe.Pointer // *tlcp.Config
 	driver            IDriver
 	listener          net.Listener
 	socket            net.Listener
@@ -294,6 +296,23 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if s.tlsConfig != nil {
 		s.capability |= mysql.ClientSSL
 	}
+
+	// load tlcp certificates
+	tlcpConfig, err := util.LoadTLCPCertificates(s.cfg.Security.TLCPCA, s.cfg.Security.TLCPSigKey, s.cfg.Security.TLCPSigCert,
+		s.cfg.Security.TLCPEncKey, s.cfg.Security.TLCPEncCert)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tlcpConfig != nil {
+		setTLCPVariable(s.cfg.Security.TLCPCA, s.cfg.Security.TLCPSigCert, s.cfg.Security.TLCPSigKey,
+			s.cfg.Security.TLCPEncCert, s.cfg.Security.TLCPEncKey)
+		atomic.StorePointer(&s.tlcpConfig, unsafe.Pointer(tlcpConfig))
+		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+			zap.Bool("client tlcp verification enabled", len(variable.GetSysVar("tlcp_ca").Value) > 0))
+		// set the capability extension flag
+		s.capability |= mysql.ClientCapabilityExtension
+	}
+
 	variable.RegisterStatistics(s)
 	return s, nil
 }
@@ -408,6 +427,14 @@ func setSSLVariable(ca, key, cert string) {
 	variable.SetSysVar("ssl_cert", cert)
 	variable.SetSysVar("ssl_key", key)
 	variable.SetSysVar("ssl_ca", ca)
+}
+
+func setTLCPVariable(ca, signKey, signCert, encKey, encCert string) {
+	variable.SetSysVar("tlcp_ca", ca)
+	variable.SetSysVar("tlcp_sig_cert", signCert)
+	variable.SetSysVar("tlcp_sig_key", signKey)
+	variable.SetSysVar("tlcp_enc_cert", encCert)
+	variable.SetSysVar("tlcp_enc_key", encKey)
 }
 
 func setTxnScope() {
@@ -944,6 +971,10 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 // GetTLSConfig implements the SessionManager interface.
 func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
+}
+
+func (s *Server) getTLCPConfig() *tlcp.Config {
+	return (*tlcp.Config)(atomic.LoadPointer(&s.tlcpConfig))
 }
 
 func killQuery(conn *clientConn, maxExecutionTime, runaway bool) {

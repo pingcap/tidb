@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
@@ -847,6 +848,9 @@ type SessionVars struct {
 
 	// TLSConnectionState is the TLS connection state (nil if not using TLS).
 	TLSConnectionState *tls.ConnectionState
+
+	// TLCPConnectionState is the TLCP connection state (nil if not using TLCP).
+	TLCPConnectionState *tlcp.ConnectionState
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64

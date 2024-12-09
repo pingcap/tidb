@@ -71,6 +71,7 @@ go_library(
         "//pkg/util/tls",
         "//pkg/util/topsql/state",
         "//pkg/util/versioninfo",
+        "@com_gitee_trisia_gotlcp//tlcp",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

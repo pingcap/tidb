@@ -55,6 +55,7 @@ import (
 	"time"
 	"unsafe"
 
+	"gitee.com/Trisia/gotlcp/tlcp"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -163,6 +164,7 @@ type clientConn struct {
 	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
+	tlcpConn     *tlcp.Conn		         // TLCP connection, nil if not TLCP.
 	server       *Server                 // a reference of server instance.
 	capability   uint32                  // client capability affects the way server handles client request.
 	connectionID uint64                  // atomically allocated by a global variable, unique in process scope.
@@ -314,7 +316,7 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 		}
 		return err
 	}
-	if err := cc.readOptionalSSLRequestAndHandshakeResponse(ctx); err != nil {
+	if err := cc.readOptionalSecureRequestAndHandshakeResponse(ctx); err != nil {
 		err1 := cc.writeError(ctx, err)
 		if err1 != nil {
 			logutil.Logger(ctx).Debug("writeError failed", zap.Error(err1))
@@ -449,8 +451,10 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, byte(cc.server.capability>>16), byte(cc.server.capability>>24))
 	// length of auth-plugin-data
 	data = append(data, byte(len(cc.salt)+1))
-	// reserved 10 [00]
-	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+	// server tlcp capability
+	data = append(data, 1)
+	// reserved 9 [00]
+	data = append(data, 0, 0, 0, 0, 0, 0, 0, 0, 0)
 	// auth-plugin-data-part-2
 	data = append(data, cc.salt[8:]...)
 	data = append(data, 0)
@@ -520,7 +524,7 @@ func (cc *clientConn) getSessionVarsWaitTimeout(ctx context.Context) uint64 {
 	return waitTimeout
 }
 
-func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Context) error {
+func (cc *clientConn) readOptionalSecureRequestAndHandshakeResponse(ctx context.Context) error {
 	// Read a packet. It may be a SSLRequest or HandshakeResponse.
 	data, err := cc.readPacket()
 	if err != nil {
@@ -578,6 +582,25 @@ func (cc *clientConn) readOptionalSSLRequestAndHandshakeResponse(ctx context.Con
 			data, err = cc.readPacket()
 			if err != nil {
 				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLS", zap.Error(err))
+				return err
+			}
+			pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
+			if err != nil {
+				terror.Log(err)
+				return err
+			}
+		}
+	} else if resp.TLCPCapability&mysql.ClientTLCP > 0 {
+		tlcpConfig := (*tlcp.Config)(atomic.LoadPointer(&cc.server.tlcpConfig))
+		if tlcpConfig != nil {
+			// The packet is a TLCPRequest, let's switch to TLCP.
+			if err = cc.upgradeToTLCP(tlcpConfig); err != nil {
+				return err
+			}
+			// Read the following HandshakeResponse packet.
+			data, err = cc.readPacket()
+			if err != nil {
+				logutil.Logger(ctx).Warn("read handshake response failure after upgrade to TLCP", zap.Error(err))
 				return err
 			}
 			pos, err = parse.HandshakeResponseHeader(ctx, &resp, data)
@@ -769,7 +792,12 @@ func (cc *clientConn) openSession() error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	var tlcpStatePtr *tlcp.ConnectionState
+	if cc.tlcpConn != nil {
+		tlcpState := cc.tlcpConn.ConnectionState()
+		tlcpStatePtr = &tlcpState
+	}
+	ctx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, tlcpStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}
@@ -2472,6 +2500,17 @@ func (cc *clientConn) upgradeToTLS(tlsConfig *tls.Config) error {
 	return nil
 }
 
+func (cc *clientConn) upgradeToTLCP(tlcpConfig *tlcp.Config) error {
+	// Important: read from buffered reader instead of the original net.Conn because it may contain data we need.
+	tlcpConn := tlcp.Server(cc.bufReadConn, tlcpConfig)
+	if err := tlcpConn.Handshake(); err != nil {
+		return err
+	}
+	cc.setConn(tlcpConn)
+	cc.tlcpConn = tlcpConn
+	return nil
+}
+
 func (cc *clientConn) handleChangeUser(ctx context.Context, data []byte) error {
 	user, data := util2.ParseNullTermString(data)
 	cc.user = string(hack.String(user))
@@ -2542,7 +2581,12 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		tlsState := cc.tlsConn.ConnectionState()
 		tlsStatePtr = &tlsState
 	}
-	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, cc.extensions)
+	var tlcpStatePtr *tlcp.ConnectionState
+	if cc.tlcpConn != nil {
+		tlcpState := cc.tlcpConn.ConnectionState()
+		tlcpStatePtr = &tlcpState
+	}
+	tidbCtx, err := cc.server.driver.OpenCtx(cc.connectionID, cc.capability, cc.collation, cc.dbname, tlsStatePtr, tlcpStatePtr, cc.extensions)
 	if err != nil {
 		return err
 	}

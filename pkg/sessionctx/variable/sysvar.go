@@ -85,6 +85,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "ssl_ca", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_cert", Value: ""},
 	{Scope: ScopeNone, Name: "ssl_key", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_ca", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_sig_cert", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_sig_key", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_enc_cert", Value: ""},
+	{Scope: ScopeNone, Name: "tlcp_enc_key", Value: ""},
 	{Scope: ScopeNone, Name: "version_compile_os", Value: runtime.GOOS},
 	{Scope: ScopeNone, Name: "version_compile_machine", Value: runtime.GOARCH},
 	/* TiDB specific variables */
