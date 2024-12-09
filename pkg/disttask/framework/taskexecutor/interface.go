@@ -53,7 +53,6 @@ type TaskTable interface {
 	// PauseSubtasks update subtasks state to paused.
 	PauseSubtasks(ctx context.Context, execID string, taskID int64) error
 
-	HasSubtasksInStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
 	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
 	// node from running to pending.
 	// see subtask state machine for more detail.

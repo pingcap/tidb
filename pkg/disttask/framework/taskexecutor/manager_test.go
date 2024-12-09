@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -464,11 +463,7 @@ func TestManagerInitMeta(t *testing.T) {
 	require.NoError(t, m.InitMeta())
 	require.True(t, ctrl.Satisfied())
 
-	bak := scheduler.RetrySQLTimes
-	t.Cleanup(func() {
-		scheduler.RetrySQLTimes = bak
-	})
-	scheduler.RetrySQLTimes = 1
+	reduceRetrySQLTimes(t, 1)
 	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
 	require.ErrorContains(t, m.InitMeta(), "mock err")
 	require.True(t, ctrl.Satisfied())
