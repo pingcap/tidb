@@ -100,7 +100,9 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	w.intestDuringPartialWorkerRun()
 
+	sizeBefore := w.chk.MemoryUsage()
 	w.chk.SwapColumns(chk)
+	w.memTracker.Consume(w.chk.MemoryUsage() - sizeBefore)
 
 	w.giveBackCh <- &HashAggInput{
 		chk:        chk,
@@ -199,6 +201,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		w.finalizeWorkerProcess(needShuffle, finalConcurrency, hasError)
 
+		w.memTracker.Consume(-w.chk.MemoryUsage())
 		updateWorkerTime(w.stats, start)
 
 		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
