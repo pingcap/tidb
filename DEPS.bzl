@@ -2634,13 +2634,13 @@ def go_deps():
         name = "com_github_golang_glog",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golang/glog",
-        sha256 = "f17e7d8a4485e91373c72d7ed688b23cafe647cd4e2bb8de669e39a35432fbec",
-        strip_prefix = "github.com/golang/glog@v1.1.2",
+        sha256 = "07688d418628ff30ffd40fde44956d1fb6bae4436003d7fcca40c85236b9484a",
+        strip_prefix = "github.com/golang/glog@v1.2.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang/glog/com_github_golang_glog-v1.1.2.zip",
-            "http://ats.apps.svc/gomod/github.com/golang/glog/com_github_golang_glog-v1.1.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang/glog/com_github_golang_glog-v1.1.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang/glog/com_github_golang_glog-v1.1.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang/glog/com_github_golang_glog-v1.2.0.zip",
+            "http://ats.apps.svc/gomod/github.com/golang/glog/com_github_golang_glog-v1.2.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golang/glog/com_github_golang_glog-v1.2.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang/glog/com_github_golang_glog-v1.2.0.zip",
         ],
     )
     go_repository(
@@ -2680,19 +2680,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v4/com_github_golang_jwt_jwt_v4-v4.5.1.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_golang_jwt_jwt_v5",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/golang-jwt/jwt/v5",
-        sha256 = "ad5cdc5c6bac562a2b890e96347208ffdb30a940243b558465ab7de90913a180",
-        strip_prefix = "github.com/golang-jwt/jwt/v5@v5.2.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
-            "http://ats.apps.svc/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang-jwt/jwt/v5/com_github_golang_jwt_jwt_v5-v5.2.1.zip",
         ],
     )
     go_repository(
