@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 36,
-=======
-    shard_count = 34,
->>>>>>> 1521bf723dd (statistics: right deal with error for reading stats from storage (#58048))
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/domain",

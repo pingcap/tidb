@@ -221,24 +221,10 @@ func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-<<<<<<< HEAD
 func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-=======
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	failpoint.Inject("ExecRowsTimeout", func() {
 		failpoint.Return(nil, nil, errors.New("inject timeout error"))
 	})
-	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
-}
-
-// ExecRowsWithCtx is a helper function to execute sql and return rows and fields.
-func ExecRowsWithCtx(
-	ctx context.Context,
-	sctx sessionctx.Context,
-	sql string,
-	args ...any,
-) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
->>>>>>> 1521bf723dd (statistics: right deal with error for reading stats from storage (#58048))
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
 			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
