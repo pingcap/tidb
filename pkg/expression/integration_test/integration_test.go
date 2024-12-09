@@ -623,6 +623,53 @@ func TestVectorControlFlow(t *testing.T) {
 	tk.MustQuery("SELECT CASE WHEN TRUE THEN VEC_FROM_TEXT('[1, 2, 3]') ELSE VEC_FROM_TEXT('[4, 5, 6]') END;").Check(testkit.Rows("[1,2,3]"))
 }
 
+func TestNvlAndNvl2(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+
+	createTable := `CREATE TABLE test.t (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		varchar_column VARCHAR(255) DEFAULT NULL,
+		int_column INT DEFAULT NULL,
+		float_column FLOAT DEFAULT NULL,
+		decimal_column DECIMAL(10, 2) DEFAULT NULL,
+		datetime_column DATETIME DEFAULT NULL
+	);`
+	tk.MustExec(createTable)
+	tk.MustExec("insert into t value()")
+	tk.MustExec(`INSERT INTO t (varchar_column, int_column, float_column, decimal_column, datetime_column) 
+			VALUES('Sample String', 100, 456.78, 98765.43, '2024-12-06')`)
+
+	// test nvl().
+	tk.MustQuery("select nvl(varchar_column, 'abc') from t where id = 1;").Check(testkit.Rows("abc"))
+	tk.MustQuery("select nvl(varchar_column, 'abc') from t where id = 2;").Check(testkit.Rows("Sample String"))
+	// 123 has been converted into "123".
+	tk.MustQuery("select nvl(varchar_column, 123) from t where id = 1;").Check(testkit.Rows("123"))
+	tk.MustQuery("select nvl(int_column, 1.23) from t where id = 1;").Check(testkit.Rows("1.23"))
+	tk.MustQuery("select nvl(int_column, 1.23) from t where id = 2;").Check(testkit.Rows("100.00"))
+	// the 'abc' can not be converted into int by implicit.
+	_, err := tk.Exec("select nvl(int_column, 'abc') from t where id = 1;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+	_, err = tk.Exec("select nvl(int_column, 'abc') from t where id = 2;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+
+	// test nv2().
+	tk.MustQuery("select nvl2(NULL, int_column, 123) from t where id = 2;").Check(testkit.Rows("123"))
+	tk.MustQuery("select nvl2(1, int_column, 123) from t where id = 2;").Check(testkit.Rows("100"))
+	// implicit conversion: convert int into float.
+	tk.MustQuery("select nvl2(1, int_column, 1.23) from t where id = 2;").Check(testkit.Rows("100.00"))
+	tk.MustQuery("select nvl2(NULL, int_column, 1.23) from t where id = 2;").Check(testkit.Rows("1.23"))
+	tk.MustQuery("select nvl2(1, varchar_column, 123) from t where id = 2;").Check(testkit.Rows("Sample String"))
+	// implicit conversion: convert int into varchar.
+	tk.MustQuery("select nvl2(NULL, varchar_column, 123) from t where id = 2;").Check(testkit.Rows("123"))
+	// the 'abc' can not be converted into int by implicit.
+	_, err = tk.Exec("select nvl2(NULL, int_column, 'abc') from t where id = 1")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+	_, err = tk.Exec("select nvl2(1, int_column, 'abc') from t where id =1;")
+	require.Error(t, err, "ERROR 1105 (HY000): String does not support implicit conversion")
+}
+
 func TestVectorStringCompare(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
