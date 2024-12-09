@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -90,6 +91,10 @@ func GCStats(
 	if now < offset {
 		return nil
 	}
+
+	failpoint.Inject("mockGCStatsLastTSOffset", func(val failpoint.Value) {
+		offset = uint64(val.(int))
+	})
 
 	// Get the last gc time.
 	gcVer := now - offset
