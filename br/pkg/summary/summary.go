@@ -3,9 +3,14 @@
 package summary
 
 import (
+	"sync/atomic"
 	"time"
 
 	"go.uber.org/zap"
+)
+
+var (
+	onceSetToSuccess atomic.Bool
 )
 
 // SetUnit set unit "backup/restore" for summary log.
@@ -40,7 +45,15 @@ func CollectUint(name string, t uint64) {
 
 // SetSuccessStatus sets final success status.
 func SetSuccessStatus(success bool) {
+	if success {
+		onceSetToSuccess.Store(true)
+	}
 	collector.SetSuccessStatus(success)
+}
+
+// OnceSucceed returns whether a `SetSuccessStatus(true)` was call.
+func OnceSucceed() bool {
+	return onceSetToSuccess.Load()
 }
 
 // NowDureTime returns the duration between start time and current time

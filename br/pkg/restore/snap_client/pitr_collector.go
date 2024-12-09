@@ -5,19 +5,23 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -57,12 +61,12 @@ func (p pitrCollectorRestorer) GoRestore(onProgress func(int64), batchFileSets .
 		for _, fileSets := range batchFileSets {
 			for _, fileSet := range fileSets {
 				for _, file := range fileSet.SSTFiles {
-					if err := p.coll.PutSST(p.ecx, file); err != nil {
+					if err := p.coll.putSST(p.ecx, file); err != nil {
 						return errors.Annotatef(err, "failed to put sst %s", file.GetName())
 					}
 				}
 				for _, hint := range fileSet.RewriteRules.TableIDRemapHint {
-					if err := p.coll.PutRewriteRule(p.ecx, hint.Origin, hint.Rewritten); err != nil {
+					if err := p.coll.putRewriteRule(p.ecx, hint.Origin, hint.Rewritten); err != nil {
 						return errors.Annotatef(err, "failed to put rewrite rule of %v", fileSet.RewriteRules)
 					}
 				}
@@ -87,10 +91,22 @@ func (p pitrCollectorRestorer) WaitUntilFinish() error {
 
 // Close releases any resources associated with the restoration process.
 func (p pitrCollectorRestorer) Close() error {
+	if p.cx.Err() != nil {
+		log.Warn("pitrCollectorRestorer.Close: the context already closed, will use a temporary context.")
+		var cancel context.CancelFunc
+		p.cx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+	}
+
 	if !p.coll.enabled {
 		return nil
 	}
-	return errors.Annotate(p.coll.commit(p.cx), "failed to commit pitrCollector")
+	if summary.OnceSucceed() {
+		return errors.Annotate(p.coll.commit(p.cx), "failed to commit pitrCollector")
+	}
+
+	log.Warn("Backup not success, put a half-finished metadata to the log backup.", zap.Stringer("uuid", p.coll.restoreUUID))
+	return errors.Annotatef(p.coll.persistExtraBackupMeta(p.cx), "failed to persist the meta")
 }
 
 type pitrCollector struct {
@@ -142,8 +158,8 @@ func (c *pitrCollector) sstPath(name string) string {
 	return c.outputPath("sst_files", name)
 }
 
-// PutSST records an SST file.
-func (c *pitrCollector) PutSST(ctx context.Context, f *pb.File) error {
+// putSST records an SST file.
+func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	if !c.enabled {
 		return nil
 	}
@@ -168,8 +184,8 @@ func (c *pitrCollector) PutSST(ctx context.Context, f *pb.File) error {
 	return nil
 }
 
-// PutRewriteRule records a rewrite rule.
-func (c *pitrCollector) PutRewriteRule(_ context.Context, oldID int64, newID int64) error {
+// putRewriteRule records a rewrite rule.
+func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int64) error {
 	if !c.enabled {
 		return nil
 	}
@@ -194,6 +210,7 @@ func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) 
 	c.extraBackupMetaLock.Lock()
 	defer c.extraBackupMetaLock.Unlock()
 
+	log.Info("Persisting extra backup meta.", zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()))
 	msg := c.extraBackupMeta.genMsg()
 	bs, err := msg.Marshal()
 	if err != nil {
