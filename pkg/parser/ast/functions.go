@@ -387,7 +387,7 @@ const (
 	LastMonth     = "last_month"
 	ToNumber      = "to_number"
 	GetGUID       = "get_guid"
-	AddMonth      = "add_month"
+	AddMonth      = "add_months"
 	NextDay       = "next_day"
 	MonthsBetween = "months_between"
 	ToChar        = "to_char"
