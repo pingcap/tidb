@@ -157,18 +157,7 @@ type HashAggExec struct {
 }
 
 // Close implements the Executor Close interface.
-func (e *HashAggExec) Close() (err error) {
-	defer func() {
-		err = e.BaseExecutor.Close()
-		failpoint.Inject("injectHashAggClosePanic", func(val failpoint.Value) {
-			if enabled := val.(bool); enabled {
-				if e.Ctx().GetSessionVars().ConnectionID != 0 {
-					panic(errors.New("test"))
-				}
-			}
-		})
-	}()
-
+func (e *HashAggExec) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
@@ -225,6 +214,14 @@ func (e *HashAggExec) Close() (err error) {
 		}
 	}
 
+	err := e.BaseExecutor.Close()
+	failpoint.Inject("injectHashAggClosePanic", func(val failpoint.Value) {
+		if enabled := val.(bool); enabled {
+			if e.Ctx().GetSessionVars().ConnectionID != 0 {
+				panic(errors.New("test"))
+			}
+		}
+	})
 	return err
 }
 
@@ -445,10 +442,15 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
+
+	mSize := chk.MemoryUsage()
+
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
 		}
+
+		e.memTracker.Consume(-mSize)
 
 		// Wait for the finish of all partial workers
 		e.inflightChunkSync.Wait()
@@ -478,16 +480,13 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			chk = input.chk
 		}
 
-		mSize := chk.MemoryUsage()
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
-			e.memTracker.Consume(-mSize)
 			return
 		}
 
 		if chk.NumRows() == 0 {
-			e.memTracker.Consume(-mSize)
 			return
 		}
 
