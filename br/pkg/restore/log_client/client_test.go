@@ -1477,10 +1477,10 @@ func TestPITRIDMap(t *testing.T) {
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, se)
-	baseSchemaReplaces := &stream.SchemasReplace{
-		DbMap: getDBMap(),
+	baseTableMappingManager := &stream.TableMappingManager{
+		DbReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseSchemaReplaces)
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
@@ -1492,9 +1492,9 @@ func TestPITRIDMap(t *testing.T) {
 	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
 	require.NoError(t, err)
 
-	require.Equal(t, len(baseSchemaReplaces.DbMap), len(newSchemaReplaces))
+	require.Equal(t, len(baseTableMappingManager.DbReplaceMap), len(newSchemaReplaces))
 	for _, dbMap := range newSchemaReplaces {
-		baseDbMap := baseSchemaReplaces.DbMap[dbMap.IdMap.UpstreamId]
+		baseDbMap := baseTableMappingManager.DbReplaceMap[dbMap.IdMap.UpstreamId]
 		require.NotNil(t, baseDbMap)
 		require.Equal(t, baseDbMap.DbID, dbMap.IdMap.DownstreamId)
 		require.Equal(t, baseDbMap.Name, dbMap.Name)

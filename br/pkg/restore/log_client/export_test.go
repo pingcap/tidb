@@ -63,9 +63,9 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	m *stream.TableMappingManager,
 ) error {
-	return rc.saveIDMap(ctx, sr)
+	return rc.saveIDMap(ctx, m)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(

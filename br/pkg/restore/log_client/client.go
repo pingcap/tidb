@@ -1770,9 +1770,9 @@ const PITRIdMapBlockSize int = 524288
 // saveIDMap saves the id mapping information.
 func (rc *LogClient) saveIDMap(
 	ctx context.Context,
-	collector *stream.TableMappingManager,
+	manager *stream.TableMappingManager,
 ) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: collector.ToProto()}
+	backupmeta := &backuppb.BackupMeta{DbMaps: manager.ToProto()}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)
