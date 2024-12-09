@@ -261,6 +261,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
 	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	start := time.Now()
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -293,7 +294,12 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		}
 	}()
 
-	log.Info("[Compacted SST Restore] Start to restore SST files", zap.Int("sst-file-count", len(backupFileSets)))
+	log.Info("[Compacted SST Restore] Start to restore SST files",
+		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
+	start = time.Now()
+	defer func() {
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
+	}()
 
 	// To optimize performance and minimize cross-region downloads,
 	// we are currently opting for a single restore approach instead of batch restoration.
