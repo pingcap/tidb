@@ -54,7 +54,7 @@ func TestInit(t *testing.T) {
 	em.dupResolution = config.DupeResAlgRecord
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1_2.*").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -63,7 +63,7 @@ func TestInit(t *testing.T) {
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`;").
 		WillReturnResult(sqlmock.NewResult(3, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(4, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -71,9 +71,9 @@ func TestInit(t *testing.T) {
 	em.remainingError.Type.Store(1)
 	mock.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_errors`.*").
 		WillReturnResult(sqlmock.NewResult(5, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.type_error_v2.*").
 		WillReturnResult(sqlmock.NewResult(6, 1))
-	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1.*").
+	mock.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_errors`\\.conflict_error_v1_2.*").
 		WillReturnResult(sqlmock.NewResult(7, 1))
 	err = em.Init(ctx)
 	require.NoError(t, err)
@@ -110,7 +110,7 @@ type mockRows struct {
 }
 
 func (r *mockRows) Columns() []string {
-	return []string{"_tidb_rowid", "raw_handle", "raw_row"}
+	return []string{"id", "raw_handle", "raw_row"}
 }
 
 func (r *mockRows) Close() error { return nil }
@@ -119,7 +119,7 @@ func (r *mockRows) Next(dest []driver.Value) error {
 	if r.start >= r.end {
 		return io.EOF
 	}
-	dest[0] = r.start  // _tidb_rowid
+	dest[0] = r.start  // id
 	dest[1] = []byte{} // raw_handle
 	dest[2] = []byte{} // raw_row
 	r.start++
@@ -127,7 +127,7 @@ func (r *mockRows) Next(dest []driver.Value) error {
 }
 
 func (c mockConn) QueryContext(_ context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	expectedQuery := "SELECT _tidb_rowid, raw_handle, raw_row.*"
+	expectedQuery := "SELECT id, raw_handle, raw_row.*"
 	if err := sqlmock.QueryMatcherRegexp.Match(expectedQuery, query); err != nil {
 		return &mockRows{}, nil
 	}
