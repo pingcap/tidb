@@ -539,8 +539,11 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
+	if err != nil {
+		return nil, err
+	}
 	// Check deleted table.
-	if err != nil || len(rows) == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {

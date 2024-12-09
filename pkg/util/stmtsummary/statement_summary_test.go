@@ -85,81 +85,85 @@ func TestAddStatement(t *testing.T) {
 	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
-		beginTime:            now + 60,
-		endTime:              now + 1860,
-		sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
-		samplePlan:           samplePlan,
-		indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
-		execCount:            1,
-		sumLatency:           stmtExecInfo1.TotalLatency,
-		maxLatency:           stmtExecInfo1.TotalLatency,
-		minLatency:           stmtExecInfo1.TotalLatency,
-		sumParseLatency:      stmtExecInfo1.ParseLatency,
-		maxParseLatency:      stmtExecInfo1.ParseLatency,
-		sumCompileLatency:    stmtExecInfo1.CompileLatency,
-		maxCompileLatency:    stmtExecInfo1.CompileLatency,
-		sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
-		maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
-		maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
-		maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
-		maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
-		sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-		maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
-		sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-		maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
-		sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-		maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
-		sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-		maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
-		sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-		maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
-		sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-		maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
-		sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-		maxPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
-		sumCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-		maxCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
-		sumLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-		maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
-		sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
-		sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-		maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
-		sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
-		maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
-		sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
-		maxWriteSize:         stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
-		sumPrewriteRegionNum: int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum),
-		maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
-		sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
-		maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
-		backoffTypes:         make(map[string]int),
-		sumMem:               stmtExecInfo1.MemMax,
-		maxMem:               stmtExecInfo1.MemMax,
-		sumDisk:              stmtExecInfo1.DiskMax,
-		maxDisk:              stmtExecInfo1.DiskMax,
-		sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
-		firstSeen:            stmtExecInfo1.StartTime,
-		lastSeen:             stmtExecInfo1.StartTime,
-		StmtRUSummary: StmtRUSummary{
-			SumRRU:            stmtExecInfo1.RUDetail.RRU(),
-			MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
-			SumWRU:            stmtExecInfo1.RUDetail.WRU(),
-			MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
-			SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
-			MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+		beginTime: now + 60,
+		endTime:   now + 1860,
+		stmtSummaryStats: stmtSummaryStats{
+			sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
+			samplePlan:           samplePlan,
+			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
+			execCount:            1,
+			sumLatency:           stmtExecInfo1.TotalLatency,
+			maxLatency:           stmtExecInfo1.TotalLatency,
+			minLatency:           stmtExecInfo1.TotalLatency,
+			sumParseLatency:      stmtExecInfo1.ParseLatency,
+			maxParseLatency:      stmtExecInfo1.ParseLatency,
+			sumCompileLatency:    stmtExecInfo1.CompileLatency,
+			maxCompileLatency:    stmtExecInfo1.CompileLatency,
+			sumNumCopTasks:       int64(stmtExecInfo1.CopTasks.NumCopTasks),
+			sumCopProcessTime:    stmtExecInfo1.CopTasks.TotProcessTime,
+			maxCopProcessTime:    stmtExecInfo1.CopTasks.MaxProcessTime,
+			maxCopProcessAddress: stmtExecInfo1.CopTasks.MaxProcessAddress,
+			sumCopWaitTime:       stmtExecInfo1.CopTasks.TotWaitTime,
+			maxCopWaitTime:       stmtExecInfo1.CopTasks.MaxWaitTime,
+			maxCopWaitAddress:    stmtExecInfo1.CopTasks.MaxWaitAddress,
+			sumProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+			maxProcessTime:       stmtExecInfo1.ExecDetail.TimeDetail.ProcessTime,
+			sumWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+			maxWaitTime:          stmtExecInfo1.ExecDetail.TimeDetail.WaitTime,
+			sumBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
+			maxBackoffTime:       stmtExecInfo1.ExecDetail.BackoffTime,
+			sumTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+			maxTotalKeys:         stmtExecInfo1.ExecDetail.ScanDetail.TotalKeys,
+			sumProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+			maxProcessedKeys:     stmtExecInfo1.ExecDetail.ScanDetail.ProcessedKeys,
+			sumGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
+			maxGetCommitTsTime:   stmtExecInfo1.ExecDetail.CommitDetail.GetCommitTsTime,
+			sumPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
+			maxPrewriteTime:      stmtExecInfo1.ExecDetail.CommitDetail.PrewriteTime,
+			sumCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
+			maxCommitTime:        stmtExecInfo1.ExecDetail.CommitDetail.CommitTime,
+			sumLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
+			maxLocalLatchTime:    stmtExecInfo1.ExecDetail.CommitDetail.LocalLatchTime,
+			sumCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
+			maxCommitBackoffTime: stmtExecInfo1.ExecDetail.CommitDetail.Mu.CommitBackoffTime,
+			sumResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
+			maxResolveLockTime:   stmtExecInfo1.ExecDetail.CommitDetail.ResolveLock.ResolveLockTime,
+			sumWriteKeys:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys),
+			maxWriteKeys:         stmtExecInfo1.ExecDetail.CommitDetail.WriteKeys,
+			sumWriteSize:         int64(stmtExecInfo1.ExecDetail.CommitDetail.WriteSize),
+			maxWriteSize:         stmtExecInfo1.ExecDetail.CommitDetail.WriteSize,
+			sumPrewriteRegionNum: int64(stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum),
+			maxPrewriteRegionNum: stmtExecInfo1.ExecDetail.CommitDetail.PrewriteRegionNum,
+			sumTxnRetry:          int64(stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry),
+			maxTxnRetry:          stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry,
+			backoffTypes:         make(map[string]int),
+			sumMem:               stmtExecInfo1.MemMax,
+			maxMem:               stmtExecInfo1.MemMax,
+			sumDisk:              stmtExecInfo1.DiskMax,
+			maxDisk:              stmtExecInfo1.DiskMax,
+			sumAffectedRows:      stmtExecInfo1.StmtCtx.AffectedRows(),
+			firstSeen:            stmtExecInfo1.StartTime,
+			lastSeen:             stmtExecInfo1.StartTime,
+			StmtRUSummary: StmtRUSummary{
+				SumRRU:            stmtExecInfo1.RUDetail.RRU(),
+				MaxRRU:            stmtExecInfo1.RUDetail.RRU(),
+				SumWRU:            stmtExecInfo1.RUDetail.WRU(),
+				MaxWRU:            stmtExecInfo1.RUDetail.WRU(),
+				SumRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
+			},
+			resourceGroupName: stmtExecInfo1.ResourceGroupName,
+			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
+				UnpackedBytesSentKVTotal:          stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
+				UnpackedBytesReceivedKVTotal:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
+				UnpackedBytesSentKVCrossZone:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
+				UnpackedBytesReceivedKVCrossZone:  stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
+				UnpackedBytesSentMPPTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
+				UnpackedBytesReceivedMPPTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
+				UnpackedBytesSentMPPCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
+				UnpackedBytesReceivedMPPCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
+			},
 		},
-		StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
-			UnpackedBytesSentKVTotal:          stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
-			UnpackedBytesReceivedKVTotal:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
-			UnpackedBytesSentKVCrossZone:      stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
-			UnpackedBytesReceivedKVCrossZone:  stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
-			UnpackedBytesSentMPPTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
-			UnpackedBytesReceivedMPPTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
-			UnpackedBytesSentMPPCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
-			UnpackedBytesReceivedMPPCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
-		},
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
 	history := list.New()
@@ -197,10 +201,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    20000,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
+			TotProcessTime:    40000,
 			AvgWaitTime:       200,
 			P90WaitTime:       2000,
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
+			TotWaitTime:       40000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  180,
@@ -271,8 +277,10 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo2.CompileLatency
 	expectedSummaryElement.maxCompileLatency = stmtExecInfo2.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo2.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo2.CopTasks.TotProcessTime
 	expectedSummaryElement.maxCopProcessTime = stmtExecInfo2.CopTasks.MaxProcessTime
 	expectedSummaryElement.maxCopProcessAddress = stmtExecInfo2.CopTasks.MaxProcessAddress
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo2.CopTasks.TotWaitTime
 	expectedSummaryElement.maxCopWaitTime = stmtExecInfo2.CopTasks.MaxWaitTime
 	expectedSummaryElement.maxCopWaitAddress = stmtExecInfo2.CopTasks.MaxWaitAddress
 	expectedSummaryElement.sumProcessTime += stmtExecInfo2.ExecDetail.TimeDetail.ProcessTime
@@ -347,10 +355,12 @@ func TestAddStatement(t *testing.T) {
 			P90ProcessTime:    300,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
+			TotProcessTime:    200,
 			AvgWaitTime:       20,
 			P90WaitTime:       200,
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
+			TotWaitTime:       40,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  18,
@@ -422,6 +432,8 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.sumParseLatency += stmtExecInfo3.ParseLatency
 	expectedSummaryElement.sumCompileLatency += stmtExecInfo3.CompileLatency
 	expectedSummaryElement.sumNumCopTasks += int64(stmtExecInfo3.CopTasks.NumCopTasks)
+	expectedSummaryElement.sumCopProcessTime += stmtExecInfo3.CopTasks.TotProcessTime
+	expectedSummaryElement.sumCopWaitTime += stmtExecInfo3.CopTasks.TotWaitTime
 	expectedSummaryElement.sumProcessTime += stmtExecInfo3.ExecDetail.TimeDetail.ProcessTime
 	expectedSummaryElement.sumWaitTime += stmtExecInfo3.ExecDetail.TimeDetail.WaitTime
 	expectedSummaryElement.sumBackoffTime += stmtExecInfo3.ExecDetail.BackoffTime
@@ -561,8 +573,10 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			ssElement1.sumCompileLatency != ssElement2.sumCompileLatency ||
 			ssElement1.maxCompileLatency != ssElement2.maxCompileLatency ||
 			ssElement1.sumNumCopTasks != ssElement2.sumNumCopTasks ||
+			ssElement1.sumCopProcessTime != ssElement2.sumCopProcessTime ||
 			ssElement1.maxCopProcessTime != ssElement2.maxCopProcessTime ||
 			ssElement1.maxCopProcessAddress != ssElement2.maxCopProcessAddress ||
+			ssElement1.sumCopWaitTime != ssElement2.sumCopWaitTime ||
 			ssElement1.maxCopWaitTime != ssElement2.maxCopWaitTime ||
 			ssElement1.maxCopWaitAddress != ssElement2.maxCopWaitAddress ||
 			ssElement1.sumProcessTime != ssElement2.sumProcessTime ||
@@ -663,10 +677,12 @@ func generateAnyExecInfo() *StmtExecInfo {
 			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
+			TotProcessTime:    10000,
 			AvgWaitTime:       100,
 			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
+			TotWaitTime:       1000,
 		},
 		ExecDetail: &execdetails.ExecDetails{
 			BackoffTime:  80,

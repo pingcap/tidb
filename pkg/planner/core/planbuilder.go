@@ -532,6 +532,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildUnlockStats(x), nil
 	case *ast.PlanReplayerStmt:
 		return b.buildPlanReplayer(x), nil
+	case *ast.TrafficStmt:
+		return b.buildTraffic(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -5825,6 +5827,14 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 		return x
 	}
 	return nil
+}
+
+func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
+	return &Traffic{
+		OpType:  pc.OpType,
+		Options: pc.Options,
+		Dir:     pc.Dir,
+	}
 }
 
 // buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.

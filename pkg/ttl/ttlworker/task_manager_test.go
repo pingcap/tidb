@@ -51,6 +51,12 @@ func (m *taskManager) ResizeWorkersWithSysVar() {
 	m.resizeWorkersWithSysVar()
 }
 
+// ResizeWorkersToZero resize workers to zero
+func (m *taskManager) ResizeWorkersToZero(t *testing.T) {
+	require.NoError(t, m.resizeScanWorkers(0))
+	require.NoError(t, m.resizeDelWorkers(0))
+}
+
 // RescheduleTasks is an exported version of rescheduleTasks
 func (m *taskManager) RescheduleTasks(se session.Session, now time.Time) {
 	m.rescheduleTasks(se, now)
@@ -118,7 +124,35 @@ func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, n
 
 // UpdateHeartBeatForTask is an exported version of updateHeartBeatForTask
 func (m *taskManager) UpdateHeartBeatForTask(ctx context.Context, se session.Session, now time.Time, task *runningScanTask) error {
-	return m.updateHeartBeatForTask(ctx, se, now, task)
+	return m.taskHeartbeatOrResignOwner(ctx, se, now, task, false)
+}
+
+// SetWaitWorkerStopTimeoutForTest sets the waitWorkerStopTimeout for testing
+func SetWaitWorkerStopTimeoutForTest(timeout time.Duration) func() {
+	original := waitWorkerStopTimeout
+	waitWorkerStopTimeout = timeout
+	return func() {
+		waitWorkerStopTimeout = original
+	}
+}
+
+// GetTerminateInfo returns the task terminates info
+func (t *runningScanTask) GetTerminateInfo() (bool, TaskTerminateReason, time.Time) {
+	if t.result == nil {
+		return false, "", time.Time{}
+	}
+	return true, t.result.reason, t.result.time
+}
+
+// GetStatistics returns the ttlStatistics
+func (t *runningScanTask) GetStatistics() *ttlStatistics {
+	return t.statistics
+}
+
+// ResetEndTime resets the end time
+func (t *runningScanTask) ResetEndTimeForTest(tb *testing.T, tm time.Time) {
+	require.NotNil(tb, t.result)
+	t.result.time = tm
 }
 
 func TestResizeWorkers(t *testing.T) {
