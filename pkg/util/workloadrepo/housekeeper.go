@@ -103,7 +103,7 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 				continue
 			}
 			sb.Reset()
-			sqlescape.MustFormatSQL(sb, "ALTER TABLE %s.%s DROP PARTITION %s",
+			sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n DROP PARTITION %n",
 				WorkloadSchema, tbl.destTable, pt.Name.L)
 			_, err = execRetry(ctx, sess, sb.String())
 			if err != nil {
@@ -147,10 +147,6 @@ func (w *worker) startHouseKeeper(ctx context.Context) func() {
 					continue
 				}
 
-				// reschedule, drain channel first
-				if !timer.Stop() {
-					<-timer.C
-				}
 				timer.Reset(calcNextTick(now))
 			}
 		}
