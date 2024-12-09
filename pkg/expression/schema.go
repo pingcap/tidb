@@ -47,7 +47,7 @@ func (ki KeyInfo) String() string {
 type Schema struct {
 	Columns []*Column
 	PKOrUK  []KeyInfo // this fields stores the primary key or unique key.
-	// NullableUK stores those unique indexes that allow null values, but Keys does not allow null values.
+	// NullableUK stores those unique indexes that allow null values, but PKOrUK does not allow null values.
 	// Since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
 	NullableUK []KeyInfo
 }
