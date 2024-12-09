@@ -21,7 +21,6 @@ import (
 	"io"
 	"math/rand"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -240,17 +239,28 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 
 	em.remainingError.Syntax.Sub(1)
 	output = em.Output()
-	checkStr := strings.ReplaceAll(output, "\n", "")
-	expected := "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected := "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m           1 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"+---+-------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
 
 	em.remainingError = cfg.App.MaxError
 	em.remainingError.Syntax.Sub(10)
 	em.remainingError.Type.Store(10)
 	output = em.Output()
-	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+-------------+-------------+--------------------------------+| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |+---+-------------+-------------+--------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|+---+-------------+-------------+--------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"| # | ERROR TYPE  | ERROR COUNT | ERROR DATA TABLE               |\n" +
+		"+---+-------------+-------------+--------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type   \x1b[0m|\x1b[31m          90 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax \x1b[0m|\x1b[31m          10 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1` \x1b[0m|\n" +
+		"+---+-------------+-------------+--------------------------------+\n"
+	require.Equal(t, expected, output)
 
 	// change multiple keys
 	em.remainingError = cfg.App.MaxError
@@ -259,7 +269,29 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 	em.remainingError.Type.Store(0)
 	em.remainingError.Conflict.Store(0)
 	output = em.Output()
-	checkStr = strings.ReplaceAll(output, "\n", "")
-	expected = "Import Data Error Summary: +---+---------------------+-------------+----------------------------------+| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |+---+---------------------+-------------+----------------------------------+|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m||\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m||\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m||\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|+---+---------------------+-------------+----------------------------------+"
-	require.Equal(t, expected, checkStr)
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+----------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                 |\n" +
+		"+---+---------------------+-------------+----------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`type_error_v1`     \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`syntax_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                  \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `error_info`.`conflict_error_v1` \x1b[0m|\n" +
+		"+---+---------------------+-------------+----------------------------------+\n"
+	require.Equal(t, expected, output)
+
+	em.schemaEscaped = "`lightning_task_info`"
+	output = em.Output()
+	expected = "\n" +
+		"Import Data Error Summary: \n" +
+		"+---+---------------------+-------------+-------------------------------------------+\n" +
+		"| # | ERROR TYPE          | ERROR COUNT | ERROR DATA TABLE                          |\n" +
+		"+---+---------------------+-------------+-------------------------------------------+\n" +
+		"|\x1b[31m 1 \x1b[0m|\x1b[31m Data Type           \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `lightning_task_info`.`type_error_v1`     \x1b[0m|\n" +
+		"|\x1b[31m 2 \x1b[0m|\x1b[31m Data Syntax         \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `lightning_task_info`.`syntax_error_v1`   \x1b[0m|\n" +
+		"|\x1b[31m 3 \x1b[0m|\x1b[31m Charset Error       \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m                                           \x1b[0m|\n" +
+		"|\x1b[31m 4 \x1b[0m|\x1b[31m Unique Key Conflict \x1b[0m|\x1b[31m         100 \x1b[0m|\x1b[31m `lightning_task_info`.`conflict_error_v1` \x1b[0m|\n" +
+		"+---+---------------------+-------------+-------------------------------------------+\n"
+	require.Equal(t, expected, output)
 }
