@@ -142,6 +142,7 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 		}
 	}
 
+	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
 	return createAllPartitions(ctx, sess, is, now)
 }
 
