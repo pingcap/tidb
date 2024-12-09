@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -204,6 +206,9 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed.Store(false)
 		if e.memTracker != nil {
+			if e.memTracker.BytesConsumed() < 0 {
+				logutil.BgLogger().Warn("Memory tracker's counter is invalid", zap.Int64("counter", e.memTracker.BytesConsumed()))
+			}
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
