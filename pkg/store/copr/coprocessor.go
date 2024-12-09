@@ -721,6 +721,7 @@ type copIterator struct {
 }
 
 type liteCopIteratorWorker struct {
+	// ctx contains some info(such as rpc interceptor(WithSQLKvExecCounterInterceptor)), it is used for handle cop task later.
 	ctx    context.Context
 	worker *copIteratorWorker
 }
@@ -860,7 +861,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
 	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.CompareAndSwapUint32(tryCopLiteWorker, 0, 1) {
 		it.liteWorker = &liteCopIteratorWorker{
-			ctx:    ctx, // the ctx contains some info(such as rpc interceptor), this ctx is used for handle cop task later.
+			ctx:    ctx,
 			worker: newCopIteratorWorker(it, nil),
 		}
 		return
