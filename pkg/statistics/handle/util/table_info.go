@@ -16,12 +16,9 @@ package util
 
 import (
 	"context"
-	"sync"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // TableInfoGetter is used to get table meta info.
@@ -33,44 +30,20 @@ type TableInfoGetter interface {
 
 // tableInfoGetterImpl is used to get table meta info.
 type tableInfoGetterImpl struct {
-	// pid2tid is the map from partition ID to table ID.
-	pid2tid map[int64]int64
-	// schemaVersion is the version of information schema when `pid2tid` is built.
-	schemaVersion int64
-	mu            sync.RWMutex
 }
 
 // NewTableInfoGetter creates a TableInfoGetter.
 func NewTableInfoGetter() TableInfoGetter {
-	return &tableInfoGetterImpl{pid2tid: map[int64]int64{}}
+	return &tableInfoGetterImpl{}
 }
 
 // TableInfoByID returns the table info specified by the physicalID.
 // If the physicalID is corresponding to a partition, return its parent table.
-func (c *tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if is.SchemaMetaVersion() != c.schemaVersion {
-		c.schemaVersion = is.SchemaMetaVersion()
-		c.pid2tid = buildPartitionID2TableID(is)
+func (*tableInfoGetterImpl) TableInfoByID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
+	tbl, ok := is.TableByID(context.Background(), physicalID)
+	if ok {
+		return tbl, true
 	}
-	if id, ok := c.pid2tid[physicalID]; ok {
-		return is.TableByID(context.Background(), id)
-	}
-	return is.TableByID(context.Background(), physicalID)
-}
-
-func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
-	mapper := make(map[int64]int64)
-	rs := is.ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
-	for _, db := range rs {
-		for _, tbl := range db.TableInfos {
-			pi := tbl.GetPartitionInfo()
-			intest.AssertNotNil(pi)
-			for _, def := range pi.Definitions {
-				mapper[def.ID] = tbl.ID
-			}
-		}
-	}
-	return mapper
+	tbl, _, _ = is.FindTableByPartitionID(physicalID)
+	return tbl, tbl != nil
 }

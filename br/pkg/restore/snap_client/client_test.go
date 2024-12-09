@@ -314,7 +314,7 @@ func TestSetSpeedLimit(t *testing.T) {
 
 	recordStores = NewRecordStores()
 	start := time.Now()
-	err := snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 10)
+	err := snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 10)
 	cost := time.Since(start)
 	require.NoError(t, err)
 
@@ -337,7 +337,7 @@ func TestSetSpeedLimit(t *testing.T) {
 		split.NewFakePDClient(mockStores, false, nil), nil, nil, split.DefaultTestKeepaliveCfg)
 
 	// Concurrency needs to be less than the number of stores
-	err = snapclient.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
+	err = snapclient.MockCallSetSpeedLimit(ctx, mockStores, FakeImporterClient{}, client, 2)
 	require.Error(t, err)
 	t.Log(err)
 

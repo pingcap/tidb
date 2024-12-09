@@ -53,7 +53,6 @@ type TaskTable interface {
 	// PauseSubtasks update subtasks state to paused.
 	PauseSubtasks(ctx context.Context, execID string, taskID int64) error
 
-	HasSubtasksInStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
 	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
 	// node from running to pending.
 	// see subtask state machine for more detail.
@@ -115,9 +114,7 @@ type Extension interface {
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
 	// GetStepExecutor returns the subtask executor for the subtask.
-	// Note:
-	// 1. summary is the summary manager of all subtask of the same type now.
-	// 2. should not retry the error from it.
+	// Note, the error returned is fatal, framework will fail the task directly.
 	GetStepExecutor(task *proto.Task) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,

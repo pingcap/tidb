@@ -479,7 +479,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
 	)
 
 	rc := &Controller{
@@ -1488,19 +1488,8 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			allTasks = append(allTasks, task{tr: tr, cp: cp})
 
 			if len(cp.Engines) == 0 {
-				for i, fi := range tableMeta.DataFiles {
+				for _, fi := range tableMeta.DataFiles {
 					totalDataSizeToRestore += fi.FileMeta.FileSize
-					if fi.FileMeta.Type == mydump.SourceTypeParquet {
-						numberRows, err := mydump.ReadParquetFileRowCountByFile(ctx, rc.store, fi.FileMeta)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						if m, ok := metric.FromContext(ctx); ok {
-							m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(numberRows))
-						}
-						fi.FileMeta.Rows = numberRows
-						tableMeta.DataFiles[i] = fi
-					}
 				}
 			} else {
 				for _, eng := range cp.Engines {
@@ -1919,6 +1908,9 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				if err := rc.checkClusterRegion(ctx); err != nil {
 					return common.ErrCheckClusterRegion.Wrap(err).GenWithStackByArgs()
 				}
+				if err := rc.checkPDTiDBFromSameCluster(ctx); err != nil {
+					return common.ErrCheckPDTiDBFromSameCluster.Wrap(err).GenWithStackByArgs()
+				}
 			}
 			// even if checkpoint exists, we still need to make sure CDC/PiTR task is not running.
 			if err := rc.checkCDCPiTR(ctx); err != nil {
@@ -1990,20 +1982,17 @@ type deliverResult struct {
 }
 
 func saveCheckpoint(rc *Controller, t *TableImporter, engineID int32, chunk *checkpoints.ChunkCheckpoint) {
-	// We need to update the AllocBase every time we've finished a file.
-	// The AllocBase is determined by the maximum of the "handle" (_tidb_rowid
-	// or integer primary key), which can only be obtained by reading all data.
-
-	var base int64
-	if t.tableInfo.Core.ContainsAutoRandomBits() {
-		base = t.alloc.Get(autoid.AutoRandomType).Base() + 1
-	} else {
-		base = t.alloc.Get(autoid.RowIDAllocType).Base() + 1
-	}
+	// we save the XXXBase every time a chunk is finished.
+	// Note, it's possible some chunk with larger autoID range finished first, so
+	// the saved XXXBase is larger, when chunks with smaller autoID range finished
+	// it might have no effect on the saved XXXBase, but it's OK, we only need
+	// the largest.
 	rc.saveCpCh <- saveCp{
 		tableName: t.tableName,
 		merger: &checkpoints.RebaseCheckpointMerger{
-			AllocBase: base,
+			AutoRandBase:  t.alloc.Get(autoid.AutoRandomType).Base(),
+			AutoIncrBase:  t.alloc.Get(autoid.AutoIncrementType).Base(),
+			AutoRowIDBase: t.alloc.Get(autoid.RowIDAllocType).Base(),
 		},
 	}
 	rc.saveCpCh <- saveCp{

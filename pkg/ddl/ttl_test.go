@@ -26,7 +26,7 @@ import (
 func Test_getTTLInfoInOptions(t *testing.T) {
 	falseValue := false
 	trueValue := true
-	twentyFourHours := "24h"
+	twentyFiveHours := "25h"
 
 	cases := []struct {
 		options            []*ast.TableOption
@@ -56,7 +56,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      DefaultTTLJobInterval,
+				JobInterval:      model.DefaultTTLJobInterval,
 			},
 			nil,
 			nil,
@@ -80,7 +80,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
-				JobInterval:      DefaultTTLJobInterval,
+				JobInterval:      model.DefaultTTLJobInterval,
 			},
 			&falseValue,
 			nil,
@@ -108,7 +108,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      DefaultTTLJobInterval,
+				JobInterval:      model.DefaultTTLJobInterval,
 			},
 			&trueValue,
 			nil,
@@ -124,7 +124,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 				{
 					Tp:       ast.TableOptionTTLJobInterval,
-					StrValue: "24h",
+					StrValue: "25h",
 				},
 			},
 			&model.TTLInfo{
@@ -132,10 +132,10 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      "24h",
+				JobInterval:      "25h",
 			},
 			nil,
-			&twentyFourHours,
+			&twentyFiveHours,
 			nil,
 		},
 	}

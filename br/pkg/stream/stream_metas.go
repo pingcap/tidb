@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -38,7 +39,16 @@ const (
 	baseTmp           = "BASE_TMP"
 	metaSuffix        = ".meta"
 	migrationPrefix   = "v1/migrations"
+
+	SupportedMigVersion = pb.MigrationVersion_M1
 )
+
+func NewMigration() *pb.Migration {
+	return &pb.Migration{
+		Version: pb.MigrationVersion_M1,
+		Creator: fmt.Sprintf("br;commit=%s;branch=%s", versioninfo.TiDBGitHash, versioninfo.TiDBGitBranch),
+	}
+}
 
 type StreamMetadataSet struct {
 	// if set true, the metadata and datafile won't be removed
@@ -196,7 +206,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	hst := ms.hook(st)
 	est := MigerationExtension(hst)
 	est.Hooks = updateFnHook{updateFn: updateFn}
-	res := MigratedTo{NewBase: new(pb.Migration)}
+	res := MigratedTo{NewBase: NewMigration()}
 	est.doTruncateLogs(ctx, ms, from, &res)
 
 	if bst, ok := hst.ExternalStorage.(*storage.Batched); ok {
@@ -517,7 +527,7 @@ func MigerationExtension(s storage.ExternalStorage) MigrationExt {
 // Merge merges two migrations.
 // The merged migration contains all operations from the two arguments.
 func MergeMigrations(m1 *pb.Migration, m2 *pb.Migration) *pb.Migration {
-	out := new(pb.Migration)
+	out := NewMigration()
 	out.EditMeta = mergeMetaEdits(m1.GetEditMeta(), m2.GetEditMeta())
 	out.Compactions = append(out.Compactions, m1.GetCompactions()...)
 	out.Compactions = append(out.Compactions, m2.GetCompactions()...)
@@ -563,6 +573,24 @@ type OrderedMigration struct {
 	Content pb.Migration `json:"content"`
 }
 
+func (o *OrderedMigration) unmarshalContent(b []byte) error {
+	err := o.Content.Unmarshal(b)
+	if err != nil {
+		return err
+	}
+	if o.Content.Version > SupportedMigVersion {
+		return errors.Annotatef(
+			berrors.ErrMigrationVersionNotSupported,
+			"the migration at %s has version %s(%d), the max version we support is %s(%d)",
+			o.Path,
+			o.Content.Version, o.Content.Version,
+			SupportedMigVersion, SupportedMigVersion,
+		)
+	}
+
+	return nil
+}
+
 // Load loads the current living migrations from the storage.
 func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	opt := &storage.WalkOption{
@@ -575,6 +603,11 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		err = t.unmarshalContent(b)
+		if err != nil {
+			return err
+		}
+
 		if t.SeqNum == baseMigrationSN {
 			// NOTE: the legacy truncating isn't implemented by appending a migration.
 			// We load their checkpoint here to be compatible with them.
@@ -585,7 +618,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 			}
 			t.Content.TruncatedTo = max(truncatedTs, t.Content.TruncatedTo)
 		}
-		return t.Content.Unmarshal(b)
+		return nil
 	})
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
@@ -605,7 +638,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 		// The BASE migration isn't persisted.
 		// This happens when `migrate-to` wasn't run ever.
 		result = Migrations{
-			Base:   new(pb.Migration),
+			Base:   NewMigration(),
 			Layers: collected.Item,
 		}
 	}
@@ -650,6 +683,17 @@ func (migs Migrations) MergeToBy(seq int, merge func(m1, m2 *pb.Migration) *pb.M
 		newBase = merge(newBase, &mig.Content)
 	}
 	return newBase
+}
+
+// ListAll returns a slice of all migrations in protobuf format.
+// This includes the base migration and any additional layers.
+func (migs Migrations) ListAll() []*pb.Migration {
+	pbMigs := make([]*pb.Migration, 0, len(migs.Layers)+1)
+	pbMigs = append(pbMigs, migs.Base)
+	for _, m := range migs.Layers {
+		pbMigs = append(pbMigs, &m.Content)
+	}
+	return pbMigs
 }
 
 type mergeAndMigrateToConfig struct {
@@ -750,8 +794,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	err = m.writeBase(ctx, newBase)
 	if err != nil {
 		result.Warnings = append(
-			result.MigratedTo.Warnings,
-			errors.Annotatef(err, "failed to save the merged new base, nothing will happen"),
+			result.Warnings,
+			errors.Annotate(err, "failed to save the merged new base"),
 		)
 		// Put the new BASE here anyway. The caller may want this.
 		result.NewBase = newBase
@@ -773,9 +817,9 @@ func (m MigrationExt) MergeAndMigrateTo(
 	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
 
 	// Put the final BASE.
-	err = m.writeBase(ctx, result.MigratedTo.NewBase)
+	err = m.writeBase(ctx, result.NewBase)
 	if err != nil {
-		result.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
+		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to save the new base"))
 	}
 	return
 }
@@ -807,10 +851,8 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	}
 
 	result := MigratedTo{
-		NewBase: new(pb.Migration),
+		NewBase: NewMigration(),
 	}
-	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
 	// Fills: TruncatedTo, Compactions, DesctructPrefix.
 	if !opt.skipTruncateLog {
 		m.doTruncating(ctx, mig, &result)
@@ -819,6 +861,10 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 		result.NewBase.Compactions = mig.Compactions
 		result.NewBase.TruncatedTo = mig.TruncatedTo
 	}
+
+	// We do skip truncate log first, so metas removed by truncating can be removed in this execution.
+	// Fills: EditMeta for new Base.
+	m.doMetaEdits(ctx, mig, &result)
 
 	return result
 }
@@ -836,6 +882,7 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 }
 
 // doMetaEdits applies the modification to the meta files in the storage.
+// This will delete data files firstly. Make sure the new BASE was persisted before calling this.
 func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
 
@@ -843,14 +890,26 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 		if isEmptyEdition(medit) {
 			return
 		}
+
+		// Sometimes, the meta file will be deleted by truncating.
+		// We clean up those meta edits.
+		// NOTE: can we unify the deletion of truncating and meta editing?
+		// Say, add a "normalize" phase that load all files to be deleted to the migration.
+		// The problem here is a huge migration may be created in memory then leading to OOM.
+		exists, errChkExist := m.s.FileExists(ctx, medit.Path)
+		if errChkExist == nil && !exists {
+			log.Warn("The meta file doesn't exist, skipping the edit", zap.String("path", medit.Path))
+			return
+		}
+
+		// Firstly delete data so they won't leak when BR crashes.
+		m.cleanUpFor(ctx, medit, out)
 		err := m.applyMetaEdit(ctx, medit)
 		if err != nil {
 			out.NewBase.EditMeta = append(out.NewBase.EditMeta, medit)
 			out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to apply meta edit %s to meta file", medit.Path))
 			return
 		}
-
-		m.cleanUpFor(ctx, medit, out)
 	}
 
 	defer m.Hooks.HandingMetaEditDone()
@@ -892,6 +951,13 @@ func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *M
 		}
 	}
 
+	if len(out.Warnings) > 0 {
+		log.Warn(
+			"Failed to clean up for meta edit.",
+			zap.String("meta-edit", medit.Path),
+			zap.Errors("warnings", out.Warnings),
+		)
+	}
 	if !isEmptyEdition(newMetaEdit) {
 		out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
 	}
@@ -930,7 +996,6 @@ func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, m
 	})
 	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
 		del := slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
-		fmt.Println(medit.Path, medit.DeletePhysicalFiles, dfg.Path, del)
 		return del
 	})
 	for _, group := range metadata.FileGroups {
@@ -1099,6 +1164,7 @@ func (m MigrationExt) doTruncateLogs(
 			// We have already written `truncated-to` to the storage hence
 			// we don't need to worry that the user access files already deleted.
 			aOut := new(MigratedTo)
+			aOut.NewBase = new(pb.Migration)
 			m.cleanUpFor(ctx, me, aOut)
 			updateResult(func(r *MigratedTo) {
 				r.Warnings = append(r.Warnings, aOut.Warnings...)

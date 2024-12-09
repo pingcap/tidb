@@ -183,8 +183,9 @@ select * from information_schema.`METRICS_TABLES` where table_name='tidb_qps';
 # TestTableConstraintsTable
 select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';
 
-# TestTableSessionVar
-select * from information_schema.SESSION_VARIABLES where VARIABLE_NAME='tidb_retry_limit';
+# Test for tables that have moved from information_schema to performance_schema
+# https://github.com/pingcap/tidb/issues/9154
+SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA='information_schema' AND TABLE_NAME IN ('GLOBAL_VARIABLES','SESSION_VARIABLES','GLOBAL_STATUS','SESSION_STATUS');
 
 # TestSequences
 drop sequence if exists seq, seq2;
