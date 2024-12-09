@@ -203,6 +203,9 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	switch p.JoinType {
@@ -1224,6 +1227,9 @@ func (p *LogicalJoin) ExtractOnCondition(
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
 	ctx := p.SCtx()
+	if !ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
 	for _, expr := range conditions {
 		// For queries like `select a in (select a from s where s.b = t.b) from t`,
 		// if subquery is empty caused by `s.b = t.b`, the result should always be
@@ -1259,7 +1265,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					if binop.FuncName.L == ast.EQ {
+					switch binop.FuncName.L {
+					case ast.EQ, ast.NullEQ:
 						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
