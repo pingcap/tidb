@@ -3316,15 +3316,16 @@ func TestTimeBuiltin(t *testing.T) {
 	tk.MustQueryToErr(`select last_month('2001-10-50')`)
 
 	// for add_month
-	tk.MustQuery(`select add_month('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08 00:00:00"))
-	tk.MustQuery(`select add_month('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08 00:00:00"))
-	tk.MustQuery(`select add_month('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
-	tk.MustQuery(`select add_month('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+	tk.MustQuery(`select add_months('2024-04-08', -3)`).Check(testkit.Rows("2024-01-08 00:00:00"))
+	tk.MustQuery(`select add_months('2024-04-08', 12)`).Check(testkit.Rows("2025-04-08 00:00:00"))
+	tk.MustQuery(`select add_months('2024-12-31', 2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
+	tk.MustQuery(`select add_months('2025-04-30', -2)`).Check(testkit.Rows("2025-02-28 00:00:00"))
 
 	// for next_day
 	tk.MustQuery(`select next_day('2024-12-31', 'TUE')`).Check(testkit.Rows("2025-01-07 00:00:00"))
 	tk.MustQuery(`select next_day('2024-12-05', 'Tuesday')`).Check(testkit.Rows("2024-12-10 00:00:00"))
 	tk.MustQuery(`select next_day('2024-12-31', 'sunday')`).Check(testkit.Rows("2025-01-05 00:00:00"))
+	tk.MustQuery(`select next_day('2024-12-31 12:31:58', 'sunday')`).Check(testkit.Rows("2025-01-05 12:31:58"))
 
 	// for localtime, localtimestamp
 	result = tk.MustQuery(`select localtime() = now(), localtime = now(), localtimestamp() = now(), localtimestamp = now()`)
