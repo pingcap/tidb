@@ -1423,24 +1423,24 @@ func restoreStream(
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
 		newTask = false
 	}
+
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get the schemas ID replace information.
 	// since targeted full backup storage, need to use the full backup cipher
 	tableMappingManager, err := client.BuildTableMappingManager(ctx, &logclient.BuildTableMappingManagerConfig{
 		IsNewTask:         newTask,
 		TableFilter:       cfg.TableFilter,
 		FullBackupStorage: fullBackupStorage,
-	}, &cfg.Config.CipherInfo)
+		CipherInfo:        &cfg.Config.CipherInfo,
+		Files:             ddlFiles,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
-	if err != nil {
-		return err
-	}
-	if err = client.IterMetaKVAndBuildIdMap(ctx, tableMappingManager, ddlFiles); err != nil {
-		return errors.Trace(err)
-	}
-	log.Info("got id map", zap.Any("size", len(tableMappingManager.DbReplaceMap)))
 
 	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DbReplaceMap, cfg.tiflashRecorder,
 		client.CurrentTS(), cfg.TableFilter, client.RecordDeleteRange)

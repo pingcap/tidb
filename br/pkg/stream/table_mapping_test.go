@@ -51,7 +51,7 @@ func TestToProto(t *testing.T) {
 	drs[oldDBID] = dr
 
 	// create schemas replace and test ToProto().
-	tc := NewTableInfoCollector(drs, mockGenGenGlobalID)
+	tc := NewTableMappingManager(drs, mockGenGenGlobalID)
 
 	dbMap := tc.ToProto()
 	require.Equal(t, len(dbMap), 1)

@@ -896,6 +896,8 @@ type BuildTableMappingManagerConfig struct {
 
 	// optional
 	FullBackupStorage *FullBackupStorageConfig
+	CipherInfo        *backuppb.CipherInfo
+	Files             []*backuppb.DataFileInfo
 }
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
@@ -903,7 +905,6 @@ const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTO
 func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
 	cfg *BuildTableMappingManagerConfig,
-	cipherInfo *backuppb.CipherInfo,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
@@ -918,7 +919,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter, cipherInfo)
+	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter, cfg.CipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -961,7 +962,6 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 func (rc *LogClient) BuildTableMappingManager(
 	ctx context.Context,
 	cfg *BuildTableMappingManagerConfig,
-	cipherInfo *backuppb.CipherInfo,
 ) (*stream.TableMappingManager, error) {
 	var (
 		err        error
@@ -998,9 +998,10 @@ func (rc *LogClient) BuildTableMappingManager(
 		}
 	}
 
-	if len(dbMaps) <= 0 {
+	needToBuildFromFullBackup := len(dbMaps) <= 0
+	if needToBuildFromFullBackup {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1025,8 +1026,16 @@ func (rc *LogClient) BuildTableMappingManager(
 		}()...)
 	}
 
-	tableInfoCollector := stream.NewTableInfoCollector(dbReplaces, rc.GenGlobalID)
-	return tableInfoCollector, nil
+	tableMappingManager := stream.NewTableMappingManager(dbReplaces, rc.GenGlobalID)
+
+	// not loaded from storage, need to iter meta kv and build and save the map
+	if needToBuildFromFullBackup {
+		if err = rc.IterMetaKVToBuildAndSaveIdMap(ctx, tableMappingManager, cfg.Files); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return tableMappingManager, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -1099,8 +1108,8 @@ func (rc *LogClient) RestoreAndRewriteMetaKVFiles(
 	return nil
 }
 
-// IterMetaKVAndBuildIdMap iterates meta kv and builds id mapping and saves it to storage.
-func (rc *LogClient) IterMetaKVAndBuildIdMap(
+// IterMetaKVToBuildAndSaveIdMap iterates meta kv and builds id mapping and saves it to storage.
+func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 	ctx context.Context,
 	tableMappingManager *stream.TableMappingManager,
 	files []*backuppb.DataFileInfo,

@@ -33,7 +33,7 @@ type TableMappingManager struct {
 	genGlobalIdFn func(ctx context.Context) (int64, error)
 }
 
-func NewTableInfoCollector(
+func NewTableMappingManager(
 	dbReplaceMap map[UpstreamID]*DBReplace,
 	genGlobalIdFn func(ctx context.Context) (int64, error)) *TableMappingManager {
 	if dbReplaceMap == nil {
