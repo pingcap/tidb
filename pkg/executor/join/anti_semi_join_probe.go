@@ -26,7 +26,7 @@ type antiSemiJoinProbe struct {
 	baseSemiJoin
 
 	// After processing all probe rows, we will find which rows will be outputted
-	outputProbeRowsSelected bool
+	isMatchedRowsAdjustedForOutput bool
 }
 
 func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoinProbe {
@@ -35,7 +35,7 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 	}
 
 	if ret.ctx.hasOtherCondition() {
-		ret.isNulls = make([]bool, 0, ret.ctx.SessCtx.GetSessionVars().MaxChunkSize)
+		ret.isNulls = make([]bool, 0, 32)
 	}
 
 	return ret
@@ -110,7 +110,7 @@ func (a *antiSemiJoinProbe) resetProbeState() {
 		}
 	}
 
-	a.outputProbeRowsSelected = false
+	a.isMatchedRowsAdjustedForOutput = false
 }
 
 func (a *antiSemiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -185,10 +185,7 @@ func (a *antiSemiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *ch
 
 		for index, result := range a.selected {
 			if result || a.isNulls[index] {
-				candidateRow := unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)
-				if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
-					meta.setUsedFlag(*(*unsafe.Pointer)(candidateRow))
-				}
+				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&a.rowIndexInfos[index].buildRowStart)))
 			}
 		}
 	}
@@ -244,12 +241,7 @@ func (a *antiSemiJoinProbe) produceResult(joinedChk *chunk.Chunk, sqlKiller *sql
 
 		length := len(a.selected)
 		for i := range length {
-			if a.selected[i] {
-				probeRowIdx := a.rowIndexInfos[i].probeRowIndex
-				a.isMatchedRows[probeRowIdx] = true
-			}
-
-			if a.isNulls[i] {
+			if a.selected[i] || a.isNulls[i] {
 				probeRowIdx := a.rowIndexInfos[i].probeRowIndex
 				a.isMatchedRows[probeRowIdx] = true
 			}
@@ -268,13 +260,13 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 	}
 
 	if a.unFinishedProbeRowIdxQueue.IsEmpty() {
-		if !a.outputProbeRowsSelected {
+		if !a.isMatchedRowsAdjustedForOutput {
 			// As this is anti semi, only rows that marked as not matched are result rows.
 			for i, matched := range a.isMatchedRows {
 				a.isMatchedRows[i] = !matched
 			}
 
-			a.outputProbeRowsSelected = true
+			a.isMatchedRowsAdjustedForOutput = true
 		}
 
 		a.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, a.isMatchedRows)

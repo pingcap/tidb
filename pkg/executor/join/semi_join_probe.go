@@ -167,10 +167,7 @@ func (s *semiJoinProbe) probeForLeftSideBuildHasOtherCondition(joinedChk *chunk.
 
 		for index, result := range s.selected {
 			if result {
-				candidateRow := unsafe.Pointer(&s.rowIndexInfos[index].buildRowStart)
-				if !meta.isCurrentRowUsedWithAtomic(candidateRow) {
-					meta.setUsedFlag(*(*unsafe.Pointer)(candidateRow))
-				}
+				meta.setUsedFlag(*(*unsafe.Pointer)(unsafe.Pointer(&s.rowIndexInfos[index].buildRowStart)))
 			}
 		}
 	}
