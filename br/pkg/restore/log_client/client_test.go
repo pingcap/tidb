@@ -140,12 +140,9 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 	dbMap := make(map[stream.UpstreamID]*stream.DBReplace)
 	return stream.NewSchemasReplace(
 		dbMap,
-		true,
 		nil,
 		1,
 		filter.All(),
-		nil,
-		nil,
 		nil,
 	)
 }
@@ -1387,16 +1384,16 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
-		cfg := &logclient.InitSchemaConfig{IsNewTask: false}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.BuildTableMappingManagerConfig{IsNewTask: false}
+		_, err := client.BuildTableMappingManager(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
-		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err := client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.BuildTableMappingManagerConfig{IsNewTask: true}
+		_, err := client.BuildTableMappingManager(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
@@ -1409,8 +1406,8 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
-		cfg := &logclient.InitSchemaConfig{IsNewTask: true}
-		_, err = client.InitSchemasReplaceForDDL(ctx, cfg, nil)
+		cfg := &logclient.BuildTableMappingManagerConfig{IsNewTask: true}
+		_, err = client.BuildTableMappingManager(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}

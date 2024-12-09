@@ -348,6 +348,10 @@ func (rc *LogClient) SetCurrentTS(ts uint64) error {
 	return nil
 }
 
+func (rc *LogClient) CurrentTS() uint64 {
+	return rc.currentTS
+}
+
 // GetClusterID gets the cluster id from down-stream cluster.
 func (rc *LogClient) GetClusterID(ctx context.Context) uint64 {
 	if rc.clusterID <= 0 {
@@ -885,13 +889,12 @@ type FullBackupStorageConfig struct {
 	Opts    *storage.ExternalStorageOptions
 }
 
-type InitSchemaConfig struct {
+type BuildTableMappingManagerConfig struct {
 	// required
 	IsNewTask   bool
 	TableFilter filter.Filter
 
 	// optional
-	TiFlashRecorder   *tiflashrec.TiFlashRecorder
 	FullBackupStorage *FullBackupStorageConfig
 }
 
@@ -899,7 +902,7 @@ const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTO
 
 func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
-	cfg *InitSchemaConfig,
+	cfg *BuildTableMappingManagerConfig,
 	cipherInfo *backuppb.CipherInfo,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
@@ -953,26 +956,22 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	return dbReplaces, nil
 }
 
-// InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
-// It is used to rewrite meta kv-event.
-func (rc *LogClient) InitSchemasReplaceForDDL(
+// BuildTableMappingManager builds the table mapping manager. It reads the full backup storage to get the full backup
+// table info to initialize the manager, or it loads the saved mapping from last time of run.
+func (rc *LogClient) BuildTableMappingManager(
 	ctx context.Context,
-	cfg *InitSchemaConfig,
+	cfg *BuildTableMappingManagerConfig,
 	cipherInfo *backuppb.CipherInfo,
-) (*stream.SchemasReplace, error) {
+) (*stream.TableMappingManager, error) {
 	var (
-		err    error
-		dbMaps []*backuppb.PitrDBMap
-		// the id map doesn't need to construct only when it is not the first execution
-		needConstructIdMap bool
-
+		err        error
+		dbMaps     []*backuppb.PitrDBMap
 		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
 
 	// not new task, load schemas map from external storage
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
-		needConstructIdMap = false
 		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -983,7 +982,6 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1002,13 +1000,12 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		needConstructIdMap = true
 		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		dbReplaces = stream.FromSchemaMaps(dbMaps)
+		dbReplaces = stream.FromDBMapProto(dbMaps)
 	}
 
 	for oldDBID, dbReplace := range dbReplaces {
@@ -1028,10 +1025,8 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	rp := stream.NewSchemasReplace(
-		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.RecordDeleteRange)
-	return rp, nil
+	tableInfoCollector := stream.NewTableInfoCollector(dbReplaces, rc.GenGlobalID)
+	return tableInfoCollector, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -1047,8 +1042,8 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 	return files
 }
 
-// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
-func (rc *LogClient) RestoreMetaKVFiles(
+// RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
+func (rc *LogClient) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
@@ -1088,21 +1083,6 @@ func (rc *LogClient) RestoreMetaKVFiles(
 		zap.Int("default files", len(filesInDefaultCF)),
 		zap.Int("write files", len(filesInWriteCF)))
 
-	if schemasReplace.NeedConstructIdMap() {
-		// Preconstruct the map and save it into external storage.
-		if err := rc.PreConstructAndSaveIDMap(
-			ctx,
-			filesInWriteCF,
-			filesInDefaultCF,
-			schemasReplace,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
-
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := RestoreMetaKVFilesWithBatchMethod(
 		ctx,
@@ -1123,31 +1103,69 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	return nil
 }
 
-// PreConstructAndSaveIDMap constructs id mapping and save it.
-func (rc *LogClient) PreConstructAndSaveIDMap(
+// IterMetaKVAndBuildIdMap iterates meta kv and builds id mapping and saves it to storage.
+func (rc *LogClient) IterMetaKVAndBuildIdMap(
 	ctx context.Context,
-	fsInWriteCF, fsInDefaultCF []*backuppb.DataFileInfo,
-	sr *stream.SchemasReplace,
+	tableMappingManager *stream.TableMappingManager,
+	files []*backuppb.DataFileInfo,
 ) error {
-	sr.SetPreConstructMapStatus()
+	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
-	if err := rc.constructIDMap(ctx, fsInWriteCF, sr); err != nil {
+	for _, f := range files {
+		if f.Type == backuppb.FileType_Delete {
+			// it should not happen
+			// only do some preventive checks here.
+			log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
+			continue
+		}
+		if f.Cf == stream.DefaultCF {
+			filesInDefaultCF = append(filesInDefaultCF, f)
+		}
+	}
+	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
+
+	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
+	})
+
+	log.Info("start to iterate meta kv and build id map",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)))
+
+	// build the map and save it into external storage.
+	if err := rc.buildAndSaveIDMap(
+		ctx,
+		filesInDefaultCF,
+		tableMappingManager,
+	); err != nil {
 		return errors.Trace(err)
 	}
-	if err := rc.constructIDMap(ctx, fsInDefaultCF, sr); err != nil {
+	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
+	})
+	return nil
+}
+
+// buildAndSaveIDMap build id mapping and save it.
+func (rc *LogClient) buildAndSaveIDMap(
+	ctx context.Context,
+	fsInDefaultCF []*backuppb.DataFileInfo,
+	tableMappingManager *stream.TableMappingManager,
+) error {
+	if err := rc.iterAndBuildIDMap(ctx, fsInDefaultCF, tableMappingManager); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err := rc.saveIDMap(ctx, sr); err != nil {
+	if err := rc.saveIDMap(ctx, tableMappingManager); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (rc *LogClient) constructIDMap(
+func (rc *LogClient) iterAndBuildIDMap(
 	ctx context.Context,
 	fs []*backuppb.DataFileInfo,
-	sr *stream.SchemasReplace,
+	tableMappingManager *stream.TableMappingManager,
 ) error {
 	for _, f := range fs {
 		entries, _, err := rc.ReadAllEntries(ctx, f, math.MaxUint64)
@@ -1156,7 +1174,7 @@ func (rc *LogClient) constructIDMap(
 		}
 
 		for _, entry := range entries {
-			if _, err := sr.RewriteKvEntry(&entry.E, f.GetCf()); err != nil {
+			if err := tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, f.GetCf()); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1197,8 +1215,6 @@ func RestoreMetaKVFilesWithBatchMethod(
 		defaultKvEntries = make([]*KvEntryWithTS, 0)
 		writeKvEntries   = make([]*KvEntryWithTS, 0)
 	)
-	// Set restoreKV to SchemaReplace.
-	schemasReplace.SetRestoreKVStatus()
 
 	for i, f := range defaultFiles {
 		if i == 0 {
@@ -1301,11 +1317,9 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 		return nextKvEntries, errors.Trace(err)
 	}
 
-	if schemasReplace.IsRestoreKVStatus() {
-		updateStats(kvCount, size)
-		for i := 0; i < len(files); i++ {
-			progressInc()
-		}
+	updateStats(kvCount, size)
+	for i := 0; i < len(files); i++ {
+		progressInc()
 	}
 	return nextKvEntries, nil
 }
@@ -1756,9 +1770,9 @@ const PITRIdMapBlockSize int = 524288
 // saveIDMap saves the id mapping information.
 func (rc *LogClient) saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	collector *stream.TableMappingManager,
 ) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: sr.TidySchemaMaps()}
+	backupmeta := &backuppb.BackupMeta{DbMaps: collector.ToProto()}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)
