@@ -56,7 +56,8 @@ type AccessPath struct {
 	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
 	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
 	// at same time. Normal single index or table path also doesn't use this field.
-	PartialAlternativeIndexPaths [][]*AccessPath
+	// one OR branch -> one alternative -> single access path
+	PartialAlternativeIndexPaths [][][]*AccessPath
 	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
 	// the new state/type of access path. (undetermined index merge path)
 	KeepIndexMergeORSourceFilter bool
@@ -134,12 +135,16 @@ func (path *AccessPath) Clone() *AccessPath {
 	for _, partialPath := range path.PartialIndexPaths {
 		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
 	}
-	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
-		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
-		for _, oneAlternative := range onePartialAlternative {
-			tmp = append(tmp, oneAlternative.Clone())
+	for _, oneOrBranch := range path.PartialAlternativeIndexPaths {
+		clonedOneOrBranch := make([][]*AccessPath, 0, len(oneOrBranch))
+		for _, oneAlternative := range oneOrBranch {
+			clonedOneAlternative := make([]*AccessPath, 0, len(oneAlternative))
+			for _, singlePath := range oneAlternative {
+				clonedOneAlternative = append(clonedOneAlternative, singlePath.Clone())
+			}
+			clonedOneOrBranch = append(clonedOneOrBranch, clonedOneAlternative)
 		}
-		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedOneOrBranch)
 	}
 	return ret
 }

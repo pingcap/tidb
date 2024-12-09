@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"math"
 	"slices"
 	"strings"
 
@@ -135,57 +134,46 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 
 func generateNormalIndexPartialPaths4DNF(
 	ds *logicalop.DataSource,
-	dnfItems []expression.Expression,
-	candidatePaths []*util.AccessPath,
-) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
-	paths = make([]*util.AccessPath, 0, len(dnfItems))
-	usedMap = make([]bool, len(dnfItems))
+	item expression.Expression,
+	candidatePath *util.AccessPath,
+) (paths *util.AccessPath, needSelection bool) {
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
-	for offset, item := range dnfItems {
-		cnfItems := expression.SplitCNFItems(item)
-		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
-		for _, cnfItem := range cnfItems {
-			if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
-				pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
-			} else {
-				needSelection = true
-			}
-		}
-		itemPaths := accessPathsForConds(ds, pushedDownCNFItems, candidatePaths)
-		if len(itemPaths) == 0 {
-			// for this dnf item, we couldn't generate an index merge partial path.
-			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
-			// the entire index merge is not valid anymore.
-			return nil, false, usedMap
-		}
-		partialPath := buildIndexMergePartialPath(itemPaths)
-		if partialPath == nil {
-			// for this dnf item, we couldn't generate an index merge partial path.
-			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
-			// the entire index merge is not valid anymore.
-			return nil, false, usedMap
-		}
-
-		// identify whether all pushedDownCNFItems are fully used.
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(partialPath.TableFilters) > 0 {
-			needSelection = true
-			partialPath.TableFilters = nil
-		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
-			needSelection = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			partialPath.IndexFilters = nil
-		}
-		// Keep this filter as a part of table filters for safety if it has any parameter.
-		if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
+	cnfItems := expression.SplitCNFItems(item)
+	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+	for _, cnfItem := range cnfItems {
+		if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
+			pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+		} else {
 			needSelection = true
 		}
-		usedMap[offset] = true
-		paths = append(paths, partialPath)
 	}
-	return paths, needSelection, usedMap
+	itemPaths := accessPathsForConds(ds, pushedDownCNFItems, []*util.AccessPath{candidatePath})
+	if len(itemPaths) != 1 {
+		// for this dnf item, we couldn't generate an index merge partial path.
+		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
+		// the entire index merge is not valid anymore.
+		return nil, false
+	}
+	partialPath := itemPaths[0]
+
+	// identify whether all pushedDownCNFItems are fully used.
+	// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+	if len(partialPath.TableFilters) > 0 {
+		needSelection = true
+		partialPath.TableFilters = nil
+	}
+	// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+	if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
+		needSelection = true
+		// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+		partialPath.IndexFilters = nil
+	}
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
+		needSelection = true
+	}
+
+	return partialPath, needSelection
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
@@ -218,7 +206,7 @@ func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Ex
 		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
 		// the current filter into a Selection after partial paths.
 		shouldKeepCurrentFilter := false
-		var partialAlternativePaths = make([][]*util.AccessPath, 0, usedIndexCount)
+		var partialAlternativePaths = make([][][]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
@@ -237,9 +225,15 @@ func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Ex
 				partialAlternativePaths = nil
 				break
 			}
+			// TODO: clean up + comments
+			tmp := make([][]*util.AccessPath, 0, len(itemPaths))
+			for _, itemPath := range itemPaths {
+				tmp = append(tmp, []*util.AccessPath{itemPath})
+			}
+
 			// we don't prune other possible index merge path here.
 			// keep all the possible index merge partial paths here to let the property choose.
-			partialAlternativePaths = append(partialAlternativePaths, itemPaths)
+			partialAlternativePaths = append(partialAlternativePaths, tmp)
 		}
 		if len(partialAlternativePaths) <= 1 {
 			continue
@@ -252,20 +246,23 @@ func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Ex
 		for _, oneAlternativeSet := range partialAlternativePaths {
 			// 1: mark used map.
 			for _, oneAlternativePath := range oneAlternativeSet {
-				if oneAlternativePath.IsTablePath() {
+				if oneAlternativePath[0].IsTablePath() {
 					// table path
 					indexMap[-1] = struct{}{}
 				} else {
 					// index path
-					indexMap[oneAlternativePath.Index.ID] = struct{}{}
+					indexMap[oneAlternativePath[0].Index.ID] = struct{}{}
 				}
 			}
 			// 2.1: trade off on countAfterAccess.
 			minCountAfterAccessPath := buildIndexMergePartialPath(oneAlternativeSet)
-			indexCondsForP := minCountAfterAccessPath.AccessConds[:]
-			indexCondsForP = append(indexCondsForP, minCountAfterAccessPath.IndexFilters...)
-			if len(indexCondsForP) > 0 {
-				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+			for _, path := range minCountAfterAccessPath {
+				indexCondsForP := path.AccessConds[:]
+				indexCondsForP = append(indexCondsForP, path.IndexFilters...)
+				if len(indexCondsForP) > 0 {
+					accessConds = append(accessConds,
+						expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+				}
 			}
 		}
 		if len(indexMap) == 1 {
@@ -416,30 +413,33 @@ func accessPathsForConds(
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we choose the index with minimal estimate row count.
-func buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
+func buildIndexMergePartialPath(indexAccessPaths [][]*util.AccessPath) []*util.AccessPath {
 	if len(indexAccessPaths) == 1 {
 		return indexAccessPaths[0]
 	}
 
-	minEstRowIndex := 0
-	minEstRow := math.MaxFloat64
-	for i := 0; i < len(indexAccessPaths); i++ {
-		rc := indexAccessPaths[i].CountAfterAccess
-		if len(indexAccessPaths[i].IndexFilters) > 0 {
-			rc = indexAccessPaths[i].CountAfterIndex
+	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
+		maxRowCount := 0.0
+		for _, path := range paths {
+			rowCount := path.CountAfterAccess
+			if len(path.IndexFilters) > 0 {
+				rowCount = path.CountAfterIndex
+			}
+			maxRowCount = max(maxRowCount, rowCount)
 		}
-		if rc < minEstRow {
-			minEstRowIndex = i
-			minEstRow = rc
-		}
+		return maxRowCount
 	}
-	return indexAccessPaths[minEstRowIndex]
+	ret := slices.MinFunc(indexAccessPaths, func(a, b []*util.AccessPath) int {
+		return cmp.Compare(getMaxRowCountFromPaths(a), getMaxRowCountFromPaths(b))
+	})
+
+	return ret
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
 func buildIndexMergeOrPath(
 	filters []expression.Expression,
-	partialAlternativePaths [][]*util.AccessPath,
+	partialAlternativePaths [][][]*util.AccessPath,
 	current int,
 	shouldKeepCurrentFilter bool,
 ) *util.AccessPath {
@@ -926,11 +926,15 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 		}
 
 		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
-		for _, path := range finishedIndexMergePath.PartialIndexPaths {
-			if isMVIndexPath(path) {
-				mvIndexPartialPathCnt++
-			} else {
-				normalIndexPartialPathCnt++
+		for _, oneAlternative := range finishedIndexMergePath.PartialAlternativeIndexPaths {
+			for _, paths := range oneAlternative {
+				for _, path := range paths {
+					if isMVIndexPath(path) {
+						mvIndexPartialPathCnt++
+					} else {
+						normalIndexPartialPathCnt++
+					}
+				}
 			}
 		}
 

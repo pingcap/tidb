@@ -918,11 +918,17 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	//  path2: {pk}
 	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
 	// so we should collect all match prop paths down, stored as matchIdxes here.
-	for pathIdx, oneItemAlternatives := range path.PartialAlternativeIndexPaths {
+	for pathIdx, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
-		for i, oneIndexAlternativePath := range oneItemAlternatives {
+		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
-			if !noSortItem && !isMatchProp(ds, oneIndexAlternativePath, prop) {
+			match := true
+			for _, singlePath := range oneAlternative {
+				if !noSortItem && !isMatchProp(ds, singlePath, prop) {
+					match = false
+				}
+			}
+			if !match {
 				continue
 			}
 			// two possibility here:
@@ -937,26 +943,31 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
-			tmpOneItemAlternatives := oneItemAlternatives
+			tmpOneItemAlternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
-				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
+				getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
+					maxRowCount := 0.0
+					for _, path := range paths {
+						rowCount := path.CountAfterAccess
+						if len(path.IndexFilters) > 0 {
+							rowCount = path.CountAfterIndex
+						}
+						maxRowCount = max(maxRowCount, rowCount)
+					}
+					return maxRowCount
 				}
-				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
-				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
-				}
-				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				lhsRowCount := getMaxRowCountFromPaths(tmpOneItemAlternatives[a])
+				rhsRowCount := getMaxRowCountFromPaths(tmpOneItemAlternatives[b])
+				res := cmp.Compare(lhsRowCount, rhsRowCount)
 				if res != 0 {
 					return res
 				}
 				// If CountAfterAccess is same, any path is global index should be the first one.
 				var lIsGlobalIndex, rIsGlobalIndex int
-				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+				if !tmpOneItemAlternatives[a][0].IsTablePath() && tmpOneItemAlternatives[a][0].Index.Global {
 					lIsGlobalIndex = 1
 				}
-				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+				if !tmpOneItemAlternatives[b][0].IsTablePath() && tmpOneItemAlternatives[b][0].Index.Global {
 					rIsGlobalIndex = 1
 				}
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
@@ -974,6 +985,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		rhsLen := len(b.matchIdx)
 		return cmp.Compare(lhsLen, rhsLen)
 	})
+	useMVIndex := false
 	for _, matchIdxes := range allMatchIdxes {
 		// since matchIdxes are ordered by matchIdxes's length,
 		// we should use matchIdxes.pathIdx to locate where it comes from.
@@ -983,14 +995,22 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// By this way, a distinguished one is better.
 		for _, oneIdx := range matchIdxes.matchIdx {
 			var indexID int64
-			if alternatives[oneIdx].IsTablePath() {
+			if alternatives[oneIdx][0].IsTablePath() {
 				indexID = -1
 			} else {
-				indexID = alternatives[oneIdx].Index.ID
+				indexID = alternatives[oneIdx][0].Index.ID
+				if alternatives[oneIdx][0].Index.MVIndex {
+					useMVIndex = true
+					determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+						util.SliceDeepClone(alternatives[oneIdx])...)
+					found = true
+					break
+				}
 			}
 			if _, ok := usedIndexMap[indexID]; !ok {
 				// try to avoid all index partial paths are all about a single index.
-				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx].Clone())
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+					util.SliceDeepClone(alternatives[oneIdx])...)
 				usedIndexMap[indexID] = struct{}{}
 				found = true
 				break
@@ -999,11 +1019,12 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		if !found {
 			// just pick the same name index (just using the first one is ok), in case that there may be some other
 			// picked distinctive index path for other partial paths latter.
-			determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[matchIdxes.matchIdx[0]].Clone())
-			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+				util.SliceDeepClone(alternatives[matchIdxes.matchIdx[0]])...)
+			// uedIndexMap[oneORBranch[oneIdx].Index.ID] = struct{}{} must already be colored.
 		}
 	}
-	if len(usedIndexMap) == 1 {
+	if len(usedIndexMap) == 1 && !useMVIndex {
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, false
 	}
@@ -1032,6 +1053,9 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
+		if path.KeepIndexMergeORSourceFilter {
+			shouldKeepCurrentFilter = true
+		}
 	}
 	// Keep this filter as a part of table filters for safety if it has any parameter.
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
@@ -1052,10 +1076,24 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 	}
 	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{accessDNF}, nil)
-	if err != nil {
-		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = cost.SelectionFactor
+	var sel float64
+	if useMVIndex {
+		sel = cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl,
+			determinedIndexPartialPaths,
+			false,
+		)
+	} else {
+		var err error
+		sel, _, err = cardinality.Selectivity(
+			ds.SCtx(),
+			ds.TableStats.HistColl,
+			[]expression.Expression{accessDNF},
+			nil,
+		)
+		if err != nil {
+			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+			sel = cost.SelectionFactor
+		}
 	}
 	indexMergePath.CountAfterAccess = sel * ds.TableStats.RowCount
 	if noSortItem {
