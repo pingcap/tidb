@@ -348,7 +348,7 @@ func TestRetry(t *testing.T) {
 func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
-	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
 	newConfig.Performance.StatsLoadQueueSize = 10000
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
