@@ -242,6 +242,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		skipBackoff = false
 		oldTask := e.task.Load()
+		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
 		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
 		if err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
@@ -476,17 +477,6 @@ func (e *BaseTaskExecutor) Cancel() {
 // Close closes the TaskExecutor when all the subtasks are complete.
 func (e *BaseTaskExecutor) Close() {
 	e.Cancel()
-}
-
-// refreshTask fetch task state from tidb_global_task table.
-func (e *BaseTaskExecutor) refreshTask() error {
-	oldTask := e.task.Load()
-	newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
-	if err != nil {
-		return err
-	}
-	e.task.Store(newTask)
-	return nil
 }
 
 func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
