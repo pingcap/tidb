@@ -172,12 +172,8 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 				isPartitionLocked = true
 			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-<<<<<<< HEAD
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
-=======
 			isLocked = tableOrPartitionLocked
-			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
->>>>>>> 5e73267e719 (statistics: do not record historical stats meta if the table is locked (#57636))
+			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
 				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
 			}
@@ -207,12 +203,8 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
-<<<<<<< HEAD
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
-=======
 			isLocked = isTableLocked
-			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
->>>>>>> 5e73267e719 (statistics: do not record historical stats meta if the table is locked (#57636))
+			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
 				physicalTableID, isTableLocked); err != nil {
 				return err
 			}
