@@ -165,6 +165,8 @@ func TestRangeIntersection(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`set @@tidb_opt_fix_control = "54337:ON"`)
 	tk.MustExec("create table t1 (a1 int, b1 int, c1 int, key pkx (a1,b1));")
+
+	tk.MustExec("create table t_inlist_test(a1 int,b1 int,c1 varbinary(767) DEFAULT NULL, KEY twoColIndex (a1,b1));")
 	tk.MustExec("insert into t1 values (1,1,1);")
 	tk.MustExec("insert into t1 values (null,1,1);")
 	tk.MustExec("insert into t1 values (1,null,1);")
