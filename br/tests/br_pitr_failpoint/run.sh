@@ -129,7 +129,7 @@ restart_services
 
 # PITR restore - 1
 echo "run pitr 1 -- before the index becomes public"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full-1"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full-1" > $res_file 2>&1
 
 # check something in downstream cluster
 echo "check br log"
@@ -142,7 +142,7 @@ run_sql "DROP DATABASE test; CREATE DATABASE test;"
 
 # PITR restore - 2
 echo "run pitr 2 -- before the index becomes public"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full-2"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full-2" > $res_file 2>&1
 
 # check something in downstream cluster
 echo "check br log"
