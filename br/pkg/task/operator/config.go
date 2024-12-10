@@ -197,7 +197,7 @@ func (cfg *ForceFlushConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	return cfg.Config.ParseFromFlags(flags)
 }
 
-type ChecksumTableConfig struct {
+type ChecksumWithRewriteRulesConfig struct {
 	task.Config
 }
 
@@ -206,7 +206,7 @@ func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 		"including tableInfo/checksum and stats.")
 }
 
-func (cfg *ChecksumTableConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
 	if err != nil {
 		return

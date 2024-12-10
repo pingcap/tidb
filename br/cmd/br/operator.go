@@ -113,11 +113,12 @@ func newMigrateToCommand() *cobra.Command {
 
 func newChecksumCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "checksum <subcommand>",
-		Short: "utilities for checksumming.",
-		Args:  cobra.NoArgs,
+		Short: "Calculate the checksum of the current cluster (specified by `-u`) " +
+			"with applying the rewrite rules generated from a backup (specified by `-s`). " +
+			"This can be used when you have the checksum of upstream elsewhere.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg := operator.ChecksumTableConfig{}
+			cfg := operator.ChecksumWithRewriteRulesConfig{}
 			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
 				return err
 			}

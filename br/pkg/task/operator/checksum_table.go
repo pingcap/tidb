@@ -26,7 +26,7 @@ import (
 )
 
 type checksumTableCtx struct {
-	cfg ChecksumTableConfig
+	cfg ChecksumWithRewriteRulesConfig
 
 	mgr *conn.Mgr
 	dom *domain.Domain
@@ -37,7 +37,7 @@ type tableInDB struct {
 	dbName string
 }
 
-func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumTableConfig) error {
+func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteRulesConfig) error {
 	c := &checksumTableCtx{cfg: cfg}
 
 	if err := c.init(ctx, g); err != nil {

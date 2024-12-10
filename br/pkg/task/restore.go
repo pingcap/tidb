@@ -677,9 +677,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	// if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
-	// 	return errors.Annotate(err, "failed to check task exists")
-	// }
+	if !cfg.UserFiltered() {
+		if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
+			return errors.Annotate(err, "failed to check task exists")
+		}
+	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
 	if err != nil {
 		return errors.Annotate(err, "failed to register task to pd")

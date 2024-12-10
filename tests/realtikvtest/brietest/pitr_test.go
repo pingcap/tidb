@@ -99,6 +99,11 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 	kit.mustExec(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
 		cfg.Storage = "local://" + kit.base + "/full"
+		cfg.FilterStr = []string{"test.*"}
+		var err error
+		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
+		cfg.CheckRequirements = false
+		require.NoError(kit.t, err)
 
 		extConfig(&cfg)
 		return task.RunRestore(ctx, kit.Glue(), task.FullRestoreCmd, &cfg)
@@ -110,6 +115,7 @@ func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
 		cfg.Storage = "local://" + kit.base + "/incr"
 		cfg.FullBackupStorage = "local://" + kit.base + "/full"
+		cfg.CheckRequirements = false
 
 		extConfig(&cfg)
 		return task.RunRestore(ctx, kit.Glue(), task.PointRestoreCmd, &cfg)
@@ -268,6 +274,7 @@ func TestPiTRAndBackup(t *testing.T) {
 
 	kit.forceFlushAndWait(taskName)
 	cleanSimpleData(kit)
+	kit.StopTaskIfExists(taskName)
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
 		rc.FullBackupStorage = "local://" + kit.base + "/full2"
 	})
