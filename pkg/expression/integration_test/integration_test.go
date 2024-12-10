@@ -4121,3 +4121,24 @@ func TestInstr(t *testing.T) {
 	tk.MustQuery(`select instr(c1, c2) from t2`).Check(testkit.Rows("2", "4"))
 	tk.MustQuery(`select instr(c1, c2, 3) from t2`).Check(testkit.Rows("0", "4"))
 }
+
+func TestWMConcat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table testagg(A varchar(16), B varchar(16), C varchar(16));")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B1','C1');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B2','C2');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('1', 'B3','C3');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('2', 'B4','C4');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('2', 'B5','C5');")
+	tk.MustExec("INSERT INTO TESTAGG (A, B, C) VALUES ('3', 'B6','C6');")
+	tk.MustQuery("select a,wm_concat(b||'-'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1-C1,B2-C2,B3-C3", "2 B4-C4,B5-C5", "3 B6-C6"))
+	tk.MustQuery("select a,wm_concat(c) from testagg group by a order by a;").Check(
+		testkit.Rows("1 C1,C2,C3", "2 C4,C5", "3 C6"))
+	tk.MustQuery("select a,wm_concat(distinct b||'-'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1-C1,B2-C2,B3-C3", "2 B4-C4,B5-C5", "3 B6-C6"))
+	tk.MustQuery("select a,wm_concat(b||'!'||c) as bc from testagg group by a order by a;").Check(
+		testkit.Rows("1 B1!C1,B2!C2,B3!C3", "2 B4!C4,B5!C5", "3 B6!C6"))
+}
