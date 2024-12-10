@@ -1730,15 +1730,11 @@ func buildOrderedList(ctx sessionctx.Context, plan Plan, list []*ast.Assignment,
 		if err != nil {
 			return nil, true
 		}
-<<<<<<< HEAD
-		expr = expression.BuildCastFunction(ctx, expr, col.GetType())
-=======
-		castToTP := col.GetStaticType()
+		castToTP := col.GetType()
 		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
 			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
->>>>>>> 1c059a1216d (planner: set enumsetasint if original value is int in point get (#57550))
+		expr = expression.BuildCastFunction(ctx, expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
