@@ -369,14 +369,14 @@ func finished() efOP {
 	}
 }
 
-func identity() efOP {
+func makeID() efOP {
 	id := uuid.New()
 	return func(ef *backuppb.ExtraFullBackup) {
 		ef.BackupUuid = id[:]
 	}
 }
 
-func pfx(pfx string) efOP {
+func prefix(pfx string) efOP {
 	return func(ef *backuppb.ExtraFullBackup) {
 		ef.FilesPrefixHint = pfx
 	}
@@ -423,7 +423,7 @@ func assertFullBackupPfxs(t *testing.T, it iter.TryNextor[*backuppb.ExtraFullBac
 func TestNotRestoreIncomplete(t *testing.T) {
 	ctx := context.Background()
 	strg := tmp(t)
-	ebk := extFullBkup(pfx("001"), asIfTS(90), identity())
+	ebk := extFullBkup(prefix("001"), asIfTS(90), makeID())
 	wm := new(logclient.WithMigrations)
 	wm.AddExtraFullBackup(pef(t, ebk, 0, strg))
 	wm.SetRestoredTS(91)
@@ -434,9 +434,9 @@ func TestNotRestoreIncomplete(t *testing.T) {
 func TestRestoreSegmented(t *testing.T) {
 	ctx := context.Background()
 	strg := tmp(t)
-	id := identity()
-	ebk1 := extFullBkup(pfx("001"), id)
-	ebk2 := extFullBkup(pfx("002"), asIfTS(90), finished(), id)
+	id := makeID()
+	ebk1 := extFullBkup(prefix("001"), id)
+	ebk2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 	wm := new(logclient.WithMigrations)
 	wm.AddExtraFullBackup(pef(t, ebk1, 0, strg))
 	wm.AddExtraFullBackup(pef(t, ebk2, 1, strg))
@@ -448,9 +448,9 @@ func TestRestoreSegmented(t *testing.T) {
 func TestFilteredOut(t *testing.T) {
 	ctx := context.Background()
 	strg := tmp(t)
-	id := identity()
-	ebk1 := extFullBkup(pfx("001"), id)
-	ebk2 := extFullBkup(pfx("002"), asIfTS(90), finished(), id)
+	id := makeID()
+	ebk1 := extFullBkup(prefix("001"), id)
+	ebk2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 	wm := new(logclient.WithMigrations)
 	wm.AddExtraFullBackup(pef(t, ebk1, 0, strg))
 	wm.AddExtraFullBackup(pef(t, ebk2, 1, strg))
@@ -462,13 +462,13 @@ func TestFilteredOut(t *testing.T) {
 func TestMultiRestores(t *testing.T) {
 	ctx := context.Background()
 	strg := tmp(t)
-	id := identity()
-	id2 := identity()
+	id := makeID()
+	id2 := makeID()
 
-	ebka1 := extFullBkup(pfx("001"), id)
-	ebkb1 := extFullBkup(pfx("101"), id2)
-	ebkb2 := extFullBkup(pfx("102"), asIfTS(88), finished(), id2)
-	ebka2 := extFullBkup(pfx("002"), asIfTS(90), finished(), id)
+	ebka1 := extFullBkup(prefix("001"), id)
+	ebkb1 := extFullBkup(prefix("101"), id2)
+	ebkb2 := extFullBkup(prefix("102"), asIfTS(88), finished(), id2)
+	ebka2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 
 	wm := new(logclient.WithMigrations)
 	wm.AddExtraFullBackup(pef(t, ebka1, 0, strg))
@@ -483,13 +483,13 @@ func TestMultiRestores(t *testing.T) {
 func TestMultiFilteredOutOne(t *testing.T) {
 	ctx := context.Background()
 	strg := tmp(t)
-	id := identity()
-	id2 := identity()
+	id := makeID()
+	id2 := makeID()
 
-	ebka1 := extFullBkup(pfx("001"), id)
-	ebkb1 := extFullBkup(pfx("101"), id2)
-	ebkb2 := extFullBkup(pfx("102"), asIfTS(88), finished(), id2)
-	ebka2 := extFullBkup(pfx("002"), asIfTS(90), finished(), id)
+	ebka1 := extFullBkup(prefix("001"), id)
+	ebkb1 := extFullBkup(prefix("101"), id2)
+	ebkb2 := extFullBkup(prefix("102"), asIfTS(88), finished(), id2)
+	ebka2 := extFullBkup(prefix("002"), asIfTS(90), finished(), id)
 
 	wm := new(logclient.WithMigrations)
 	wm.AddExtraFullBackup(pef(t, ebka1, 0, strg))
