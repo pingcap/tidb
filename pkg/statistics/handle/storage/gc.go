@@ -278,25 +278,28 @@ func gcTableStats(sctx sessionctx.Context,
 	statsHandler types.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
 	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
-	if !ok {
-		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
-		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
-		})
-	}
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// The table has already been deleted in stats and acknowledged to all tidb,
-	// we can safely remove the meta info now.
-	if len(rows) == 0 && !ok {
+	if !ok {
+		if len(rows) > 0 {
+			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
+			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
+			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
+				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+			})
+		}
+		// len(rows) == 0 => The table's stats is empty.
+		// The table has already been deleted in stats and acknowledged to all tidb,
+		// We can safely remove the meta info now.
 		_, _, err = util.ExecRows(sctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
+
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
 		isIndex, histID := row.GetInt64(0), row.GetInt64(1)
