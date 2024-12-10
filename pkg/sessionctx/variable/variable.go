@@ -98,12 +98,12 @@ const (
 
 	// StrategyPerformance is a choice of variable TiDBPipelinedDMLResourcePolicy,
 	// the best performance policy
-	StrategyPerformance = "PERFORMANCE"
+	StrategyPerformance = "performance"
 	// StrategyConservation is a choice of variable TiDBPipelinedDMLResourcePolicy,
 	// a rather conservative policy
-	StrategyConservation = "CONSERVATION"
+	StrategyConservation = "conservation"
 	// StrategyCustom is a choice of variable TiDBPipelinedDMLResourcePolicy,
-	StrategyCustom = "CUSTOM"
+	StrategyCustom = "custom"
 )
 
 // Global config name list.

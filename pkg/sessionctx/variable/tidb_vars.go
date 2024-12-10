@@ -1235,6 +1235,24 @@ const (
 	MaxPreSplitRegions = 15
 )
 
+// Pipelined-DML related constants
+const (
+	// MinPipelinedDMLConcurrency is the minimum acceptable concurrency
+	MinPipelinedDMLConcurrency = 1
+	// MaxPipelinedDMLConcurrency is the maximum acceptable concurrency
+	MaxPipelinedDMLConcurrency = 8192
+
+	// DefaultFlushConcurrency is the default flush concurrency
+	DefaultFlushConcurrency = 128
+	// DefaultResolveConcurrency is the default resolve_lock concurrency
+	DefaultResolveConcurrency = 8
+
+	// ConservationFlushConcurrency is the flush concurrency in conservation mode
+	ConservationFlushConcurrency = 2
+	// ConservationResolveConcurrency is the resolve_lock concurrency in conservation mode
+	ConservationResolveConcurrency = 2
+)
+
 // Default TiDB system variable values.
 const (
 	DefHostname                             = "localhost"

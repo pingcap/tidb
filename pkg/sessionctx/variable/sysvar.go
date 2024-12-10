@@ -3432,31 +3432,107 @@ var defaultSysVars = []*SysVar{
 		Value: DefTiDBPipelinedDmlResourcePolicy,
 		Type:  TypeStr,
 		SetSession: func(s *SessionVars, val string) error {
-			switch val {
+			// ensure the value is trimmed and lowercased
+			val = strings.TrimSpace(val)
+			lowVal := strings.ToLower(val)
+			switch lowVal {
 			case StrategyPerformance:
-				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 128
-				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 8
-				s.PipelinedDMLConfig.PipelinedFlushRateRatio = 1
+				s.PipelinedDMLConfig.PipelinedFlushConcurrency = DefaultFlushConcurrency
+				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = DefaultResolveConcurrency
+				s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
 			case StrategyConservation:
-				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 2
-				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 2
-				s.PipelinedDMLConfig.PipelinedFlushRateRatio = 1
+				s.PipelinedDMLConfig.PipelinedFlushConcurrency = ConservationFlushConcurrency
+				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = ConservationResolveConcurrency
+				s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
 			default:
-				s.PipelinedDMLConfig.PipelinedFlushConcurrency = 128
-				s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = 8
-				extractFloat := func(s string) (float64, bool) {
-					var value float64
-					n, err := fmt.Sscanf(s, "custom{write_flow_ratio:%f}", &value)
-					if err != nil || n != 1 {
-						return 0, false
+				// Create a temporary config to hold new values to avoid partial application
+				newConfig := PipelinedDMLConfig{
+					PipelinedFlushConcurrency:       DefaultFlushConcurrency,
+					PipelinedResolveLockConcurrency: DefaultResolveConcurrency,
+					PipelinedWriteThrottleRatio:     0,
+				}
+
+				// More flexible custom format validation
+				if !strings.HasPrefix(lowVal, StrategyCustom) {
+					return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+				}
+
+				// Extract everything after "custom"
+				remaining := strings.TrimSpace(lowVal[len(StrategyCustom):])
+				if len(remaining) < 2 || !strings.HasPrefix(remaining, "{") || !strings.HasSuffix(remaining, "}") {
+					return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+				}
+
+				// Extract and trim content between brackets
+				content := strings.TrimSpace(remaining[1 : len(remaining)-1])
+				if content == "" {
+					return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+				}
+
+				// Split parameters
+				rawParams := strings.Split(content, ",")
+				for _, rawParam := range rawParams {
+					param := strings.TrimSpace(rawParam)
+					if param == "" {
+						return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
 					}
-					return value, true
+
+					// Split key-values
+					parts := strings.FieldsFunc(param, func(r rune) bool {
+						return r == '=' || r == ':'
+					})
+
+					if len(parts) != 2 {
+						return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+					}
+
+					key := strings.TrimSpace(parts[0])
+					value := strings.TrimSpace(parts[1])
+
+					switch key {
+					case "concurrency":
+						concurrency, err := strconv.ParseInt(value, 10, 64)
+						if err != nil || concurrency < MinPipelinedDMLConcurrency || concurrency > MaxPipelinedDMLConcurrency {
+							logutil.BgLogger().Warn(
+								"invalid concurrency value in pipelined DML resource policy",
+								zap.String("value", val),
+								zap.String("concurrency", value),
+								zap.Error(err),
+							)
+							return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+						}
+						newConfig.PipelinedFlushConcurrency = int(concurrency)
+					case "resolve_concurrency":
+						concurrency, err := strconv.ParseInt(value, 10, 64)
+						if err != nil || concurrency < MinPipelinedDMLConcurrency || concurrency > MaxPipelinedDMLConcurrency {
+							logutil.BgLogger().Warn(
+								"invalid resolve_concurrency value in pipelined DML resource policy",
+								zap.String("value", val),
+								zap.String("resolve_concurrency", value),
+								zap.Error(err),
+							)
+							return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+						}
+						newConfig.PipelinedResolveLockConcurrency = int(concurrency)
+					case "write_throttle_ratio":
+						ratio, err := strconv.ParseFloat(value, 64)
+						if err != nil || ratio < 0 || ratio >= 1 {
+							logutil.BgLogger().Warn(
+								"invalid write_throttle_ratio value in pipelined DML resource policy",
+								zap.String("value", val),
+								zap.String("write_throttle_ratio", value),
+								zap.Error(err),
+							)
+							return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+						}
+						newConfig.PipelinedWriteThrottleRatio = ratio
+					default:
+						return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+					}
 				}
-				if r, ok := extractFloat(strings.ToLower(val)); ok {
-					s.PipelinedDMLConfig.PipelinedFlushRateRatio = r
-					return nil
-				}
-				return ErrWrongValueForVar.FastGenByArgs(TiDBPipelinedDMLResourcePolicy, val)
+
+				// Only apply changes after all validation passed
+				s.PipelinedDMLConfig = newConfig
 			}
 			return nil
 		},

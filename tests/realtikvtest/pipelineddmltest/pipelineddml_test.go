@@ -35,6 +35,8 @@ func TestVariable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	// Original test cases...
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
 	tk.MustExec("set session tidb_dml_type = bulk")
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, true)
@@ -43,21 +45,87 @@ func TestVariable(t *testing.T) {
 	// not supported yet.
 	tk.MustExecToErr("set session tidb_dml_type = bulk(10)")
 
+	// Basic policy tests
+	tk.MustExec("set tidb_pipelined_dml_resource_policy = 'PERFORMANCE'")
 	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("PERFORMANCE"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
 	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'conserVation'")
-	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("CONSERVATION"))
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("conserVation"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 2)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 2)
 	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'Performance'")
-	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("PERFORMANCE"))
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("Performance"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
 
-	tk.MustExec("set global tidb_pipelined_dml_resource_policy = 'conservation'")
+	// Test custom configuration with valid values
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=64}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=0.5}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.5)
+
+	// Test multiple parameters
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=32,write_throttle_ratio=0.3}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 32)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.3)
+
+	// Test different separators
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency:64,write_throttle_ratio:0.4}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test whitespace handling
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = '  custom  {  concurrency  =  64  ,  write_throttle_ratio  =  0.4  }  '")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test case insensitivity
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'CUSTOM{CONCURRENCY=64,WRITE_THROTTLE_RATIO=0.4}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test boundary values
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=1}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 1)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=0.999}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.999)
+
+	// Test error cases and state consistency
+	origFlushConcurrency := tk.Session().GetSessionVars().PipelinedFlushConcurrency
+	origResolveConcurrency := tk.Session().GetSessionVars().PipelinedResolveLockConcurrency
+	origThrottleRatio := tk.Session().GetSessionVars().PipelinedWriteThrottleRatio
+
+	// Invalid format
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, origResolveConcurrency)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, origThrottleRatio)
+
+	// Empty content
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Invalid parameter name
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{unknown=1}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Out of range values
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=8193}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=1.1}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, origThrottleRatio)
+
+	// Malformed values
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=abc}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Test global scope
+	tk.MustExec("set global tidb_pipelined_dml_resource_policy = 'custom{concurrency=64,write_throttle_ratio=0.4}'")
 	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustQuery("select @@global.tidb_pipelined_dml_resource_policy").Check(testkit.Rows("CONSERVATION"))
+	tk2.MustQuery("select @@global.tidb_pipelined_dml_resource_policy").Check(testkit.Rows("custom{concurrency=64,write_throttle_ratio=0.4}"))
 }
 
 // We limit this feature only for cases meet all the following conditions:
