@@ -14,17 +14,17 @@
 
 package workloadbasedlearning
 
-// WorkloadBasedLearningHandle The entry point for all workload-based learning related tasks
-type WorkloadBasedLearningHandle struct {
+// Handle The entry point for all workload-based learning related tasks
+type Handle struct {
 }
 
 // NewWorkloadBasedLearningHandle Create a new WorkloadBasedLearningHandle
 // WorkloadBasedLearningHandle is Singleton pattern
-func NewWorkloadBasedLearningHandle() *WorkloadBasedLearningHandle {
-	return &WorkloadBasedLearningHandle{}
+func NewWorkloadBasedLearningHandle() *Handle {
+	return &Handle{}
 }
 
 // HandleReadTableCost Start a new round of analysis of all historical read queries.
-func (Handle *WorkloadBasedLearningHandle) HandleReadTableCost() {
+func (Handle *Handle) HandleReadTableCost() {
 
 }

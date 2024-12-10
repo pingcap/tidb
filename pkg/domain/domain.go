@@ -3356,7 +3356,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	// TODO: Add more workers for other workload based learning tasks.
 }
 
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.WorkloadBasedLearningHandle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
 	defer func() {
