@@ -17,7 +17,6 @@ package core
 import (
 	"context"
 	"math"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
