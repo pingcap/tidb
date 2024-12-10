@@ -388,6 +388,7 @@ func TestBinderAny(t *testing.T) {
 
 func TestBinderMultiAny(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().MockPlan = true
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
 	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
