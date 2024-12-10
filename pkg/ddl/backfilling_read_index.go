@@ -138,7 +138,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	r.bc.ResetWorkers(r.job.ID)
-	return nil
+	return r.onFinished(ctx, subtask)
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -154,7 +154,7 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil
