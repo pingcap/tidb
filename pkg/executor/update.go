@@ -198,8 +198,9 @@ func (e *UpdateExec) exec(
 		}
 		assignments = append(assignments, assign)
 	}
-	assignFunc := func(assign *expression.Assignment, evalBuffer chunk.MutRow) (types.Datum, error) {
-		return evaluateGeneratedInUpdate(e.Ctx(), assign, evalBuffer, rowIdx)
+
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
+		return handleUpdateError(e.Ctx(), assign.ColName, assign.Col.ToInfo(), rowIdx, err)
 	}
 
 	var totalMemDelta int64
@@ -230,10 +231,10 @@ func (e *UpdateExec) exec(
 		}
 
 		// Update row
-		changed, err, ignored := updateRecord(
+		changed, ignored, err := updateRecord(
 			ctx, e.Ctx(),
 			handle, oldData, newTableData,
-			assignments, e.evalBuffer, assignFunc,
+			assignments, e.evalBuffer, errorHandler,
 			flags, tbl, false, e.memTracker,
 			e.fkChecks[content.TblID],
 			e.fkCascades[content.TblID],
@@ -377,30 +378,6 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 	return totalNumRows, nil
-}
-
-func evaluateGeneratedInUpdate(
-	sctx sessionctx.Context,
-	assign *expression.Assignment,
-	evalBuffer chunk.MutRow,
-	rowIdx int,
-) (types.Datum, error) {
-	var val types.Datum
-	c := assign.Col.ToInfo()
-	c.Name = assign.ColName
-
-	val, err := assign.Expr.Eval(sctx.GetExprCtx().GetEvalCtx(), evalBuffer.ToRow())
-	if err = handleUpdateError(sctx, assign.ColName, c, rowIdx, err); err != nil {
-		return val, err
-	}
-
-	val, err = table.CastValue(sctx, val, c, false, false)
-	if err = handleUpdateError(sctx, assign.ColName, c, rowIdx, err); err != nil {
-		return val, err
-	}
-
-	evalBuffer.SetDatum(assign.Col.Index, val)
-	return val, nil
 }
 
 func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
