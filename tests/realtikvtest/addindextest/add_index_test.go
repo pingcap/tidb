@@ -169,7 +169,7 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 
 	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("delete from t where c = 0;")
