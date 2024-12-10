@@ -726,12 +726,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 				}
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			} else {
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
@@ -877,6 +881,14 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulers, cfg.Online)
 		log.Info("finish removing pd scheduler")
 	}()
+
+	var checkpointFirstRun = true
+	if cfg.UseCheckpoint {
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		checkpointFirstRun = !existsCheckpointMetadata
+	}
 
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
