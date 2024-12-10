@@ -59,7 +59,7 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         ":storage",
         "//pkg/domain",
@@ -76,6 +76,7 @@ go_test(
         "//pkg/testkit/analyzehelper",
         "//pkg/types",
         "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
