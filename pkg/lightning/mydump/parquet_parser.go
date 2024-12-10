@@ -110,7 +110,7 @@ func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	return res.String()
 }
 
-func formatTime(v int64, unit string, format, utcFormat string) string {
+func formatTime(v int64, unit string, format, utcFormat string, utc bool) string {
 	var t time.Time
 	switch unit {
 	case "MICROS":
@@ -121,7 +121,11 @@ func formatTime(v int64, unit string, format, utcFormat string) string {
 		t = time.Unix(0, v)
 	}
 
-	return t.UTC().Format(utcFormat)
+	t = t.UTC()
+	if utc {
+		return t.Format(utcFormat)
+	}
+	return t.Format(format)
 }
 
 // bytesReaderWrapper is a wrapper of bytes.Reader.
@@ -140,7 +144,7 @@ func (*bytesReaderWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (r *bytesReaderWrapper) Open(name string) (storage.ReadSeekCloser, error) {
+func (r *bytesReaderWrapper) Open(name string) (parquet.ReaderAtSeeker, error) {
 	if len(name) > 0 && name != r.path {
 		panic(fmt.Sprintf("Open with a different name is not supported! current: '%s', new: '%s'", r.path, name))
 	}
@@ -203,7 +207,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open(name string) (storage.ReadSeekCloser, error) {
+func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) {
 	if len(name) == 0 {
 		name = pf.path
 	}
@@ -225,7 +229,7 @@ func (pf *parquetFileWrapper) Open(name string) (storage.ReadSeekCloser, error) 
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
-	reader      *file.Reader
+	readers     []*file.Reader
 	colMetas    []convertedType
 	columnNames []string
 
@@ -243,9 +247,8 @@ type ParquetParser struct {
 	curRows          int
 	totalRows        int
 
-	readBytes int64
-	lastRow   Row
-	logger    log.Logger
+	lastRow Row
+	logger  log.Logger
 }
 
 func (p *ParquetParser) setStringData(readNum, col, offset int) {
@@ -286,7 +289,7 @@ func (p *ParquetParser) setUint64Data(readNum, col, offset int) {
 func (p *ParquetParser) setTimeMillisData(readNum, col, offset int) {
 	buf := p.colBuffers[col].int32Buffer
 	for i := 0; i < readNum; i++ {
-		timeStr := formatTime(int64(buf[i]), "MILLIS", "15:04:05.999999", "15:04:05.999999Z")
+		timeStr := formatTime(int64(buf[i]), "MILLIS", "15:04:05.999999", "15:04:05.999999Z", true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
 	}
 }
@@ -294,7 +297,7 @@ func (p *ParquetParser) setTimeMillisData(readNum, col, offset int) {
 func (p *ParquetParser) setTimeMicrosData(readNum, col, offset int) {
 	buf := p.colBuffers[col].int32Buffer
 	for i := 0; i < readNum; i++ {
-		timeStr := formatTime(int64(buf[i]), "MICROS", "15:04:05.999999", "15:04:05.999999Z")
+		timeStr := formatTime(int64(buf[i]), "MICROS", "15:04:05.999999", "15:04:05.999999Z", true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
 	}
 }
@@ -302,7 +305,7 @@ func (p *ParquetParser) setTimeMicrosData(readNum, col, offset int) {
 func (p *ParquetParser) setTimestampMillisData(readNum, col, offset int) {
 	buf := p.colBuffers[col].int64Buffer
 	for i := 0; i < readNum; i++ {
-		timeStr := formatTime(buf[i], "MILLIS", timeLayout, utcTimeLayout)
+		timeStr := formatTime(buf[i], "MILLIS", timeLayout, utcTimeLayout, true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
 	}
 }
@@ -310,7 +313,7 @@ func (p *ParquetParser) setTimestampMillisData(readNum, col, offset int) {
 func (p *ParquetParser) setTimestampMicrosData(readNum, col, offset int) {
 	buf := p.colBuffers[col].int64Buffer
 	for i := 0; i < readNum; i++ {
-		timeStr := formatTime(buf[i], "MICROS", timeLayout, utcTimeLayout)
+		timeStr := formatTime(buf[i], "MICROS", timeLayout, utcTimeLayout, true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
 	}
 }
@@ -413,11 +416,11 @@ func (p *ParquetParser) setInt96Data(readNum, col, offset int) {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (p *ParquetParser) Init() error {
-	p.curRowGroup, p.totalRowGroup = -1, p.reader.NumRowGroups()
+	p.curRowGroup, p.totalRowGroup = -1, p.readers[0].NumRowGroups()
 
-	p.totalRows = int(p.reader.MetaData().NumRows)
+	p.totalRows = int(p.readers[0].MetaData().NumRows)
 
-	numCols := p.reader.MetaData().Schema.NumColumns()
+	numCols := p.readers[0].MetaData().Schema.NumColumns()
 	p.colReaders = make([]file.ColumnChunkReader, numCols)
 	p.colBuffers = make([]*readBuffer, numCols)
 	p.rows = make([][]types.Datum, batchReadRowSize)
@@ -444,15 +447,15 @@ func (p *ParquetParser) readRows(num int) (int, error) {
 		// Move to next row group
 		if p.curRowInGroup == p.totalRowsInGroup {
 			p.curRowGroup++
-			rowGroupReader := p.reader.RowGroup(p.curRowGroup)
 			var err error
 			for c := 0; c < len(p.colReaders); c++ {
+				rowGroupReader := p.readers[c].RowGroup(p.curRowGroup)
 				p.colReaders[c], err = rowGroupReader.Column(c)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
 			}
-			p.curRowInGroup, p.totalRowsInGroup = 0, int(rowGroupReader.NumRows())
+			p.curRowInGroup, p.totalRowsInGroup = 0, int(p.readers[0].MetaData().RowGroups[p.curRowGroup].NumRows)
 		}
 
 		// Read in this group
@@ -589,7 +592,12 @@ func (pp *ParquetParser) ScannedPos() (int64, error) {
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
-	return pp.reader.Close()
+	for _, r := range pp.readers {
+		if err := r.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // GetRow get the the current row.
@@ -633,6 +641,18 @@ func (p *ParquetParser) ReadRow() error {
 // LastRow gets the last row parsed by the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) LastRow() Row {
+	pp.lastRow.Length = 0
+	for _, v := range pp.lastRow.Row {
+		if v.IsNull() {
+			continue
+		}
+		if v.Kind() == types.KindString {
+			// use GetBytes to avoid memory allocation
+			pp.lastRow.Length += len(v.GetBytes())
+		} else {
+			pp.lastRow.Length += 8
+		}
+	}
 	return pp.lastRow
 }
 
@@ -725,7 +745,7 @@ func NewParquetParser(
 ) (*ParquetParser, error) {
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
-		wrapper := &parquetFileWrapper{
+		wrapper = &parquetFileWrapper{
 			ReadSeekCloser: r,
 			store:          store,
 			ctx:            ctx,
@@ -734,7 +754,10 @@ func NewParquetParser(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
-	reader, err := file.NewParquetReader(wrapper)
+	prop := parquet.NewReaderProperties(nil)
+	prop.BufferedStreamEnabled = true
+
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -756,8 +779,23 @@ func NewParquetParser(
 		}
 	}
 
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+	for i := 1; i < fileSchema.NumColumns(); i++ {
+		newWrapper, err := wrapper.Open("")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		subreaders = append(subreaders, reader)
+	}
+
 	parser := &ParquetParser{
-		reader:      reader,
+		readers:     subreaders,
 		colMetas:    columnMetas,
 		columnNames: columnNames,
 		logger:      log.FromContext(ctx),
