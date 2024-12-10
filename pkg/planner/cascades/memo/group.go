@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ base.HashEquals = &Group{}
@@ -129,6 +130,7 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 
 // GetLogicalProperty return this group's logical property.
 func (g *Group) GetLogicalProperty() *property.LogicalProperty {
+	intest.Assert(g.logicalProp != nil)
 	return g.logicalProp
 }
 

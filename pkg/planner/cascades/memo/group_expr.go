@@ -137,7 +137,6 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
 	for _, childG := range e.Inputs {
 		childGProp := childG.GetLogicalProperty()
-		intest.Assert(childGProp != nil)
 		childStats = append(childStats, childGProp.Stats)
 		childSchema = append(childSchema, childGProp.Schema)
 	}
