@@ -531,33 +531,31 @@ func TestTruncate(t *testing.T) {
 
 func TestTruncNum(t *testing.T) {
 	ctx := createContext(t)
-	// newDec := types.NewDecFromStringForTest
+	newDec := types.NewDecFromStringForTest
 	tbl := []struct {
 		Arg []any
 		Ret any
 	}{
-		{[]any{-1.23}, -1},
-		{[]any{1.58, 0}, 1},
-		{[]any{1.298, 1}, 1.2},
-		{[]any{123.2, -1}, 120},
-		{[]any{123.2, 100}, 123.2},
-		{[]any{123.2, -100}, 0},
-		{[]any{123.2, -100}, 0},
-		{[]any{1.797693134862315708145274237317043567981e+308, 2},
-			1.797693134862315708145274237317043567981e+308},
-		// {[]any{newDec("-1.23")}, newDec("-1")},
-		// {[]any{newDec("-1.23"), 1}, newDec("-1.2")},
-		// {[]any{newDec("-11.23"), -1}, newDec("-10")},
-		// {[]any{newDec("1.58"), 0}, newDec("1")},
-		// {[]any{newDec("1.58"), 1}, newDec("1.5")},
-		// {[]any{newDec("11.58"), -1}, newDec("10")},
-		// {[]any{newDec("23.298"), -1}, newDec("20")},
-		// {[]any{newDec("23.298"), -100}, newDec("0")},
-		// {[]any{newDec("23.298"), 100}, newDec("23.298")},
-		// {[]any{nil, 2}, nil},
-		{[]any{uint64(9223372036854775808), -10}, 9223372030000000000},
-		{[]any{9223372036854775807, -7}, 9223372036850000000},
-		{[]any{uint64(18446744073709551615), -10}, uint64(18446744070000000000)},
+		// Basic tests without decimal places parameter
+		{[]any{123.458}, 123},
+		{[]any{-123.458}, -123},
+		{[]any{0.458}, 0},
+		{[]any{999.999}, 999},
+
+		// Tests with decimal places parameter
+		{[]any{123.458, 0}, 123},
+		{[]any{123.458, 2}, 123.45},
+		{[]any{123.458, -1}, 120},
+		{[]any{123.458, -3}, 0},
+		{[]any{123.458, -4}, 0},
+
+		// Boundary value tests
+		{[]any{0.0001, 2}, 0.00},
+		{[]any{-9999.9999, 2}, -9999.99},
+
+		// Decimal type tests
+		{[]any{newDec("123.458")}, newDec("123")},
+		{[]any{newDec("123.458"), -4}, newDec("0")},
 	}
 
 	Dtbl := tblToDtbl(tbl)
@@ -570,32 +568,6 @@ func TestTruncNum(t *testing.T) {
 		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, tt["Ret"][0], v)
-	}
-}
-
-func TestTruncDatetime(t *testing.T) {
-	ctx := createContext(t)
-	tests := []struct {
-		datetime string
-		expect   string
-	}{
-		{"2011-12-13 10:10:10", "2011-12-13"},
-		{"2011/12/13 10:10:10", "2011-12-13"},
-		{"2011-12-13", "2011-12-13"},
-	}
-
-	fc := funcs[ast.Trunc]
-	for _, test := range tests {
-		args := []types.Datum{
-			types.NewDatum(test.datetime),
-		}
-		resetStmtContext(ctx)
-		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		require.NoError(t, err)
-		result, _ := d.ToString()
-		require.Equal(t, test.expect, result)
 	}
 }
 

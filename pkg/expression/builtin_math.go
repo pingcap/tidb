@@ -2089,28 +2089,23 @@ func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 
-	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).GetType()
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 
-	// TRUNC(datetime)
 	switch arg0Tp {
-	case mysql.TypeDatetime, mysql.TypeVarString:
-		if len(args) != 1 {
-			return nil, perrors.Errorf("Wrong number of arguments for trunc(datetime), expected 1 but got %d", len(args))
+	// string can be datetime-like
+	case types.ETDatetime, types.ETString:
+		if len(args) == 1 {
+			// TRUNC(datetime) is equivalent to TRUNC(datetime, 'dd')
+			args = append(args, &Constant{Value: types.NewDatum("dd"), RetType: types.NewFieldType(mysql.TypeVarchar)})
 		}
-		// TRUNC(datetime) is equivalent to STR_TO_DATE(DATE(datetime), '%Y-%m-%d')
-		fc := dateFunctionClass{baseFunctionClass{ast.Date, 1, 1}}
-		return fc.getFunction(ctx, args)
-	case mysql.TypeTiny, mysql.TypeLong, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeLonglong, mysql.TypeInt24, mysql.TypeNewDecimal:
-		// TODO: is it possible that we encounter args longer than 2?
-		if len(args) > 2 {
-			return nil, perrors.Errorf("Wrong number of arguments for trunc(num1[, num2]), expected 1 or 2 but got %d", len(args))
-		} else if len(args) == 2 {
-			// TODO: Check the type of the second argument?
-			// arg1Tp := args[1].GetType(ctx.GetEvalCtx()).EvalType()
-			// if arg1Tp != types.ETInt {
-			// 	return nil, errors.Errorf("Invalid argument type of num2 %v for trunc(num1, num2)", arg1Tp)
-			// }
-		} else {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETString)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinTruncDatetimeSig{bf}
+		return sig, nil
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		if len(args) == 1 {
 			// TRUNC(num1) is equivalent to TRUNCATE(num1, 0)
 			args = append(args, &Constant{Value: types.NewDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)})
 		}

@@ -226,6 +226,7 @@ var (
 	_ builtinFunc = &builtinAddSubDateAsStringSig{}
 	_ builtinFunc = &builtinAddSubDateDatetimeAnySig{}
 	_ builtinFunc = &builtinAddSubDateDurationAnySig{}
+	_ builtinFunc = &builtinTruncDatetimeSig{}
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int, roundMode types.RoundMode) (types.Time, error) {
@@ -1708,10 +1709,10 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	if fieldString(arg0Tp.GetType()) {
-		//Improve string cast Unix Time precision
+		// Improve string cast Unix Time precision
 		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
 		if ok {
-			//used to adjust FromUnixTime precision #Fixbug35184
+			// used to adjust FromUnixTime precision #Fixbug35184
 			if x.FuncName.L == ast.Cast {
 				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
@@ -6501,10 +6502,10 @@ func (b *builtinTimestampAddSig) resolveType(typ uint8, unit string) uint8 {
 	// The field type for the result of an Item_date function is defined as
 	// follows:
 	//
-	//- If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
-	//- If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
+	// - If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
+	// - If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
 	//	minutes, seconds or microsecond then type is MYSQL_TYPE_DATETIME.
-	//- Otherwise the result is MYSQL_TYPE_STRING
+	// - Otherwise the result is MYSQL_TYPE_STRING
 	//	(This is because you can't know if the string contains a DATE, MYSQL_TIME
 	//	or DATETIME argument)
 	if typ == mysql.TypeDate && (unit == "HOUR" || unit == "MINUTE" || unit == "SECOND" || unit == "MICROSECOND") {
@@ -7034,4 +7035,60 @@ func (b *builtinTiDBCurrentTsoSig) evalInt(ctx EvalContext, row chunk.Row) (val 
 	tso, _ := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "tidb_current_ts")
 	itso, _ := strconv.ParseInt(tso, 10, 64)
 	return itso, false, nil
+}
+
+// This builtin func is for the datetime implementation for truncFunctionClass in builtin_math.go
+type builtinTruncDatetimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTruncDatetimeSig) Clone() builtinFunc {
+	newSig := &builtinTruncDatetimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals TRUNC(datetime, fmt).
+// fmt can be 'yy', 'mm', 'dd', 'hh', 'mi'
+func (b *builtinTruncDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	// Get datetime parameter
+	t, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	// Get format parameter
+	format, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	// Truncate time based on different formats
+	year, month, day := t.Year(), t.Month(), t.Day()
+	hour, minute := t.Hour(), t.Minute()
+
+	switch strings.ToLower(format) {
+	case "yy", "yyyy", "year":
+		// Keep only year
+		month, day, hour, minute = 1, 1, 0, 0
+	case "mm", "month":
+		// Keep year and month
+		day, hour, minute = 1, 0, 0
+	case "dd", "day":
+		// Keep year, month and day
+		hour, minute = 0, 0
+	case "hh", "hour":
+		// Keep year, month and day, hour
+		minute = 0
+	case "mi", "minute":
+		// Keep year, month and day, hour, minute
+		// do nothing
+	default:
+		// invalid format
+		return types.ZeroTime, true, types.ErrWrongValue.GenWithStackByArgs("format", format)
+	}
+
+	// Create new truncated time
+	result := types.NewTime(types.FromDate(year, month, day, hour, minute, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
+	return result, false, nil
 }

@@ -3683,3 +3683,55 @@ func TestLastMonth(t *testing.T) {
 		require.Equal(t, test.expect, result)
 	}
 }
+
+func TestTruncDatetime(t *testing.T) {
+	ctx := createContext(t)
+	tests := []struct {
+		datetime string
+		unit     string
+		expect   string
+	}{
+		{"2024-11-27 22:03:45", "", "2024-11-27 00:00:00"},
+		{"2024/11/27 22:03:45", "", "2024-11-27 00:00:00"},
+		{"2024-11-27", "", "2024-11-27 00:00:00"},
+
+		{"2024-11-27 22:03:45", "YEAR", "2024-01-01 00:00:00"},
+		{"2024-11-27 22:03:45", "yy", "2024-01-01 00:00:00"},
+		{"2024-11-27 22:03:45", "yYyY", "2024-01-01 00:00:00"},
+
+		{"2024-11-27 22:03:45", "MONTH", "2024-11-01 00:00:00"},
+		{"2024-11-27 22:03:45", "month", "2024-11-01 00:00:00"},
+		{"2024-11-27 22:03:45", "Mm", "2024-11-01 00:00:00"},
+
+		{"2024-11-27 22:03:45", "DAY", "2024-11-27 00:00:00"},
+		{"2024-11-27 22:03:45", "dd", "2024-11-27 00:00:00"},
+
+		{"2024-11-27 22:03:45", "HOUR", "2024-11-27 22:00:00"},
+		{"2024-11-27 22:03:45", "hh", "2024-11-27 22:00:00"},
+
+		{"2024-11-27 22:03:45", "MINUTE", "2024-11-27 22:03:00"},
+		{"2024-11-27 22:03:45", "minute", "2024-11-27 22:03:00"},
+		{"2024-11-27 22:03:45", "mi", "2024-11-27 22:03:00"},
+	}
+
+	fc := funcs[ast.Trunc]
+	for _, test := range tests {
+		var args []types.Datum
+		if test.unit == "" {
+			args = []types.Datum{types.NewDatum(test.datetime)}
+		} else {
+			args = []types.Datum{
+				types.NewDatum(test.datetime),
+				types.NewDatum(test.unit),
+			}
+		}
+
+		resetStmtContext(ctx)
+		f, err := fc.getFunction(ctx, datumsToConstants(args))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		result, _ := d.ToString()
+		require.Equal(t, test.expect, result)
+	}
+}

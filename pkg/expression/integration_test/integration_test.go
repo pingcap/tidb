@@ -2059,28 +2059,30 @@ func TestTrunc(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	// test trunc num
-	tk.MustExec("CREATE TABLE t(a DECIMAL(10,2), b DOUBLE)")
+	// trunc(number)
+	tk.MustQuery("SELECT trunc(123.458), trunc(-123.458), trunc(0.458), trunc(999.999)").Check(testkit.Rows("123 -123 0 999"))
+	tk.MustQuery("SELECT trunc(123.458, 2), trunc(123.458, -1), trunc(123.458, -3)").Check(testkit.Rows("123.45 120 0"))
+	tk.MustQuery("SELECT trunc(0.0001, 2), trunc(-9999.9999, 2)").Check(testkit.Rows("0.00 -9999.99"))
 
-	tk.MustExec("INSERT INTO t VALUES(1.1, 1.1)")
-	tk.MustExec("INSERT INTO t VALUES(2.2, 2.2)")
-	tk.MustExec("INSERT INTO t VALUES(3.3, 3.3)")
+	// trunc(datetime)
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45')").Check(testkit.Rows("2024-11-27 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024/11/27 22:03:45')").Check(testkit.Rows("2024-11-27 00:00:00"))
 
-	tk.MustQuery("SELECT trunc(a), trunc(b) FROM t").Check(testkit.Rows(
-		"1 1",
-		"2 2",
-		"3 3",
-	))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'YEAR')").Check(testkit.Rows("2024-01-01 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'yy')").Check(testkit.Rows("2024-01-01 00:00:00"))
 
-	tk.MustExec("DROP TABLE t")
-	// test trunc datetime
-	tk.MustExec("CREATE TABLE t(a DATETIME)")
-	tk.MustExec("INSERT INTO t VALUES('2022-01-01 12:12:12')")
-	tk.MustExec("INSERT INTO t VALUES('2022-01-01')")
-	tk.MustQuery("SELECT trunc(a) FROM t").Check(testkit.Rows(
-		"2022-01-01",
-		"2022-01-01",
-	))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'MONTH')").Check(testkit.Rows("2024-11-01 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'mm')").Check(testkit.Rows("2024-11-01 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'DAY')").Check(testkit.Rows("2024-11-27 00:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'dd')").Check(testkit.Rows("2024-11-27 00:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'HOUR')").Check(testkit.Rows("2024-11-27 22:00:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'hh')").Check(testkit.Rows("2024-11-27 22:00:00"))
+
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'MINUTE')").Check(testkit.Rows("2024-11-27 22:03:00"))
+	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'mi')").Check(testkit.Rows("2024-11-27 22:03:00"))
+
 }
 
 func TestCompareBuiltin(t *testing.T) {
