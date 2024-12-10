@@ -17,24 +17,17 @@ package executor_test
 import (
 	"context"
 	"fmt"
-<<<<<<< HEAD
-=======
 	"strconv"
-	"sync"
->>>>>>> 474aed53cf0 (ddl: fix issue that recover table by job id may cause panic (#56965))
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
->>>>>>> 474aed53cf0 (ddl: fix issue that recover table by job id may cause panic (#56965))
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -50,7 +43,7 @@ func TestRecoverTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -138,11 +131,15 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("drop table if exists t_recover2")
 	tk.MustExec("create table t_recover2 (a int);")
 	jobID := int64(0)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionDropTable && jobID == 0 {
 			jobID = job.ID
 		}
-	})
+	}
+	dom.DDL().SetHook(hook)
+
 	tk.MustExec("drop table t_recover2")
 	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
 	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
