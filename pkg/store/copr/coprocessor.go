@@ -1921,6 +1921,9 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if worker.kvclient.Stats == nil {
+		return
+	}
 	defer func() {
 		worker.kvclient.Stats = nil
 	}()
