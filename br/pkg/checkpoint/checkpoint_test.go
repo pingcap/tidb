@@ -584,3 +584,63 @@ func TestCheckpointRunnerLock(t *testing.T) {
 
 	runner.WaitForFinish(ctx, true)
 }
+<<<<<<< HEAD
+=======
+
+func TestCheckpointCompactedRestoreRunner(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+
+	err = checkpoint.SaveCheckpointMetadataForSstRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+	require.NoError(t, err)
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, 500*time.Millisecond, time.Second)
+	require.NoError(t, err)
+
+	data := map[string]struct {
+		Name string
+	}{
+		"a": {Name: "a"},
+		"A": {Name: "A"},
+		"1": {Name: "1"},
+	}
+
+	for _, d := range data {
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointFileItem(1, d.Name))
+		require.NoError(t, err)
+	}
+
+	checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
+	checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
+
+	checkpointRunner.WaitForFinish(ctx, true)
+
+	se, err = g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	respCount := 0
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+		require.NotNil(t, resp)
+		d, ok := data[resp.Name]
+		require.True(t, ok)
+		require.Equal(t, d.Name, resp.Name)
+		respCount++
+	}
+
+	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	require.True(t, exists)
+
+	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.CustomSSTRestoreCheckpointDatabaseName, checker)
+	require.NoError(t, err)
+	require.Equal(t, 3, respCount)
+
+	err = checkpoint.RemoveCheckpointDataForSstRestore(ctx, s.Mock.Domain, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	require.NoError(t, err)
+
+	exists = checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+	require.False(t, exists)
+	exists = s.Mock.Domain.InfoSchema().SchemaExists(pmodel.NewCIStr(checkpoint.CustomSSTRestoreCheckpointDatabaseName))
+	require.False(t, exists)
+}
+>>>>>>> b41648482cb (compacted restore: fix the wrong initial configrations (#58050))
