@@ -1059,6 +1059,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1074,6 +1076,8 @@ select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1099,6 +1103,8 @@ show collation;
 Collation	Charset	Id	Default	Compiled	Sortlen	Pad_attribute
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE
@@ -1114,6 +1120,8 @@ select * from information_schema.COLLATIONS;
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN	PAD_ATTRIBUTE
 ascii_bin	ascii	65	Yes	Yes	1	PAD SPACE
 binary	binary	63	Yes	Yes	1	NO PAD
+gb18030_bin	gb18030	249		Yes	1	PAD SPACE
+gb18030_chinese_ci	gb18030	248	Yes	Yes	1	PAD SPACE
 gbk_bin	gbk	87		Yes	1	PAD SPACE
 gbk_chinese_ci	gbk	28	Yes	Yes	1	PAD SPACE
 latin1_bin	latin1	47	Yes	Yes	1	PAD SPACE

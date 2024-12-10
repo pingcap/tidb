@@ -6,6 +6,8 @@ go_library(
         "bin.go",
         "charset.go",
         "collate.go",
+        "gb18030_bin.go",
+        "gb18030_chinese_ci.go",
         "gbk_bin.go",
         "gbk_chinese_ci.go",
         "gbk_chinese_ci_data.go",
@@ -16,6 +18,7 @@ go_library(
         "unicode_0900_ai_ci_generated.go",
         "unicode_0900_ai_ci_impl.go",
     ],
+    embedsrcs = ["gb18030_weight.data"],
     importpath = "github.com/pingcap/tidb/pkg/util/collate",
     visibility = ["//visibility:public"],
     deps = [
