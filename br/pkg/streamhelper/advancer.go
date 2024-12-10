@@ -567,6 +567,13 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 	if c.cfg.CheckPointLagLimit <= 0 {
 		return false, nil
 	}
+	c.taskMu.Lock()
+	if c.lastCheckpoint == nil || c.task.StartTs == c.lastCheckpoint.TS {
+		c.taskMu.Unlock()
+		// task is not started yet
+		return false, nil
+	}
+	c.taskMu.Unlock()
 
 	now, err := c.env.FetchCurrentTS(ctx)
 	if err != nil {
