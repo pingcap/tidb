@@ -1203,11 +1203,15 @@ const (
 	// version 239
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version239 = 239
+
+	// version 240
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version240 = 240
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version239
+var currentBootstrapVersion int64 = version240
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1382,6 +1386,7 @@ var (
 		upgradeToVer217,
 		upgradeToVer218,
 		upgradeToVer239,
+		upgradeToVer240,
 	}
 )
 
@@ -3285,6 +3290,14 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer240(s sessiontypes.Session, ver int64) {
+	if ver >= version240 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
