@@ -52,7 +52,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			closeValue, err := infosync.GetPDScheduleConfig(context.Background())
@@ -60,7 +60,7 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 			assert.Equal(t, closeValue["merge-schedule-limit"], 0)
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			// cancel flashback job
@@ -74,8 +74,8 @@ func TestFlashbackCloseAndResetPDSchedule(t *testing.T) {
 	require.NoError(t, err)
 
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 
 	finishValue, err := infosync.GetPDScheduleConfig(context.Background())
 	require.NoError(t, err)
@@ -101,7 +101,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -111,7 +111,7 @@ func TestAddDDLDuringFlashback(t *testing.T) {
 	})
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
@@ -135,7 +135,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	defer resetGC()
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionFlashbackCluster, job.Type)
 		if job.SchemaState == model.StateWriteReorganization {
 			rs, err := tk.Exec("show variables like 'tidb_gc_enable'")
@@ -187,7 +187,7 @@ func TestGlobalVariablesOnFlashback(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][1], variable.Off)
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 }
@@ -213,7 +213,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
 		return job.SchemaState == model.StateDeleteOnly
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hook.OnJobUpdated)
 	tk.MustExec("set global tidb_ttl_job_enable = on")
 	tk.MustGetErrCode(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)), errno.ErrCancelledDDLJob)
 	hook.MustCancelDone(t)
@@ -226,7 +226,7 @@ func TestCancelFlashbackCluster(t *testing.T) {
 	hook = newCancelJobHook(t, store, func(job *model.Job) bool {
 		return job.SchemaState == model.StateWriteReorganization
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hook.OnJobUpdated)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hook.OnJobUpdated)
 	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 	hook.MustCancelFailed(t)
 

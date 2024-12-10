@@ -170,8 +170,10 @@ func ExistsSstRestoreCheckpoint(
 	dom *domain.Domain,
 	dbName string,
 ) bool {
+	// we only check the existence of the checkpoint data table
+	// because the checkpoint metadata is not used for restore
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointMetaTableName))
+		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointDataTableName))
 }
 
 func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {
