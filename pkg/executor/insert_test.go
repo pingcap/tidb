@@ -1594,7 +1594,6 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
 // see issue https://github.com/pingcap/tidb/issues/47787
 func TestInsertBigScientificNotation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1628,7 +1627,8 @@ func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into tf values('-100')")
 	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
-=======
+}
+
 func TestMySQLInsertID(t *testing.T) {
 	// mysql_insert_id() differs from LAST_INSERT_ID()
 	// See https://github.com/pingcap/tidb/issues/55965
@@ -1692,5 +1692,4 @@ func TestMySQLInsertID(t *testing.T) {
 	// Then transaction conflict and retry, in the second time it modify nothing.
 	tk.MustExec("insert into tb(a, b) values(1,2) on duplicate key update b = 2;")
 	require.Equal(t, tk.Session().LastInsertID(), uint64(0))
->>>>>>> 3dfc47f2cc2 (executor: fix mysql_insert_id() for "INSERT .. ON DUPLICATE KEY" statement (#56514))
 }
