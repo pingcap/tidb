@@ -98,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/workloadbasedlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -3322,6 +3323,37 @@ func (do *Domain) planCacheEvictTrigger() {
 					zap.String("detail", detailInfo),
 					zap.Int64("num_evicted", int64(numEvicted)),
 					zap.Duration("time_spent", time.Since(begin)))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) SetupWorkloadBasedLearningWorker() {
+	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle()
+	// Start the workload based learning worker to analyze the read workload by statement_summary.
+	do.wg.Run(
+		func() {
+			do.readTableCostWorker(wbLearningHandle)
+		},
+		"readTableCostWorker",
+	)
+	// TODO: Add more workers for other workload based learning tasks.
+}
+
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.WorkloadBasedLearningHandle) {
+	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
+	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
+	defer func() {
+		readTableCostTicker.Stop()
+		logutil.BgLogger().Info("readTableCostWorker exited.")
+	}()
+	for {
+		select {
+		case <-readTableCostTicker.C:
+			if variable.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
+				wbLearningHandle.HandleReadTableCost()
 			}
 		case <-do.exit:
 			return

@@ -3630,6 +3630,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// init the instance plan cache
 	dom.InitInstancePlanCache()
 
+	// setup workload-based learning worker
+	dom.SetupWorkloadBasedLearningWorker()
+
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
 	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
