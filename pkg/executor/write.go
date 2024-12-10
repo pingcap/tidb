@@ -77,7 +77,7 @@ func updateRecord(
 	fkCascades []*FKCascadeExec,
 	dupKeyMode table.DupKeyCheckMode,
 	ignoreErr bool,
-) (bool, bool, error) {
+) (changed bool, ignored bool, retErr error) {
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
@@ -155,24 +155,37 @@ func updateRecord(
 		}
 	}
 
-	var err error
-	if changed {
-		// Step 3: fill values into on-update-now fields.
-		for i, col := range t.Cols() {
-			if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
-				newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
-				evalBuffer.SetDatum(i, newData[i])
-				if err != nil {
-					return false, false, err
-				}
-				// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
-				// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
-				if col.IsPKHandleColumn(t.Meta()) {
-					return false, false, errors.Errorf("on-update-now column should never be pk-is-handle")
-				}
-				if col.IsCommonHandleColumn(t.Meta()) {
-					handleChanged = true
-				}
+	// If no changes, nothing to do, return directly.
+	if !changed {
+		sc.AddTouchedRows(1)
+		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
+		if sessVars.ClientCapability&mysql.ClientFoundRows > 0 {
+			sc.AddAffectedRows(1)
+		}
+		keySet := lockRowKey
+		if sessVars.LockUnchangedKeys {
+			keySet |= lockUniqueKeys
+		}
+		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
+		return false, false, err
+	}
+
+	// Step 3: fill values into on-update-now fields.
+	for i, col := range t.Cols() {
+		var err error
+		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
+			newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			evalBuffer.SetDatum(i, newData[i])
+			if err != nil {
+				return false, false, err
+			}
+			// Only TIMESTAMP and DATETIME columns can be automatically updated, so it cannot be PKIsHandle.
+			// Ref: https://dev.mysql.com/doc/refman/8.0/en/timestamp-initialization.html
+			if col.IsPKHandleColumn(t.Meta()) {
+				return false, false, errors.Errorf("on-update-now column should never be pk-is-handle")
+			}
+			if col.IsCommonHandleColumn(t.Meta()) {
+				handleChanged = true
 			}
 		}
 
@@ -199,19 +212,6 @@ func updateRecord(
 				return false, false, err
 			}
 		}
-	} else {
-		// If no changes, nothing to do, return directly.
-		sc.AddTouchedRows(1)
-		// See https://dev.mysql.com/doc/refman/5.7/en/mysql-real-connect.html  CLIENT_FOUND_ROWS
-		if sessVars.ClientCapability&mysql.ClientFoundRows > 0 {
-			sc.AddAffectedRows(1)
-		}
-		keySet := lockRowKey
-		if sessVars.LockUnchangedKeys {
-			keySet |= lockUniqueKeys
-		}
-		_, err := addUnchangedKeysForLockByRow(sctx, t, h, oldData, keySet)
-		return false, false, err
 	}
 
 	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.

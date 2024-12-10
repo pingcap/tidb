@@ -474,10 +474,11 @@ func (e *InsertExec) doDupRowUpdate(
 		}
 	}
 
+	warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
 		c := assign.Col.ToInfo()
 		sc := sctx.GetSessionVars().StmtCtx
-		warnCnt := int(sc.WarningCount())
+
 		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
 			for k := range newWarnings {
 				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
@@ -511,7 +512,7 @@ func (e *InsertExec) doDupRowUpdate(
 			return err
 		}
 
-		errorHandler(sctx, assign, &val, nil)
+		_ = errorHandler(sctx, assign, &val, nil)
 		e.evalBuffer4Dup.SetDatum(idx, val)
 		e.row4Update[assign.Col.Index] = val
 		assignFlag[assign.Col.Index] = true

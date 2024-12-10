@@ -199,8 +199,8 @@ func (e *UpdateExec) exec(
 		assignments = append(assignments, assign)
 	}
 
-	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
-		return handleUpdateError(e.Ctx(), assign.ColName, assign.Col.ToInfo(), rowIdx, err)
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
+		return handleUpdateError(sctx, assign.ColName, assign.Col.ToInfo(), rowIdx, err)
 	}
 
 	var totalMemDelta int64
