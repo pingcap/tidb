@@ -1028,7 +1028,7 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	ch := make(chan struct{})
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
