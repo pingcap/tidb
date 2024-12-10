@@ -275,6 +275,11 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+// UnprefixedEtcdCli export for test.
+func (do *Domain) UnprefixedEtcdCli() *clientv3.Client {
+	return do.unprefixedEtcdCli
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -810,15 +815,40 @@ func (do *Domain) Reload() error {
 		}
 	}
 
-	// lease renew, so it must be executed despite it is cache or not
-	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	lease := do.GetSchemaLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
+		// If it is a full load and there are a lot of tables, this is likely to happen.
 		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
+
+		// We can optimize the case by updating the TS to a new value, as long as the schema version is the same.
+		// For example, lease is 45s, and the load process takes 2min, after the load process finish, this
+		// loaded infoschema because stale immediately.
+		// But if we re-check the schema version again and verify that it's still the newest, it is safe to use it.
+		var latestSchemaVer int64
+		var currentTS uint64
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+		err := kv.RunInNewTxn(ctx, do.store, false, func(_ context.Context, txn kv.Transaction) error {
+			var err error
+			m := meta.NewReader(txn)
+			latestSchemaVer, err = m.GetSchemaVersion()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			currentTS = txn.StartTS()
+			return nil
+		})
+		if err == nil && latestSchemaVer == is.SchemaMetaVersion() {
+			version = currentTS
+			logutil.BgLogger().Info("use this schema and update ts",
+				zap.Int64("schema ver", latestSchemaVer),
+				zap.Uint64("reload ts", currentTS))
+		}
 	}
+	// lease renew, so it must be executed despite it is cache or not
+	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 
 	return nil
 }
@@ -1280,6 +1310,11 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
+}
+
+// NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
+func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
@@ -1324,6 +1359,7 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	do.etcdClient = etcdClient
 	return do
 }
 

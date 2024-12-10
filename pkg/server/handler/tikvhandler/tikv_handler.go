@@ -1957,7 +1957,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	hook := req.FormValue("ddl_hook")
 	switch hook {
 	case "ctc_hook":
-		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			log.Info("on job run before", zap.String("job", job.String()))
 			// Only block the ctc type ddl here.
 			if job.Type != model.ActionModifyColumn {
@@ -1974,7 +1974,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "default_hook":
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 
 	handler.WriteData(w, "success!")

@@ -510,7 +510,7 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 	tk1.MustExec("use addindexlit;")
 
 	var runDML bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
