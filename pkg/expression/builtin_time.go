@@ -1709,10 +1709,10 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 	}
 
 	if fieldString(arg0Tp.GetType()) {
-		// Improve string cast Unix Time precision
+		//Improve string cast Unix Time precision
 		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
 		if ok {
-			// used to adjust FromUnixTime precision #Fixbug35184
+			//used to adjust FromUnixTime precision #Fixbug35184
 			if x.FuncName.L == ast.Cast {
 				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
@@ -6502,10 +6502,10 @@ func (b *builtinTimestampAddSig) resolveType(typ uint8, unit string) uint8 {
 	// The field type for the result of an Item_date function is defined as
 	// follows:
 	//
-	// - If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
-	// - If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
+	//- If first arg is a MYSQL_TYPE_DATETIME result is MYSQL_TYPE_DATETIME
+	//- If first arg is a MYSQL_TYPE_DATE and the interval type uses hours,
 	//	minutes, seconds or microsecond then type is MYSQL_TYPE_DATETIME.
-	// - Otherwise the result is MYSQL_TYPE_STRING
+	//- Otherwise the result is MYSQL_TYPE_STRING
 	//	(This is because you can't know if the string contains a DATE, MYSQL_TIME
 	//	or DATETIME argument)
 	if typ == mysql.TypeDate && (unit == "HOUR" || unit == "MINUTE" || unit == "SECOND" || unit == "MICROSECOND") {

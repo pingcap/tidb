@@ -3707,19 +3707,19 @@ PARTITION BY RANGE (c) (
 		expectErr error
 	}{
 		// FIXME: block by https://github.com/pingcap/tidb/issues/21872
-		// {
+		//{
 		//	name:      "cross dc read to sh by holding bj, IndexReader",
 		//	txnScope:  "bj",
 		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
 		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		// },
+		//},
 		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
-		// {
+		//{
 		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
 		//	txnScope:  "bj",
 		//	sql:       "select * from t1 where c in (1,2,3,4);",
 		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		// },
+		//},
 		{
 			name:      "cross dc read to sh by holding bj, PointGet",
 			txnScope:  "local",
