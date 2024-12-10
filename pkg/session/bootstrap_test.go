@@ -2568,7 +2568,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	etcdClient := cluster.RandClient()
 
 	require.NoError(t, err)
-	dom, err := domap.GetWithEtcdClient(mockStore, etcdClient)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
 	require.NoError(t, err)
 	defer dom.Close()
 

@@ -63,10 +63,10 @@ type domainMap struct {
 // TODO decouple domain create from it, it's more clear to create domain explicitly
 // before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.GetWithEtcdClient(store, nil)
+	return dm.getWithEtcdClient(store, nil)
 }
 
-func (dm *domainMap) GetWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client) (d *domain.Domain, err error) {
+func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
