@@ -217,7 +217,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	ctx.GetSessionVars().PlanID.Store(-1)
+	ctx.GetSessionVars().PlanID.Store(0)
 
 	joinGroup := make([]base.LogicalPlan, 0, 4)
 	joinGroup = append(joinGroup, newDataSource(ctx, "a", 100))
