@@ -651,9 +651,18 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		// We create a fake one for the pseudo estimation.
 		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
 		if loadNeeded && !analyzed {
+<<<<<<< HEAD
 			fakeCol := statistics.EmptyColumn(colInfo.ID, tblInfo.PKIsHandle, colInfo)
 			statsTbl.Columns[col.ID] = fakeCol
 			statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+=======
+			fakeCol := statistics.EmptyColumn(tblInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl = statsTbl.Copy()
+			statsTbl.SetCol(col.ID, fakeCol)
+			statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
+				Updated: []*statistics.Table{statsTbl},
+			})
+>>>>>>> 9eddc072ebd (statistics: copy stats when to update it for avoiding data race (#58106))
 		}
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
