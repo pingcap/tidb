@@ -591,6 +591,7 @@ show builtins;
 Supported_builtin_functions
 abs
 acos
+add_months
 adddate
 addtime
 aes_decrypt
@@ -643,6 +644,7 @@ date
 date_add
 date_format
 date_sub
+date_to_char
 datediff
 day
 dayname
@@ -767,13 +769,17 @@ minute
 mod
 month
 monthname
+months_between
 mul
 name_const
 ne
+next_day
 nextval
 not
 now
 nulleq
+nvl
+nvl2
 oct
 octet_length
 old_password
@@ -857,6 +863,7 @@ timestamp
 timestampadd
 timestampdiff
 to_base64
+to_char
 to_date
 to_days
 to_number
