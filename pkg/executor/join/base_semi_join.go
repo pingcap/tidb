@@ -171,7 +171,7 @@ func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCa
 			// For calculating virtual row num
 			virtualRowNum := chk.GetNumVirtualRows()
 			for i := start; i < end; i++ {
-				if b.isMatchedRows[i] {
+				if resultRows[i] {
 					virtualRowNum++
 				}
 			}

@@ -35,7 +35,7 @@ func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoi
 	}
 
 	if ret.ctx.hasOtherCondition() {
-		ret.isNulls = make([]bool, 0, 32)
+		ret.isNulls = make([]bool, 0, chunk.InitialCapacity)
 	}
 
 	return ret
