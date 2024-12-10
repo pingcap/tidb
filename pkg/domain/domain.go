@@ -3330,6 +3330,7 @@ func (do *Domain) planCacheEvictTrigger() {
 	}
 }
 
+// SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle()
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
