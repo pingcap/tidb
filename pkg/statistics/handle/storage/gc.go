@@ -298,6 +298,7 @@ func gcTableStats(sctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
+		return nil
 	}
 
 	tblInfo := tbl.Meta()
