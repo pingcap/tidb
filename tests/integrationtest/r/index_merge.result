@@ -536,11 +536,12 @@ Sort_16	1841.86	root		index_merge.t1.c1
     │     └─TableRowIDScan_24	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TopN_29(Probe)	1841.86	root		index_merge.t2.c1, offset:2, count:1
       └─HashAgg_35	4900166.23	root		group by:Column#23, funcs:avg(Column#22)->Column#9, funcs:firstrow(Column#23)->index_merge.t2.c1
-        └─Projection_51	10207989.32	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
-          └─IndexMerge_40	10207989.32	root		type: union
-            ├─IndexRangeScan_37(Build)	6121120.92	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-            ├─IndexRangeScan_38(Build)	6121120.92	cop[tikv]	table:t2, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-            └─TableRowIDScan_39(Probe)	10207989.32	cop[tikv]	table:t2	keep order:false, stats:pseudo
+        └─Projection_53	6125207.79	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#22, index_merge.t2.c1->Column#23
+          └─IndexMerge_41	6125207.79	root		type: union
+            ├─Selection_38(Build)	6121.12	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
+            │ └─IndexRangeScan_37	6121120.92	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+            ├─IndexRangeScan_39(Build)	6121120.92	cop[tikv]	table:t2, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+            └─TableRowIDScan_40(Probe)	6125207.79	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select /*+ use_index_merge(t2) */ avg(t2.c1) from t2 where t1.c1 = t2.c1 and t2.c1 < 10 or t2.c2 < 10 group by t2.c1 order by c1 limit 1 offset 2) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
 c1	c2	c3
 3	3	3
