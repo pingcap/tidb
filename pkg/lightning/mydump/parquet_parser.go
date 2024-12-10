@@ -40,9 +40,6 @@ const (
 	// optimize the read performance
 	smallParquetFileThreshold = 256 * 1024 * 1024
 	defaultBufSize            = 64 * 1024
-	// jan011970 is the date of unix epoch in julian day,
-	jan011970 = 2440588
-	secPerDay = 24 * 60 * 60
 
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
@@ -221,7 +218,7 @@ func (pf *parquetFileWrapper) Open(name string) (storage.ReadSeekCloser, error) 
 		ctx:            pf.ctx,
 		path:           name,
 	}
-	newPf.InitBuffer(64 * 1024)
+	newPf.InitBuffer(defaultBufSize)
 	return newPf, nil
 }
 
@@ -414,6 +411,7 @@ func (p *ParquetParser) setInt96Data(readNum, col, offset int) {
 	}
 }
 
+// Init initializes the Parquet parser and allocate necessary buffers
 func (p *ParquetParser) Init() error {
 	p.curRowGroup, p.totalRowGroup = -1, p.reader.NumRowGroups()
 
@@ -434,23 +432,7 @@ func (p *ParquetParser) Init() error {
 	return nil
 }
 
-func (p *ParquetParser) GetRow() ([]types.Datum, error) {
-	if p.curIdx >= p.avail {
-		read, err := p.readRows(batchReadRowSize)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if read == 0 {
-			return nil, nil
-		}
-		p.curIdx, p.avail = 0, read
-	}
-
-	row := p.rows[p.curIdx]
-	p.curIdx++
-	return row, nil
-}
-
+// readRows read several rows internally and store them in the row buffer.
 func (p *ParquetParser) readRows(num int) (int, error) {
 	readNum := min(num, p.totalRows-p.curRows)
 	if readNum == 0 {
@@ -487,8 +469,10 @@ func (p *ParquetParser) readRows(num int) (int, error) {
 	return readNum, nil
 }
 
-// Read num rows in current row group and store results
-func (p *ParquetParser) readInGroup(num, dataOffset int) (int, error) {
+// readInGroup read severals rows in current row group.
+// storeOffset represents the starting position for storing the read rows.
+// It's a part of the readRows.
+func (p *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 	var (
 		err   error
 		total int64
@@ -528,48 +512,48 @@ func (p *ParquetParser) readInGroup(num, dataOffset int) (int, error) {
 		if physicalTp == parquet.Types.Boolean || physicalTp == parquet.Types.Int96 || meta.converted == schema.ConvertedTypes.None {
 			switch physicalTp {
 			case parquet.Types.Boolean:
-				p.setBoolData(num, i, dataOffset)
+				p.setBoolData(num, i, storeOffset)
 			case parquet.Types.Int32:
-				p.setInt32Data(num, i, dataOffset)
+				p.setInt32Data(num, i, storeOffset)
 			case parquet.Types.Int64:
-				p.setInt64Data(num, i, dataOffset)
+				p.setInt64Data(num, i, storeOffset)
 			case parquet.Types.Int96:
-				p.setInt96Data(num, i, dataOffset)
+				p.setInt96Data(num, i, storeOffset)
 			case parquet.Types.Float:
-				p.setFloat32Data(num, i, dataOffset)
+				p.setFloat32Data(num, i, storeOffset)
 			case parquet.Types.Double:
-				p.setFloat64Data(num, i, dataOffset)
+				p.setFloat64Data(num, i, storeOffset)
 			case parquet.Types.ByteArray:
-				p.setByteArrayData(num, i, dataOffset)
+				p.setByteArrayData(num, i, storeOffset)
 			case parquet.Types.FixedLenByteArray:
-				p.setFixedByteArrayData(num, i, dataOffset)
+				p.setFixedByteArrayData(num, i, storeOffset)
 			}
 			continue
 		}
 
 		switch meta.converted {
 		case schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
-			p.setStringData(num, i, dataOffset)
+			p.setStringData(num, i, storeOffset)
 		case schema.ConvertedTypes.Int8, schema.ConvertedTypes.Int16, schema.ConvertedTypes.Int32:
-			p.setInt32Data(num, i, dataOffset)
+			p.setInt32Data(num, i, storeOffset)
 		case schema.ConvertedTypes.Uint8, schema.ConvertedTypes.Uint16, schema.ConvertedTypes.Uint32:
-			p.setUint32Data(num, i, dataOffset)
+			p.setUint32Data(num, i, storeOffset)
 		case schema.ConvertedTypes.Int64:
-			p.setInt64Data(num, i, dataOffset)
+			p.setInt64Data(num, i, storeOffset)
 		case schema.ConvertedTypes.Uint64:
-			p.setUint64Data(num, i, dataOffset)
+			p.setUint64Data(num, i, storeOffset)
 		case schema.ConvertedTypes.TimeMillis:
-			p.setTimeMillisData(num, i, dataOffset)
+			p.setTimeMillisData(num, i, storeOffset)
 		case schema.ConvertedTypes.TimeMicros:
-			p.setTimeMicrosData(num, i, dataOffset)
+			p.setTimeMicrosData(num, i, storeOffset)
 		case schema.ConvertedTypes.TimestampMillis:
-			p.setTimestampMillisData(num, i, dataOffset)
+			p.setTimestampMillisData(num, i, storeOffset)
 		case schema.ConvertedTypes.TimestampMicros:
-			p.setTimestampMicrosData(num, i, dataOffset)
+			p.setTimestampMicrosData(num, i, storeOffset)
 		case schema.ConvertedTypes.Date:
-			p.setDateData(num, i, dataOffset)
+			p.setDateData(num, i, storeOffset)
 		case schema.ConvertedTypes.Decimal:
-			p.setDecimalData(num, i, dataOffset)
+			p.setDecimalData(num, i, storeOffset)
 		}
 	}
 
@@ -596,8 +580,8 @@ func (p *ParquetParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos implements the Parser interface.
-// For parquet it's nonsense to read the position of internal reader,
-// thus it will return the number of rows read
+// For parquet it's nonsense to get the position of internal reader,
+// thus it will return the number of rows read.
 func (pp *ParquetParser) ScannedPos() (int64, error) {
 	return int64(pp.curRows), nil
 }
@@ -608,8 +592,29 @@ func (pp *ParquetParser) Close() error {
 	return pp.reader.Close()
 }
 
+// GetRow get the the current row.
+// Return error if can't read next row.
+// User should call ReadRow before calling this.
+func (p *ParquetParser) GetRow() ([]types.Datum, error) {
+	if p.curIdx >= p.avail {
+		read, err := p.readRows(batchReadRowSize)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if read == 0 {
+			return nil, nil
+		}
+		p.curIdx, p.avail = 0, read
+	}
+
+	row := p.rows[p.curIdx]
+	p.curIdx++
+	return row, nil
+}
+
 // ReadRow reads a row in the parquet file by the parser.
 // It implements the Parser interface.
+// Return io.EOF if reaching the end of the file.
 func (p *ParquetParser) ReadRow() error {
 	p.lastRow.RowID++
 	p.lastRow.Length = 0
@@ -718,7 +723,6 @@ func NewParquetParser(
 	r storage.ReadSeekCloser,
 	path string,
 ) (*ParquetParser, error) {
-
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
 		wrapper := &parquetFileWrapper{
@@ -727,7 +731,7 @@ func NewParquetParser(
 			ctx:            ctx,
 			path:           path,
 		}
-		wrapper.InitBuffer(64 * 1024)
+		wrapper.InitBuffer(defaultBufSize)
 	}
 
 	reader, err := file.NewParquetReader(wrapper)
