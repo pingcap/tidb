@@ -1486,8 +1486,20 @@
           {
             "table_name": "t",
             "type": "Index Stats-Range",
+            "expr": "((a < 5))",
+            "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
             "expr": "((a < 5)) or ((a > 10 and true))",
             "row_count": 6
+          },
+          {
+            "table_name": "t",
+            "type": "Index Stats-Range",
+            "expr": "((a > 10 and true))",
+            "row_count": 1
           },
           {
             "table_name": "t",
