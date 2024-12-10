@@ -1107,14 +1107,14 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount float64
 	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
 	// because that can always be less than realtimeRowCount if NULLs exist
 	newRows := realtimeRowCount - origRowCount
-	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
-	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
-	if newRows < 0 {
-		newRows = realtimeRowCount
-	}
 	// If the original row count is zero - use the realtimeRowCount
 	if notNullCount <= 0 {
 		notNullCount = realtimeRowCount
+	}
+	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
+	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
+	if newRows < 0 {
+		newRows = min(notNullCount, realtimeRowCount)
 	}
 	// if no NDV - derive an NDV using sqrt
 	if ndv <= 0 {

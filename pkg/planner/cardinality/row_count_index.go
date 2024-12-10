@@ -415,9 +415,8 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	if histNDV <= 0 {
-		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
-		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
-		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), idx.TotalRowCount(), float64(realtimeRowCount), modifyCount)
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
+		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), idx.Histogram.NotNullCount(), float64(realtimeRowCount), modifyCount)
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
