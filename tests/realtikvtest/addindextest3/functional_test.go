@@ -125,7 +125,7 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
 	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteOnly {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")

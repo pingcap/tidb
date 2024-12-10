@@ -28,6 +28,7 @@ go_test(
         "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain",
         "//pkg/session",
