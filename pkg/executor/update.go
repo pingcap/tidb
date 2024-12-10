@@ -176,6 +176,95 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	return nil
 }
 
+func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
+	var mergedData []types.Datum
+	// merge updates from and into mergedRowData
+	var totalMemDelta int64
+
+	content := e.tblColPosInfos[i]
+
+	if !e.multiUpdateOnSameTable[content.TblID] {
+		// No need to merge if not multi-updated
+		return nil
+	}
+	if !e.tableUpdatable[i] {
+		// If there's nothing to update, we can just skip current row
+		return nil
+	}
+	if e.changed[i] {
+		// Each matched row is updated once, even if it matches the conditions multiple times.
+		return nil
+	}
+	handle := e.handles[i]
+	flags := e.assignFlag[content.Start:content.End]
+
+	if e.mergedRowData[content.TblID] == nil {
+		e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
+	}
+	tbl := e.tblID2table[content.TblID]
+	newTableData := newData[content.Start:content.End]
+
+	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	for i := range flags {
+		if !tbl.WritableCols()[i].IsGenerated() {
+			continue
+		}
+		newTableData[i].Copy(&mergedData[i])
+	}
+
+	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	totalMemDelta += memDelta
+
+	e.memTracker.Consume(totalMemDelta)
+	return nil
+}
+
+func (e *UpdateExec) mergeToOldData(row []types.Datum, i int) error {
+	var mergedData []types.Datum
+	// merge updates from and into mergedRowData
+	var totalMemDelta int64
+
+	content := e.tblColPosInfos[i]
+
+	if !e.multiUpdateOnSameTable[content.TblID] {
+		// No need to merge if not multi-updated
+		return nil
+	}
+	if !e.tableUpdatable[i] {
+		// If there's nothing to update, we can just skip current row
+		return nil
+	}
+	if e.changed[i] {
+		// Each matched row is updated once, even if it matches the conditions multiple times.
+		return nil
+	}
+	handle := e.handles[i]
+	flags := e.assignFlag[content.Start:content.End]
+
+	if e.mergedRowData[content.TblID] == nil {
+		e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
+	}
+	tbl := e.tblID2table[content.TblID]
+	oldData := row[content.Start:content.End]
+
+	// We don't check the second return value here because we have already called merge() before.
+	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	for i := range flags {
+		if !tbl.WritableCols()[i].IsGenerated() {
+			continue
+		}
+		mergedData[i].Copy(&oldData[i])
+	}
+
+	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	totalMemDelta += memDelta
+
+	e.memTracker.Consume(totalMemDelta)
+	return nil
+}
+
 func (e *UpdateExec) exec(
 	ctx context.Context,
 	_ *expression.Schema,
@@ -186,17 +275,6 @@ func (e *UpdateExec) exec(
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
-	}
-
-	// Evaluate generated columns and write to table.
-	// Evaluated values will be stored in newRow.
-	assignments := make([]*expression.Assignment, 0)
-	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		tblIdx := e.assignFlag[assign.Col.Index]
-		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
-			continue
-		}
-		assignments = append(assignments, assign)
 	}
 
 	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
@@ -226,8 +304,27 @@ func (e *UpdateExec) exec(
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
 
+		// Evaluate generated columns and write to table.
+		// Evaluated values will be stored in newRow.
+		assignments := make([]*expression.Assignment, 0)
+		for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
+			tblIdx := e.assignFlag[assign.Col.Index]
+			if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
+				continue
+			}
+
+			if tblIdx >= 0 && content.TblID == e.tblColPosInfos[tblIdx].TblID && assign.Col.Index < len(newTableData) {
+				assignments = append(assignments, assign)
+			}
+		}
+
 		if len(assignments) > 0 {
 			e.evalBuffer.SetDatums(newTableData...)
+		}
+
+		// Copy data from merge row to old row
+		if err := e.mergeToOldData(row, i); err != nil {
+			return errors.Trace(err)
 		}
 
 		// Update row
@@ -239,6 +336,11 @@ func (e *UpdateExec) exec(
 			e.fkChecks[content.TblID],
 			e.fkCascades[content.TblID],
 			dupKeyCheck, e.IgnoreError)
+
+		// Copy data from new row to merge row
+		if err := e.newDataToMerge(newData, i); err != nil {
+			return errors.Trace(err)
+		}
 
 		if ignored {
 			continue
@@ -365,12 +467,6 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				ctx, e.Children(0).Schema(),
 				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
 				return 0, err
-			}
-			// Merge generated columns if necessary
-			if e.virtualAssignmentsOffset < len(e.OrderedList) {
-				if err := e.merge(datumRow, newRow, true); err != nil {
-					return 0, err
-				}
 			}
 			globalRowIdx++
 		}
