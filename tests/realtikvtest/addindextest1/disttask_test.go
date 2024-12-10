@@ -273,7 +273,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState"))
 
 	// dist task succeed, job paused and resumed.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.IsPaused() {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
