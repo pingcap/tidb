@@ -884,7 +884,7 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 	// Collect access paths that satisfy the hints, and make sure there is at least one MV index path.
 	var mvIndexPathCnt int
 	candidateAccessPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
-	for idx := 0; idx < normalPathCnt; idx++ {
+	for idx := range normalPathCnt {
 		if (ds.PossibleAccessPaths[idx].IsTablePath() &&
 			!isInIndexMergeHints(ds, "primary")) ||
 			(!ds.PossibleAccessPaths[idx].IsTablePath() &&
@@ -922,7 +922,7 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 			unfinishedIndexMergePath,
 		)
 		if finishedIndexMergePath == nil {
-			return nil
+			continue
 		}
 
 		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
@@ -940,10 +940,10 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 
 		// Keep the same behavior with previous implementation, we only handle the "composed" case here.
 		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt == 1 && normalIndexPartialPathCnt == 0) {
-			return nil
+			continue
 		}
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
-		return nil
+		continue
 	}
 	// CNF path.
 
@@ -1036,11 +1036,11 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 			TableRowIdScan(t)
 */
 func generateIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) error {
-	dnfMVIndexPaths, err := generateIndexMergeOnDNF4MVIndex(ds, normalPathCnt, filters)
-	if err != nil {
-		return err
-	}
-	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, dnfMVIndexPaths...)
+	//dnfMVIndexPaths, err := generateIndexMergeOnDNF4MVIndex(ds, normalPathCnt, filters)
+	//if err != nil {
+	//	return err
+	//}
+	//ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, dnfMVIndexPaths...)
 
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
