@@ -240,7 +240,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
 	ingestTS := bc.ingestTS.Load()
 	logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
-	err := bc.backend.SetTSBeforeImportEngine(ei.uuid, ingestTS)
+	err := bc.backend.SetTSBeforeImportEngine(ctx, ei.uuid, ingestTS)
 	if err != nil {
 		logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
 		return err

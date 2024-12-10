@@ -1011,7 +1011,6 @@ func (s *indexWriteResultSink) flush() error {
 		// Try to advance watermark even if there is an error.
 		err1 := s.cpMgr.AdvanceWatermark(flushed, imported)
 		if err1 != nil {
-			logutil.Logger(s.ctx).Error("advance watermark failed", zap.String("category", "ddl"), zap.Error(err))
 			return err1
 		}
 	}

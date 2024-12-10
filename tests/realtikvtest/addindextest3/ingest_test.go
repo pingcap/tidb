@@ -489,21 +489,24 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 2);")
 	ingest.ForceSyncFlagForTest = true
-	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
-	// tk.MustExec("alter table t add index idx(b);")
-	// tk.MustExec("admin check table t;")
-	// tk.MustExec("update t set b = b + 1;")
-
-	// tk.MustExec("alter table t drop index idx;")
-	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
-	// tk.MustExec("alter table t add unique index idx(k);")
-	// tk.MustExec("admin check table t;")
-	// tk.MustExec("update t set k = k + 1;")
-
-	// tk.MustExec("alter table t drop index idx;")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
-	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
+	tk.MustExec("update t set b = b + 1;")
+
+	tk.MustExec("alter table t drop index idx;")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	tk.MustExec("alter table t add unique index idx(k);")
+	tk.MustExec("admin check table t;")
+	tk.MustExec("update t set k = k + 10;")
+
+	tk.MustExec("alter table t drop index idx;")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "1*return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/afterSetTSBeforeImportEngine", "1*return")
+	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {

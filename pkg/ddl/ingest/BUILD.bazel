@@ -43,6 +43,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/dbterror",
         "//pkg/util/generic",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/size",
