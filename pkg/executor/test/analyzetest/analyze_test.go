@@ -1192,8 +1192,8 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 				))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
-				testkit.Rows("test t  a 0 0 3 1 3 5 0",
-					"test t  a 0 1 4 1 6 6 0",
+				testkit.Rows("test t  a 0 0 2 1 3 4 0",
+					"test t  a 0 1 4 1 5 6 0",
 					"test t  c 0 0 4 1 3 6 0",
 					"test t  c 0 1 7 1 7 9 0"))
 		}(val)

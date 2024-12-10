@@ -168,7 +168,7 @@ func buildHist(
 	valuesPerBucket := float64(count)/float64(numBuckets) + sampleFactor
 	minNumBuckets := int64(100)
 	maxValuesPerBucket := max(float64(count)/float64(minNumBuckets)+sampleFactor, 2)
-	if numBuckets != 254 || ndv < numBuckets {
+	if numBuckets != 256 || ndv < minNumBuckets {
 		maxValuesPerBucket = valuesPerBucket
 	}
 
@@ -226,9 +226,15 @@ func buildHist(
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
 		} else {
-			skewedValue := bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat > origNdvFactor
+			//skewedValue := bucketIdx > 0 && hg.Buckets[bucketIdx-1].Repeat > origNdvFactor && hg.Buckets[bucketIdx].Repeat < hg.Buckets[bucketIdx-1].Repeat
+			priorBucket := max(0, bucketIdx-1)
+			priorRepeat := hg.Buckets[priorBucket].Repeat
+			skewedValue := priorRepeat > origNdvFactor
+			if priorRepeat > 1 && !skewedValue {
+				skewedValue = true
+			}
 			// Try to get the last value in the bucket as a skewed value.
-			if (skewedValue && valuesPerBucket <= maxValuesPerBucket) || currentCount >= maxValuesPerBucket {
+			if (skewedValue && valuesPerBucket <= maxValuesPerBucket) || currentCount >= max(maxValuesPerBucket, valuesPerBucket) {
 				lastCount = hg.Buckets[bucketIdx].Count
 				// The bucket is full, store the item in the next bucket.
 				bucketIdx++
@@ -243,7 +249,7 @@ func buildHist(
 		remainingCount := float64(count) - totalCount
 		remainingBuckets := float64(numBuckets) - float64(bucketIdx)
 		if remainingCount/valuesPerBucket > remainingBuckets {
-			origNdvFactor++
+			origNdvFactor += int64(math.Ceil(float64(origNdvFactor) * 0.1))
 			valuesPerBucket++
 		}
 	}
