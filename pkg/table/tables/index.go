@@ -241,6 +241,8 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
 			}
+			// during some step of add-index, such as in write-reorg state, this
+			// key is THE temp index key.
 			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
 				return nil, err
