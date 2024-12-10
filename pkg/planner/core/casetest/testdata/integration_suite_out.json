@@ -165,7 +165,7 @@
       {
         "SQL": "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
         "Plan": [
-          "HashJoin_17 3.00 32781.07 root  CARTESIAN left outer semi join",
+          "HashJoin_17 3.00 32781.07 root  CARTESIAN left outer semi join, left side:IndexReader_21",
           "├─Selection_22(Build) 0.80 31149.25 root  eq(2, Column#18)",
           "│ └─StreamAgg_29 1.00 31099.35 root  funcs:count(1)->Column#18",
           "│   └─TableReader_41 3.00 30949.65 root  MppVersion: 2, data:ExchangeSender_40",

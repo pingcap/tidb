@@ -326,6 +326,7 @@ go_test(
         "//pkg/util/ranger",
         "//pkg/util/stmtsummary",
         "//pkg/util/tracing",
+        "//tests/realtikvtest",
         "@com_github_docker_go_units//:go-units",
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",

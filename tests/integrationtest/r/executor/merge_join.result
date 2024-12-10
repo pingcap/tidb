@@ -7,7 +7,7 @@ insert into t1 values(2,3),(4,4);
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 id	estRows	task	access object	operator info
 Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
-└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+└─MergeJoin	10000.00	root		left outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
   ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
   │ └─TableReader	3336.66	root		data:Selection
   │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
@@ -21,7 +21,7 @@ c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 id	estRows	task	access object	operator info
 Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
-└─MergeJoin	10000.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
+└─MergeJoin	10000.00	root		right outer join, left side:Sort, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
   ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
   │ └─TableReader	3336.66	root		data:Selection
   │   └─Selection	3336.66	cop[tikv]		not(isnull(executor__merge_join.t1.c1)), or(eq(executor__merge_join.t1.c1, 1), gt(executor__merge_join.t1.c2, 20))
@@ -35,7 +35,7 @@ NULL	NULL	1	1
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 on t.c1 = t1.c1 where t.c1 = 1 or t1.c2 > 20;
 id	estRows	task	access object	operator info
 Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
-└─MergeJoin	12487.50	root		right outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+└─MergeJoin	12487.50	root		right outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
   ├─Sort(Build)	9990.00	root		executor__merge_join.t.c1
   │ └─TableReader	9990.00	root		data:Selection
   │   └─Selection	9990.00	cop[tikv]		not(isnull(executor__merge_join.t.c1))
@@ -61,7 +61,7 @@ c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		executor__merge_join.t1.c1
-└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
+└─MergeJoin	10000.00	root		left outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
   ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
   │ └─TableReader	6656.67	root		data:Selection
   │   └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
@@ -196,7 +196,7 @@ create table s(a int, b int);
 insert into s values(1,1);
 explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
 id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer semi join, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
+MergeJoin	10000.00	root		left outer semi join, left side:TableReader, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -272,7 +272,7 @@ explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 o
 id	estRows	task	access object	operator info
 Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
-  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  └─MergeJoin	10000.00	root		left outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
     ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	3336.66	root		
     │   └─TableReader	3336.66	root		data:Selection
@@ -289,7 +289,7 @@ explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t1 right outer join t 
 id	estRows	task	access object	operator info
 Selection	8000.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
-  └─MergeJoin	10000.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
+  └─MergeJoin	10000.00	root		right outer join, left side:Sort, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t.c1
     ├─Sort(Build)	3336.66	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	3336.66	root		
     │   └─TableReader	3336.66	root		data:Selection
@@ -306,7 +306,7 @@ explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t right outer join t1 
 id	estRows	task	access object	operator info
 Selection	9990.00	root		or(eq(executor__merge_join.t.c1, 1), gt(executor__merge_join.t1.c2, 20))
 └─Shuffle	12487.50	root		execution info: concurrency:4, data sources:[TableReader TableReader]
-  └─MergeJoin	12487.50	root		right outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
+  └─MergeJoin	12487.50	root		right outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1
     ├─Sort(Build)	9990.00	root		executor__merge_join.t.c1
     │ └─ShuffleReceiver	9990.00	root		
     │   └─TableReader	9990.00	root		data:Selection
@@ -338,7 +338,7 @@ explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 o
 id	estRows	task	access object	operator info
 Sort	10000.00	root		executor__merge_join.t1.c1
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
-  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
+  └─MergeJoin	10000.00	root		left outer join, left side:Sort, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
     ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	6656.67	root		
     │   └─TableReader	6656.67	root		data:Selection
@@ -475,7 +475,7 @@ create table s(a int, b int);
 insert into s values(1,1);
 explain format = 'brief' select /*+ TIDB_SMJ(t, s) */ a in (select a from s where s.b >= t.b) from t;
 id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer semi join, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
+MergeJoin	10000.00	root		left outer semi join, left side:TableReader, other cond:eq(executor__merge_join.t.a, executor__merge_join.s.a), ge(executor__merge_join.s.b, executor__merge_join.t.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -571,7 +571,7 @@ Sort	15625.00	root		executor__merge_join.t1.c1
 └─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	12500.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  └─MergeJoin(Probe)	12500.00	root		right outer join, left side:TableReader, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -625,7 +625,7 @@ Sort	15625.00	root		executor__merge_join.t1.c1
 └─MergeJoin	15625.00	root		inner join, left key:executor__merge_join.t2.c1, right key:executor__merge_join.t3.c1
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:true, stats:pseudo
-  └─MergeJoin(Probe)	12500.00	root		right outer join, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
+  └─MergeJoin(Probe)	12500.00	root		right outer join, left side:TableReader, left key:executor__merge_join.t1.c1, right key:executor__merge_join.t2.c1
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan

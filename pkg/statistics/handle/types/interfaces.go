@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -146,6 +147,8 @@ type IndicatorsJSON struct {
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
@@ -220,6 +223,7 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
 	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
 	// MemConsumed returns its memory usage.
@@ -520,16 +524,16 @@ type DDL interface {
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Pool is used to get a session or a goroutine to execute stats updating.
-	statsutil.Pool
+	handleutil.Pool
 
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	statsutil.AutoAnalyzeProcIDGenerator
+	handleutil.AutoAnalyzeProcIDGenerator
 
 	// LeaseGetter is used to get stats lease.
-	statsutil.LeaseGetter
+	handleutil.LeaseGetter
 
 	// TableInfoGetter is used to get table meta info.
-	statsutil.TableInfoGetter
+	handleutil.TableInfoGetter
 
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table

@@ -57,12 +57,14 @@ func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtS
 		beginTime: beginTime,
 		endTime:   endTime,
 		otherSummary: &stmtSummaryByDigestElement{
-			beginTime:    beginTime,
-			endTime:      endTime,
-			authUsers:    make(map[string]struct{}),
-			minLatency:   time.Duration(math.MaxInt64),
-			backoffTypes: make(map[string]int),
-			firstSeen:    time.Unix(endTime, 0),
+			beginTime: beginTime,
+			endTime:   endTime,
+			stmtSummaryStats: stmtSummaryStats{
+				authUsers:    make(map[string]struct{}),
+				minLatency:   time.Duration(math.MaxInt64),
+				backoffTypes: make(map[string]int),
+				firstSeen:    time.Unix(endTime, 0),
+			},
 		},
 	}
 }
