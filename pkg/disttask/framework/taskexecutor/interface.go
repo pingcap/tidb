@@ -59,13 +59,6 @@ type TaskTable interface {
 	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.SubtaskBase) error
 }
 
-// Pool defines the interface of a pool.
-type Pool interface {
-	Run(func()) error
-	RunWithConcurrency(chan func(), uint32) error
-	ReleaseAndWait()
-}
-
 // TaskExecutor is the executor for a task.
 // Each task type should implement this interface.
 // context tree of task execution:
@@ -147,10 +140,5 @@ func (*EmptyStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 // Cleanup implements the StepExecutor interface.
 func (*EmptyStepExecutor) Cleanup(context.Context) error {
-	return nil
-}
-
-// OnFinished implements the StepExecutor interface.
-func (*EmptyStepExecutor) OnFinished(_ context.Context, _ *proto.Subtask) error {
 	return nil
 }

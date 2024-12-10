@@ -46,7 +46,6 @@ func GetCommonStepExecutor(ctrl *gomock.Controller, step proto.Step, runSubtaskF
 	executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	executor.EXPECT().GetStep().Return(step).AnyTimes()
 	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	return executor
 }

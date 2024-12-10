@@ -150,11 +150,6 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
-	return nil
-}
-
 func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *model.IndexInfo, idxID int64, err error) {
 	switch len(eleIDs) {
 	case 1:

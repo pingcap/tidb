@@ -264,7 +264,6 @@ func TestTaskExecutorRun(t *testing.T) {
 				e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 			} else {
 				e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
-				e.stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
 				e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 			}
 		}
@@ -300,7 +299,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().GetStep().Return(proto.StepOne)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), nextSubtask.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), nextSubtask).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), nextSubtask).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", nextSubtask.ID, gomock.Any()).Return(nil)
 		// exit
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
@@ -319,7 +317,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", int64(1), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
@@ -345,7 +342,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			}
 			e.taskTable.EXPECT().StartSubtask(gomock.Any(), subtaskID, "id").Return(nil)
 			e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), theSubtask).Return(nil)
-			e.stepExecutor.EXPECT().OnFinished(gomock.Any(), theSubtask).Return(nil)
 			e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", subtaskID, gomock.Any()).Return(nil)
 		}
 		// exit due to no subtask to run for a while
@@ -393,7 +389,6 @@ func TestTaskExecutorRun(t *testing.T) {
 				}
 				e.taskTable.EXPECT().StartSubtask(gomock.Any(), subtaskID, "id").Return(nil)
 				e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), theSubtask).Return(nil)
-				e.stepExecutor.EXPECT().OnFinished(gomock.Any(), theSubtask).Return(nil)
 				e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", subtaskID, gomock.Any()).Return(nil)
 			}
 		}
@@ -414,7 +409,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), e.pendingSubtask1).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", int64(1), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 		step2Subtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
@@ -427,7 +421,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), step2Subtask.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), step2Subtask).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), step2Subtask).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", step2Subtask.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(errors.New("some error 2"))
@@ -463,7 +456,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		// first round of the run loop
 		e.taskExecExt.EXPECT().IsIdempotent(gomock.Any()).Return(true)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", subtaskID, gomock.Any()).Return(nil)
 		// second round of the run loop
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
@@ -540,32 +532,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().GetStep().Return(proto.StepOne)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), e.pendingSubtask1).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
-		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
-		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-		e.taskExecutor.Run(nil)
-		require.True(t, e.ctrl.Satisfied())
-	})
-
-	t.Run("OnFinished failed for task, will run again", func(t *testing.T) {
-		e := newTaskExecutorRunEnv(t)
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
-		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
-			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
-		e.taskExecExt.EXPECT().GetStepExecutor(gomock.Any()).Return(e.stepExecutor, nil)
-		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
-		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), e.pendingSubtask1).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(errors.New("some error"))
-		// second round of the run loop
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
-		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
-			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
-		e.stepExecutor.EXPECT().GetStep().Return(proto.StepOne)
-		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
-		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), e.pendingSubtask1).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
@@ -596,7 +562,6 @@ func TestTaskExecutorRun(t *testing.T) {
 		e.stepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().StartSubtask(gomock.Any(), e.pendingSubtask1.ID, "id").Return(nil)
 		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		// loop for 8 times without subtask, and exit
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil).Times(8)

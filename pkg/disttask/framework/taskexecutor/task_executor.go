@@ -391,7 +391,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		}()
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
-	failpoint.InjectCall("changeRunSubtaskError", e, &subtaskErr)
+	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
 	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())
@@ -403,11 +403,6 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return subtaskErr
 	}
 
-	failpoint.InjectCall("beforeCallOnSubtaskFinished", subtask)
-	if err := e.stepExec.OnFinished(e.stepCtx, subtask); err != nil {
-		logger.Info("OnFinished failed", zap.Error(err))
-		return errors.Trace(err)
-	}
 	err := e.finishSubtask(e.stepCtx, subtask)
 	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err

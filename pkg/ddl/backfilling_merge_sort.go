@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -104,13 +103,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		common.OnDuplicateKeyError,
 	)
 	if err != nil {
-		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
-		if err2 == nil {
-			return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
-		}
 		return errors.Trace(err)
 	}
-	return nil
+	return m.onFinished(ctx, subtask)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -118,7 +113,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
