@@ -417,27 +417,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	if histNDV <= 0 {
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
-		//
-		// If the table hasn't been modified, it's safe to return 0.
-		if modifyCount == 0 {
-			return 0
-		}
-		newRows := float64(realtimeRowCount) - idx.TotalRowCount()
-		if newRows < 0 {
-			newRows = float64(realtimeRowCount)
-		}
-		// ELSE calculate an approximate estimate based upon newly inserted rows.
-		//
-		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
-		if idx.Histogram.NDV > 0 {
-			histNDV = float64(idx.Histogram.NDV)
-		} else {
-			histNDV = math.Sqrt(max(idx.TotalRowCount(), float64(realtimeRowCount)))
-		}
-		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
-		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-		totalRowCount := min(idx.TotalRowCount(), newRows)
-		return max(1, totalRowCount/histNDV)
+		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), idx.TotalRowCount(), realtimeRowCount, modifyCount)
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
