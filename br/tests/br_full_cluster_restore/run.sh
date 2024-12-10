@@ -1,6 +1,7 @@
 #! /bin/bash
 
 set -eu
+set -x
 
 # we need to keep backup data after restart service
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -21,6 +22,7 @@ function run_sql_as() {
   mysql -u$user -p$password -h127.0.0.1 -P4000 \
       "$@" \
       --default-character-set utf8 -E -e "$SQL" > "$TEST_DIR/sql_res.$TEST_NAME.txt" 2>&1
+  echo "SQL result: $(cat $TEST_DIR/sql_res.$TEST_NAME.txt)"
 }
 
 restart_services
