@@ -1633,8 +1633,9 @@ var (
 	EnableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
-	EnableWorkloadBasedLearning         = atomic.NewBool(DefTiDBEnableWorkloadBasedLearning)
-	WorkloadBasedLearningInterval       = atomic.NewDuration(DefTiDBWorkloadBasedLearningInterval)
+	// TODO: set value by session variable
+	EnableWorkloadBasedLearning   = atomic.NewBool(DefTiDBEnableWorkloadBasedLearning)
+	WorkloadBasedLearningInterval = atomic.NewDuration(DefTiDBWorkloadBasedLearningInterval)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning
