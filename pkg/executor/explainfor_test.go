@@ -602,12 +602,12 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
-	require.Len(t, res.Rows(), 7)
+	require.Len(t, res.Rows(), 6)
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[1][0])
+	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[2][0])
+	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[2][4])
 	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[3][0])
-	require.Equal(t, "range:(NULL,\"mm\"), (\"mm\",+inf], keep order:false, stats:pseudo", res.Rows()[3][4])
-	require.Regexp(t, ".*IndexRangeScan.*", res.Rows()[4][0])
-	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[4][4])
+	require.Equal(t, "range:[0198-09-29 20:19:49,0198-09-29 20:19:49], keep order:false, stats:pseudo", res.Rows()[3][4])
 
 	// test for cluster index in indexMerge
 	tk.MustExec("drop table if exists t;")

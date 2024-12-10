@@ -679,10 +679,6 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 		}
 	}
 
-	if !needConsiderIndexMerge {
-		return "IndexMerge is inapplicable or disabled. ", nil // IndexMerge is inapplicable
-	}
-
 	// 1. Generate possible IndexMerge paths for `OR`.
 	err := generateIndexMergeOrPaths(ds, indexMergeConds)
 	if err != nil {
@@ -692,6 +688,33 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	indexMergeAndPath := generateIndexMergeAndPaths(ds, regularPathCount, nil)
 	if indexMergeAndPath != nil {
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergeAndPath)
+	}
+
+	if needConsiderIndexMerge {
+		return "", nil
+	}
+
+	var containMVPath bool
+	for i := regularPathCount; i < len(ds.PossibleAccessPaths); i++ {
+		path := ds.PossibleAccessPaths[i]
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+				for _, paths := range oneORBranch {
+					for _, p := range paths {
+						if isMVIndexPath(p) {
+							containMVPath = true
+							break
+						}
+					}
+				}
+			}
+		}
+		if !containMVPath {
+			ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+		}
+	}
+	if len(ds.PossibleAccessPaths) == regularPathCount {
+		return "IndexMerge is inapplicable or disabled. No available index.", nil
 	}
 	return "", nil
 }
