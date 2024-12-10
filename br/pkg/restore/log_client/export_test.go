@@ -127,3 +127,11 @@ func (helper *FakeStreamMetadataHelper) ReadFile(
 ) ([]byte, error) {
 	return helper.Data[offset : offset+length], nil
 }
+
+func (w *WithMigrations) AddExtraFullBackup(extPath string) {
+	w.fullBackups = append(w.fullBackups, extPath)
+}
+
+func (w *WithMigrations) SetRestoredTS(ts uint64) {
+	w.restoredTS = ts
+}

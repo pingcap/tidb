@@ -294,12 +294,6 @@ func (c *extBackupCollector) TryNext(ctx context.Context) iter.IterResult[[]*bac
 		}
 
 		fbk := res.Item
-		if fbk.AsIfTs > c.restoreTS {
-			log.Info("Filter out out-of-ts-range extra full backup.",
-				zap.Uint64("restoreTS", c.restoreTS), zap.Uint64("asIfTs", fbk.AsIfTs), zap.String("path", fbk.FilesPrefixHint))
-			continue
-		}
-
 		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
 			return iter.Throw[[]*backuppb.ExtraFullBackup](
 				errors.Annotatef(berrors.ErrInvalidArgument, "the full backup UUID has bad length(%d)", len(fbk.BackupUuid)),
@@ -318,6 +312,12 @@ func (c *extBackupCollector) TryNext(ctx context.Context) iter.IterResult[[]*bac
 			c.finished[uid] = struct{}{}
 			items := c.collected[uid]
 			delete(c.collected, uid)
+
+			if fbk.AsIfTs > c.restoreTS {
+				log.Info("Filter out out-of-ts-range extra full backup.",
+					zap.Uint64("restoreTS", c.restoreTS), zap.Uint64("asIfTs", fbk.AsIfTs), zap.String("path", fbk.FilesPrefixHint))
+				continue
+			}
 			return iter.Emit(items)
 		}
 	}
