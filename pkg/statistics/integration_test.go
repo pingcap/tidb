@@ -590,3 +590,25 @@ func TestGlobalIndexWithAnalyzeVersion1AndHistoricalStats(t *testing.T) {
 	// Each analyze will only generate one record
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_history where table_id=%d", tblID)).Equal(testkit.Rows("10"))
 }
+
+func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0;")
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int);")
+	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("insert into t values (1, 1);")
+	err := dom.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	tk.MustExec("alter table t add column c int default 1;")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
+	tk.MustExec("select * from t where a = 1 or b = 1 or c = 1;")
+	require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
+	result := tk.MustQuery("show stats_meta where table_name = 't'")
+	require.Len(t, result.Rows(), 1)
+	// The last analyze time.
+	require.Equal(t, "<nil>", result.Rows()[0][6])
+}

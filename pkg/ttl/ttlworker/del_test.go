@@ -179,6 +179,22 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	require.Equal(t, 0, buffer.Len())
 	require.Equal(t, uint64(0), statics6.SuccessRows.Load())
 	require.Equal(t, uint64(7), statics6.ErrorRows.Load())
+
+	// test should only retry at most once for one item in a DoRetry call.
+	buffer2 := newTTLDelRetryBuffer()
+	buffer2.SetRetryInterval(0)
+	buffer2.maxRetry = math.MaxInt
+	task7, rows7, statics7 := createTask("t7")
+	buffer2.RecordTaskResult(task7, rows7[:8])
+	require.Equal(t, 1, buffer2.Len())
+	currentRetryFn := doRetryFail
+	buffer2.DoRetry(func(task *ttlDeleteTask) [][]types.Datum {
+		fn := currentRetryFn
+		currentRetryFn = shouldNotDoRetry
+		return fn(task)
+	})
+	require.Equal(t, uint64(1), statics7.SuccessRows.Load())
+	require.Equal(t, uint64(0), statics7.ErrorRows.Load())
 }
 
 func TestTTLDeleteTaskDoDelete(t *testing.T) {
@@ -269,7 +285,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 			retryErrBatches:   []int{1, 2, 4},
 		},
 		{
-			// some retries and some not
+			// some retries and some not and some are executed when ctx canceled
 			batchCnt:          10,
 			noRetryErrBatches: []int{3, 8, 9},
 			retryErrBatches:   []int{1, 2, 4},
@@ -279,6 +295,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 	}
 
 	for _, c := range cases {
+		require.True(t, c.cancelCtxBatch >= 0 && c.cancelCtxBatch < c.batchCnt)
 		ctx, cancel := context.WithCancel(context.Background())
 		if c.cancelCtx && c.cancelCtxBatch == 0 {
 			cancel()
@@ -298,16 +315,14 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 		retryErrBatches = c.retryErrBatches
 		nonRetryBatches = c.noRetryErrBatches
 		retryRows := task.doDelete(ctx, s)
-		realBatchCnt := c.batchCnt
-		if c.cancelCtx {
-			realBatchCnt = c.cancelCtxBatch
-		}
-		require.LessOrEqual(t, realBatchCnt, c.batchCnt)
 
 		// check SQLs
-		require.Equal(t, realBatchCnt, len(sqls))
 		expectedSQLs := make([]string, 0, len(sqls))
-		for i := 0; i < realBatchCnt; i++ {
+		for i := 0; i < c.batchCnt; i++ {
+			if c.cancelCtx && i >= c.cancelCtxBatch {
+				break
+			}
+
 			batch := task.rows[i*delBatch : (i+1)*delBatch]
 			idList := make([]string, 0, delBatch)
 			for _, row := range batch {
@@ -324,8 +339,8 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 		// check retry rows
 		var expectedRetryRows [][]types.Datum
-		for i := 0; i < realBatchCnt; i++ {
-			if slices.Contains(c.retryErrBatches, i) {
+		for i := 0; i < c.batchCnt; i++ {
+			if slices.Contains(c.retryErrBatches, i) || (c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedRetryRows = append(expectedRetryRows, task.rows[i*delBatch:(i+1)*delBatch]...)
 			}
 		}
@@ -334,7 +349,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 		// check statistics
 		var expectedErrRows uint64
 		for i := 0; i < c.batchCnt; i++ {
-			if i >= realBatchCnt || slices.Contains(c.noRetryErrBatches, i) {
+			if slices.Contains(c.noRetryErrBatches, i) && !(c.cancelCtx && i >= c.cancelCtxBatch) {
 				expectedErrRows += uint64(delBatch)
 			}
 		}
@@ -384,6 +399,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	t2 := newMockTTLTbl(t, "t2")
 	t3 := newMockTTLTbl(t, "t3")
 	t4 := newMockTTLTbl(t, "t4")
+	t5 := newMockTTLTbl(t, "t5")
 	s := newMockSession(t)
 	pool := newMockSessionPool(t)
 	pool.se = s
@@ -392,8 +408,11 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	sqlMap := make(map[string]int)
 	t3Retried := make(chan struct{})
 	t4Retried := make(chan struct{})
+	t5Executed := make(chan struct{})
 	s.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-		pool.lastSession.sessionInfoSchema = newMockInfoSchema(t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo)
+		pool.lastSession.sessionInfoSchema = newMockInfoSchema(
+			t1.TableInfo, t2.TableInfo, t3.TableInfo, t4.TableInfo, t5.TableInfo,
+		)
 		if strings.Contains(sql, "`t1`") {
 			// success
 			return nil, nil
@@ -419,12 +438,26 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 			// error and retry still error
 			// this is to test the retry buffer should be drained after the delete worker stopped
 			i := sqlMap[sql]
-			if i >= 2 {
-				// i >= 2 means t4 has retried once and records in retry buffer
+			if i == 2 {
+				// i == 2 means t4 has retried once and records in retry buffer
 				close(t4Retried)
 			}
 			sqlMap[sql] = i + 1
 			return nil, errors.New("mockErr")
+		}
+
+		if strings.Contains(sql, "`t5`") {
+			// error when the worker is running,
+			// success when flushing retry buffer while the worker stopping.
+			i := sqlMap[sql]
+			sqlMap[sql] = i + 1
+			if ctx.Value("delWorker") != nil {
+				if i == 1 {
+					close(t5Executed)
+				}
+				return nil, errors.New("mockErr")
+			}
+			return nil, nil
 		}
 
 		require.FailNow(t, "")
@@ -433,6 +466,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 
 	delCh := make(chan *ttlDeleteTask)
 	w := newDeleteWorker(delCh, pool)
+	w.ctx = context.WithValue(w.ctx, "delWorker", struct{}{})
 	w.retryBuffer.retryInterval = time.Millisecond
 	w.retryBuffer.maxRetry = math.MaxInt
 	require.Equal(t, workerStatusCreated, w.Status())
@@ -444,7 +478,7 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	}()
 
 	tasks := make([]*ttlDeleteTask, 0)
-	for _, tbl := range []*cache.PhysicalTable{t1, t2, t3, t4} {
+	for _, tbl := range []*cache.PhysicalTable{t1, t2, t3, t4, t5} {
 		task := &ttlDeleteTask{
 			tbl:    tbl,
 			expire: time.UnixMilli(0),
@@ -476,8 +510,17 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 		require.FailNow(t, "")
 	}
 
-	// before stop, t4 should always retry without any error rows
+	select {
+	case <-t5Executed:
+	case <-time.After(time.Second):
+		require.FailNow(t, "")
+	}
+
+	// before stop, t4, t5 should always retry without any error rows
+	require.Equal(t, uint64(0), tasks[3].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(0), tasks[3].statistics.ErrorRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.SuccessRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.ErrorRows.Load())
 	w.Stop()
 	require.NoError(t, w.WaitStopped(context.Background(), 10*time.Second))
 
@@ -490,6 +533,11 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	require.Equal(t, uint64(0), tasks[2].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(3), tasks[2].statistics.ErrorRows.Load())
 
+	// t4 should be error because the buffer flush error while the worker stopping.
 	require.Equal(t, uint64(0), tasks[3].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(3), tasks[3].statistics.ErrorRows.Load())
+
+	// t5 should be success because the buffer flush success while the worker stopping.
+	require.Equal(t, uint64(3), tasks[4].statistics.SuccessRows.Load())
+	require.Equal(t, uint64(0), tasks[4].statistics.ErrorRows.Load())
 }

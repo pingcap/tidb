@@ -1581,7 +1581,9 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
-	// Test Conv function
+	// Test Conv function, `conv` function for a BIT column should not be pushed down for its special behavior which
+	// is only handled in TiDB currently.
+	// see issue: https://github.com/pingcap/tidb/issues/51877
 	exprs = exprs[:0]
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
@@ -1590,7 +1592,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 	exprs = exprs[:0]
-	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
+	// when conv a column with type BIT, a cast function will be used to cast bit to a binary string
+	castTp := types.NewFieldType(mysql.TypeString)
+	castTp.SetCharset(charset.CharsetBin)
+	castTp.SetCollate(charset.CollationBin)
+	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, castTp, byteColumn)
 	require.NoError(t, err)
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
 	require.NoError(t, err)

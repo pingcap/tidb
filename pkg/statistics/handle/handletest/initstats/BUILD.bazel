@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "initstats_test",
+    timeout = "short",
+    srcs = [
+        "load_stats_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/statistics/handle",
+        "//pkg/statistics/handle/types",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

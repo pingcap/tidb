@@ -16,6 +16,7 @@ package domain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -94,6 +95,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memoryusagealarm"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -356,6 +358,16 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+
+	// add failpoint to simulate long-running schema loading scenario
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep, but not sure if there is a better way
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
+		}
+	})
+
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
@@ -521,7 +533,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
-			tables, err = m.ListTables(di.ID)
+			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
 				return err
 			}
@@ -1393,7 +1405,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
 	if err != nil {
 		return err
 	}
@@ -1511,6 +1523,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
+}
+
+// IsLeaseExpired returns whether lease has expired
+func (do *Domain) IsLeaseExpired() bool {
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.
@@ -1808,6 +1825,36 @@ func (do *Domain) GetPDHTTPClient() pdhttp.Client {
 	return nil
 }
 
+func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
+	var msg PrivilegeEvent
+	for _, event := range resp.Events {
+		if event.Kv != nil {
+			val := event.Kv.Value
+			if len(val) > 0 {
+				var tmp PrivilegeEvent
+				err := json.Unmarshal(val, &tmp)
+				if err != nil {
+					logutil.BgLogger().Warn("decodePrivilegeEvent unmarshal fail", zap.Error(err))
+					break
+				}
+				if tmp.All {
+					msg.All = true
+					break
+				}
+				// duplicated users in list is ok.
+				msg.UserList = append(msg.UserList, tmp.UserList...)
+			}
+		}
+	}
+
+	// In case old version triggers the event, the event value is empty,
+	// Then we fall back to the old way: reload all the users.
+	if len(msg.UserList) == 0 {
+		msg.All = true
+	}
+	return msg
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1822,7 +1869,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
 	if do.etcdClient != nil {
-		watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
+		watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
 		duration = 10 * time.Minute
 	}
 
@@ -1834,25 +1881,32 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			ok := true
+			var err error
 			select {
 			case <-do.exit:
 				return
-			case _, ok = <-watchCh:
-			case <-time.After(duration):
-			}
-			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
-				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
-				count++
-				if count > 10 {
-					time.Sleep(time.Duration(count) * time.Second)
+			case resp, ok := <-watchCh:
+				if ok {
+					count = 0
+					event := decodePrivilegeEvent(resp)
+					if event.All {
+						err = do.privHandle.UpdateAll()
+					} else {
+						err = do.privHandle.Update(event.UserList)
+					}
+				} else {
+					if do.ctx.Err() == nil {
+						logutil.BgLogger().Error("load privilege loop watch channel closed")
+						watchCh = do.etcdClient.Watch(do.ctx, privilegeKey)
+						count++
+						if count > 10 {
+							time.Sleep(time.Duration(count) * time.Second)
+						}
+					}
 				}
-				continue
+			case <-time.After(duration):
+				err = do.privHandle.UpdateAll()
 			}
-
-			count = 0
-			err := do.privHandle.Update()
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -2009,7 +2063,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		return err
 	}
 
-	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	owner := do.NewOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 	err = owner.CampaignOwner()
 	if err != nil {
 		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
@@ -2337,7 +2391,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
-	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.statsOwner = do.NewOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
@@ -2446,7 +2500,8 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
 }
 
-func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
+// NewOwnerManager returns the owner manager for use outside of the domain.
+func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
@@ -2751,15 +2806,39 @@ const (
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 
+// PrivilegeEvent is the message definition for NotifyUpdatePrivilege(), encoded in json.
+// TiDB old version do not use no such message.
+type PrivilegeEvent struct {
+	All      bool
+	UserList []string
+}
+
+// NotifyUpdateAllUsersPrivilege updates privilege key in etcd, TiDB client that watches
+// the key will get notification.
+func (do *Domain) NotifyUpdateAllUsersPrivilege() error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{All: true})
+}
+
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
 // the key will get notification.
-func (do *Domain) NotifyUpdatePrivilege() error {
+func (do *Domain) NotifyUpdatePrivilege(userList []string) error {
+	return do.notifyUpdatePrivilege(PrivilegeEvent{UserList: userList})
+}
+
+func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 	// No matter skip-grant-table is configured or not, sending an etcd message is required.
 	// Because we need to tell other TiDB instances to update privilege data, say, we're changing the
 	// password using a special TiDB instance and want the new password to take effect.
 	if do.etcdClient != nil {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if uint64(len(data)) > size.MB {
+			logutil.BgLogger().Warn("notify update privilege message too large", zap.ByteString("value", data))
+		}
 		row := do.etcdClient.KV
-		_, err := row.Put(context.Background(), privilegeKey, "")
+		_, err = row.Put(do.ctx, privilegeKey, string(data))
 		if err != nil {
 			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
 		}
@@ -2772,7 +2851,10 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		return nil
 	}
 
-	return do.PrivilegeHandle().Update()
+	if event.All {
+		return do.PrivilegeHandle().UpdateAll()
+	}
+	return do.PrivilegeHandle().Update(event.UserList)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB

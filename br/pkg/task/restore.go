@@ -100,6 +100,8 @@ const (
 	defaultStatsConcurrency   = 12
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
+	maxRestoreBatchSizeLimit  = 10240
+	pb                        = 1024 * 1024 * 1024 * 1024 * 1024
 	resetSpeedLimitRetryTimes = 3
 )
 
@@ -532,6 +534,10 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 	cfg.PitrConcurrency += 1
 	log.Info("set restore kv files concurrency", zap.Int("concurrency", int(cfg.PitrConcurrency)))
 	cfg.Config.Concurrency = cfg.PitrConcurrency
+	if cfg.ConcurrencyPerStore.Value > 0 {
+		log.Info("set restore compacted sst files concurrency per store",
+			zap.Int("concurrency", int(cfg.ConcurrencyPerStore.Value)))
+	}
 }
 
 func configureRestoreClient(ctx context.Context, client *snapclient.SnapClient, cfg *RestoreConfig) error {
@@ -719,12 +725,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 				}
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			} else {
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
@@ -765,8 +775,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
 	client := snapclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	// set to cfg so that restoreStream can use it.
+	cfg.ConcurrencyPerStore = kvConfigs.ImportGoroutines
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(kvConfigs.ImportGoroutines.Value)
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore.Value)
 	err := configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -802,7 +814,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats); err != nil {
+	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -867,7 +879,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
@@ -1093,6 +1105,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	onProgress := func(n int64) {
+		if n == 0 {
+			updateCh.Inc()
+			return
+		}
+		updateCh.IncBy(n)
+	}
 	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
@@ -1100,7 +1119,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// Notice that `split-region-on-table` configure from TiKV split on the region having data, it may trigger after restore done.
 		// It's recommended to enable TiDB configure `split-table` instead.
 		atomic.LoadUint32(&ddl.EnableSplitTableRegion) == 1,
-		updateCh,
+		onProgress,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -1125,25 +1144,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	finish := dropToBlackhole(ctx, postHandleCh, errCh)
-
-	// Reset speed limit. ResetSpeedLimit must be called after client.LoadSchemaIfNeededAndInitClient has been called.
-	defer func() {
-		var resetErr error
-		// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
-		for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
-			resetErr = client.ResetSpeedLimit(ctx)
-			if resetErr != nil {
-				log.Warn("failed to reset speed limit, retry it",
-					zap.Int("retry time", retry), logutil.ShortError(resetErr))
-				time.Sleep(time.Duration(retry+3) * time.Second)
-				continue
-			}
-			break
-		}
-		if resetErr != nil {
-			log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
-		}
-	}()
 
 	select {
 	case err = <-errCh:
@@ -1175,7 +1175,7 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 	err = utils.WithRetry(ctx, func() error {
 		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1192,7 +1192,7 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	err = utils.WithRetry(ctx, func() error {
 		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1300,7 +1300,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 			}
 		}
 		return nil
-	}, utils.NewDiskCheckBackoffer())
+	}, utils.NewDiskCheckBackoffStrategy())
 	if err != nil {
 		return errors.Trace(err)
 	}

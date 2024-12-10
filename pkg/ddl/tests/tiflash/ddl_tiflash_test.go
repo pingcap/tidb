@@ -411,6 +411,7 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -424,7 +425,7 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
-	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]enforced error")
+	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]DDL job rollback, error msg: enforced error")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }

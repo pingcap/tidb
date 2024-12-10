@@ -154,7 +154,7 @@
         "Plan": [
           "TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 1.00 mpp[tiflash]  right outer join, equal:[eq(test.t1.k1, test.t2.k1)]",
+          "  └─HashJoin 1.00 mpp[tiflash]  right outer join, left side:ExchangeReceiver, equal:[eq(test.t1.k1, test.t2.k1)]",
           "    ├─ExchangeReceiver(Build) 1.00 mpp[tiflash]  ",
           "    │ └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "    │   └─Selection 1.00 mpp[tiflash]  not(isnull(test.t1.k1))",
