@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -129,7 +128,8 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 
 	dbMap, exist := sr.DbMap[dbID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
+		// db filtered out
+		return nil, nil
 	}
 
 	rawMetaKey.UpdateField(meta.DBkey(dbMap.DbID))
@@ -147,7 +147,8 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 
 	dbMap, exist := sr.DbMap[dbInfo.ID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
+		// db filtered out
+		return nil, nil
 	}
 
 	dbInfo.ID = dbMap.DbID
@@ -206,12 +207,14 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 
 	dbReplace, exist := sr.DbMap[dbID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
+		// db filtered out
+		return nil, nil
 	}
 
 	tableReplace, exist := dbReplace.TableMap[tableID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
+		// table filtered out
+		return nil, nil
 	}
 
 	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
@@ -237,12 +240,14 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	// construct or find the id map.
 	dbReplace, exist = sr.DbMap[dbID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
+		// db filtered out
+		return nil, nil
 	}
 
 	tableReplace, exist = dbReplace.TableMap[tableInfo.ID]
 	if !exist {
-		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableInfo.ID)
+		// table filtered out
+		return nil, nil
 	}
 
 	// update table ID and partition ID.
@@ -252,7 +257,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 		for i, tbl := range partitions.Definitions {
 			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find partition id:%v in maps", tbl.ID)
+				// partition filtered out
+				return nil, nil
 			}
 			partitions.Definitions[i].ID = newID
 		}
