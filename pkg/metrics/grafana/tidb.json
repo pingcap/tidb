@@ -14413,7 +14413,7 @@
               "exemplar": true,
               "expr": "tidb_domain_infoschema_v2_cache_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "interval": "",
-              "legendFormat": "used",
+              "legendFormat": "{{instance}} used",
               "refId": "A"
             },
             {
@@ -14421,7 +14421,7 @@
               "expr": "tidb_domain_infoschema_v2_cache_limit{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "hide": false,
               "interval": "",
-              "legendFormat": "limit",
+              "legendFormat": "{{instance}} limit",
               "refId": "B"
             }
           ],
