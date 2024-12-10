@@ -421,7 +421,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	})
 
 	ctx := context.Background()
-	pdCli := jobCtx.store.(tikv.Storage).GetRegionCache().PDClient()
+	pdCli := jobCtx.store.(tikv.Storage).GetRegionCache().PDClient().WithCallerComponent("partition")
 	stores, err := pdCli.GetAllStores(ctx)
 	if err != nil {
 		return needWait, errors.Trace(err)

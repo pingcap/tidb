@@ -33,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/caller"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -155,7 +157,7 @@ func NewClient(
 	opts ...ClientOptionalParameter,
 ) SplitClient {
 	cli := &pdClient{
-		client:           client,
+		client:           client.WithCallerComponent(caller.GetComponent(1)).(pd.Client),
 		httpCli:          httpCli,
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),
@@ -210,7 +212,7 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
+	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}

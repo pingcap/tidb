@@ -1347,7 +1347,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
-	pdCli := h.RegionCache.PDClient()
+	pdCli := h.RegionCache.PDClient().WithCallerComponent("tikvhandler")
 	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 	if err != nil {
 		return nil, err
