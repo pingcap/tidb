@@ -275,6 +275,11 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+// UnprefixedEtcdCli export for test.
+func (do *Domain) UnprefixedEtcdCli() *clientv3.Client {
+	return do.unprefixedEtcdCli
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -1305,6 +1310,11 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
+}
+
+// NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
+func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
@@ -1349,6 +1359,7 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	do.etcdClient = etcdClient
 	return do
 }
 
