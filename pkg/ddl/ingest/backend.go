@@ -162,7 +162,7 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 // For standalone local sort, the ingest TS is initialized from checkpoint and
 // updated when the watermark is advanced.
 // For DXF local sort, the ingest TS is initialized to a fixed value
-// from subtasks meta to guarentee it is idempotent.
+// from subtasks meta to guarantee it is idempotent.
 func (bc *litBackendCtx) SetIngestTS(ts uint64) {
 	bc.ingestTS.Store(ts)
 }
