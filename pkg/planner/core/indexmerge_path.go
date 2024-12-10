@@ -197,92 +197,29 @@ func generateNormalIndexPartialPaths4DNF(
 //	}
 func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Expression) error {
 	usedIndexCount := len(ds.PossibleAccessPaths)
-	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for k, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
 		}
-		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
-		// the current filter into a Selection after partial paths.
-		shouldKeepCurrentFilter := false
-		var partialAlternativePaths = make([][][]*util.AccessPath, 0, usedIndexCount)
-		dnfItems := expression.FlattenDNFConditions(sf)
-		for _, item := range dnfItems {
-			cnfItems := expression.SplitCNFItems(item)
 
-			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
-			for _, cnfItem := range cnfItems {
-				if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
-					pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
-				} else {
-					shouldKeepCurrentFilter = true
-				}
-			}
+		dnfFilters := expression.SplitDNFItems(sf)
 
-			itemPaths := accessPathsForConds(ds, pushedDownCNFItems, ds.PossibleAccessPaths[:usedIndexCount])
-			if len(itemPaths) == 0 {
-				partialAlternativePaths = nil
-				break
-			}
-			// TODO: clean up + comments
-			tmp := make([][]*util.AccessPath, 0, len(itemPaths))
-			for _, itemPath := range itemPaths {
-				tmp = append(tmp, []*util.AccessPath{itemPath})
-			}
-
-			// we don't prune other possible index merge path here.
-			// keep all the possible index merge partial paths here to let the property choose.
-			partialAlternativePaths = append(partialAlternativePaths, tmp)
+		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
+			ds,
+			dnfFilters,
+			ds.PossibleAccessPaths[:usedIndexCount],
+		)
+		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
+			ds,
+			filters,
+			k,
+			ds.PossibleAccessPaths[:usedIndexCount],
+			unfinishedIndexMergePath,
+		)
+		if finishedIndexMergePath != nil {
+			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
 		}
-		if len(partialAlternativePaths) <= 1 {
-			continue
-		}
-		// in this loop we do two things.
-		// 1: If all the partialPaths use the same index, we will not use the indexMerge.
-		// 2: Compute a theoretical best countAfterAccess(pick its accessConds) for every alternative path(s).
-		indexMap := make(map[int64]struct{}, 1)
-		accessConds := make([]expression.Expression, 0, len(partialAlternativePaths))
-		for _, oneAlternativeSet := range partialAlternativePaths {
-			// 1: mark used map.
-			for _, oneAlternativePath := range oneAlternativeSet {
-				if oneAlternativePath[0].IsTablePath() {
-					// table path
-					indexMap[-1] = struct{}{}
-				} else {
-					// index path
-					indexMap[oneAlternativePath[0].Index.ID] = struct{}{}
-				}
-			}
-			// 2.1: trade off on countAfterAccess.
-			minCountAfterAccessPath := buildIndexMergePartialPath(oneAlternativeSet)
-			for _, path := range minCountAfterAccessPath {
-				indexCondsForP := path.AccessConds[:]
-				indexCondsForP = append(indexCondsForP, path.IndexFilters...)
-				if len(indexCondsForP) > 0 {
-					accessConds = append(accessConds,
-						expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
-				}
-			}
-		}
-		if len(indexMap) == 1 {
-			continue
-		}
-		// 2.2 get the theoretical whole count after access for index merge.
-		accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{accessDNF}, nil)
-		if err != nil {
-			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-			sel = cost.SelectionFactor
-		}
-
-		possiblePath := buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
-		if possiblePath == nil {
-			return nil
-		}
-		possiblePath.CountAfterAccess = sel * ds.TableStats.RowCount
-		// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, possiblePath)
 	}
 	return nil
 }

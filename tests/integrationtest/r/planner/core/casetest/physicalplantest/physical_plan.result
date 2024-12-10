@@ -3620,12 +3620,12 @@ Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2;
 id	estRows	task	access object	operator info
 TopN	0.02	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	0.02	root		type: union
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx2(b, c)	range:[2,2], keep order:false, stats:pseudo
-  └─TopN(Probe)	0.02	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─Selection	0.02	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.c, 3)
-      └─TableRowIDScan	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge	0.20	root		type: union
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(a, c)	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx2(b, c)	range:[2 3,2 3], keep order:false, stats:pseudo
+  └─TopN(Probe)	0.20	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
+    └─Selection	0.20	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.c, 3)
+      └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2;
@@ -3835,32 +3835,36 @@ insert into tbl_43 values("BCmuENPHzSOIMJLPB"),("LDOdXZYpOR"),("R"),("TloTqcHhdg
 explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
-└─Limit	1.00	root		offset:0, count:1
-  └─IndexMerge	1.00	root		type: union
-    ├─Selection(Build)	0.00	cop[tikv]		1
-    │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
-    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, stats:pseudo
-    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))
-      └─TableRowIDScan	1.25	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
+└─IndexMerge	1.25	root		type: union, limit embedded(offset:0, count:1)
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
+  ├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.00	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
 select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 min(col_304)
 BCmuENPHzSOIMJLPB                                                                                                                                                                                              
 explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
-└─Limit	1.00	root		offset:0, count:1
-  └─IndexMerge	1.00	root		type: union
-    ├─Selection(Build)	0.00	cop[tikv]		1
-    │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
-    ├─IndexRangeScan(Build)	0.42	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
-    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, desc, stats:pseudo
-    ├─TableRangeScan(Build)	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, desc, stats:pseudo
-    └─Selection(Probe)	1.00	cop[tikv]		or(or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "YEpfYfPVvhMlHGHSMKm"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "PE")), or(and(eq(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "LUBGzGMA"), 1), or(lt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "MFWmuOsoyDv"), gt(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304, "TSeMYpDXnFIyp"))))
-      └─TableRowIDScan	1.25	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
+└─IndexMerge	1.25	root		type: union, limit embedded(offset:0, count:1)
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.42	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
+  ├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.00	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, desc, stats:pseudo
+  ├─Limit(Build)	0.42	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.42	cop[tikv]	table:tbl_43	range:("TSeMYpDXnFIyp",+inf], keep order:true, desc, stats:pseudo
+  └─TableRowIDScan(Probe)	1.25	cop[tikv]	table:tbl_43	keep order:false, stats:pseudo
 select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 max(col_304)
 swLIoWa                                                                                                                                                                                                        

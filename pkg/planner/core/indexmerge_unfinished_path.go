@@ -453,9 +453,20 @@ func buildIntoAccessPath(
 	// If containMVPath, we need to use CalcTotalSelectivityForMVIdxPath instead of Selectivity to estimate
 	accessConds := make([]expression.Expression, 0, len(allAllPaths))
 	pathsForEstimate := make([]*util.AccessPath, 0, len(allAllPaths))
+	possibleIdxIDs := make(map[int64]struct{}, len(allAllPaths))
 
 	var containMVPath bool
 	for _, oneORBranch := range allAllPaths {
+		for _, paths := range oneORBranch {
+			for _, path := range paths {
+				if path.IsTablePath() {
+					possibleIdxIDs[-1] = struct{}{}
+				} else {
+					possibleIdxIDs[path.Index.ID] = struct{}{}
+				}
+			}
+		}
+
 		pathsWithMinRowCount := buildIndexMergePartialPath(oneORBranch)
 		for _, path := range pathsWithMinRowCount {
 			if isMVIndexPath(path) {
@@ -469,6 +480,9 @@ func buildIntoAccessPath(
 			}
 		}
 		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
+	}
+	if !containMVPath && len(possibleIdxIDs) <= 1 {
+		return nil
 	}
 	if containMVPath {
 		sel := cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl, pathsForEstimate, false)
