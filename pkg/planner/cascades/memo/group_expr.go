@@ -130,7 +130,7 @@ func (e *GroupExpression) Init(h base2.Hasher) {
 // init new group from bottom-up, so we can sure that this new group's children
 // has already gotten its logical prop.
 func (e *GroupExpression) DeriveLogicalProp() (err error) {
-	if e.GetGroup().GetLogicalProperty() != nil {
+	if e.GetGroup().HasLogicalProperty() {
 		return nil
 	}
 	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))

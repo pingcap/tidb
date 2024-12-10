@@ -128,6 +128,11 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 	return g.Operand2FirstExpr[operand]
 }
 
+// HasLogicalProperty check whether current group has the logical property.
+func (g *Group) HasLogicalProperty() bool {
+	return g.logicalProp != nil
+}
+
 // GetLogicalProperty return this group's logical property.
 func (g *Group) GetLogicalProperty() *property.LogicalProperty {
 	intest.Assert(g.logicalProp != nil)
