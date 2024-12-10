@@ -131,7 +131,7 @@ func TestTransactionOnAddDropColumn(t *testing.T) {
 	}
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -752,7 +752,7 @@ func TestAddColumn2(t *testing.T) {
 	defer tk.MustExec("drop table if exists t1, t2")
 
 	var writeOnlyTable table.Table
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			writeOnlyTable, _ = dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		}
@@ -787,7 +787,7 @@ func TestAddColumn2(t *testing.T) {
 	// Test for _tidb_rowid
 	var re *testkit.Result
 	tk.MustExec("create table t2 (a int);")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -806,7 +806,7 @@ func TestAddColumn2(t *testing.T) {
 	require.NoError(t, err)
 	re.Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a,b,_tidb_rowid from t2").Check(testkit.Rows("1 3 2"))
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 }
 
 func TestDropTables(t *testing.T) {
