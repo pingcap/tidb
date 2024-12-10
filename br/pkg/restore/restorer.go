@@ -359,7 +359,6 @@ func (p *PipelineRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNe
 
 			// Check if the accumulated items meet the criteria for splitting.
 			if strategy.ShouldSplit() {
-				log.Info("Trying to start region split with accumulations")
 				startTime := time.Now()
 
 				// Execute the split operation on the accumulated items.
