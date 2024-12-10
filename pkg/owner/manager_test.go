@@ -293,12 +293,19 @@ func TestWatchOwner(t *testing.T) {
 	client, d := tInfo.client, tInfo.ddl
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
+
+	// failed to get owner id.
+	ctx := context.Background()
+	_, err := ownerManager.GetOwnerID(ctx)
+	require.ErrorContains(t, err, "election: no leader")
+
+	// start CampaignOwner.
 	require.NoError(t, ownerManager.CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
 
 	// get the owner id.
-	ctx := context.Background()
+	ctx = context.Background()
 	id, err := ownerManager.GetOwnerID(ctx)
 	require.NoError(t, err)
 
