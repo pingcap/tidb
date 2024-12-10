@@ -40,12 +40,14 @@ type Plan struct {
 
 // NewBasePlan creates a new base plan.
 func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
-	delta := int32(1)
+	var delta int32
 	if ctx.GetSessionVars().MockPlan {
 		delta = int32(-1)
 		intest.Assert(ctx.GetSessionVars().PlanID.Load() <= 0)
+	} else {
+		delta = int32(1)
+		intest.Assert(ctx.GetSessionVars().PlanID.Load() >= 0)
 	}
-	intest.Assert(ctx.GetSessionVars().PlanID.Load() >= 0)
 	id := ctx.GetSessionVars().PlanID.Add(delta)
 	return Plan{
 		tp:      tp,
