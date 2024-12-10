@@ -824,7 +824,11 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		rs.Total = totalCnt
 		rs.Next = nextKey
 		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
-		w.cpMgr.AdvanceWatermark(flushed, imported)
+		err := w.cpMgr.AdvanceWatermark(flushed, imported)
+		if err != nil {
+			w.ctx.onError(err)
+			return
+		}
 		// for local disk case, we need to refresh TS because duplicate detection
 		// requires each ingest to have a unique TS.
 		w.backendCtx.SetIngestTS(w.cpMgr.GetTS())
@@ -1005,7 +1009,11 @@ func (s *indexWriteResultSink) flush() error {
 	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
 	if s.cpMgr != nil {
 		// Try to advance watermark even if there is an error.
-		s.cpMgr.AdvanceWatermark(flushed, imported)
+		err1 := s.cpMgr.AdvanceWatermark(flushed, imported)
+		if err1 != nil {
+			logutil.Logger(s.ctx).Error("advance watermark failed", zap.String("category", "ddl"), zap.Error(err))
+			return err1
+		}
 	}
 	if err != nil {
 		msg := "flush error"

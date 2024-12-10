@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -216,9 +217,9 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 }
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
-func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
+func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) error {
 	if !flushed {
-		return
+		return nil
 	}
 
 	failpoint.Inject("resignAfterFlush", func() {
@@ -233,13 +234,18 @@ func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) {
 	s.afterFlush()
 
 	if imported {
-		s.afterImport()
-		err := s.updateCheckpoint()
+		err := s.afterImport()
 		if err != nil {
-			s.logger.Warn("advance watermark update checkpoint failed", zap.Error(err))
+			return err
 		}
-		return
+		err = s.updateCheckpoint()
+		if err != nil {
+			s.logger.Error("advance watermark update checkpoint failed", zap.Error(err))
+			return err
+		}
+		return nil
 	}
+	return nil
 }
 
 // afterFlush should be called after all engine is flushed.
@@ -259,10 +265,14 @@ func (s *CheckpointManager) afterFlush() {
 	}
 }
 
-func (s *CheckpointManager) afterImport() {
+func (s *CheckpointManager) afterImport() error {
 	p, l, err := s.pdCli.GetTS(s.ctx)
+	failpoint.Inject("mockAfterImportAllocTSFailed", func(_ failpoint.Value) {
+		err = errors.Errorf("mock err")
+	})
 	if err != nil {
 		s.logger.Warn("advance watermark get ts failed", zap.Error(err))
+		return err
 	}
 	newTS := oracle.ComposeTS(p, l)
 
@@ -274,14 +284,16 @@ func (s *CheckpointManager) afterImport() {
 			zap.String("flushed", hex.EncodeToString(s.flushedKeyLowWatermark)),
 			zap.String("imported", hex.EncodeToString(s.importedKeyLowWatermark)),
 		)
-		return
+		return errors.Errorf("flushed key is less than imported key")
 	}
 	s.importedKeyLowWatermark = s.flushedKeyLowWatermark
 	s.importedKeyCnt = s.flushedKeyCnt
+	intest.Assert(s.ts < newTS)
 	if s.ts < newTS {
 		s.ts = newTS
 	}
 	s.dirty = true
+	return nil
 }
 
 // Close closes the checkpoint manager.

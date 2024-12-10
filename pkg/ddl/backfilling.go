@@ -787,9 +787,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		}
 		return err
 	}
-	if cpMgr != nil {
-		cpMgr.AdvanceWatermark(true, true)
-	}
 	return bcCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
 }
 

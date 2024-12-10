@@ -453,12 +453,12 @@ func TestAddIndexDiskQuotaTS(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	testAddIndexDiskQuotaTS(t, tk)
+	testAddIndexDiskQuotaTS(tk)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	testAddIndexDiskQuotaTS(t, tk)
+	testAddIndexDiskQuotaTS(tk)
 }
 
-func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
+func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -474,6 +474,36 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("alter table t add index idx_test(b);")
 	ingest.ForceSyncFlagForTest = false
 	tk.MustExec("update t set b = b + 1;")
+}
+
+func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt=1;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+
+	tk.MustExec("create table t(id int primary key, b int, k int);")
+	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
+	tk.MustExec("insert into t values(1, 1, 1);")
+	tk.MustExec("insert into t values(100000, 1, 2);")
+	ingest.ForceSyncFlagForTest = true
+	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	// tk.MustExec("alter table t add index idx(b);")
+	// tk.MustExec("admin check table t;")
+	// tk.MustExec("update t set b = b + 1;")
+
+	// tk.MustExec("alter table t drop index idx;")
+	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	// tk.MustExec("alter table t add unique index idx(k);")
+	// tk.MustExec("admin check table t;")
+	// tk.MustExec("update t set k = k + 1;")
+
+	// tk.MustExec("alter table t drop index idx;")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	tk.MustExec("alter table t add unique index idx(b);")
+	tk.MustExec("admin check table t;")
 }
 
 func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
