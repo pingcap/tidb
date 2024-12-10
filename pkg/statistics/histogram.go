@@ -929,6 +929,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
+			"modifyCount", modifyCount,
 			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
