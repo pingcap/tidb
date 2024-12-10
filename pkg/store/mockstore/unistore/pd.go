@@ -32,6 +32,7 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 )
 
@@ -303,23 +304,23 @@ func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
 	return nil, nil
 }
 
-func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	return nil, nil
 }
 
-func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
+func (c *pdClient) SplitRegions(ctx context.Context, splitKeys [][]byte, opts ...opt.RegionsOption) (*pdpb.SplitRegionsResponse, error) {
 	return nil, nil
 }
 
-func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, opts ...pd.RegionsOption) (*pdpb.SplitAndScatterRegionsResponse, error) {
+func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byte, opts ...opt.RegionsOption) (*pdpb.SplitAndScatterRegionsResponse, error) {
 	return nil, nil
 }
 
-func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string, opts ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string, opts ...opt.GetRegionOption) (*pd.Region, error) {
 	return nil, nil
 }
 
-func (c *pdClient) UpdateOption(option pd.DynamicOption, value any) error {
+func (c *pdClient) UpdateOption(option opt.DynamicOption, value any) error {
 	return nil
 }
 
@@ -395,11 +396,11 @@ func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation
 	return nil
 }
 
-func (c *pdClient) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+func (c *pdClient) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
 	return nil, nil
 }
 
-func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...pd.OpOption) (*meta_storagepb.PutResponse, error) {
+func (c *pdClient) Put(ctx context.Context, key []byte, value []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
 	return nil, nil
 }
 

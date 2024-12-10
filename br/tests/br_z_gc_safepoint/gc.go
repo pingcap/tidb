@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/caller"
 	"go.uber.org/zap"
 )
 
@@ -49,11 +50,12 @@ func main() {
 	timeout := time.Second * 10
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	pdclient, err := pd.NewClientWithContext(ctx, []string{*pdAddr}, pd.SecurityOption{
-		CAPath:   *ca,
-		CertPath: *cert,
-		KeyPath:  *key,
-	})
+	pdclient, err := pd.NewClientWithContext(ctx, caller.TestComponent,
+		[]string{*pdAddr}, pd.SecurityOption{
+			CAPath:   *ca,
+			CertPath: *cert,
+			KeyPath:  *key,
+		})
 	if err != nil {
 		log.Panic("create pd client failed", zap.Error(err))
 	}

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pdclient "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 // MPPTaskHandlerMap is a map of *cophandler.MPPTaskHandler.
@@ -642,7 +643,7 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int, _ ...pdclient.GetRegionOption) []*pdclient.Region {
+func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int, _ ...opt.GetRegionOption) []*pdclient.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
@@ -773,13 +774,13 @@ func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, 
 }
 
 // GetRegion implements gRPC PDServer.
-func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+func (pd *MockPD) GetRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*pdclient.Region, error) {
 	r, p, b, d := pd.rm.GetRegionByKey(key)
 	return &pdclient.Region{Meta: r, Leader: p, Buckets: b, DownPeers: d}, nil
 }
 
 // GetRegionByID implements gRPC PDServer.
-func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+func (pd *MockPD) GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*pdclient.Region, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 
@@ -890,7 +891,7 @@ func GetTS() (int64, int64) {
 }
 
 // GetPrevRegion gets the previous region and its leader Peer of the region where the key is located.
-func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...pdclient.GetRegionOption) (*pdclient.Region, error) {
+func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*pdclient.Region, error) {
 	r, p := pd.rm.GetRegionByEndKey(key)
 	return &pdclient.Region{Meta: r, Leader: p}, nil
 }
@@ -898,7 +899,7 @@ func (pd *MockPD) GetPrevRegion(ctx context.Context, key []byte, opts ...pdclien
 // GetAllStores gets all stores from pd.
 // The store may expire later. Caller is responsible for caching and taking care
 // of store change.
-func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOption) ([]*metapb.Store, error) {
+func (pd *MockPD) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return pd.rm.GetAllStores(), nil
 }
 
@@ -906,14 +907,14 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*pdclient.Region, error) {
 	regions := pd.rm.ScanRegions(startKey, endKey, limit, opts...)
 	return regions, nil
 }
 
 // BatchScanRegions scans regions in batch, return flattened regions.
 // limit limits the maximum number of regions returned.
-func (pd *MockPD) BatchScanRegions(ctx context.Context, keyRanges []pdclient.KeyRange, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+func (pd *MockPD) BatchScanRegions(ctx context.Context, keyRanges []pdclient.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*pdclient.Region, error) {
 	regions := make([]*pdclient.Region, 0, len(keyRanges))
 	var lastRegion *pdclient.Region
 	for _, keyRange := range keyRanges {

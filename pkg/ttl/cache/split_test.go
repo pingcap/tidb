@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
@@ -63,7 +64,7 @@ type mockPDClient struct {
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*pd.Region, error) {
 	if len(c.regions) == 0 {
 		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}

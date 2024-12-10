@@ -60,6 +60,7 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -593,11 +594,11 @@ func NewBackend(
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
 	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		ctx, "LocalImport", pdAddrs, tls.ToPDSecurityOption(),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -692,7 +693,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -1810,7 +1811,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 // GetRegionSplitSizeKeys return region split size, region split keys, error
 func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
-	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := cli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
 	}

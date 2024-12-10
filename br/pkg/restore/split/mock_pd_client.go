@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
@@ -248,7 +249,7 @@ func (c *MockPDClientForSplit) ScanRegions(
 	_ context.Context,
 	key, endKey []byte,
 	limit int,
-	_ ...pd.GetRegionOption,
+	_ ...opt.GetRegionOption,
 ) ([]*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -278,7 +279,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 	_ context.Context,
 	keyRanges []pd.KeyRange,
 	limit int,
-	_ ...pd.GetRegionOption,
+	_ ...opt.GetRegionOption,
 ) ([]*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -316,7 +317,7 @@ func (c *MockPDClientForSplit) BatchScanRegions(
 	return regions, nil
 }
 
-func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *MockPDClientForSplit) GetRegionByID(_ context.Context, regionID uint64, _ ...opt.GetRegionOption) (*pd.Region, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -370,7 +371,7 @@ func (c *MockPDClientForSplit) ScatterRegion(_ context.Context, regionID uint64)
 	return newRegionNotFullyReplicatedErr(regionID)
 }
 
-func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...pd.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
+func (c *MockPDClientForSplit) ScatterRegions(_ context.Context, regionIDs []uint64, _ ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -544,7 +545,7 @@ func (fpdc *FakePDClient) SetRegions(regions []*pd.Region) {
 	fpdc.regions = regions
 }
 
-func (fpdc *FakePDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return append([]*metapb.Store{}, fpdc.stores...), nil
 }
 
@@ -552,7 +553,7 @@ func (fpdc *FakePDClient) ScanRegions(
 	ctx context.Context,
 	key, endKey []byte,
 	limit int,
-	opts ...pd.GetRegionOption,
+	opts ...opt.GetRegionOption,
 ) ([]*pd.Region, error) {
 	regions := make([]*pd.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1
@@ -574,7 +575,7 @@ func (fpdc *FakePDClient) BatchScanRegions(
 	ctx context.Context,
 	ranges []pd.KeyRange,
 	limit int,
-	opts ...pd.GetRegionOption,
+	opts ...opt.GetRegionOption,
 ) ([]*pd.Region, error) {
 	regions := make([]*pd.Region, 0, len(fpdc.regions))
 	fpdc.peerStoreId = fpdc.peerStoreId + 1

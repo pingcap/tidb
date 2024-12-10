@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 // initDomainSysVars() is called when a domain is initialized.
@@ -62,14 +63,14 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
-		err = do.updatePDClient(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
+		err = do.updatePDClient(opt.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
 			return err
 		}
 		variable.MaxTSOBatchWaitInterval.Store(val)
 	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
-		err := do.updatePDClient(pd.EnableTSOFollowerProxy, val)
+		err := do.updatePDClient(opt.EnableTSOFollowerProxy, val)
 		if err != nil {
 			return err
 		}
@@ -78,7 +79,7 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		val := variable.TiDBOptOn(sVal)
 		// Note: EnableFollowerHandle is only used for region API now.
 		// If pd support more APIs in follower, the pd option may be changed.
-		err := do.updatePDClient(pd.EnableFollowerHandle, val)
+		err := do.updatePDClient(opt.EnableFollowerHandle, val)
 		if err != nil {
 			return err
 		}
@@ -97,7 +98,7 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
 		}
 
-		err := do.updatePDClient(pd.TSOClientRPCConcurrency, concurrency)
+		err := do.updatePDClient(opt.TSOClientRPCConcurrency, concurrency)
 		if err != nil {
 			return err
 		}
@@ -118,7 +119,7 @@ func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) erro
 }
 
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option pd.DynamicOption, val any) error {
+func (do *Domain) updatePDClient(option opt.DynamicOption, val any) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil

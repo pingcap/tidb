@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 type codecPDClient struct {
@@ -31,13 +32,13 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
@@ -46,7 +47,7 @@ func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte, opts ...p
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
 func (c *codecPDClient) GetRegionByID(ctx context.Context,
-	regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
+	regionID uint64, _ ...opt.GetRegionOption) (*pd.Region, error) {
 	region, err := c.Client.GetRegionByID(ctx, regionID)
 	return processRegionResult(region, err)
 }
@@ -56,7 +57,7 @@ func (c *codecPDClient) ScanRegions(
 	startKey []byte,
 	endKey []byte,
 	limit int,
-	opts ...pd.GetRegionOption,
+	opts ...opt.GetRegionOption,
 ) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes(nil, startKey)
 	if len(endKey) > 0 {

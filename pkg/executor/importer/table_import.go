@@ -139,7 +139,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := NewClientWithContext(ctx, "executor/importer", addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}

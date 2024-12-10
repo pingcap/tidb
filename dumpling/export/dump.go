@@ -1462,7 +1462,7 @@ func tidbSetPDClientForGC(d *Dumper) error {
 		if err != nil {
 			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 		} else if doPdGC {
-			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
+			pdClient, err := pd.NewClientWithContext(tctx, "dump", pdAddrs, pd.SecurityOption{})
 			if err != nil {
 				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
 			}

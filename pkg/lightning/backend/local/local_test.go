@@ -64,6 +64,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -668,11 +669,11 @@ type mockPdClient struct {
 	regions []*pd.Region
 }
 
-func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockPdClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, nil
 }
 
-func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPdClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, opts ...opt.GetRegionOption) ([]*pd.Region, error) {
 	return c.regions, nil
 }
 

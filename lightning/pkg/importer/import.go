@@ -363,7 +363,7 @@ func NewImportControllerWithPauser(
 		}
 
 		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
-		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
+		pdCli, err = pd.NewClientWithContext(ctx, "import", addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1176,7 +1176,7 @@ const (
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
 	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, "import", addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
