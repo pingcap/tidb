@@ -58,12 +58,12 @@ func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) fun
 		if mj, ok := lChild.(*mockLogicalJoin); ok {
 			retJoin.involvedNodeSet = mj.involvedNodeSet
 		} else {
-			retJoin.involvedNodeSet = 1 << uint(lChild.ID())
+			retJoin.involvedNodeSet = 1 << uint(lChild.ID()-1)
 		}
 		if mj, ok := rChild.(*mockLogicalJoin); ok {
 			retJoin.involvedNodeSet |= mj.involvedNodeSet
 		} else {
-			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
+			retJoin.involvedNodeSet |= 1 << uint(rChild.ID()-1)
 		}
 		retJoin.SetChildren(lChild, rChild)
 		retJoin.JoinType = joinType
