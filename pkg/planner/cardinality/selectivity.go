@@ -1120,10 +1120,7 @@ func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount float64
 	if ndv <= 0 {
 		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	}
-	// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
-	// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-	finalRowCount := min(notNullCount, newRows)
-	return max(1, finalRowCount/ndv)
+	return max(1, newRows/ndv)
 }
 
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
