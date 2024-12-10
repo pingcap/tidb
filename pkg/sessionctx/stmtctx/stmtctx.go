@@ -288,6 +288,8 @@ type StatementContext struct {
 	planHint       string
 	planHintSet    bool
 	binaryPlan     string
+	// indexForce is set if any table in the query has a force or use index applied
+	indexForce bool
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
 	flatPlan any
@@ -732,6 +734,11 @@ func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
 }
 
+// GetIndexForce gets the IndexForce boolean generated from the plan.
+func (sc *StatementContext) GetIndexForce() bool {
+	return sc.indexForce
+}
+
 // InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
 func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
 	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
@@ -748,6 +755,11 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
+}
+
+// SetIndexForce sets the hint for the plan.
+func (sc *StatementContext) SetIndexForce() {
+	sc.indexForce = true
 }
 
 // PlanCacheType is the flag of plan cache

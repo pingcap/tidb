@@ -75,6 +75,20 @@ func (mr *MockStepExecutorMockRecorder) GetResource() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetResource", reflect.TypeOf((*MockStepExecutor)(nil).GetResource))
 }
 
+// GetStep mocks base method.
+func (m *MockStepExecutor) GetStep() proto.Step {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetStep")
+	ret0, _ := ret[0].(proto.Step)
+	return ret0
+}
+
+// GetStep indicates an expected call of GetStep.
+func (mr *MockStepExecutorMockRecorder) GetStep() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStep", reflect.TypeOf((*MockStepExecutor)(nil).GetStep))
+}
+
 // Init mocks base method.
 func (m *MockStepExecutor) Init(arg0 context.Context) error {
 	m.ctrl.T.Helper()

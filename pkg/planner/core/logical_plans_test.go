@@ -2020,7 +2020,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
-			result: "b_global,b_c_global",
+			result: "PRIMARY_KEY,b_global,b_c_global",
 		},
 		{
 			sql:    "select b from pt2_global_index where b > 1 order by b",

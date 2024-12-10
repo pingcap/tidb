@@ -48,7 +48,7 @@
       },
       {
         "SQL": "select c from t order by t.a limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
+        "Best": "TableReader(Table(t)->Limit)->Limit->Projection"
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
@@ -165,7 +165,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
-        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->Sort"
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",
@@ -508,7 +508,7 @@
       },
       {
         "SQL": "select a from t union all (select c from t) order by a limit 1",
-        "Best": "UnionAll{IndexReader(Index(t.f)[[NULL,+inf]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
+        "Best": "UnionAll{TableReader(Table(t)->Limit)->Limit->IndexReader(Index(t.c_d_e)[[NULL,+inf]]->Limit)->Limit}->TopN([Column#25],0,1)"
       }
     ]
   },
