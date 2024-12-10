@@ -175,7 +175,10 @@ func updateRecord(
 		var err error
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
 			newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
-			evalBuffer.SetDatum(i, newData[i])
+			// For update statement, evalBuffer is initialized on demand.
+			if chunk.Row(evalBuffer).Chunk() != nil {
+				evalBuffer.SetDatum(i, newData[i])
+			}
 			if err != nil {
 				return false, false, err
 			}
@@ -197,18 +200,21 @@ func updateRecord(
 				return false, false, assign.LazyErr
 			}
 
-			idx := assign.Col.Index
+			// For Update statements, Index may be larger than len(newData)
+			// e.g. update t a, t b set a.c1 = 1, b.c2 = 2;
+			idx := assign.Col.Index % len(newData)
 			rawVal, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
 			if err == nil {
 				newData[idx], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
 			}
+			evalBuffer.SetDatum(assign.Col.Index, newData[idx])
 
 			err = errorHandler(sctx, assign, &rawVal, err)
 			if err != nil {
 				return false, false, err
 			}
 
-			if err := checkColumnFunc(assign.Col.Index, false); err != nil {
+			if err := checkColumnFunc(idx, false); err != nil {
 				return false, false, err
 			}
 		}
