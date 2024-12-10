@@ -169,7 +169,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	ctx.GetSessionVars().PlanID.Store(-1)
+	ctx.GetSessionVars().PlanID.Store(0)
 	joinGroups := make([]base.LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
 	joinGroups = append(joinGroups, newDataSource(ctx, "orders", 15000000))
