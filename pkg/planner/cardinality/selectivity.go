@@ -1099,30 +1099,30 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 
 // outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
 // and the searched value does not appear in the topN
-func outOfRangeFullNDV(ndv, origRowCount, notNullCount float64, realtimeRowCount, modifyCount int64) (result float64) {
+func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount float64, modifyCount int64) (result float64) {
 	// If the table hasn't been modified, it's safe to return 0.
 	if modifyCount == 0 {
 		return 0
 	}
 	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
 	// because that can always be less than realtimeRowCount if NULLs exist
-	newRows := float64(realtimeRowCount) - origRowCount
+	newRows := realtimeRowCount - origRowCount
 	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
 	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
 	if newRows < 0 {
-		newRows = float64(realtimeRowCount)
+		newRows = realtimeRowCount
 	}
 	// If the original row count is zero - use the realtimeRowCount
 	if notNullCount <= 0 {
-		notNullCount = float64(realtimeRowCount)
+		notNullCount = realtimeRowCount
 	}
 	// if no NDV - derive an NDV using sqrt
 	if ndv <= 0 {
-		ndv = math.Sqrt(max(notNullCount, float64(realtimeRowCount)))
+		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
 	}
 	// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
 	// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
-	finalRowCount := min(float64(notNullCount), newRows)
+	finalRowCount := min(notNullCount, newRows)
 	return max(1, finalRowCount/ndv)
 }
 

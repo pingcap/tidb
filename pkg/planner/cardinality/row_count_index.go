@@ -417,7 +417,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	if histNDV <= 0 {
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
-		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), idx.TotalRowCount(), realtimeRowCount, modifyCount)
+		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), idx.TotalRowCount(), float64(realtimeRowCount), modifyCount)
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
