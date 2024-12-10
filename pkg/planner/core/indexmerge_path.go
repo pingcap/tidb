@@ -837,51 +837,51 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 		return nil
 	}
 
-	for current, filter := range indexMergeConds {
-		// DNF path.
-		sf, ok := filter.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.LogicOr {
-			// targeting: cond1 or cond2 or cond3
-			continue
-		}
-		dnfFilters := expression.SplitDNFItems(sf)
-
-		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
-			ds,
-			dnfFilters,
-			candidateAccessPaths,
-		)
-		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
-			ds,
-			indexMergeConds,
-			current,
-			candidateAccessPaths,
-			unfinishedIndexMergePath,
-		)
-		if finishedIndexMergePath == nil {
-			continue
-		}
-
-		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
-		for _, oneAlternative := range finishedIndexMergePath.PartialAlternativeIndexPaths {
-			for _, paths := range oneAlternative {
-				for _, path := range paths {
-					if isMVIndexPath(path) {
-						mvIndexPartialPathCnt++
-					} else {
-						normalIndexPartialPathCnt++
-					}
-				}
-			}
-		}
-
-		// Keep the same behavior with previous implementation, we only handle the "composed" case here.
-		if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt == 1 && normalIndexPartialPathCnt == 0) {
-			continue
-		}
-		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
-		continue
-	}
+	//for current, filter := range indexMergeConds {
+	//	// DNF path.
+	//	sf, ok := filter.(*expression.ScalarFunction)
+	//	if !ok || sf.FuncName.L != ast.LogicOr {
+	//		// targeting: cond1 or cond2 or cond3
+	//		continue
+	//	}
+	//	dnfFilters := expression.SplitDNFItems(sf)
+	//
+	//	unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
+	//		ds,
+	//		dnfFilters,
+	//		candidateAccessPaths,
+	//	)
+	//	finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
+	//		ds,
+	//		indexMergeConds,
+	//		current,
+	//		candidateAccessPaths,
+	//		unfinishedIndexMergePath,
+	//	)
+	//	if finishedIndexMergePath == nil {
+	//		continue
+	//	}
+	//
+	//	var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
+	//	for _, oneAlternative := range finishedIndexMergePath.PartialAlternativeIndexPaths {
+	//		for _, paths := range oneAlternative {
+	//			for _, path := range paths {
+	//				if isMVIndexPath(path) {
+	//					mvIndexPartialPathCnt++
+	//				} else {
+	//					normalIndexPartialPathCnt++
+	//				}
+	//			}
+	//		}
+	//	}
+	//
+	//	// Keep the same behavior with previous implementation, we only handle the "composed" case here.
+	//	if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt == 1 && normalIndexPartialPathCnt == 0) {
+	//		continue
+	//	}
+	//	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
+	//	continue
+	//}
 	// CNF path.
 
 	// after fillIndexPath, all cnf items are filled into the suitable index paths, for these normal index paths,
