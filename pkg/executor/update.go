@@ -210,11 +210,10 @@ func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
 	newTableData := newData[content.Start:content.End]
 
 	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
-	for i := range flags {
-		if !tbl.WritableCols()[i].IsGenerated() {
-			continue
+	for i, flag := range flags {
+		if tbl.WritableCols()[i].IsGenerated() && flag >= 0 {
+			newTableData[i].Copy(&mergedData[i])
 		}
-		newTableData[i].Copy(&mergedData[i])
 	}
 
 	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
@@ -225,7 +224,7 @@ func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
 	return nil
 }
 
-func (e *UpdateExec) mergeToOldData(row []types.Datum, i int) error {
+func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int) error {
 	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
 		return nil
 	}
@@ -256,14 +255,18 @@ func (e *UpdateExec) mergeToOldData(row []types.Datum, i int) error {
 	}
 	tbl := e.tblID2table[content.TblID]
 	oldData := row[content.Start:content.End]
+	newTableData := newData[content.Start:content.End]
 
 	// We don't check the second return value here because we have already called mergeNonGenerated() before.
 	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
-	for i := range flags {
+	for i, flag := range flags {
 		if !tbl.WritableCols()[i].IsGenerated() {
 			continue
 		}
 		mergedData[i].Copy(&oldData[i])
+		if flag < 0 {
+			mergedData[i].Copy(&newTableData[i])
+		}
 	}
 
 	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
@@ -320,8 +323,8 @@ func (e *UpdateExec) exec(
 			assignments = a
 		}
 
-		// Copy data from merge row to old row
-		if err := e.mergeToOldData(row, i); err != nil {
+		// Copy data from merge row to old and new rows
+		if err := e.mergeGenerated(row, newData, i); err != nil {
 			return errors.Trace(err)
 		}
 
