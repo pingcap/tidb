@@ -497,7 +497,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	statsHandle := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index index_a(a))")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	err := statstestutil.HandleNextDDLEventWithTxn(statsHandle)
 	require.NoError(t, err)
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
