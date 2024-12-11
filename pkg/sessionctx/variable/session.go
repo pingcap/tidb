@@ -857,9 +857,6 @@ type SessionVars struct {
 	// SQLCPUUsages records tidb/tikv cpu usages for current sql
 	SQLCPUUsages ppcpuusage.SQLCPUUsages
 
-	// MockPlan is tagged in test to generate logical plan with negative plan ids.
-	MockPlan bool
-
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
 

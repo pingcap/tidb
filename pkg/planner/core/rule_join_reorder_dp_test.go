@@ -58,12 +58,12 @@ func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) fun
 		if mj, ok := lChild.(*mockLogicalJoin); ok {
 			retJoin.involvedNodeSet = mj.involvedNodeSet
 		} else {
-			retJoin.involvedNodeSet = 1 << uint(lChild.ID()-1)
+			retJoin.involvedNodeSet = 1 << uint(lChild.ID())
 		}
 		if mj, ok := rChild.(*mockLogicalJoin); ok {
 			retJoin.involvedNodeSet |= mj.involvedNodeSet
 		} else {
-			retJoin.involvedNodeSet |= 1 << uint(rChild.ID()-1)
+			retJoin.involvedNodeSet |= 1 << uint(rChild.ID())
 		}
 		retJoin.SetChildren(lChild, rChild)
 		retJoin.JoinType = joinType
@@ -169,7 +169,7 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	ctx.GetSessionVars().PlanID.Store(0)
+	ctx.GetSessionVars().PlanID.Store(-1)
 	joinGroups := make([]base.LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
 	joinGroups = append(joinGroups, newDataSource(ctx, "orders", 15000000))
@@ -217,7 +217,7 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	ctx.GetSessionVars().PlanID.Store(0)
+	ctx.GetSessionVars().PlanID.Store(-1)
 
 	joinGroup := make([]base.LogicalPlan, 0, 4)
 	joinGroup = append(joinGroup, newDataSource(ctx, "a", 100))

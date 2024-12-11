@@ -64,7 +64,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	ctx.GetSessionVars().PlanID.Store(0)
+	ctx.GetSessionVars().PlanID.Store(-1)
 	joinNode := logicalop.LogicalJoin{}.Init(ctx.GetPlanCtx(), 0)
 	dataSourceNode := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
 	dsSchema := expression.NewSchema()
