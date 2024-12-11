@@ -19,15 +19,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
@@ -286,4 +289,28 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	concurrency, smallTaskConcurrency := it.GetConcurrency()
 	require.Equal(t, concurrency, 1)
 	require.Equal(t, smallTaskConcurrency, 0)
+}
+
+func TestCoprocessorReadcs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Test tidb_distsql_scan_concurrency for partition table.
+	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
+	}
+
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	tk.MustQueryWithContext(ctx, "select sum(c) from t1 use index (idx_b) where b < 10;")
+	cancel()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+
+	// Test query after split region.
+	tk.MustExec("create table t2 (id int key, b int, c int, index idx_b(b));")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("split table t2 by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);").Check(testkit.Rows("11 1"))
+	tk.MustQuery("select sum(c) from t2 use index (idx_b) where b < 10;")
 }
