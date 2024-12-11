@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -1433,15 +1434,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 			switch job.stage {
 			case regionScanned, wrote:
 				job.retryCount++
-<<<<<<< HEAD
-				if job.retryCount > maxWriteAndIngestRetryTimes {
-					firstErr.Set(job.lastRetryableErr)
-					workerCancel()
-					job.done(&jobWg)
-					continue
-=======
 				if job.retryCount > MaxWriteAndIngestRetryTimes {
-					job.done(&jobWg)
 					lastErr := job.lastRetryableErr
 					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
 					if lastErr == nil {
@@ -1453,8 +1446,11 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 							zap.Stringer("stage", job.stage),
 							zap.Error(lastErr))
 					}
-					return lastErr
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345))
+
+					firstErr.Set(lastErr)
+					workerCancel()
+					job.done(&jobWg)
+					continue
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
 				sleepSecond := math.Pow(2, float64(job.retryCount))

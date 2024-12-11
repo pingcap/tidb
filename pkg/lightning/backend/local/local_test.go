@@ -2163,39 +2163,13 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
-<<<<<<< HEAD
-					retryCount: maxWriteAndIngestRetryTimes,
-=======
 					retryCount: MaxWriteAndIngestRetryTimes,
-					region: &split.RegionInfo{
-						Region: &metapb.Region{
-							Peers: []*metapb.Peer{
-								{Id: 1, StoreId: 1},
-								{Id: 2, StoreId: 2},
-								{Id: 3, StoreId: 3},
-							},
-						},
-					},
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345))
 				},
 				{
 					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
-<<<<<<< HEAD
-					retryCount: maxWriteAndIngestRetryTimes,
-=======
 					retryCount: MaxWriteAndIngestRetryTimes,
-					region: &split.RegionInfo{
-						Region: &metapb.Region{
-							Peers: []*metapb.Peer{
-								{Id: 4, StoreId: 4},
-								{Id: 5, StoreId: 5},
-								{Id: 6, StoreId: 6},
-							},
-						},
-					},
->>>>>>> 448d56910cd (lightning: fix forget to set lastRetryableErr when ingest RPC fail (#56345))
 				},
 			},
 		},
