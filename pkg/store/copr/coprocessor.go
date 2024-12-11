@@ -761,7 +761,7 @@ type copResponse struct {
 	respTime time.Duration
 }
 
-type copTaskResponse struct {
+type copTaskResult struct {
 	resp          *copResponse
 	batchRespList []*copResponse
 	remains       []*copTask
@@ -1210,7 +1210,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
-func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResponse, error) {
+func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
 	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
@@ -1336,19 +1336,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
-	taskResp := &copTaskResponse{resp: &copResponse{pbResp: copResp}}
+	var result *copTaskResult
 	if worker.req.Paging.Enable {
-		err = worker.handleCopPagingResult(bo, rpcCtx, taskResp, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		err = worker.handleCopResponse(bo, rpcCtx, taskResp, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	}
-	if req.ReadType != "" {
-		for _, remain := range taskResp.remains {
+	if req.ReadType != "" && result != nil {
+		for _, remain := range result.remains {
 			remain.firstReadType = req.ReadType
 		}
 	}
-	return taskResp, err
+	return result, err
 }
 
 const (
@@ -1410,42 +1410,40 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) error {
-	err := worker.handleCopResponse(bo, rpcCtx, taskResp, cacheKey, cacheValue, task, costTime)
-	if err != nil || (taskResp != nil && len(taskResp.remains) != 0) {
+func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
+	if err != nil || (result != nil && len(result.remains) != 0) {
 		// If there is region error or lock error, keep the paging size and retry.
-		if taskResp != nil {
-			for _, remainedTask := range taskResp.remains {
-				remainedTask.pagingSize = task.pagingSize
-			}
+		for _, remainedTask := range result.remains {
+			remainedTask.pagingSize = task.pagingSize
 		}
-		return errors.Trace(err)
+		return result, errors.Trace(err)
 	}
-	pagingRange := taskResp.resp.pbResp.Range
+	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
 	if pagingRange == nil {
 		// If the storage engine doesn't support paging protocol, it should have return all the region data.
 		// So we finish here.
-		return nil
+		return result, nil
 	}
 
 	// calculate next ranges and grow the paging size
 	task.ranges = worker.calculateRemain(task.ranges, pagingRange, worker.req.Desc)
 	if task.ranges.Len() == 0 {
-		return nil
+		return result, nil
 	}
 
 	task.pagingSize = paging.GrowPagingSize(task.pagingSize, worker.req.Paging.MaxPagingSize)
-	taskResp.remains = append(taskResp.remains, task)
-	return nil
+	result.remains = []*copTask{task}
+	return result, nil
 }
 
 // handleCopResponse checks coprocessor Response for region split and lock,
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling coprocessor paging response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) error {
-	resp := taskResp.resp
+func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+	result := &copTaskResult{}
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
@@ -1453,12 +1451,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
 			//worker.sendToRespCh(resp, ch, true)
-			return nil
+			result.resp = resp
+			return result, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 		if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
@@ -1469,17 +1468,31 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			ignoreTiKVClientReadTimeout: true,
 		})
 		if err != nil {
-			return err
+			//result.remains = remains
+			return nil, err
 		}
-		taskResp.remains = append(taskResp.remains, remains...)
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, taskResp, task)
+		//result.remains = append(result.remains, remains...)
+		batchRespList, batchRemainTasks, err := worker.handleBatchRemainsOnErr(bo, rpcCtx, resp.pbResp, task)
+		if err != nil {
+			return nil, err
+		}
+		result.batchRespList = batchRespList
+		result.remains = append(remains, batchRemainTasks...)
+		return result, err
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
-			return err
+			return nil, err
 		}
 		task.meetLockFallback = true
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, taskResp, task)
+		remains := []*copTask{task}
+		batchRespList, batchRemainTasks, err := worker.handleBatchRemainsOnErr(bo, rpcCtx, resp.pbResp, task)
+		if err != nil {
+			return nil, err
+		}
+		result.batchRespList = batchRespList
+		result.remains = append(remains, batchRemainTasks...)
+		return result, err
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1500,9 +1513,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.String("storeAddr", task.storeAddr),
 			zap.String("error", otherErr))
 		if strings.Contains(err.Error(), "write conflict") {
-			return kv.ErrWriteConflict.FastGen("%s", otherErr)
+			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	// When the request is using paging API, the `Range` is not nil.
 	if resp.pbResp.Range != nil {
@@ -1511,40 +1524,44 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		resp.startKey = task.ranges.At(0).StartKey
 	}
 	if err := worker.handleCollectExecutionInfo(bo, rpcCtx, resp); err != nil {
-		return err
+		return nil, err
 	}
 	resp.respTime = costTime
 
 	if err := worker.handleCopCache(task, resp, cacheKey, cacheValue); err != nil {
-		return err
+		return nil, err
 	}
 
 	//worker.sendToRespCh(resp, ch, true)
-	return worker.handleBatchCopResponse(bo, rpcCtx, taskResp, task.batchTaskList)
+	result.resp = resp
+	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp.pbResp, task.batchTaskList)
+	if err != nil {
+		return result, err
+	}
+	result.batchRespList = batchRespList
+	result.remains = batchRemainTasks
+	return result, nil
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse, task *copTask) error {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response, task *copTask) (batchRespList []*copResponse, remainTasks []*copTask, err error) {
 	if len(task.batchTaskList) == 0 {
-		return nil
+		return nil, nil, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	return worker.handleBatchCopResponse(bo, rpcCtx, taskResp, batchedTasks)
+	return worker.handleBatchCopResponse(bo, rpcCtx, resp, batchedTasks)
 }
 
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse,
-	tasks map[uint64]*batchedCopTask) (err error) {
-	if len(tasks) == 0 || taskResp == nil || taskResp.resp == nil {
-		return nil
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
+	tasks map[uint64]*batchedCopTask) (batchRespList []*copResponse, remainTasks []*copTask, err error) {
+	if len(tasks) == 0 {
+		return nil, nil, nil
 	}
 	batchedNum := len(tasks)
 	busyThresholdFallback := false
-	resp := taskResp.resp.pbResp
 	batchResps := resp.GetBatchResponses()
-	batchRespList := make([]*copResponse, 0, len(batchResps))
-	var remainTasks []*copTask
 	defer func() {
 		if err != nil {
 			return
@@ -1553,8 +1570,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
 			worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
 		}
-		taskResp.remains = append(taskResp.remains, remainTasks...)
-		taskResp.batchRespList = batchRespList
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
 		if remainTasks == nil {
@@ -1575,7 +1590,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		taskID := batchResp.GetTaskId()
 		batchedTask, ok := tasks[taskID]
 		if !ok {
-			return errors.Errorf("task id %d not found", batchResp.GetTaskId())
+			return batchRespList, nil, errors.Errorf("task id %d not found", batchResp.GetTaskId())
 		}
 		delete(tasks, taskID)
 		resp := &copResponse{
@@ -1592,7 +1607,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-				return errors.Trace(err)
+				return batchRespList, nil, errors.Trace(err)
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
@@ -1602,7 +1617,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				ignoreTiKVClientReadTimeout: true,
 			})
 			if err != nil {
-				return err
+				return batchRespList, nil, err
 			}
 			appendRemainTasks(remains...)
 			continue
@@ -1610,7 +1625,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
-				return err
+				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
 			appendRemainTasks(task)
@@ -1636,12 +1651,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err))
 			if strings.Contains(err.Error(), "write conflict") {
-				return kv.ErrWriteConflict.FastGen("%s", otherErr)
+				return batchRespList, nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 			}
-			return errors.Trace(err)
+			return batchRespList, nil, errors.Trace(err)
 		}
 		if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
-			return err
+			return batchRespList, nil, err
 		}
 		//worker.sendToRespCh(resp, ch, true)
 		batchRespList = append(batchRespList, resp)
@@ -1670,7 +1685,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
 		if len(batchResps) != 0 {
-			return errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
+			return batchRespList, nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
 		busyThresholdFallback = true
 		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
@@ -1678,12 +1693,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			// do not set busy threshold again.
 			task.busyThreshold = 0
 			if err = handler.handle(task); err != nil {
-				return err
+				return batchRespList, nil, err
 			}
 		}
 		remainTasks = handler.build()
 	}
-	return nil
+	return batchRespList, remainTasks, nil
 }
 
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
@@ -1917,7 +1932,7 @@ type copIteratorRuntimeStats struct {
 	stats []*CopRuntimeStats
 }
 
-func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResponse, error) {
+func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) (*copTaskResult, error) {
 	errCode := errno.ErrUnknown
 	errMsg := err.Error()
 	if terror.ErrorEqual(err, derr.ErrTiKVServerTimeout) {
@@ -1940,7 +1955,7 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp := &copTaskResponse{
+	resp := &copTaskResult{
 		resp: &copResponse{
 			pbResp: &coprocessor.Response{
 				Data: data,
