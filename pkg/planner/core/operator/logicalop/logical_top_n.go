@@ -30,7 +30,7 @@ import (
 
 // LogicalTopN represents a top-n plan.
 type LogicalTopN struct {
-	BaseLogicalPlan
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	ByItems []*util.ByItems `hash64-equals:"true"`
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
@@ -82,6 +82,9 @@ func (lt *LogicalTopN) ReplaceExprColumns(replace map[string]*expression.Column)
 func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
 	child := lt.Children()[0]
 	var cols []*expression.Column
+
+	lt.InlineProjection(parentUsedCols, opt)
+
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
 	var err error
@@ -96,7 +99,7 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	lt.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
+	lt.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	if lt.Count == 1 {
 		lt.SetMaxOneRow(true)
 	}
