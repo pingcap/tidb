@@ -228,6 +228,7 @@ var (
 	_ builtinFunc = &builtinAddSubDateAsStringSig{}
 	_ builtinFunc = &builtinAddSubDateDatetimeAnySig{}
 	_ builtinFunc = &builtinAddSubDateDurationAnySig{}
+	_ builtinFunc = &builtinTruncDatetimeSig{}
 )
 
 func convertTimeToMysqlTime(t time.Time, fsp int, roundMode types.RoundMode) (types.Time, error) {
@@ -7255,4 +7256,60 @@ func (b *builtinMonthsBetweenSig) evalReal(ctx EvalContext, row chunk.Row) (floa
 	// Compute fractional months as a ratio of total seconds base on 31 days. And result needs to maintain a precision of eight decimal places.
 	decimalMonth := math.Round(float64(totalSeconds)/(31.0*24.0*60.0*60.0)*1e8) / 1e8
 	return integerMonth + decimalMonth, false, nil
+}
+
+// This builtin func is for the datetime implementation for truncFunctionClass in builtin_math.go
+type builtinTruncDatetimeSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinTruncDatetimeSig) Clone() builtinFunc {
+	newSig := &builtinTruncDatetimeSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// evalTime evals TRUNC(datetime, fmt).
+// fmt can be 'yy', 'mm', 'dd', 'hh', 'mi'
+func (b *builtinTruncDatetimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	// Get datetime parameter
+	t, isNull, err := b.args[0].EvalTime(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	// Get format parameter
+	format, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return types.ZeroTime, true, err
+	}
+
+	// Truncate time based on different formats
+	year, month, day := t.Year(), t.Month(), t.Day()
+	hour, minute := t.Hour(), t.Minute()
+
+	switch strings.ToLower(format) {
+	case "yy", "yyyy", "year":
+		// Keep only year
+		month, day, hour, minute = 1, 1, 0, 0
+	case "mm", "month":
+		// Keep year and month
+		day, hour, minute = 1, 0, 0
+	case "dd", "day":
+		// Keep year, month and day
+		hour, minute = 0, 0
+	case "hh", "hour":
+		// Keep year, month and day, hour
+		minute = 0
+	case "mi", "minute":
+		// Keep year, month and day, hour, minute
+		// do nothing
+	default:
+		// invalid format
+		return types.ZeroTime, true, types.ErrWrongValue.GenWithStackByArgs("format", format)
+	}
+
+	// Create new truncated time
+	result := types.NewTime(types.FromDate(year, month, day, hour, minute, 0, 0), mysql.TypeDatetime, types.DefaultFsp)
+	return result, false, nil
 }

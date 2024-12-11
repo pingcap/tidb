@@ -395,6 +395,7 @@ const (
 	Nvl2          = "nvl2"
 	ToChar        = "to_char"
 	DateToChar    = "date_to_char"
+	Trunc         = "trunc"
 )
 
 type FuncCallExprType int8
