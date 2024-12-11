@@ -246,7 +246,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		s.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, s.isMatchedRows)
+		s.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, s.isMatchedRows, true)
 	}
 	return
 }

@@ -24,9 +24,6 @@ import (
 
 type antiSemiJoinProbe struct {
 	baseSemiJoin
-
-	// After processing all probe rows, we will find which rows will be outputted
-	isMatchedRowsAdjustedForOutput bool
 }
 
 func newAntiSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *antiSemiJoinProbe {
@@ -109,8 +106,6 @@ func (a *antiSemiJoinProbe) resetProbeState() {
 			}
 		}
 	}
-
-	a.isMatchedRowsAdjustedForOutput = false
 }
 
 func (a *antiSemiJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
@@ -260,16 +255,7 @@ func (a *antiSemiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedC
 	}
 
 	if a.unFinishedProbeRowIdxQueue.IsEmpty() {
-		if !a.isMatchedRowsAdjustedForOutput {
-			// As this is anti semi, only rows that marked as not matched are result rows.
-			for i, matched := range a.isMatchedRows {
-				a.isMatchedRows[i] = !matched
-			}
-
-			a.isMatchedRowsAdjustedForOutput = true
-		}
-
-		a.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, a.isMatchedRows)
+		a.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, a.isMatchedRows, false)
 	}
 
 	return

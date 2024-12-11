@@ -153,7 +153,7 @@ func (b *baseSemiJoin) generateResultChkForRightBuildNoOtherCondition(resultChk 
 }
 
 // Only used for semi and anti semi join
-func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCap int, chk *chunk.Chunk, resultRows []bool) {
+func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCap int, chk *chunk.Chunk, resultRows []bool, expectedResult bool) {
 	for remainCap > 0 && (b.currentProbeRow < b.chunkRows) {
 		rowNumToTryAppend := min(remainCap, b.chunkRows-b.currentProbeRow)
 		start := b.currentProbeRow
@@ -162,7 +162,7 @@ func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCa
 		for index, usedColIdx := range b.lUsed {
 			dstCol := chk.Column(index)
 			srcCol := b.currentChunk.Column(usedColIdx)
-			chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, resultRows, start, end, func(i int) int {
+			chunk.CopyExpectedRowsWithRowIDFunc(dstCol, srcCol, resultRows, expectedResult, start, end, func(i int) int {
 				return b.usedRows[i]
 			})
 		}
@@ -171,7 +171,7 @@ func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCa
 			// For calculating virtual row num
 			virtualRowNum := chk.GetNumVirtualRows()
 			for i := start; i < end; i++ {
-				if resultRows[i] {
+				if resultRows[i] == expectedResult {
 					virtualRowNum++
 				}
 			}
