@@ -914,9 +914,6 @@ func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	if err := p.Handle.ensureActiveUser(ctx, u); err != nil {
-		return nil, err
-	}
 	mysqlPrivilege := p.Handle.Get()
 	grants = mysqlPrivilege.showGrants(sctx, u, h, roles)
 	if len(grants) == 0 {

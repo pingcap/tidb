@@ -2127,12 +2127,12 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 		sql     string
 		visited bool
 	}{
-		// FIXME {"drop user if exists 'test1'", false},
-		// FIXME {"alter user test identified by 'test1'", false},
-		// {"set password for test = 'test2'", false},
-		// FIXME {"show create user test", false},
+		{"drop user if exists 'test1'", false},
+		{"alter user test identified by 'test1'", false},
+		{"set password for test = 'test2'", false},
+		{"show create user test", false},
 		{"create user test1", false},
-		// FIXME {"show grants", false},
+		{"show grants", false},
 		{"show grants for 'test'@'%'", true},
 	}
 
