@@ -766,7 +766,8 @@ func (t *testEnv) putTask() {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}

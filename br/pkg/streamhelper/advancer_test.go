@@ -686,14 +686,73 @@ func TestUnregisterAfterPause(t *testing.T) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
 	adv.StartTaskListener(ctx)
+
+	// No matter how many times the task is paused, after put a new one the task should run normally
+	// First sequence: pause -> unregister -> put
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
-	time.Sleep(1 * time.Second)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
 	env.unregisterTask()
 	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+
+	// Second sequence: put -> pause -> unregister -> put
+	c.advanceClusterTimeBy(1 * time.Minute)
+	env.putTask()
+	env.PauseTask(ctx, "whole")
+	env.unregisterTask()
+	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+
+	// Third sequence: put -> pause -> put -> unregister -> put
+	c.advanceClusterTimeBy(1 * time.Minute)
+	env.putTask()
+	env.PauseTask(ctx, "whole")
+	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+	env.unregisterTask()
+	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+
+	// Fourth sequence: unregister -> put -> pause -> put -> unregister -> put
+	c.advanceClusterTimeBy(1 * time.Minute)
+	env.unregisterTask()
+	env.putTask()
+	env.PauseTask(ctx, "whole")
+	time.Sleep(1 * time.Second)
+	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+	env.unregisterTask()
+	env.putTask()
+	require.NoError(t, adv.OnTick(ctx))
+
+	// Fifth sequence: multiple rapid operations with put before pause
+	for i := 0; i < 3; i++ {
+		c.advanceClusterTimeBy(1 * time.Minute)
+		env.putTask()
+		env.PauseTask(ctx, "whole")
+		env.unregisterTask()
+		env.putTask()
+		env.PauseTask(ctx, "whole")
+		env.putTask()
+		require.NoError(t, adv.OnTick(ctx))
+	}
+
+	// Sixth sequence: rapid alternating put and pause
+	for i := 0; i < 3; i++ {
+		c.advanceClusterTimeBy(1 * time.Minute)
+		env.putTask()
+		env.PauseTask(ctx, "whole")
+		env.putTask()
+		env.PauseTask(ctx, "whole")
+		env.putTask()
+		require.NoError(t, adv.OnTick(ctx))
+	}
+
+	// Final verification
+	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
 }
 
