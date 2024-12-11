@@ -136,7 +136,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	err := statstestutil.HandleNextDDLEventWithTxn(statsHandle)
 	require.NoError(t, err)
 
 	// Prepare the data.
