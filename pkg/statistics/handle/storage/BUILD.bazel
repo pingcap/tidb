@@ -54,7 +54,11 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 22,
+=======
+    shard_count = 24,
+>>>>>>> d5b6b699c84 (statistics: GCStats should not wrongly remove record of an existing table (#58108))
     deps = [
         ":storage",
         "//pkg/domain",
@@ -67,6 +71,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )
