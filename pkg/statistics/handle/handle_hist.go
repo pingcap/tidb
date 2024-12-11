@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -285,6 +286,13 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 			h.SPool().Put(se)
 		}
 	}()
+	var skipTypes map[string]struct{}
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get global variable", zap.Error(err))
+	} else {
+		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+	}
 
 	item := task.TableItemID
 	tbl, ok := h.Get(item.TableID)
@@ -305,7 +313,14 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		} else {
 			wrapper.col = col
 		}
+		if skipTypes != nil && wrapper.col != nil && wrapper.col.Info != nil {
+			_, skip := skipTypes[types.TypeToStr(wrapper.col.Info.FieldType.GetType(), wrapper.col.Info.FieldType.GetCharset())]
+			if skip {
+				return nil
+			}
+		}
 	}
+	failpoint.Inject("handleOneItemTaskPanic", nil)
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
