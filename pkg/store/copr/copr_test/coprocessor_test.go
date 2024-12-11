@@ -291,7 +291,7 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	require.Equal(t, smallTaskConcurrency, 0)
 }
 
-func TestCopQuery(t *testing.T) {
+func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

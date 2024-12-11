@@ -868,6 +868,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 // open starts workers and sender goroutines.
 func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
 	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.CompareAndSwapUint32(tryCopLiteWorker, 0, 1) {
+		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
+		// see more detail in TestQueryWithConcurrentSmallCop.
 		it.liteWorker = &liteCopIteratorWorker{
 			ctx:    ctx,
 			worker: newCopIteratorWorker(it, nil),
