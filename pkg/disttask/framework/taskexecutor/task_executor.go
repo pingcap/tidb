@@ -252,7 +252,7 @@ func (e *BaseTaskExecutor) Run() {
 			continue
 		}
 
-		if bytes.Compare(oldTask.Meta, newTask.Meta) != 0 {
+		if !bytes.Equal(oldTask.Meta, newTask.Meta) {
 			e.logger.Info("task meta modified",
 				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
 				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
