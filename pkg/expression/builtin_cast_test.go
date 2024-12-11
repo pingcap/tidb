@@ -1694,11 +1694,7 @@ func TestCastArrayFunc(t *testing.T) {
 		},
 	}
 	for _, tt := range tbl {
-<<<<<<< HEAD
-		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
-=======
 		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false, false)
->>>>>>> e0864c6cf1d (expression: let `cast` function supports explicit set charset (#55724))
 		if !tt.buildFuncSuccess {
 			require.Error(t, err, tt.input)
 			continue
