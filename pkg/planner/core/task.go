@@ -946,7 +946,6 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 			PartitionBy: newPartitionBy,
 			Count:       newCount,
 		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
-		topN.SetSchema(bottomProj.Schema())
 		// mppTask's topN
 		topN.ByItems[0].Expr = distanceCol
 		// rootTask's topn, need reuse the distance col
