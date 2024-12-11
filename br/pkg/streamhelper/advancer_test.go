@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -695,10 +694,7 @@ func TestUnregisterAfterPause(t *testing.T) {
 	require.NoError(t, adv.OnTick(ctx))
 	env.unregisterTask()
 	env.putTask()
-	require.Eventually(t, func() bool {
-		err := adv.OnTick(ctx)
-		return err != nil && strings.Contains(err.Error(), "check point lagged too large")
-	}, 5*time.Second, 300*time.Millisecond)
+	require.NoError(t, adv.OnTick(ctx))
 }
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
@@ -850,11 +846,17 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
-	c.advanceClusterTimeBy(3 * time.Minute)
+	// advance cluster time to 4 minutes, and checkpoint to 1 minutes
+	// if start ts equals to checkpoint, the task will not be paused
+	c.advanceClusterTimeBy(4 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
-	env.mockPDConnectionError()
 	adv.StartTaskListener(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+
+	// if start ts < checkpoint, the task will be paused
+	c.advanceCheckpointBy(1 * time.Minute)
+	env.advanceCheckpointBy(1 * time.Minute)
 	// Try update checkpoint
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// Verify no err raised after paused
