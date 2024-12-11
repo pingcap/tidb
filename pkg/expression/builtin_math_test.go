@@ -529,6 +529,48 @@ func TestTruncate(t *testing.T) {
 	}
 }
 
+func TestTruncNum(t *testing.T) {
+	ctx := createContext(t)
+	newDec := types.NewDecFromStringForTest
+	tbl := []struct {
+		Arg []any
+		Ret any
+	}{
+		// Basic tests without decimal places parameter
+		{[]any{123.458}, 123},
+		{[]any{-123.458}, -123},
+		{[]any{0.458}, 0},
+		{[]any{999.999}, 999},
+
+		// Tests with decimal places parameter
+		{[]any{123.458, 0}, 123},
+		{[]any{123.458, 2}, 123.45},
+		{[]any{123.458, -1}, 120},
+		{[]any{123.458, -3}, 0},
+		{[]any{123.458, -4}, 0},
+
+		// Boundary value tests
+		{[]any{0.0001, 2}, 0.00},
+		{[]any{-9999.9999, 2}, -9999.99},
+
+		// Decimal type tests
+		{[]any{newDec("123.458")}, newDec("123")},
+		{[]any{newDec("123.458"), -4}, newDec("0")},
+	}
+
+	Dtbl := tblToDtbl(tbl)
+
+	for _, tt := range Dtbl {
+		fc := funcs[ast.Trunc]
+		f, err := fc.getFunction(ctx, datumsToConstants(tt["Arg"]))
+		require.NoError(t, err)
+		require.NotNil(t, f)
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		require.NoError(t, err)
+		testutil.DatumEqual(t, tt["Ret"][0], v)
+	}
+}
+
 func TestCRC32(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
