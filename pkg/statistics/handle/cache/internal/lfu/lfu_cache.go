@@ -251,3 +251,8 @@ func (s *LFU) addCost(v int64) {
 	newv := s.cost.Add(v)
 	metrics.CostGauge.Set(float64(newv))
 }
+
+// TriggerEvict implements statsCacheInner
+func (s *LFU) TriggerEvict() {
+	s.triggerEvict()
+}
