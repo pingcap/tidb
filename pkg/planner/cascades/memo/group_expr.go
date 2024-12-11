@@ -15,10 +15,13 @@
 package memo
 
 import (
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -121,4 +124,45 @@ func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
 	e.hash64 = h.Sum64()
+}
+
+// DeriveLogicalProp derive the new group's logical property from a specific GE.
+// DeriveLogicalProp is not called with recursive, because we only examine and
+// init new group from bottom-up, so we can sure that this new group's children
+// has already gotten its logical prop.
+func (e *GroupExpression) DeriveLogicalProp() (err error) {
+	if e.GetGroup().HasLogicalProperty() {
+		return nil
+	}
+	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
+	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
+	for _, childG := range e.Inputs {
+		childGProp := childG.GetLogicalProperty()
+		childStats = append(childStats, childGProp.Stats)
+		childSchema = append(childSchema, childGProp.Schema)
+	}
+	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
+	// currently the schemaProducer side logical op is still useful for group schema.
+	// just add this mock for a mocked logical-plan which is with the id less than 0.
+	//  todo: functional dependency
+	tmpSchema := e.LogicalPlan.Schema()
+	tmpStats := e.LogicalPlan.StatsInfo()
+	// only for those new created logical op from XForm, we should rebuild their stats;
+	// in memo init phase, all logical ops has maintained their stats already, just use them.
+	if tmpStats == nil {
+		skipDeriveStats := false
+		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+			skipDeriveStats = val.(bool)
+		})
+		if !skipDeriveStats {
+			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
+	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	return nil
 }

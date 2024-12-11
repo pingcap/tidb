@@ -364,13 +364,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		responseErr(err)
-		return
-	}
-
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now().In(tz)) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -573,13 +567,6 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
