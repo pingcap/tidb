@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -40,14 +39,7 @@ type Plan struct {
 
 // NewBasePlan creates a new base plan.
 func NewBasePlan(ctx planctx.PlanContext, tp string, qbBlock int) Plan {
-	var id int32
-	if ctx.GetSessionVars().MockPlan {
-		intest.Assert(ctx.GetSessionVars().PlanID.Load() <= 0)
-		id = ctx.GetSessionVars().PlanID.Add(-1)
-	} else {
-		intest.Assert(ctx.GetSessionVars().PlanID.Load() >= 0)
-		id = ctx.GetSessionVars().PlanID.Add(1)
-	}
+	id := ctx.GetSessionVars().PlanID.Add(1)
 	return Plan{
 		tp:      tp,
 		id:      int(id),

@@ -15,6 +15,7 @@
 package memo
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
@@ -148,11 +149,17 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	tmpStats := e.LogicalPlan.StatsInfo()
 	// only for those new created logical op from XForm, we should rebuild their stats;
 	// in memo init phase, all logical ops has maintained their stats already, just use them.
-	if tmpStats == nil && e.LogicalPlan.ID() > 0 {
-		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
-		if err != nil {
-			return err
+	if tmpStats == nil {
+		skipDeriveStats := false
+		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+			skipDeriveStats = val.(bool)
+		})
+		if !skipDeriveStats {
+			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema

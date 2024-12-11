@@ -18,6 +18,7 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/util/intest",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
 
@@ -39,6 +40,7 @@ go_test(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/testkit/testsetup",
         "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
