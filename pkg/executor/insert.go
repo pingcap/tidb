@@ -477,6 +477,7 @@ func (e *InsertExec) doDupRowUpdate(
 	warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
 	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
 		c := assign.Col.ToInfo()
+		c.Name = assign.ColName
 		sc := sctx.GetSessionVars().StmtCtx
 
 		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
