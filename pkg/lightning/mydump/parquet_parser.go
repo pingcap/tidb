@@ -232,12 +232,18 @@ type ParquetParser struct {
 	readers     []*file.Reader
 	colMetas    []convertedType
 	columnNames []string
+	readType    int
 
 	colReaders []file.ColumnChunkReader
+
+	// colBuffers is used to store raw data read from parquet columns.
+	// rows stores the actual data after parsing.
 	colBuffers []*readBuffer
 	rows       [][]types.Datum
-	curIdx     int
-	avail      int
+
+	// curIdx and avail is the current index and total number of rows in rows buffer
+	curIdx int
+	avail  int
 
 	curRowGroup   int
 	totalRowGroup int
@@ -565,7 +571,7 @@ func (p *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 
 // Pos returns the currently row number of the parquet file
 func (p *ParquetParser) Pos() (pos int64, rowID int64) {
-	return int64(p.curRows), p.lastRow.RowID
+	return int64(p.curRows - p.avail + p.curIdx), p.lastRow.RowID
 }
 
 // SetPos implements the Parser interface.
