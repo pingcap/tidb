@@ -2121,6 +2121,7 @@ func (b *builtinTruncateRealSig) Clone() builtinFunc {
 	return newSig
 }
 
+// TODO add test
 // evalReal evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
 func (b *builtinTruncateRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
