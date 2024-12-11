@@ -103,7 +103,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, op
 	if ctx.Value(util.RUDetailsCtxKey) == nil {
 		ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	}
-	it.open(ctx)
+	it.open(ctx, option.TryCopLiteWorker)
 	return it
 }
 
@@ -678,7 +678,9 @@ type copIterator struct {
 	req                  *kv.Request
 	concurrency          int
 	smallTaskConcurrency int
-	finishCh             chan struct{}
+	// liteWorker uses to send cop request without start new goroutine, it is only work when tasks count is 1, and used to improve the performance of small cop query.
+	liteWorker *liteCopIteratorWorker
+	finishCh   chan struct{}
 
 	// If keepOrder, results are stored in copTask.respChan, read them out one by one.
 	tasks []*copTask
@@ -717,6 +719,13 @@ type copIterator struct {
 
 	runawayChecker resourcegroup.RunawayChecker
 	stats          *copIteratorRuntimeStats
+}
+
+type liteCopIteratorWorker struct {
+	// ctx contains some info(such as rpc interceptor(WithSQLKvExecCounterInterceptor)), it is used for handle cop task later.
+	ctx              context.Context
+	worker           *copIteratorWorker
+	batchCopRespList []*copResponse
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -857,7 +866,14 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context) {
+func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
+	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.CompareAndSwapUint32(tryCopLiteWorker, 0, 1) {
+		it.liteWorker = &liteCopIteratorWorker{
+			ctx:    ctx,
+			worker: newCopIteratorWorker(it, nil),
+		}
+		return
+	}
 	taskCh := make(chan *copTask, 1)
 	it.wg.Add(it.concurrency + it.smallTaskConcurrency)
 	var smallTaskCh chan *copTask
@@ -1081,7 +1097,15 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	// Otherwise all responses are returned from a single channel.
 
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
-	if it.respChan != nil {
+	if it.liteWorker != nil {
+		resp = it.liteWorker.liteSendReq(ctx, it)
+		if resp == nil {
+			it.actionOnExceed.close()
+			return nil, nil
+		}
+		it.actionOnExceed.destroyTokenIfNeeded(func() {})
+		memTrackerConsumeResp(it.memTracker, resp)
+	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
 		if !ok || closed {
@@ -1128,6 +1152,50 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 		return nil, errors.Trace(err)
 	}
 	return resp, nil
+}
+
+func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator) (resp *copResponse) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			logutil.Logger(ctx).Error("copIteratorWork meet panic",
+				zap.Any("r", r),
+				zap.Stack("stack trace"))
+			resp = &copResponse{err: util2.GetRecoverError(r)}
+		}
+	}()
+
+	if len(w.batchCopRespList) > 0 {
+		resp := w.batchCopRespList[0]
+		w.batchCopRespList = w.batchCopRespList[1:]
+		return resp
+	}
+
+	worker := w.worker
+	backoffermap := make(map[uint64]*Backoffer)
+	for len(it.tasks) > 0 {
+		curTask := it.tasks[0]
+		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		result, err := worker.handleTaskOnce(bo, curTask)
+		if err != nil {
+			resp = &copResponse{err: errors.Trace(err)}
+			worker.checkRespOOM(resp, true)
+			return resp
+		}
+
+		if result != nil && len(result.batchRespList) > 0 {
+			it.tasks = append(result.remains, it.tasks[1:]...)
+		} else {
+			it.tasks = it.tasks[1:]
+		}
+		if result != nil && result.resp != nil {
+			resp = result.resp
+			worker.checkRespOOM(resp, true)
+			w.batchCopRespList = result.batchRespList
+			return resp
+		}
+	}
+	return nil
 }
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.

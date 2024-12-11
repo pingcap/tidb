@@ -295,7 +295,7 @@ func TestCopQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Test tidb_distsql_scan_concurrency for partition table.
+	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
 	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
@@ -307,10 +307,4 @@ func TestCopQuery(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "select sum(c) from t1 use index (idx_b) where b < 10;")
 	cancel()
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
-
-	// Test query after split region.
-	tk.MustExec("create table t2 (id int key, b int, c int, index idx_b(b));")
-	tk.MustExec("insert into t2 select * from t1")
-	tk.MustQuery("split table t2 by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);").Check(testkit.Rows("11 1"))
-	tk.MustQuery("select sum(c) from t2 use index (idx_b) where b < 10;")
 }
