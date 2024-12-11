@@ -853,7 +853,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		if worker.respChan != nil {
 			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
 			// there is a task finished.
-			worker.sendToRespCh(finCopResp, worker.respChan, false)
+			worker.sendToRespCh(finCopResp, worker.respChan)
 		}
 		if task.respChan != nil {
 			close(task.respChan)
@@ -1038,8 +1038,7 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *cop
 	return
 }
 
-func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse, checkOOM bool) (exit bool) {
-	worker.checkRespOOM(resp, checkOOM)
+func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
 	select {
 	case respCh <- resp:
 	case <-worker.finishCh:
@@ -1048,8 +1047,8 @@ func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *
 	return
 }
 
-func (worker *copIteratorWorker) checkRespOOM(resp *copResponse, checkOOM bool) {
-	if worker.memTracker != nil && checkOOM {
+func (worker *copIteratorWorker) checkRespOOM(resp *copResponse) {
+	if worker.memTracker != nil {
 		consumed := resp.MemSize()
 		failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
 			if val.(bool) {
@@ -1167,13 +1166,12 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		}
 	}()
 
+	worker := w.worker
 	if len(w.batchCopRespList) > 0 {
 		resp := w.batchCopRespList[0]
 		w.batchCopRespList = w.batchCopRespList[1:]
 		return resp
 	}
-
-	worker := w.worker
 	backoffermap := make(map[uint64]*Backoffer)
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
@@ -1181,18 +1179,17 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
-			worker.checkRespOOM(resp, true)
+			worker.checkRespOOM(resp)
 			return resp
 		}
 
-		if result != nil && len(result.batchRespList) > 0 {
+		if result != nil && len(result.remains) > 0 {
 			it.tasks = append(result.remains, it.tasks[1:]...)
 		} else {
 			it.tasks = it.tasks[1:]
 		}
 		if result != nil && result.resp != nil {
 			resp = result.resp
-			worker.checkRespOOM(resp, true)
 			w.batchCopRespList = result.batchRespList
 			return resp
 		}
@@ -1244,8 +1241,8 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: util2.GetRecoverError(r)}
-			// if panic has happened, set checkOOM to false to avoid another panic.
-			worker.sendToRespCh(resp, respCh, false)
+			// if panic has happened, not checkRespOOM to avoid another panic.
+			worker.sendToRespCh(resp, respCh)
 		}
 	}()
 	remainTasks := []*copTask{task}
@@ -1256,15 +1253,16 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
-			worker.sendToRespCh(resp, respCh, true)
+			worker.checkRespOOM(resp)
+			worker.sendToRespCh(resp, respCh)
 			return
 		}
 		if result != nil {
 			if result.resp != nil {
-				worker.sendToRespCh(result.resp, respCh, true)
+				worker.sendToRespCh(result.resp, respCh)
 			}
 			for _, resp := range result.batchRespList {
-				worker.sendToRespCh(resp, respCh, true)
+				worker.sendToRespCh(resp, respCh)
 			}
 		}
 		if worker.finished() {
@@ -1519,6 +1517,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
+			worker.checkRespOOM(resp)
 			return &copTaskResult{resp: resp}, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
@@ -1584,6 +1583,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return nil, err
 	}
 
+	worker.checkRespOOM(resp)
 	result := &copTaskResult{resp: resp}
 	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp.pbResp, task.batchTaskList)
 	if err != nil {
@@ -1716,7 +1716,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
 			return batchRespList, nil, err
 		}
-		//worker.sendToRespCh(resp, ch, true)
+		worker.checkRespOOM(resp)
 		batchRespList = append(batchRespList, resp)
 	}
 	for _, t := range tasks {
@@ -2013,14 +2013,14 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &copTaskResult{
-		resp: &copResponse{
-			pbResp: &coprocessor.Response{
-				Data: data,
-			},
-			detail: &CopRuntimeStats{},
+	resp := &copResponse{
+		pbResp: &coprocessor.Response{
+			Data: data,
 		},
-	}, nil
+		detail: &CopRuntimeStats{},
+	}
+	worker.checkRespOOM(resp)
+	return &copTaskResult{resp: resp}, nil
 }
 
 // calculateRetry splits the input ranges into two, and take one of them according to desc flag.
