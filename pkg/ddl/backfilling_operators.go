@@ -519,7 +519,9 @@ func NewTableScanOperator(
 
 // Close implements operator.Operator interface.
 func (o *TableScanOperator) Close() error {
-	o.logger.Info("table scan operator total count", zap.Int64("count", o.totalCount.Load()))
+	defer func() {
+		o.logger.Info("table scan operator total count", zap.Int64("count", o.totalCount.Load()))
+	}()
 	return o.AsyncOperator.Close()
 }
 

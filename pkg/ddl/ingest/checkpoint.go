@@ -218,7 +218,7 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
 func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) error {
-	if !flushed {
+	if !flushed || s.noUpdate() {
 		return nil
 	}
 
@@ -297,6 +297,10 @@ func (s *CheckpointManager) afterImport() error {
 	}
 	s.dirty = true
 	return nil
+}
+
+func (s *CheckpointManager) noUpdate() bool {
+	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
 }
 
 func (s *CheckpointManager) unsetTS() {
