@@ -1250,6 +1250,11 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
 		taskResp, err := worker.handleTaskOnce(bo, curTask)
+		if err != nil {
+			resp := &copResponse{err: errors.Trace(err)}
+			worker.sendToRespCh(resp, respCh, true)
+			return
+		}
 		if taskResp != nil {
 			if taskResp.resp != nil {
 				worker.sendToRespCh(taskResp.resp, respCh, true)
@@ -1257,11 +1262,6 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			for _, resp := range taskResp.batchRespList {
 				worker.sendToRespCh(resp, respCh, true)
 			}
-		}
-		if err != nil {
-			resp := &copResponse{err: errors.Trace(err)}
-			worker.sendToRespCh(resp, respCh, true)
-			return
 		}
 		if worker.finished() {
 			break
@@ -1527,8 +1527,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		var err error
-		taskResp.remains, err = buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
 			cache:                       worker.store.GetRegionCache(),
 			respChan:                    false,
@@ -1538,6 +1537,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return err
 		}
+		taskResp.remains = append(taskResp.remains, remains...)
 		return worker.handleBatchRemainsOnErr(bo, rpcCtx, taskResp, task)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
@@ -1585,15 +1585,8 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return err
 	}
 
-	pbResp := resp.pbResp
 	//worker.sendToRespCh(resp, ch, true)
-	batchCopResps, batchedRemains, err := worker.handleBatchCopResponse(bo, rpcCtx, pbResp, task.batchTaskList)
-	if err != nil {
-		return err
-	}
-	taskResp.remains = append(taskResp.remains, batchedRemains...)
-	taskResp.batchRespList = batchCopResps
-	return nil
+	return worker.handleBatchCopResponse(bo, rpcCtx, taskResp, task.batchTaskList)
 }
 
 func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse, task *copTask) error {
@@ -1602,24 +1595,20 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	batchCopResps, batchedRemains, err := worker.handleBatchCopResponse(bo, rpcCtx, taskResp.resp.pbResp, batchedTasks)
-	if err != nil {
-		return err
-	}
-	taskResp.remains = append(taskResp.remains, batchedRemains...)
-	taskResp.batchRespList = batchCopResps
-	return nil
+	return worker.handleBatchCopResponse(bo, rpcCtx, taskResp, batchedTasks)
 }
 
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
-	tasks map[uint64]*batchedCopTask) (batchCopResps []*copResponse, remainTasks []*copTask, err error) {
-	if len(tasks) == 0 {
-		return nil, nil, nil
+func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, taskResp *copTaskResponse,
+	tasks map[uint64]*batchedCopTask) (err error) {
+	if len(tasks) == 0 || taskResp == nil || taskResp.resp == nil {
+		return nil
 	}
 	batchedNum := len(tasks)
 	busyThresholdFallback := false
+	var batchRespList []*copResponse
+	var remainTasks []*copTask
 	defer func() {
 		if err != nil {
 			return
@@ -1628,6 +1617,8 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			worker.storeBatchedNum.Add(uint64(batchedNum - len(remainTasks)))
 			worker.storeBatchedFallbackNum.Add(uint64(len(remainTasks)))
 		}
+		taskResp.remains = append(taskResp.remains, remainTasks...)
+		taskResp.batchRespList = batchRespList
 	}()
 	appendRemainTasks := func(tasks ...*copTask) {
 		if remainTasks == nil {
@@ -1643,13 +1634,14 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			Addr: rpcCtx.Addr,
 		}
 	}
+	resp := taskResp.resp.pbResp
 	batchResps := resp.GetBatchResponses()
-	batchCopResps = make([]*copResponse, 0, len(batchResps))
+	batchRespList = make([]*copResponse, 0, len(batchResps))
 	for _, batchResp := range batchResps {
 		taskID := batchResp.GetTaskId()
 		batchedTask, ok := tasks[taskID]
 		if !ok {
-			return nil, nil, errors.Errorf("task id %d not found", batchResp.GetTaskId())
+			return errors.Errorf("task id %d not found", batchResp.GetTaskId())
 		}
 		delete(tasks, taskID)
 		resp := &copResponse{
@@ -1666,7 +1658,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
-				return nil, nil, errors.Trace(err)
+				return errors.Trace(err)
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
@@ -1676,7 +1668,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				ignoreTiKVClientReadTimeout: true,
 			})
 			if err != nil {
-				return nil, nil, err
+				return err
 			}
 			appendRemainTasks(remains...)
 			continue
@@ -1684,7 +1676,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
 			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
-				return nil, nil, err
+				return err
 			}
 			task.meetLockFallback = true
 			appendRemainTasks(task)
@@ -1710,15 +1702,15 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				zap.String("storeAddr", task.storeAddr),
 				zap.Error(err))
 			if strings.Contains(err.Error(), "write conflict") {
-				return nil, nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
+				return kv.ErrWriteConflict.FastGen("%s", otherErr)
 			}
-			return nil, nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
-			return nil, nil, err
+			return err
 		}
 		//worker.sendToRespCh(resp, ch, true)
-		batchCopResps = append(batchCopResps, resp)
+		batchRespList = append(batchRespList, resp)
 	}
 	for _, t := range tasks {
 		task := t.task
@@ -1744,7 +1736,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
 		if len(batchResps) != 0 {
-			return nil, nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
+			return errors.New("store batched coprocessor with server is busy error shouldn't contain responses")
 		}
 		busyThresholdFallback = true
 		handler := newBatchTaskBuilder(bo, worker.req, worker.store.GetRegionCache(), kv.ReplicaReadFollower)
@@ -1752,12 +1744,12 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			// do not set busy threshold again.
 			task.busyThreshold = 0
 			if err = handler.handle(task); err != nil {
-				return nil, nil, err
+				return err
 			}
 		}
 		remainTasks = handler.build()
 	}
-	return batchCopResps, remainTasks, nil
+	return nil
 }
 
 func (worker *copIteratorWorker) handleLockErr(bo *Backoffer, lockErr *kvrpcpb.LockInfo, task *copTask) error {
