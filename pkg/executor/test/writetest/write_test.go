@@ -757,8 +757,7 @@ commit;`
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 
 	tk.MustExec(`SET sql_mode='';`)
-	tk.MustExec(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1048 Column 'f2' cannot be null"))
+	tk.ExecToErr(`INSERT t1 VALUES (1, 1) ON DUPLICATE KEY UPDATE f2 = null;`)
 	tk.MustQuery(`SELECT * FROM t1 order by f1;`).Check(testkit.Rows("1 0", "2 2"))
 }
 
@@ -1314,6 +1313,7 @@ func TestIssue18681(t *testing.T) {
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	ctx.GetSessionVars().StmtCtx.NoDefaultAsWarning = true
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()

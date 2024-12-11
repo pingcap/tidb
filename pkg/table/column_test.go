@@ -465,6 +465,7 @@ func TestGetDefaultValue(t *testing.T) {
 
 	for _, tt := range tests {
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+		ctx.GetSessionVars().StmtCtx.NoDefaultAsWarning = !tt.strict
 		val, err := GetColDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)
@@ -479,6 +480,7 @@ func TestGetDefaultValue(t *testing.T) {
 
 	for _, tt := range tests {
 		ctx.GetSessionVars().StmtCtx.BadNullAsWarning = !tt.strict
+		ctx.GetSessionVars().StmtCtx.NoDefaultAsWarning = !tt.strict
 		val, err := GetColOriginDefaultValue(ctx, tt.colInfo)
 		if err != nil {
 			require.Errorf(t, tt.err, "%v", err)

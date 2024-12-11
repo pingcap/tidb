@@ -168,6 +168,7 @@ func initSessCtx(
 		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
+	sessCtx.GetSessionVars().StmtCtx.NoDefaultAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
@@ -194,6 +195,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		timezone = &tz
 	}
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
+	noDefaultAsWarn := sv.StmtCtx.NoDefaultAsWarning
 	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	ignoreZeroInDate := sv.StmtCtx.IgnoreZeroInDate
@@ -205,6 +207,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
+		uv.StmtCtx.NoDefaultAsWarning = noDefaultAsWarn
 		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.IgnoreZeroInDate = ignoreZeroInDate

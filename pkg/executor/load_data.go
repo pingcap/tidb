@@ -101,6 +101,7 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	stmtCtx.DupKeyAsWarning = true
 	stmtCtx.TruncateAsWarning = true
 	stmtCtx.BadNullAsWarning = true
+	stmtCtx.NoDefaultAsWarning = true
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.
