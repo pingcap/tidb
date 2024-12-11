@@ -1409,7 +1409,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		// Handles the response for non-paging copTask.
 		err = worker.handleCopResponse(bo, rpcCtx, taskResp, cacheKey, cacheValue, task, costTime)
 	}
-	if req.ReadType != "" && taskResp != nil {
+	if req.ReadType != "" {
 		for _, remain := range taskResp.remains {
 			remain.firstReadType = req.ReadType
 		}
