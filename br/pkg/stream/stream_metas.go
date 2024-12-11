@@ -794,8 +794,8 @@ func (m MigrationExt) MergeAndMigrateTo(
 	err = m.writeBase(ctx, newBase)
 	if err != nil {
 		result.Warnings = append(
-			result.MigratedTo.Warnings,
-			errors.Annotatef(err, "failed to save the merged new base, nothing will happen"),
+			result.Warnings,
+			errors.Annotate(err, "failed to save the merged new base"),
 		)
 		// Put the new BASE here anyway. The caller may want this.
 		result.NewBase = newBase
@@ -817,9 +817,9 @@ func (m MigrationExt) MergeAndMigrateTo(
 	result.MigratedTo = m.MigrateTo(ctx, newBase, MTMaybeSkipTruncateLog(!config.alwaysRunTruncate && canSkipTruncate))
 
 	// Put the final BASE.
-	err = m.writeBase(ctx, result.MigratedTo.NewBase)
+	err = m.writeBase(ctx, result.NewBase)
 	if err != nil {
-		result.Warnings = append(result.MigratedTo.Warnings, errors.Annotatef(err, "failed to save the new base"))
+		result.Warnings = append(result.Warnings, errors.Annotatef(err, "failed to save the new base"))
 	}
 	return
 }
@@ -853,8 +853,6 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	result := MigratedTo{
 		NewBase: NewMigration(),
 	}
-	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
 	// Fills: TruncatedTo, Compactions, DesctructPrefix.
 	if !opt.skipTruncateLog {
 		m.doTruncating(ctx, mig, &result)
@@ -863,6 +861,10 @@ func (m MigrationExt) MigrateTo(ctx context.Context, mig *pb.Migration, opts ...
 		result.NewBase.Compactions = mig.Compactions
 		result.NewBase.TruncatedTo = mig.TruncatedTo
 	}
+
+	// We do skip truncate log first, so metas removed by truncating can be removed in this execution.
+	// Fills: EditMeta for new Base.
+	m.doMetaEdits(ctx, mig, &result)
 
 	return result
 }
@@ -880,6 +882,7 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 }
 
 // doMetaEdits applies the modification to the meta files in the storage.
+// This will delete data files firstly. Make sure the new BASE was persisted before calling this.
 func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
 
@@ -887,14 +890,26 @@ func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *M
 		if isEmptyEdition(medit) {
 			return
 		}
+
+		// Sometimes, the meta file will be deleted by truncating.
+		// We clean up those meta edits.
+		// NOTE: can we unify the deletion of truncating and meta editing?
+		// Say, add a "normalize" phase that load all files to be deleted to the migration.
+		// The problem here is a huge migration may be created in memory then leading to OOM.
+		exists, errChkExist := m.s.FileExists(ctx, medit.Path)
+		if errChkExist == nil && !exists {
+			log.Warn("The meta file doesn't exist, skipping the edit", zap.String("path", medit.Path))
+			return
+		}
+
+		// Firstly delete data so they won't leak when BR crashes.
+		m.cleanUpFor(ctx, medit, out)
 		err := m.applyMetaEdit(ctx, medit)
 		if err != nil {
 			out.NewBase.EditMeta = append(out.NewBase.EditMeta, medit)
 			out.Warnings = append(out.Warnings, errors.Annotatef(err, "failed to apply meta edit %s to meta file", medit.Path))
 			return
 		}
-
-		m.cleanUpFor(ctx, medit, out)
 	}
 
 	defer m.Hooks.HandingMetaEditDone()
@@ -936,6 +951,13 @@ func (m MigrationExt) cleanUpFor(ctx context.Context, medit *pb.MetaEdit, out *M
 		}
 	}
 
+	if len(out.Warnings) > 0 {
+		log.Warn(
+			"Failed to clean up for meta edit.",
+			zap.String("meta-edit", medit.Path),
+			zap.Errors("warnings", out.Warnings),
+		)
+	}
 	if !isEmptyEdition(newMetaEdit) {
 		out.NewBase.EditMeta = append(out.NewBase.EditMeta, newMetaEdit)
 	}
@@ -974,7 +996,6 @@ func (m MigrationExt) applyMetaEditTo(ctx context.Context, medit *pb.MetaEdit, m
 	})
 	metadata.FileGroups = slices.DeleteFunc(metadata.FileGroups, func(dfg *pb.DataFileGroup) bool {
 		del := slices.Contains(medit.DeletePhysicalFiles, dfg.Path)
-		fmt.Println(medit.Path, medit.DeletePhysicalFiles, dfg.Path, del)
 		return del
 	})
 	for _, group := range metadata.FileGroups {
@@ -1143,6 +1164,7 @@ func (m MigrationExt) doTruncateLogs(
 			// We have already written `truncated-to` to the storage hence
 			// we don't need to worry that the user access files already deleted.
 			aOut := new(MigratedTo)
+			aOut.NewBase = new(pb.Migration)
 			m.cleanUpFor(ctx, me, aOut)
 			updateResult(func(r *MigratedTo) {
 				r.Warnings = append(r.Warnings, aOut.Warnings...)

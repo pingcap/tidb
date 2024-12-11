@@ -258,8 +258,6 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
-	// Text represents the origin query text.
-	Text string
 
 	StmtNode ast.StmtNode
 
@@ -298,7 +296,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
 	if r.Span != nil {
-		r.Span.LogKV("sql", a.OriginText())
+		r.Span.LogKV("sql", a.Text())
 	}
 
 	failpoint.Inject("assertTxnManagerInShortPointGetPlan", func() {
@@ -328,7 +326,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
-			exec.Init(pointGetPlan)
+			exec.Recreated(pointGetPlan)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
 		}
@@ -359,7 +357,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	var pi processinfoSetter
 	if raw, ok := sctx.(processinfoSetter); ok {
 		pi = raw
-		sql := a.OriginText()
+		sql := a.Text()
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
 		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
@@ -379,6 +377,11 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 // OriginText returns original statement as a string.
 func (a *ExecStmt) OriginText() string {
 	return a.StmtNode.OriginalText()
+}
+
+// Text returns utf8 encoded statement as a string.
+func (a *ExecStmt) Text() string {
+	return a.StmtNode.Text()
 }
 
 // IsPrepared returns true if stmt is a prepare statement.
@@ -641,7 +644,7 @@ func (a *ExecStmt) inheritContextFromExecuteStmt() {
 }
 
 func (a *ExecStmt) getSQLForProcessInfo() string {
-	sql := a.OriginText()
+	sql := a.Text()
 	if simple, ok := a.Plan.(*plannercore.Simple); ok && simple.Statement != nil {
 		if ss, ok := simple.Statement.(ast.SensitiveStmtNode); ok {
 			// Use SecureText to avoid leak password information.
@@ -1035,7 +1038,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			// If it's not a retryable error, rollback current transaction instead of rolling back current statement like
 			// in normal transactions, because we cannot locate and rollback the statement that leads to the lock error.
 			// This is too strict, but since the feature is not for everyone, it's the easiest way to guarantee safety.
-			stmtText := parser.Normalize(a.OriginText(), sctx.GetSessionVars().EnableRedactLog)
+			stmtText := parser.Normalize(a.Text(), sctx.GetSessionVars().EnableRedactLog)
 			logutil.Logger(ctx).Info("Transaction abort for the safety of lazy uniqueness check. "+
 				"Note this may not be a uniqueness violation.",
 				zap.Error(err),
@@ -1419,6 +1422,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
+	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
 		if succ {
 			executor_metrics.TotalTiFlashQuerySuccCounter.Inc()
@@ -2151,6 +2155,31 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	topsql.RegisterPlan(normalizedPlan, planDigest)
 	return topsql.AttachSQLAndPlanInfo(ctx, sqlDigest, planDigest)
+}
+
+// UpdatePlanCacheRuntimeInfo updates the runtime information of the plan in the plan cache.
+func (a *ExecStmt) UpdatePlanCacheRuntimeInfo() {
+	if !variable.EnableInstancePlanCache.Load() {
+		return // only record for Instance Plan Cache
+	}
+	v := a.Ctx.GetSessionVars().PlanCacheValue
+	if v == nil {
+		return
+	}
+	pcv, ok := v.(*plannercore.PlanCacheValue)
+	if !ok {
+		return
+	}
+
+	execDetail := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+	var procKeys, totKeys int64
+	if execDetail.ScanDetail != nil { // only support TiKV
+		procKeys = execDetail.ScanDetail.ProcessedKeys
+		totKeys = execDetail.ScanDetail.TotalKeys
+	}
+	costTime := a.Ctx.GetSessionVars().GetTotalCostDuration()
+	pcv.UpdateRuntimeInfo(procKeys, totKeys, int64(costTime))
+	a.Ctx.GetSessionVars().PlanCacheValue = nil // reset
 }
 
 func (a *ExecStmt) observeStmtFinishedForTopSQL() {

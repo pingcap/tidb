@@ -213,6 +213,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
+		failpoint.InjectCall("beforeGetSchedulableTasks")
 		schedulableTasks, err := sm.getSchedulableTasks()
 		if err != nil {
 			continue
@@ -275,7 +276,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 				// task of lower rank might be able to be scheduled.
 				continue
 			}
-		// reverting/cancelling/pausing
+		// reverting/cancelling/pausing/modifying, we don't allocate slots for them.
 		default:
 			allocateSlots = false
 			sm.logger.Info("start scheduler without allocating slots",

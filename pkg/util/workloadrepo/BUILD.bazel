@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "workloadrepo",
+    srcs = [
+        "const.go",
+        "housekeeper.go",
+        "sampling.go",
+        "snapshot.go",
+        "table.go",
+        "utils.go",
+        "worker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/workloadrepo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/domain/infosync",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/model",
+        "//pkg/owner",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/slice",
+        "//pkg/util/sqlescape",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "workloadrepo_test",
+    timeout = "short",
+    srcs = ["worker_test.go"],
+    embed = [":workloadrepo"],
+    flaky = True,
+    deps = [
+        "//pkg/domain",
+        "//pkg/kv",
+        "//pkg/owner",
+        "//pkg/parser/model",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_server_v3//embed",
+    ],
+)

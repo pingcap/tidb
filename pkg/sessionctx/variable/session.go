@@ -812,6 +812,9 @@ type SessionVars struct {
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
 
+	// The Cached Plan for this execution, it should be *plannercore.PlanCacheValue.
+	PlanCacheValue any
+
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
 
@@ -3775,8 +3778,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}

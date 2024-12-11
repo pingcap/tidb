@@ -16,11 +16,14 @@ package instanceplancache
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -499,4 +502,138 @@ func TestInstancePlanCachePlan(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("execute stmt using %v", using))
 		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	}
+}
+
+func TestInstancePlanCacheMetaInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st from "select a from t where a<?"`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where a=1 and b>1`)
+	tk.MustExec(`prepare st from "select a from t where a=? and b>?"`)
+	tk.MustExec(`execute st using @a, @b`)
+	tk.MustExec(`prepare st from "insert into t values (?, 1)"`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`prepare st from "delete from t where a=?"`)
+	tk.MustExec(`execute st using @a`)
+
+	sctx := tk.Session()
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	require.Len(t, values, 4)
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].(*plannercore.PlanCacheValue).SQLDigest <
+			values[j].(*plannercore.PlanCacheValue).SQLDigest
+	})
+	v0 := values[0].(*plannercore.PlanCacheValue)
+	v1 := values[1].(*plannercore.PlanCacheValue)
+	v2 := values[2].(*plannercore.PlanCacheValue)
+	v3 := values[3].(*plannercore.PlanCacheValue)
+
+	require.True(t, v0.SQLDigest != "") // not empty
+	require.Equal(t, "insert into t values (?, 1)", v0.SQLText)
+	require.Equal(t, "Insert", v0.StmtType)
+	require.Equal(t, "root", v0.ParseUser)
+	require.Equal(t, "", v0.Binding)
+	require.True(t, v0.OptimizerEnvHash != "") // not empty
+	require.Equal(t, "1", v0.ParseValues)
+
+	require.True(t, v1.SQLDigest != "") // not empty
+	require.Equal(t, "select a from t where a<?", v1.SQLText)
+	require.Equal(t, "Select", v1.StmtType)
+	require.Equal(t, "root", v1.ParseUser)
+	require.Equal(t, "", v1.Binding)
+	require.True(t, v1.OptimizerEnvHash != "") // not empty
+	require.Equal(t, "1", v1.ParseValues)
+
+	require.True(t, v2.SQLDigest != "") // not empty
+	require.Equal(t, "delete from t where a=?", v2.SQLText)
+	require.Equal(t, "Delete", v2.StmtType)
+	require.Equal(t, "root", v2.ParseUser)
+	require.Equal(t, "", v2.Binding)
+	require.True(t, v2.OptimizerEnvHash != "") // not empty
+	require.Equal(t, "1", v2.ParseValues)
+
+	require.True(t, v3.SQLDigest != "") // not empty
+	require.Equal(t, "select a from t where a=? and b>?", v3.SQLText)
+	require.Equal(t, "Select", v3.StmtType)
+	require.Equal(t, "root", v3.ParseUser)
+	require.Equal(t, "SELECT /*+ use_index(`t` `a`)*/ `a` FROM `test`.`t` WHERE `a` = 1 AND `b` > 1", v3.Binding)
+	require.True(t, v3.OptimizerEnvHash != "") // not empty
+	require.Equal(t, "(1, 2)", v3.ParseValues)
+}
+
+func TestInstancePlanCacheRuntimeInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`insert into t values (1, 1)`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st1 from "select a from t where a<=?"`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`prepare st2 from "select a from t where a=? and b=?"`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustExec(`execute st2 using @a, @b`)
+
+	sctx := tk.Session()
+	values := domain.GetDomain(sctx).GetInstancePlanCache().All()
+	require.Len(t, values, 2)
+	sort.Slice(values, func(i, j int) bool {
+		return values[i].(*plannercore.PlanCacheValue).SQLDigest <
+			values[j].(*plannercore.PlanCacheValue).SQLDigest
+	})
+	v0 := values[0].(*plannercore.PlanCacheValue)
+	v1 := values[1].(*plannercore.PlanCacheValue)
+
+	require.Equal(t, v0.SQLText, "select a from t where a<=?")
+	exec, _, _, sumLat, _ := v0.RuntimeInfo()
+	require.Equal(t, int(exec), 4)
+	require.True(t, sumLat != 0)
+
+	require.Equal(t, v1.SQLText, "select a from t where a=? and b=?")
+	exec, _, _, sumLat, _ = v1.RuntimeInfo()
+	require.Equal(t, int(exec), 2)
+	require.True(t, sumLat != 0)
+
+	tk.MustExec(`execute st1 using @a`)
+	exec, _, _, _, _ = v0.RuntimeInfo()
+	require.Equal(t, int(exec), 5)
+}
+
+func TestInstancePlanCacheView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`set @a=1, @b=2`)
+
+	tk.MustExec(`prepare st1 from "select a from t where a<=?"`)
+	tk.MustExec(`prepare st2 from "select a from t where a=? and b=?"`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustExec(`execute st2 using @a, @b`)
+
+	tk.MustQuery(`select sql_text, stmt_type, parse_user, parse_values, executions from information_schema.tidb_plan_cache order by sql_text`).Check(
+		testkit.Rows("select a from t where a<=? Select root 1 2",
+			"select a from t where a=? and b=? Select root (1, 2) 2"))
+
+	tk.MustExec(`execute st1 using @a`)
+	tk.MustExec(`execute st2 using @a, @b`)
+	tk.MustQuery(`select sql_text, stmt_type, parse_user, parse_values, executions from information_schema.tidb_plan_cache order by sql_text`).Check(
+		testkit.Rows("select a from t where a<=? Select root 1 3",
+			"select a from t where a=? and b=? Select root (1, 2) 3"))
 }

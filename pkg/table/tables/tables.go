@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -83,6 +82,9 @@ type TableCommon struct {
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
+
+	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
+	skipAssert bool
 }
 
 // ResetColumnsCache implements testingKnob interface.
@@ -408,31 +410,6 @@ func (t *TableCommon) RecordKey(h kv.Handle) kv.Key {
 	return tablecodec.EncodeRecordKey(t.recordPrefix, h)
 }
 
-// shouldAssert checks if the partition should be in consistent
-// state and can have assertion.
-func (t *TableCommon) shouldAssert(level variable.AssertionLevel) bool {
-	p := t.Meta().Partition
-	if p != nil {
-		// This disables asserting during Reorganize Partition.
-		switch level {
-		case variable.AssertionLevelFast:
-			// Fast option, just skip assertion for all partitions.
-			if p.DDLState != model.StateNone && p.DDLState != model.StatePublic {
-				return false
-			}
-		case variable.AssertionLevelStrict:
-			// Strict, only disable assertion for intermediate partitions.
-			// If there were an easy way to get from a TableCommon back to the partitioned table...
-			for i := range p.AddingDefinitions {
-				if t.physicalTableID == p.AddingDefinitions[i].ID {
-					return false
-				}
-			}
-		}
-	}
-	return true
-}
-
 // UpdateRecord implements table.Table UpdateRecord interface.
 // `touched` means which columns are really modified, used for secondary indices.
 // Length of `oldData` and `newData` equals to length of `t.WritableCols()`.
@@ -535,10 +512,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		}
 	})
 
-	if t.shouldAssert(sctx.TxnAssertionLevel()) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-	} else {
+	if t.skipAssert {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	if err != nil {
 		return err
@@ -1238,10 +1215,10 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 			}
 		}
 	})
-	if t.shouldAssert(ctx.TxnAssertionLevel()) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
-	} else {
+	if t.skipAssert {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+	} else {
+		err = txn.SetAssertion(key, kv.SetAssertExist)
 	}
 	if err != nil {
 		return err

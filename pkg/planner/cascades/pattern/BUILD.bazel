@@ -6,7 +6,7 @@ go_library(
         "engine.go",
         "pattern.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/pattern",
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/pattern",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/planner/core/base",

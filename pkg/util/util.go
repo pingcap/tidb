@@ -17,6 +17,8 @@ package util
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -288,4 +290,71 @@ func GetRecoverError(r any) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
+}
+
+// CheckIfSameCluster reads PD addresses registered in etcd from two sources, to
+// check if there are common addresses in both sources. If there are common
+// addresses, the first return value is true which means we have confidence that
+// the two sources are in the same cluster. If there are no common addresses, the
+// first return value is false, which means 1) the two sources are in different
+// clusters, or 2) the two sources may be in the same cluster but the getter
+// function does not return the common addresses.
+//
+// The getters should keep the same format of the returned addresses, like both
+// have URL scheme or not.
+//
+// The second and third return values are the PD addresses from the first and
+// second getters respectively. The fourth return value is the error occurred.
+func CheckIfSameCluster(
+	ctx context.Context,
+	pdAddrsGetter, pdAddrsGetter2 func(context.Context) ([]string, error),
+) (bool, []string, []string, error) {
+	addrs, err := pdAddrsGetter(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	addrsMap := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		addrsMap[a] = struct{}{}
+	}
+
+	addrs2, err := pdAddrsGetter2(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	for _, a := range addrs2 {
+		if _, ok := addrsMap[a]; ok {
+			return true, addrs, addrs2, nil
+		}
+	}
+	return false, addrs, addrs2, nil
+}
+
+// GetPDsAddrWithoutScheme returns a function that read all PD nodes' first etcd
+// client URL by SQL query. This is done by query INFORMATION_SCHEMA.CLUSTER_INFO
+// table and its executor memtableRetriever.dataForTiDBClusterInfo.
+func GetPDsAddrWithoutScheme(db *sql.DB) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defer rows.Close()
+		var ret []string
+		for rows.Next() {
+			var addr string
+			err = rows.Scan(&addr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// if intersection is not empty, we can say URLs from TiDB and PD are from the
+			// same cluster. See comments above pdTiDBFromSameClusterCheckItem struct.
+			ret = append(ret, addr)
+		}
+		if err = rows.Err(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, nil
+	}
 }

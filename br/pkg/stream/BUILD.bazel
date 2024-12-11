@@ -65,7 +65,7 @@ go_test(
     ],
     embed = [":stream"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 48,
     deps = [
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
@@ -88,6 +88,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_golang_x_exp//maps",
+        "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
     ],
 )
