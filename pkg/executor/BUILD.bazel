@@ -377,6 +377,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
+        "//pkg/ddl/util/callback",
         "//pkg/distsql",
         "//pkg/domain",
         "//pkg/domain/infosync",
