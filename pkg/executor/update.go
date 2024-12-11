@@ -177,54 +177,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 	return nil
 }
 
-func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
-	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
-		return nil
-	}
-
-	var mergedData []types.Datum
-	// merge updates from and into mergedRowData
-	var totalMemDelta int64
-
-	content := e.tblColPosInfos[i]
-
-	if !e.multiUpdateOnSameTable[content.TblID] {
-		// No need to merge if not multi-updated
-		return nil
-	}
-	if !e.tableUpdatable[i] {
-		// If there's nothing to update, we can just skip current row
-		return nil
-	}
-	if e.changed[i] {
-		// Each matched row is updated once, even if it matches the conditions multiple times.
-		return nil
-	}
-	handle := e.handles[i]
-	flags := e.assignFlag[content.Start:content.End]
-
-	if e.mergedRowData[content.TblID] == nil {
-		e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
-	}
-	tbl := e.tblID2table[content.TblID]
-	newTableData := newData[content.Start:content.End]
-
-	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
-	for i, flag := range flags {
-		if tbl.WritableCols()[i].IsGenerated() && flag >= 0 {
-			newTableData[i].Copy(&mergedData[i])
-		}
-	}
-
-	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
-	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
-	totalMemDelta += memDelta
-
-	e.memTracker.Consume(totalMemDelta)
-	return nil
-}
-
-func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int) error {
+func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEval bool) error {
 	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
 		return nil
 	}
@@ -263,9 +216,19 @@ func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int) error {
 		if !tbl.WritableCols()[i].IsGenerated() {
 			continue
 		}
-		mergedData[i].Copy(&oldData[i])
-		if flag < 0 {
-			mergedData[i].Copy(&newTableData[i])
+		// Before evaluate generated columns,
+		// we need to copy new values to both oldData and newData.
+		// After evaluation,
+		/// we need to copy new generated values into mergedData.
+		if beforeEval {
+			mergedData[i].Copy(&oldData[i])
+			if flag < 0 {
+				mergedData[i].Copy(&newTableData[i])
+			}
+		} else {
+			if flag >= 0 {
+				newTableData[i].Copy(&mergedData[i])
+			}
 		}
 	}
 
@@ -324,7 +287,7 @@ func (e *UpdateExec) exec(
 		}
 
 		// Copy data from merge row to old and new rows
-		if err := e.mergeGenerated(row, newData, i); err != nil {
+		if err := e.mergeGenerated(row, newData, i, true); err != nil {
 			return errors.Trace(err)
 		}
 
@@ -339,7 +302,7 @@ func (e *UpdateExec) exec(
 			dupKeyCheck, e.IgnoreError)
 
 		// Copy data from new row to merge row
-		if err := e.newDataToMerge(newData, i); err != nil {
+		if err := e.mergeGenerated(row, newData, i, false); err != nil {
 			return errors.Trace(err)
 		}
 
