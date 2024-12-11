@@ -1188,10 +1188,16 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-		if result != nil && result.resp != nil {
-			resp = result.resp
-			w.batchCopRespList = result.batchRespList
-			return resp
+		if result != nil {
+			if result.resp != nil {
+				w.batchCopRespList = result.batchRespList
+				return result.resp
+			}
+			if len(result.batchRespList) > 0 {
+				resp := result.batchRespList[0]
+				w.batchCopRespList = result.batchRespList[1:]
+				return resp
+			}
 		}
 	}
 	return nil
