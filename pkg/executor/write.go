@@ -60,13 +60,13 @@ var (
  * Since the column indices in assignments are based on evalbuffer, and newData may be a subset of evalBuffer,
  * offset is needed when assigning to newData.
  *
- *	                   |<---- newData ---->|
+ *                     |<---- newData ---->|
  * -------------------------------------------------------
  * |        t1         |        t1         |     t3      |
  * -------------------------------------------------------
  * |<------------------ evalBuffer ---|----------------->|
  *                                    |
- * 	                                  |
+ *                                    |
  * |<------------------------- assign.Col.Idx
  *
  * Length of `oldData` and `newData` equals to length of `t.Cols()`.
