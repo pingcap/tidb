@@ -4,13 +4,13 @@ package rtree
 
 import (
 	"bytes"
-	"slices"
 
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
@@ -32,10 +32,7 @@ func (rg *Range) ToKeyRange() *kvrpcpb.KeyRange {
 
 // BytesAndKeys returns total bytes and keys in a range.
 func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
-	for _, f := range rg.Files {
-		bytes += f.TotalBytes
-		keys += f.TotalKvs
-	}
+	keys, bytes = metautil.CalculateKvStatsOnFiles(rg.Files)
 	return
 }
 
@@ -266,36 +263,36 @@ func isOverlapContainsRange(overlaps []*Range, rg *Range) bool {
 }
 
 // removeOverlappedTableMetas remove table meta in files since the data is given up.
-func (rangeTree *RangeTree) removeOverlappedTableMetas(overlaps []*Range, rg *Range) bool {
+func (rangeTree *RangeTree) removeOverlappedTableMetas(overlaps []*Range, rg *Range, force bool) bool {
 	if len(overlaps) == 0 {
 		return false
 	}
-	if isOverlapContainsRange(overlaps, rg) {
+	if !force && isOverlapContainsRange(overlaps, rg) {
+		for _, file := range rg.Files {
+			for i := range file.TableMetas {
+				if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+					file.TableMetas[i] = nil
+					break
+				}
+			}
+		}
 		return true
 	}
 	// files in the first overlap having other tables range, so remove the last one table meta
 	for _, file := range overlaps[0].Files {
-		if len(file.TableMetas) > 1 {
-			// TODO: maybe it's OK to get file.TableMetas[:len-1]
-			if file.TableMetas[len(file.TableMetas)-1].PhysicalId == rangeTree.PhysicalID {
-				file.TableMetas = file.TableMetas[:len(file.TableMetas)-1]
-			} else {
-				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(meta *backuppb.TableMeta) bool {
-					return meta.PhysicalId == rangeTree.PhysicalID
-				})
+		for i := len(file.TableMetas) - 1; i >= 0; i-- {
+			if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas[i] = nil
+				break
 			}
 		}
 	}
 	// files in the last overlap having other tables range, so remove the first one table meta
 	for _, file := range overlaps[len(overlaps)-1].Files {
-		if len(file.TableMetas) > 1 {
-			// TODO: maybe it's OK to get file.TableMetas[1:]
-			if file.TableMetas[0].PhysicalId == rangeTree.PhysicalID {
-				file.TableMetas = file.TableMetas[1:]
-			} else {
-				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(meta *backuppb.TableMeta) bool {
-					return meta.PhysicalId == rangeTree.PhysicalID
-				})
+		for i := range file.TableMetas {
+			if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas[i] = nil
+				break
 			}
 		}
 	}
@@ -303,10 +300,14 @@ func (rangeTree *RangeTree) removeOverlappedTableMetas(overlaps []*Range, rg *Ra
 }
 
 // Update inserts range into tree and delete overlapping ranges.
-func (rangeTree *RangeTree) Update(rg Range) {
+func (rangeTree *RangeTree) Update(rg Range) bool {
+	return rangeTree.UpdateForce(rg, false)
+}
+
+func (rangeTree *RangeTree) UpdateForce(rg Range, force bool) bool {
 	overlaps := rangeTree.getOverlaps(&rg)
-	if rangeTree.removeOverlappedTableMetas(overlaps, &rg) {
-		return
+	if rangeTree.removeOverlappedTableMetas(overlaps, &rg, force) {
+		return false
 	}
 	// Range has backuped, overwrite overlapping range.
 	for _, item := range overlaps {
@@ -316,18 +317,31 @@ func (rangeTree *RangeTree) Update(rg Range) {
 		rangeTree.Delete(item)
 	}
 	rangeTree.ReplaceOrInsert(&rg)
+	return true
 }
 
 // Put forms a range and inserts it into tree.
 func (rangeTree *RangeTree) Put(
 	startKey, endKey []byte, files []*backuppb.File,
-) {
+) bool {
 	rg := Range{
 		StartKey: startKey,
 		EndKey:   endKey,
 		Files:    files,
 	}
-	rangeTree.Update(rg)
+	return rangeTree.Update(rg)
+}
+
+// Put forms a range and inserts it into tree.
+func (rangeTree *RangeTree) PutForce(
+	startKey, endKey []byte, files []*backuppb.File, force bool,
+) bool {
+	rg := Range{
+		StartKey: startKey,
+		EndKey:   endKey,
+		Files:    files,
+	}
+	return rangeTree.UpdateForce(rg, force)
 }
 
 // InsertRange inserts ranges into the range tree.
@@ -441,7 +455,7 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 // containsRange check if the range contains the region's key range.
 func containsRange(start, end, startKey, endKey []byte) bool {
 	return bytes.Compare(startKey, start) >= 0 &&
-		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
+		(len(end) == 0 || (len(endKey) > 0 && bytes.Compare(endKey, end) <= 0))
 }
 
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).

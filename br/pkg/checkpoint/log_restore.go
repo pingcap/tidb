@@ -161,7 +161,7 @@ func AppendRangeForLogRestore(
 func LoadCheckpointDataForLogRestore[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
-	fn func(K, V),
+	fn func(K, V) error,
 ) (time.Duration, error) {
 	return selectCheckpointData(ctx, execCtx, LogRestoreCheckpointDatabaseName, fn)
 }

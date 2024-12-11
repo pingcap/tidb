@@ -32,47 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMapTableToFiles(t *testing.T) {
-	filesOfTable1 := []*backuppb.File{
-		{
-			Name:     "table1-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-3.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-	}
-	filesOfTable2 := []*backuppb.File{
-		{
-			Name:     "table2-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table2-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-	}
-
-	result, hintSplitKeyCount := snapclient.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
-
-	require.Equal(t, filesOfTable1, result[1])
-	require.Equal(t, filesOfTable2, result[2])
-	require.Equal(t, 3, hintSplitKeyCount)
-}
-
 func newPartitionID(ids []int64) *model.PartitionInfo {
 	definitions := make([]model.PartitionDefinition, 0, len(ids))
 	for i, id := range ids {
@@ -127,7 +86,7 @@ type MockUpdateCh struct {
 
 func (m MockUpdateCh) IncBy(cnt int64) {}
 
-func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
+func generateCreatedTables(t *testing.T, files []*backuppb.File, upstreamTableIDs []int64, upstreamPartitionIDs map[int64][]int64, downstreamID func(upstream int64) int64) []*snapclient.CreatedTable {
 	createdTables := make([]*snapclient.CreatedTable, 0, len(upstreamTableIDs))
 	triggerID := 0
 	for _, upstreamTableID := range upstreamTableIDs {
@@ -177,7 +136,16 @@ func generateCreatedTables(t *testing.T, upstreamTableIDs []int64, upstreamParti
 			}
 		}
 		// generate rewrite rules
-		createdTable.RewriteRule = restoreutils.GetRewriteRules(createdTable.Table, createdTable.OldTable.Info, 0, true)
+		var err error
+		createdTable.RewriteRule, err = restoreutils.GetRewriteRules(createdTable.Table, createdTable.OldTable.Info, 0)
+		require.NoError(t, err)
+		filesOfPhysicals := make(map[int64][]*backuppb.File)
+		for _, file := range files {
+			for _, tableMeta := range file.TableMetas {
+				filesOfPhysicals[tableMeta.PhysicalId] = append(filesOfPhysicals[tableMeta.PhysicalId], file)
+			}
+		}
+		createdTable.OldTable.FilesOfPhysicals = filesOfPhysicals
 		createdTables = append(createdTables, createdTable)
 	}
 
@@ -222,7 +190,7 @@ func files(physicalTableID int64, startRows []int, cfs []string) restore.BackupF
 func downstreamID(upstream int64) int64 { return upstream + ((999-upstream)%10+1)*1000 }
 
 func cptKey(tableID int64, startRow int, cf string) string {
-	return snapclient.GetFileRangeKey(fmt.Sprintf("file_%d_%d_%s.sst", tableID, startRow, cf))
+	return restoreutils.GetFileRangeKey(fmt.Sprintf("file_%d_%d_%s.sst", tableID, startRow, cf))
 }
 
 func TestSortAndValidateFileRanges(t *testing.T) {
@@ -655,9 +623,9 @@ func TestSortAndValidateFileRanges(t *testing.T) {
 
 	for i, cs := range cases {
 		t.Log(i)
-		createdTables := generateCreatedTables(t, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
+		createdTables := generateCreatedTables(t, cs.files, cs.upstreamTableIDs, cs.upstreamPartitionIDs, downstreamID)
 		onProgress := func(i int64) { updateCh.IncBy(i) }
-		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.files, cs.checkpointSetWithTableID, []metautil.TableIDSpan{}, cs.splitSizeBytes, cs.splitKeyCount, cs.splitOnTable, onProgress)
+		splitKeys, tableIDWithFilesGroups, err := snapclient.SortAndValidateFileRanges(createdTables, cs.checkpointSetWithTableID, []metautil.TableIDSpan{}, cs.splitSizeBytes, cs.splitKeyCount, 0, cs.splitOnTable, onProgress)
 		require.NoError(t, err)
 		require.Equal(t, cs.splitKeys, splitKeys)
 		require.Equal(t, len(cs.tableIDWithFilesGroups), len(tableIDWithFilesGroups))
@@ -949,6 +917,7 @@ func TestIterSortedPhysicalTables(t *testing.T) {
 		for _, cs := range csGroup.cases {
 			i := 0
 			err := snapclient.IterSortedPhysicalTables(
+				0,
 				generatePhysicalTables(cs.tableIDs),
 				generateTableIDSpans(idSpans),
 				func(pt []*snapclient.PhysicalTable) error {

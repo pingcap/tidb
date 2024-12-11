@@ -14,6 +14,6 @@
 
 package rtree
 
-func RemoveOverlappedTableMetas(rangeTree *RangeTree, overlaps []*Range, rg *Range) bool {
-	return rangeTree.removeOverlappedTableMetas(overlaps, rg)
+func RemoveOverlappedTableMetas(rangeTree *RangeTree, overlaps []*Range, rg *Range, force bool) bool {
+	return rangeTree.removeOverlappedTableMetas(overlaps, rg, force)
 }

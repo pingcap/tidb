@@ -56,7 +56,7 @@ func FastChecksum(
 			// empty database
 			continue
 		}
-		expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.Info, tbl.Files)
+		expectedChecksumStats := tbl.CalculateChecksumStatsOnFiles()
 		if expectedChecksumStats.Crc64Xor != tbl.Crc64Xor ||
 			expectedChecksumStats.TotalBytes != tbl.TotalBytes ||
 			expectedChecksumStats.TotalKvs != tbl.TotalKvs {

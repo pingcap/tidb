@@ -87,6 +87,18 @@ func New(tables []*metautil.Table) *PreallocIDs {
 	}
 }
 
+// GetPreallocedInfo gets the (preallocedFrom, preallocedEnd, unreusedCount), and it is valid only after PreallocIDs.Allc has been called
+func (p *PreallocIDs) GetPreallocedInfo() (int64, int64, int) {
+	return p.preallocedFrom, p.preallocedEnd, p.unreusedCount
+}
+
+// SetPreallocedInfo sets by the already prealloced info from checkpoint metadata
+func (p *PreallocIDs) SetPreallocedInfo(from, end int64, unreusedCount int) {
+	p.preallocedFrom = from
+	p.preallocedEnd = end
+	p.unreusedCount = unreusedCount
+}
+
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
 	if p.preallocedFrom >= p.preallocedEnd {

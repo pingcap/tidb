@@ -217,16 +217,13 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []checkpoint.RangeKey{
-			{
-				GroupKey: "a",
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		}, []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
-		})
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+			[]byte(d.StartKey),
+			[]byte(d.EndKey),
+			[]*backuppb.File{
+				{Name: d.Name},
+				{Name: d.Name2},
+			})
 		require.NoError(t, err)
 	}
 
@@ -236,33 +233,30 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []checkpoint.RangeKey{
-			{
-				GroupKey: "+",
-				StartKey: []byte(d.StartKey),
-				EndKey:   []byte(d.EndKey),
-			},
-		}, []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
-		})
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+			[]byte(d.StartKey),
+			[]byte(d.EndKey),
+			[]*backuppb.File{
+				{Name: d.Name},
+				{Name: d.Name2},
+			})
 		require.NoError(t, err)
 	}
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	checker := func(groupKey string, resp checkpoint.BackupValueType) {
+	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
 		require.NotNil(t, resp)
-		require.Len(t, resp.RangeKeys, 1)
-		d, ok := data[string(resp.RangeKeys[0].StartKey)]
+		d, ok := data[string(resp.StartKey)]
 		if !ok {
-			d, ok = data2[string(resp.RangeKeys[0].StartKey)]
+			d, ok = data2[string(resp.StartKey)]
 			require.True(t, ok)
 		}
-		require.Equal(t, d.StartKey, string(resp.RangeKeys[0].StartKey))
-		require.Equal(t, d.EndKey, string(resp.RangeKeys[0].EndKey))
+		require.Equal(t, d.StartKey, string(resp.StartKey))
+		require.Equal(t, d.EndKey, string(resp.EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
+		return nil
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
@@ -300,40 +294,25 @@ func TestCheckpointBackupRunner2(t *testing.T) {
 		ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
 	require.NoError(t, err)
 
-	err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []checkpoint.RangeKey{
-		{
-			GroupKey: "a",
-			StartKey: []byte("a1"),
-			EndKey:   []byte("a2"),
-		},
-		{
-			GroupKey: "b",
-			StartKey: []byte("b1"),
-			EndKey:   []byte("b2"),
-		},
-		{
-			GroupKey: "c",
-			StartKey: []byte("c1"),
-			EndKey:   []byte("c2"),
-		},
-	}, []*backuppb.File{
-		{Name: "1.sst"},
-		{Name: "2.sst"},
-	})
+	err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+		[]byte("a1"),
+		[]byte("c2"),
+		[]*backuppb.File{
+			{Name: "1.sst"},
+			{Name: "2.sst"},
+		})
 	require.NoError(t, err)
 
 	checkpointRunner.WaitForFinish(ctx, true)
 	count := 0
-	checker := func(groupKey string, resp checkpoint.BackupValueType) {
-		require.Equal(t, "a", groupKey)
-		require.Len(t, resp.RangeKeys, 3)
-		require.Equal(t, checkpoint.RangeKey{GroupKey: "a", StartKey: []byte("a1"), EndKey: []byte("a2")}, resp.RangeKeys[0])
-		require.Equal(t, checkpoint.RangeKey{GroupKey: "b", StartKey: []byte("b1"), EndKey: []byte("b2")}, resp.RangeKeys[1])
-		require.Equal(t, checkpoint.RangeKey{GroupKey: "c", StartKey: []byte("c1"), EndKey: []byte("c2")}, resp.RangeKeys[2])
+	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
+		require.Equal(t, []byte("a1"), resp.StartKey)
+		require.Equal(t, []byte("c2"), resp.EndKey)
 		require.Len(t, resp.Files, 2)
 		require.Equal(t, "1.sst", resp.Files[0].Name)
 		require.Equal(t, "2.sst", resp.Files[1].Name)
 		count += 1
+		return nil
 	}
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
 	require.NoError(t, err)
@@ -398,7 +377,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[resp.RangeKey]
 		if !ok {
@@ -410,6 +389,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		}
 		require.Equal(t, d.RangeKey, resp.RangeKey)
 		respCount += 1
+		return nil
 	}
 
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
@@ -470,8 +450,9 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
-		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		func(tableID int64, rangeKey checkpoint.RestoreValueType) error {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+			return nil
 		})
 	require.NoError(t, err)
 	require.LessOrEqual(t, 1, recordSet["1_{123}"])
@@ -510,8 +491,9 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	require.NoError(t, err)
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
-		func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		func(tableID int64, rangeKey checkpoint.RestoreValueType) error {
 			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+			return nil
 		})
 	require.NoError(t, err)
 	require.Equal(t, 1, recordSet["1_{123}"])
@@ -579,7 +561,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) error {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
 		if !ok {
@@ -596,11 +578,12 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 			for _, foff := range foffs {
 				if f.foff == foff {
 					respCount += 1
-					return
+					return nil
 				}
 			}
 		}
 		require.FailNow(t, "not found in the original data")
+		return nil
 	}
 
 	_, err = checkpoint.LoadCheckpointDataForLogRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)

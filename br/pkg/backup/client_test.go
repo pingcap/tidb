@@ -588,7 +588,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
@@ -629,7 +629,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -674,7 +674,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -733,7 +733,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -786,7 +786,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -838,6 +838,7 @@ func TestMainBackupLoop(t *testing.T) {
 }
 
 func TestBuildProgressRangeTree(t *testing.T) {
+	backgroundCtx := context.Background()
 	s := createBackupSuite(t)
 	ranges := []rtree.Range{
 		{
@@ -849,7 +850,7 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			EndKey:   []byte("d"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))

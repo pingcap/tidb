@@ -72,38 +72,25 @@ func EmptyRewriteRule() *RewriteRules {
 // if set to true, means we collect the rules like tXXX_r, tYYY_i.
 // if set to false, means we only collect the rules contain table_id, tXXX, tYYY.
 func GetRewriteRules(
-	newTable, oldTable *model.TableInfo, newTimeStamp uint64, getDetailRule bool,
-) *RewriteRules {
+	newTable, oldTable *model.TableInfo, newTimeStamp uint64,
+) (*RewriteRules, error) {
 	tableIDs := GetTableIDMap(newTable, oldTable)
-	indexIDs := GetIndexIDMap(newTable, oldTable)
+	if err := MustTheSameIndexID(newTable, oldTable); err != nil {
+		return nil, errors.Trace(err)
+	}
 
 	dataRules := make([]*import_sstpb.RewriteRule, 0)
 	for oldTableID, newTableID := range tableIDs {
-		if getDetailRule {
-			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix: tablecodec.GenTableRecordPrefix(oldTableID),
-				NewKeyPrefix: tablecodec.GenTableRecordPrefix(newTableID),
-				NewTimestamp: newTimeStamp,
-			})
-			for oldIndexID, newIndexID := range indexIDs {
-				dataRules = append(dataRules, &import_sstpb.RewriteRule{
-					OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
-					NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
-					NewTimestamp: newTimeStamp,
-				})
-			}
-		} else {
-			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
-				NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
-				NewTimestamp: newTimeStamp,
-			})
-		}
+		dataRules = append(dataRules, &import_sstpb.RewriteRule{
+			OldKeyPrefix: tablecodec.EncodeTablePrefix(oldTableID),
+			NewKeyPrefix: tablecodec.EncodeTablePrefix(newTableID),
+			NewTimestamp: newTimeStamp,
+		})
 	}
 
 	return &RewriteRules{
 		Data: dataRules,
-	}
+	}, nil
 }
 
 func GetRewriteRulesMap(
@@ -293,6 +280,23 @@ func GetRewriteTableID(tableID int64, rewriteRules *RewriteRules) int64 {
 	return tablecodec.DecodeTableID(rule.GetNewKeyPrefix())
 }
 
+func UniqueSortedRewriteRules(sortedRewriteRules []*import_sstpb.RewriteRule) []*import_sstpb.RewriteRule {
+	var lastOldPrefix []byte
+	var endIndex int = 0
+	for i, rule := range sortedRewriteRules {
+		if bytes.Equal(rule.OldKeyPrefix, lastOldPrefix) {
+			continue
+		}
+		lastOldPrefix = rule.OldKeyPrefix
+		if i != endIndex {
+			sortedRewriteRules[endIndex] = rule
+		}
+		endIndex += 1
+	}
+	clear(sortedRewriteRules[endIndex:])
+	return sortedRewriteRules[:endIndex]
+}
+
 func GetSortedRewriteRules(file *backuppb.File, rules map[int64]*RewriteRules, encodePrefix bool) ([]byte, []byte, []*import_sstpb.RewriteRule) {
 	sortedRewriteRules := make([]*import_sstpb.RewriteRule, 0)
 	startID := tablecodec.DecodeTableID(file.StartKey)
@@ -350,7 +354,7 @@ func GetSortedRewriteRules(file *backuppb.File, rules map[int64]*RewriteRules, e
 	slices.SortFunc(sortedRewriteRules, func(leftRule, rightRule *import_sstpb.RewriteRule) int {
 		return bytes.Compare(leftRule.OldKeyPrefix, rightRule.OldKeyPrefix)
 	})
-	return encodedStartKey, encodedEndKey, sortedRewriteRules
+	return encodedStartKey, encodedEndKey, UniqueSortedRewriteRules(sortedRewriteRules)
 }
 
 func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb.RewriteRule {
@@ -459,67 +463,6 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.
 	}
 
 	return s, nil
-}
-
-func RewriteFileRange(file *backuppb.File, rewriteRules map[int64]*RewriteRules) ([]byte, []byte, *rtree.Range, error) {
-	rg := &rtree.Range{}
-	if len(file.TableMetas) == 0 {
-		rg.StartKey = file.StartKey
-		rg.EndKey = file.EndKey
-		newRg, err := RewriteRange(rg, rewriteRules)
-		return rg.StartKey, rg.EndKey, newRg, err
-	}
-	// get the start key
-	newUpstreamStartKey, rewritedStartKey, err := func() ([]byte, []byte, error) {
-		for i, tableMeta := range file.TableMetas {
-			rules, exists := rewriteRules[tableMeta.PhysicalId]
-			if exists {
-				startKey := file.StartKey
-				if i != 0 {
-					startKey = tablecodec.EncodeTableIndexPrefix(tableMeta.PhysicalId, 0)
-				}
-				rewritedStartKey, rule := replacePrefix(startKey, rules)
-				if rule == nil {
-					log.Error("cannot find rewrite rule", logutil.Key("start key", startKey))
-					return nil, nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "cannot find rewrite rule")
-				}
-				return startKey, rewritedStartKey, nil
-			}
-		}
-		return nil, nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "cannot find rewrite rule")
-	}()
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-	rg.StartKey = rewritedStartKey
-
-	// get the end key
-	newUpstreamEndKey, rewritedEndKey, err := func() ([]byte, []byte, error) {
-		for i := len(file.TableMetas) - 1; i >= 0; i -= 1 {
-			tableMeta := file.TableMetas[i]
-			rules, exists := rewriteRules[tableMeta.PhysicalId]
-			if exists {
-				endKey := file.EndKey
-				if i != len(file.TableMetas)-1 {
-					// TODO: is t{table_id}_r\xFF OK?
-					endKey = append(tablecodec.EncodeTablePrefix(tableMeta.PhysicalId), 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF)
-				}
-				rewritedEndKey, rule := replacePrefix(endKey, rules)
-				if rule == nil {
-					log.Error("cannot find rewrite rule", logutil.Key("start key", endKey))
-					return nil, nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "cannot find rewrite rule")
-				}
-				return endKey, rewritedEndKey, nil
-			}
-		}
-		return nil, nil, errors.Annotate(berrors.ErrKVRewriteRuleNotFound, "cannot find rewrite rule")
-	}()
-	if err != nil {
-		return nil, nil, nil, errors.Trace(err)
-	}
-	rg.EndKey = rewritedEndKey
-
-	return newUpstreamStartKey, newUpstreamEndKey, rg, nil
 }
 
 func RewriteRange(rg *rtree.Range, rewriteRulesMap map[int64]*RewriteRules) (*rtree.Range, error) {

@@ -4,6 +4,7 @@ package rtree_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -296,34 +297,40 @@ func TestProgressRangeTree(t *testing.T) {
 	require.Equal(t, 0, len(groupRanges))
 }
 
+func removeNilTableMetas(tableMetas []*backuppb.TableMeta) []*backuppb.TableMeta {
+	return slices.DeleteFunc(tableMetas, func(tableMeta *backuppb.TableMeta) bool {
+		return tableMeta == nil
+	})
+}
+
 func TestRemoveOverlappedTableMetas(t *testing.T) {
 	rangeTree := rtree.NewRangeTreeWithPhysicalID(5)
 	rg := &rtree.Range{
 		StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
 		EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
 	}
-	skip := rtree.RemoveOverlappedTableMetas(&rangeTree, nil, rg)
+	skip := rtree.RemoveOverlappedTableMetas(&rangeTree, nil, rg, false)
 	require.False(t, skip)
 	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
 		{
 			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
 			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
 		},
-	}, rg)
+	}, rg, false)
 	require.True(t, skip)
 	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
 		{
 			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(500)),
 			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
 		},
-	}, rg)
+	}, rg, false)
 	require.True(t, skip)
 	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
 		{
 			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
 			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(3000)),
 		},
-	}, rg)
+	}, rg, false)
 	require.True(t, skip)
 
 	overlaps := []*rtree.Range{
@@ -340,9 +347,10 @@ func TestRemoveOverlappedTableMetas(t *testing.T) {
 			},
 		},
 	}
-	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg)
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg, false)
 	require.False(t, skip)
-	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, overlaps[0].Files[0].TableMetas)
+	tableMetas := removeNilTableMetas(overlaps[0].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
 	overlaps = []*rtree.Range{
 		{
 			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1)),
@@ -381,10 +389,14 @@ func TestRemoveOverlappedTableMetas(t *testing.T) {
 			},
 		},
 	}
-	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg)
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg, false)
 	require.False(t, skip)
-	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, overlaps[0].Files[0].TableMetas)
-	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, overlaps[0].Files[1].TableMetas)
-	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, overlaps[1].Files[0].TableMetas)
-	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, overlaps[1].Files[1].TableMetas)
+	tableMetas = removeNilTableMetas(overlaps[0].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[0].Files[1].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[1].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[1].Files[1].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, tableMetas)
 }

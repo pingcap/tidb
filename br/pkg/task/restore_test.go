@@ -500,22 +500,31 @@ func TestTikvUsage(t *testing.T) {
 	for _, f := range files {
 		total += f.GetSize_()
 	}
-	ret := task.EstimateTikvUsage(files, replica, storeCnt)
+	ret := task.EstimateTikvUsage(total, replica, storeCnt)
 	require.Equal(t, total*replica/storeCnt, ret)
 }
 
 func TestTiflashUsage(t *testing.T) {
 	tables := []*metautil.Table{
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
-			Files: []*backuppb.File{{Size_: 1 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{1: {{Size_: 1 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
-			Files: []*backuppb.File{{Size_: 2 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{2: {{Size_: 2 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
-			Files: []*backuppb.File{{Size_: 3 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{3: {{Size_: 3 * pb}}}},
+	}
+
+	physicalSizes := make(map[int64]uint64)
+	for _, table := range tables {
+		for physicalID, files := range table.FilesOfPhysicals {
+			for _, file := range files {
+				physicalSizes[physicalID] += file.Size_
+			}
+		}
 	}
 
 	var storeCnt uint64 = 3
-	ret := task.EstimateTiflashUsage(tables, storeCnt)
+	ret := task.EstimateTiflashUsage(physicalSizes, tables, storeCnt)
 	require.Equal(t, 8*pb/3, ret)
 }
 

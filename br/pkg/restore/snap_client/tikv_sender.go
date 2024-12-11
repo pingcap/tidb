@@ -26,13 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
 )
 
@@ -43,6 +41,7 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 			NewPhysicalID: createdTable.Table.ID,
 			OldPhysicalID: createdTable.OldTable.Info.ID,
 			RewriteRules:  createdTable.RewriteRule,
+			Files:         createdTable.OldTable.FilesOfPhysicals[createdTable.OldTable.Info.ID],
 		})
 
 		partitionIDMap := restoreutils.GetPartitionIDMap(createdTable.Table, createdTable.OldTable.Info)
@@ -51,8 +50,11 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 				NewPhysicalID: newID,
 				OldPhysicalID: oldID,
 				RewriteRules:  createdTable.RewriteRule,
+				Files:         createdTable.OldTable.FilesOfPhysicals[oldID],
 			})
 		}
+		// take the physical files
+		createdTable.OldTable.FilesOfPhysicals = nil
 	}
 	// sort the physical table by downstream stream physical id
 	sort.Slice(physicalTables, func(a, b int) bool {
@@ -61,44 +63,24 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 	return physicalTables
 }
 
-// mapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
-	result := map[int64][]*backuppb.File{}
-	// count the write cf file that hint for split key slice size
-	maxSplitKeyCount := 0
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID &&
-			tableID != file.TableMetas[0].PhysicalId &&
-			tableEndID != file.TableMetas[len(file.TableMetas)-1].PhysicalId {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 || tableEndID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-
-		result[tableID] = append(result[tableID], file)
-		if file.Cf == restoreutils.WriteCFName {
-			maxSplitKeyCount += 1
-		}
-	}
-	return result, maxSplitKeyCount
-}
-
-func iterSortedPhysicalTables(sortedPhysicalTables []*PhysicalTable, sortedTableIDSpans []metautil.TableIDSpan, iterFn func([]*PhysicalTable) error) error {
+func iterSortedPhysicalTables(preallocedFrom int64, sortedPhysicalTables []*PhysicalTable, sortedTableIDSpans []metautil.TableIDSpan, iterFn func([]*PhysicalTable) error) error {
 	var (
-		currentSpanIndex   = 0
-		startPhysicalTable = -1
-		inSpan             = false
+		currentSpanIndex     = 0
+		unpreallocedIndexEnd = -1
+		inSpan               = false
 	)
+	for i := range sortedPhysicalTables {
+		table := sortedPhysicalTables[i]
+		if table.NewPhysicalID >= preallocedFrom {
+			break
+		}
+		// BR can not make sure the tables whose id is less than preallocedFrom is near other tables whose ids are from the same span.
+		// So it directly calls the iter function.
+		iterFn(sortedPhysicalTables[i : i+1])
+		unpreallocedIndexEnd = i
+	}
+	startPhysicalTable := unpreallocedIndexEnd
+	preallocedIndexStart := unpreallocedIndexEnd + 1
 	// Notice that some table ID may be filtered, so we need to handle these situations:
 	// There are 6 tables with ID 1, 3, 5, 7, 9, and 11, and there is a span [5 7 9].
 	// And the ID 5 is filtered.
@@ -115,11 +97,11 @@ func iterSortedPhysicalTables(sortedPhysicalTables []*PhysicalTable, sortedTable
 	//     1 3 [5 7 {9}] 11 -> 1 3 [5 7 9] {11}
 	//
 NEXTTABLE:
-	for end := range sortedPhysicalTables {
+	for end := preallocedIndexStart; end < len(sortedPhysicalTables); end += 1 {
 		table := sortedPhysicalTables[end]
 		for {
 			if currentSpanIndex >= len(sortedTableIDSpans) || table.OldPhysicalID < sortedTableIDSpans[currentSpanIndex].StartTableID {
-				if startPhysicalTable >= 0 && startPhysicalTable < end {
+				if startPhysicalTable >= preallocedIndexStart && startPhysicalTable < end {
 					if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
 						return errors.Trace(err)
 					}
@@ -131,7 +113,7 @@ NEXTTABLE:
 			if table.OldPhysicalID <= sortedTableIDSpans[currentSpanIndex].EndTableID {
 				// first in the span
 				if !inSpan {
-					if startPhysicalTable >= 0 && startPhysicalTable < end {
+					if startPhysicalTable >= preallocedIndexStart && startPhysicalTable < end {
 						if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
 							return errors.Trace(err)
 						}
@@ -153,7 +135,7 @@ NEXTTABLE:
 			currentSpanIndex += 1
 		}
 	}
-	if startPhysicalTable >= 0 && startPhysicalTable < len(sortedPhysicalTables) {
+	if startPhysicalTable >= preallocedIndexStart && startPhysicalTable < len(sortedPhysicalTables) {
 		if err := iterFn(sortedPhysicalTables[startPhysicalTable:]); err != nil {
 			return errors.Trace(err)
 		}
@@ -168,13 +150,14 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, o
 	totalBytes := uint64(0)
 	newFiles := make([]*backuppb.File, 0, len(files))
 	for _, file := range files {
-		rangeKey := getFileRangeKey(file.Name)
+		rangeKey := restoreutils.GetFileRangeKey(file.Name)
 		if _, exists := checkpointSet[rangeKey]; exists {
 			// the range has been import done, so skip it and
 			// update the summary information
 			progress += 1
-			totalKVs += file.TotalKvs
-			totalBytes += file.TotalBytes
+			kvs, bytes := metautil.CalculateKvStatsOnFile(file)
+			totalKVs += kvs
+			totalBytes += bytes
 		} else {
 			newFiles = append(newFiles, file)
 		}
@@ -197,26 +180,24 @@ const MergedRangeCountThreshold = 1536
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
-	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	sortedTableIDSpans []metautil.TableIDSpan,
 	splitSizeBytes, splitKeyCount uint64,
+	preallocedFrom int64,
 	splitOnTable bool,
 	onProgress func(int64),
 ) ([][]byte, []restore.BatchBackupFileSet, error) {
 	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
-	// mapping table ID to its backup files
-	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
 	var (
 		// to generate region split keys, merge the small ranges over the adjacent tables
-		sortedSplitKeys        = make([][]byte, 0, hintSplitKeyCount)
+		sortedSplitKeys        = make([][]byte, 0)
 		groupSize              = uint64(0)
 		groupCount             = uint64(0)
 		lastKey         []byte = nil
 
 		// group the files by the generated split keys
-		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0, hintSplitKeyCount)
+		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0)
 		lastFilesGroup        restore.BatchBackupFileSet = nil
 
 		// statistic
@@ -225,19 +206,20 @@ func SortAndValidateFileRanges(
 	)
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
-	if err := iterSortedPhysicalTables(sortedPhysicalTables, sortedTableIDSpans, func(tables []*PhysicalTable) error {
+	if err := iterSortedPhysicalTables(preallocedFrom, sortedPhysicalTables, sortedTableIDSpans, func(tables []*PhysicalTable) error {
 		minPhysicalID := int64(math.MaxInt64)
 		mergedFiles := make([]*backuppb.File, 0)
 		rewriteRules := make(map[int64]*restoreutils.RewriteRules)
 		for _, table := range tables {
-			files := fileOfTable[table.OldPhysicalID]
-			for _, file := range files {
+			for _, file := range table.Files {
 				if err := restoreutils.ValidateFileRewriteRule(file, table.OldPhysicalID, table.RewriteRules); err != nil {
 					return errors.Trace(err)
 				}
 			}
 			minPhysicalID = min(minPhysicalID, table.NewPhysicalID)
-			mergedFiles = append(mergedFiles, files...)
+			mergedFiles = append(mergedFiles, table.Files...)
+			// take the files
+			table.Files = nil
 			rewriteRules[table.OldPhysicalID] = table.RewriteRules
 		}
 		// Merge small ranges to reduce split and scatter regions.
@@ -356,7 +338,6 @@ func (rc *SnapClient) RestoreTables(
 	ctx context.Context,
 	placementRuleManager PlacementRuleManager,
 	createdTables []*CreatedTable,
-	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
@@ -374,9 +355,9 @@ func (rc *SnapClient) RestoreTables(
 
 	start := time.Now()
 	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(
-		createdTables, allFiles,
-		checkpointSetWithTableID, rc.sortedTableIDSpans,
-		splitSizeBytes, splitKeyCount, splitOnTable, onProgress)
+		createdTables,
+		checkpointSetWithTableID, rc.schemaFilesStats.SortedPhysicalRanges,
+		splitSizeBytes, splitKeyCount, rc.preallocInfo.From, splitOnTable, onProgress)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -395,8 +376,6 @@ func (rc *SnapClient) RestoreTables(
 	}
 	elapsed := time.Since(start)
 	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
-
-	summary.CollectSuccessUnit("files", len(allFiles), elapsed)
 	return nil
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -295,41 +294,40 @@ func TestCalculateChecksumStatsOnFiles(t *testing.T) {
 			Crc64Xor:   checksum,
 		}
 	}
-	checksumStats := CalculateChecksumStatsOnFiles(&model.TableInfo{
-		ID: 1,
-		Partition: &model.PartitionInfo{
-			Definitions: []model.PartitionDefinition{
-				{ID: 100},
-				{ID: 102},
-				{ID: 3},
-			},
+	file1 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(1, 10, 20, 30),
+			generateTableMeta(3, 30, 40, 50),
 		},
-	}, []*backuppb.File{
-		{
-			TableMetas: []*backuppb.TableMeta{
-				generateTableMeta(1, 10, 20, 30),
-				generateTableMeta(3, 30, 40, 50),
-			},
+	}
+	file2 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(3, 40, 50, 60),
 		},
-		{
-			TableMetas: []*backuppb.TableMeta{
-				generateTableMeta(3, 40, 50, 60),
-			},
+	}
+	file3 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(3, 50, 60, 70),
+			generateTableMeta(4, 40, 50, 60),
+			generateTableMeta(100, 1000, 2000, 3000),
 		},
-		{
-			TableMetas: []*backuppb.TableMeta{
-				generateTableMeta(3, 50, 60, 70),
-				generateTableMeta(4, 40, 50, 60),
-				generateTableMeta(100, 1000, 2000, 3000),
-			},
+	}
+	file4 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(102, 1002, 2002, 3002),
+			generateTableMeta(103, 1003, 2003, 3003),
 		},
-		{
-			TableMetas: []*backuppb.TableMeta{
-				generateTableMeta(102, 1002, 2002, 3002),
-				generateTableMeta(103, 1003, 2003, 3003),
-			},
+	}
+	// table id : 1, partition ids: 3, 100, 102
+	tbl := &Table{
+		FilesOfPhysicals: map[int64][]*backuppb.File{
+			1:   {file1},
+			3:   {file1, file2, file3},
+			100: {file3},
+			102: {file4},
 		},
-	})
+	}
+	checksumStats := tbl.CalculateChecksumStatsOnFiles()
 	require.Equal(t, uint64(10+30+40+50+1000+1002), checksumStats.TotalKvs)
 	require.Equal(t, uint64(20+40+50+60+2000+2002), checksumStats.TotalBytes)
 	require.Equal(t, uint64(30^50^60^70^3000^3002), checksumStats.Crc64Xor)

@@ -16,8 +16,6 @@ package restore
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -297,7 +295,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 				for _, filesGroup := range filesReplica {
 					rangeKeySet := make(map[string]struct{})
 					for _, file := range filesGroup.SSTFiles {
-						rangeKey := GetFileRangeKey(file.Name)
+						rangeKey := utils.GetFileRangeKey(file.Name)
 						// Assert that the files having the same rangeKey are all in the current filesGroup.Files
 						rangeKeySet[rangeKey] = struct{}{}
 					}
@@ -317,17 +315,6 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
 	return m.ectx.Err()
-}
-
-func GetFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
 }
 
 type PipelineRestorerWrapper[T any] struct {

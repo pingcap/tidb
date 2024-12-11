@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -580,10 +581,7 @@ func (bc *Client) StartCheckpointRunner(
 		// otherwise, the checkpoint meta is loaded from the external storage,
 		// no need to save it again
 		// besides, there are exist checkpoint data need to be loaded before start checkpoint runner
-		bc.checkpointMeta.CheckpointDataMap, err = bc.loadCheckpointRanges(ctx, progressCallBack)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		bc.checkpointMeta.LoadCheckpointDataMap = true
 	}
 
 	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
@@ -601,20 +599,6 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
 	physicalID := tablecodec.DecodeTableID(r.StartKey)
 	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
-	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
-		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
-		if exists {
-			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
-			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
-			rangeTree.PhysicalID = physicalID
-			return &rtree.ProgressRange{
-				Res:        rangeTree,
-				Incomplete: incomplete,
-				Origin:     r,
-				GroupKey:   groupKey,
-			}
-		}
-	}
 
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
@@ -626,30 +610,6 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 		Origin:   r,
 		GroupKey: groupKey,
 	}
-}
-
-// LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
-	rangeDataMap := make(map[string]rtree.RangeTree)
-
-	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) {
-		// make sure the same SST file having the same pointer
-		for _, rangeKey := range rg.RangeKeys {
-			rangeTree, exists := rangeDataMap[rangeKey.GroupKey]
-			if !exists {
-				rangeTree = rtree.NewRangeTree()
-				rangeDataMap[rangeKey.GroupKey] = rangeTree
-			}
-			rangeTree.Put(rangeKey.StartKey, rangeKey.EndKey, rg.Files)
-		}
-		progressCallBack()
-	})
-
-	// we should adjust start-time of the summary to `pastDureTime` earlier
-	log.Info("past cost time", zap.Duration("cost", pastDureTime))
-	summary.AdjustStartTimeToEarlierTime(pastDureTime)
-
-	return rangeDataMap, errors.Trace(err)
 }
 
 // SetStorage sets ExternalStorage for client.
@@ -1067,7 +1027,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, error) {
+func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Range, progressCallBack func()) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree()
@@ -1075,6 +1035,41 @@ func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRa
 		if err := progressRangeTree.Insert(bc.getProgressRange(r)); err != nil {
 			return progressRangeTree, errors.Trace(err)
 		}
+	}
+
+	// LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
+	if bc.checkpointMeta != nil && bc.checkpointMeta.LoadCheckpointDataMap {
+		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) error {
+			sortedPrs, err := progressRangeTree.FindContained(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			physicalIDSet := make(map[int64]struct{})
+			if len(rg.Files) > 0 {
+				for _, tableMeta := range rg.Files[0].TableMetas {
+					if tableMeta != nil {
+						physicalIDSet[tableMeta.PhysicalId] = struct{}{}
+					}
+				}
+			}
+			force := false
+			for _, pr := range sortedPrs {
+				if _, exists := physicalIDSet[pr.Res.PhysicalID]; !exists {
+					continue
+				}
+				startKey, endKey := maxStartKey(pr.Origin.StartKey, rg.StartKey), minEndKey(pr.Origin.EndKey, rg.EndKey)
+				force = pr.Res.PutForce(startKey, endKey, rg.Files, force)
+			}
+			progressCallBack()
+			return nil
+		})
+		if err != nil {
+			return progressRangeTree, errors.Trace(err)
+		}
+
+		// we should adjust start-time of the summary to `pastDureTime` earlier
+		log.Info("past cost time", zap.Duration("cost", pastDureTime))
+		summary.AdjustStartTimeToEarlierTime(pastDureTime)
 	}
 	return progressRangeTree, nil
 }
@@ -1102,7 +1097,7 @@ func (bc *Client) BackupRanges(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	globalProgressTree, err := bc.BuildProgressRangeTree(ranges)
+	globalProgressTree, err := bc.BuildProgressRangeTree(ctx, ranges, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1191,31 +1186,24 @@ func (bc *Client) OnBackupResponse(
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
 		start := time.Now()
-		prs, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
+		sortedPrs, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
 		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
 			return nil, err
 		}
-		checkpointRangeKeys := make([]checkpoint.RangeKey, 0, len(prs))
-		for _, pr := range prs {
+		force := false
+		for _, pr := range sortedPrs {
 			startKey, endKey := maxStartKey(pr.Origin.StartKey, resp.StartKey), minEndKey(pr.Origin.EndKey, resp.EndKey)
-			if bc.checkpointRunner != nil {
-				checkpointRangeKeys = append(checkpointRangeKeys, checkpoint.RangeKey{
-					GroupKey: pr.GroupKey,
-					StartKey: startKey,
-					EndKey:   endKey,
-				})
-			}
-			pr.Res.Put(startKey, endKey, resp.Files)
+			force = pr.Res.PutForce(startKey, endKey, resp.Files, force)
 		}
-		if bc.checkpointRunner != nil && len(checkpointRangeKeys) > 0 {
+		if force && bc.checkpointRunner != nil {
 			if err := checkpoint.AppendForBackup(
 				ctx,
 				bc.checkpointRunner,
-				checkpointRangeKeys[0].GroupKey,
-				checkpointRangeKeys,
+				resp.StartKey,
+				resp.EndKey,
 				resp.Files,
 			); err != nil {
 				// flush checkpoint failed,
@@ -1253,23 +1241,27 @@ func (bc *Client) OnBackupResponse(
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
 	var progressRangeAscendErr error
-	var lastKey []byte
+	var filename string
 	progressRangeTree.Ascend(func(progressRange *rtree.ProgressRange) bool {
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)
 			if len(r.Files) > 0 {
-				if bytes.Equal(lastKey, r.Files[0].StartKey) {
+				if filename == r.Files[0].Name {
 					// skip these files because they have been sent to meta writer.
 					return true
 				} else {
-					lastKey = r.Files[0].StartKey
+					filename = r.Files[0].Name
 				}
 			}
-			for _, f := range r.Files {
-				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			for _, file := range r.Files {
+				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(tableMeta *backuppb.TableMeta) bool {
+					return tableMeta == nil
+				})
 			}
+			totalKvs, totalBytes := metautil.CalculateKvStatsOnFiles(r.Files)
+			summary.CollectSuccessUnit(summary.TotalKV, 1, totalKvs)
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, totalBytes)
 			// we need keep the files in order after we support multi_ingest sst.
 			// default_sst and write_sst need to be together.
 			if err := metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {

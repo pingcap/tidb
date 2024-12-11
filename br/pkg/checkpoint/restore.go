@@ -91,7 +91,7 @@ func AppendRangesForRestore(
 func LoadCheckpointDataForSnapshotRestore[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
-	fn func(K, V),
+	fn func(K, V) error,
 ) (time.Duration, error) {
 	return selectCheckpointData(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, fn)
 }
@@ -103,10 +103,17 @@ func LoadCheckpointChecksumForRestore(
 	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
 }
 
+type PreallocedInfo struct {
+	From     int64 `json:"from"`
+	End      int64 `json:"end"`
+	Unreused int   `json:"unreused"`
+}
+
 type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
+	PreallocedInfo    PreallocedInfo        `json:"prealloced"`
 }
 
 func LoadCheckpointMetadataForSnapshotRestore(

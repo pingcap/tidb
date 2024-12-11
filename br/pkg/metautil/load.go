@@ -39,11 +39,11 @@ func (db *Database) GetTable(name string) *Table {
 }
 
 // LoadBackupTables loads schemas from BackupMeta.
-func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, []TableIDSpan, error) {
+func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, *SchemaFilesStats, error) {
 	var wg sync.WaitGroup
 	ch := make(chan *Table)
 	errCh := make(chan error)
-	linkCh := make(chan []TableIDSpan)
+	statsCh := make(chan *SchemaFilesStats)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -51,12 +51,12 @@ func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (
 		if !loadStats {
 			opts = []ReadSchemaOption{SkipStats}
 		}
-		physicalRangeLink, err := reader.ReadSchemasFiles(ctx, ch, opts...)
+		schemaFilesStats, err := reader.ReadSchemasFiles(ctx, ch, opts...)
 		if err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)
-		linkCh <- physicalRangeLink
+		statsCh <- schemaFilesStats
 	}()
 
 	databases := make(map[string]*Database)
@@ -69,8 +69,8 @@ func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (
 		case table, ok := <-ch:
 			if !ok {
 				close(errCh)
-				physicalRangeLink := <-linkCh
-				return databases, physicalRangeLink, nil
+				schemaFilesStats := <-statsCh
+				return databases, schemaFilesStats, nil
 			}
 			dbName := table.DB.Name.String()
 			db, ok := databases[dbName]

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
@@ -430,10 +431,9 @@ func (importer *SnapFileImporter) Import(
 		return errors.Trace(err)
 	}
 	for _, files := range backupFileSets {
-		for _, f := range files.SSTFiles {
-			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
-		}
+		totalKvs, totalBytes := metautil.CalculateKvStatsOnFiles(files.SSTFiles)
+		summary.CollectSuccessUnit(summary.TotalKV, 1, totalKvs)
+		summary.CollectSuccessUnit(summary.TotalBytes, 1, totalBytes)
 	}
 	return nil
 }
