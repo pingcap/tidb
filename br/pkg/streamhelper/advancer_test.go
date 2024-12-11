@@ -627,8 +627,10 @@ func TestCheckPointLagged(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(2 * time.Minute)
+	// if global ts is not advanced, the checkpoint will not be lagged
+	c.advanceCheckpointBy(2 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// after some times, the isPaused will be set and ticks are skipped
 	require.Eventually(t, func() bool {
@@ -652,8 +654,10 @@ func TestCheckPointResume(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
+	// if global ts is not advanced, the checkpoint will not be lagged
+	c.advanceCheckpointBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))
