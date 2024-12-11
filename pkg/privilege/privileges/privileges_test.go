@@ -2091,6 +2091,7 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
 	pc := privilege.GetPrivilegeManager(tk.Session())
+	pc.MatchIdentity(context.Background(), "show_sql_mode", "localhost", false)
 	gs, err := pc.ShowGrants(context.Background(), tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
 	require.Len(t, gs, 2)

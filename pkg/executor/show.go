@@ -1882,6 +1882,8 @@ func (e *ShowExec) fetchShowGrants(ctx context.Context) error {
 				return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(userName, hostName, mysql.SystemDB)
 			}
 		}
+		// ensureActiveUser for this User.
+		checker.MatchIdentity(ctx, e.User.Username, e.User.Hostname, false)
 	}
 	// This is for the syntax SHOW GRANTS FOR x USING role
 	for _, r := range e.Roles {
