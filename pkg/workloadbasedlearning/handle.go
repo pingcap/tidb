@@ -14,6 +14,15 @@
 
 package workloadbasedlearning
 
+/*
+The Workload-Based Learning Optimizer introduces a new module in TiDB that leverages captured workload history to
+enhance the database query optimizer.
+By learning from historical data, this module helps the optimizer make smarter decisions, such as identify hot and cold tables,
+analyze resource consumption, etc.
+The workload analysis results can be used to directly suggest a better path,
+or to indirectly influence the cost model and stats so that the optimizer can select the best plan more intelligently and adaptively.
+*/
+
 // Handle The entry point for all workload-based learning related tasks
 type Handle struct {
 }
