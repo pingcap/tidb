@@ -227,34 +227,30 @@ type stmtSummaryByDigestElement struct {
 
 // StmtExecInfo records execution information of each statement.
 type StmtExecInfo struct {
-	SchemaName          string
-	OriginalSQL         fmt.Stringer
-	Charset             string
-	Collation           string
-	NormalizedSQL       string
-	Digest              string
-	PrevSQL             string
-	PrevSQLDigest       string
-	PlanGenerator       func() (string, string, any)
-	BinaryPlanGenerator func() string
-	PlanDigest          string
-	PlanDigestGen       func() string
-	User                string
-	TotalLatency        time.Duration
-	ParseLatency        time.Duration
-	CompileLatency      time.Duration
-	StmtCtx             *stmtctx.StatementContext
-	CopTasks            *execdetails.CopTasksDetails
-	ExecDetail          *execdetails.ExecDetails
-	MemMax              int64
-	DiskMax             int64
-	StartTime           time.Time
-	IsInternal          bool
-	Succeed             bool
-	PlanInCache         bool
-	PlanInBinding       bool
-	ExecRetryCount      uint
-	ExecRetryTime       time.Duration
+	SchemaName     string
+	Charset        string
+	Collation      string
+	NormalizedSQL  string
+	Digest         string
+	PrevSQL        string
+	PrevSQLDigest  string
+	PlanDigest     string
+	User           string
+	TotalLatency   time.Duration
+	ParseLatency   time.Duration
+	CompileLatency time.Duration
+	StmtCtx        *stmtctx.StatementContext
+	CopTasks       *execdetails.CopTasksDetails
+	ExecDetail     execdetails.ExecDetails
+	MemMax         int64
+	DiskMax        int64
+	StartTime      time.Time
+	IsInternal     bool
+	Succeed        bool
+	PlanInCache    bool
+	PlanInBinding  bool
+	ExecRetryCount uint
+	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
 	TiKVExecDetails   util.ExecDetails
@@ -266,6 +262,16 @@ type StmtExecInfo struct {
 	CPUUsages         ppcpuusage.CPUUsages
 
 	PlanCacheUnqualified string
+
+	LazyInfo StmtExecLazyInfo
+}
+
+// StmtExecLazyInfo is the interface about getting lazy information for StmtExecInfo.
+type StmtExecLazyInfo interface {
+	GetOriginalSQL() string
+	GetEncodedPlan() (string, string, any)
+	GetBinaryPlan() string
+	GetPlanDigest() string
 }
 
 // newStmtSummaryByDigestMap creates an empty stmtSummaryByDigestMap.
@@ -566,9 +572,9 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	tableNames := buffer.String()
 
 	planDigest := sei.PlanDigest
-	if sei.PlanDigestGen != nil && len(planDigest) == 0 {
+	if len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
-		planDigest = sei.PlanDigestGen()
+		planDigest = sei.LazyInfo.GetPlanDigest()
 	}
 	ssbd.schemaName = sei.SchemaName
 	ssbd.digest = sei.Digest
@@ -652,23 +658,25 @@ var MaxEncodedPlanSizeInBytes = 1024 * 1024
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, e := sei.PlanGenerator()
+	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
 		return nil
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := ""
-	if sei.BinaryPlanGenerator != nil {
-		binPlan = sei.BinaryPlanGenerator()
-		if len(binPlan) > MaxEncodedPlanSizeInBytes {
-			binPlan = plancodec.BinaryPlanDiscardedEncoded
-		}
+	binPlan := sei.LazyInfo.GetBinaryPlan()
+	if len(binPlan) > MaxEncodedPlanSizeInBytes {
+		binPlan = plancodec.BinaryPlanDiscardedEncoded
 	}
+<<<<<<< HEAD
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime: beginTime,
 		sampleSQL: formatSQL(sei.OriginalSQL.String()),
+=======
+	return &stmtSummaryStats{
+		sampleSQL: formatSQL(sei.LazyInfo.GetOriginalSQL()),
+>>>>>>> a3d60bcfc6c (executor: Optimize statement summary performance by avoiding heap memory allocation (#58023))
 		charset:   sei.Charset,
 		collation: sei.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -747,6 +755,7 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	}
 
 	// coprocessor
+<<<<<<< HEAD
 	numCopTasks := int64(sei.CopTasks.NumCopTasks)
 	ssElement.sumNumCopTasks += numCopTasks
 	if sei.CopTasks.MaxProcessTime > ssElement.maxCopProcessTime {
@@ -756,6 +765,20 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	if sei.CopTasks.MaxWaitTime > ssElement.maxCopWaitTime {
 		ssElement.maxCopWaitTime = sei.CopTasks.MaxWaitTime
 		ssElement.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+=======
+	if sei.CopTasks != nil {
+		ssStats.sumNumCopTasks += int64(sei.CopTasks.NumCopTasks)
+		ssStats.sumCopProcessTime += sei.CopTasks.TotProcessTime
+		if sei.CopTasks.MaxProcessTime > ssStats.maxCopProcessTime {
+			ssStats.maxCopProcessTime = sei.CopTasks.MaxProcessTime
+			ssStats.maxCopProcessAddress = sei.CopTasks.MaxProcessAddress
+		}
+		ssStats.sumCopWaitTime += sei.CopTasks.TotWaitTime
+		if sei.CopTasks.MaxWaitTime > ssStats.maxCopWaitTime {
+			ssStats.maxCopWaitTime = sei.CopTasks.MaxWaitTime
+			ssStats.maxCopWaitAddress = sei.CopTasks.MaxWaitAddress
+		}
+>>>>>>> a3d60bcfc6c (executor: Optimize statement summary performance by avoiding heap memory allocation (#58023))
 	}
 
 	// TiKV
