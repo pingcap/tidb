@@ -224,8 +224,6 @@ func TestIssue18042(t *testing.T) {
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
 	tk.MustExec("drop table t")
 }
-<<<<<<< HEAD
-=======
 
 func TestIssue56832(t *testing.T) {
 	store := testkit.CreateMockStore(t)
