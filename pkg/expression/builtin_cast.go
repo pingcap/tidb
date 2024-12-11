@@ -2058,7 +2058,7 @@ func BuildCastFunction4Union(ctx BuildContext, expr Expression, tp *types.FieldT
 	defer func() {
 		ctx.SetValue(inUnionCastContext, nil)
 	}()
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, true, false)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
@@ -2095,13 +2095,13 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 
 // BuildCastFunction builds a CAST ScalarFunction from the Expression.
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
-	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
+	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false)
 	terror.Log(err)
 	return
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
+func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, isExplicitCharset bool) (res Expression, err error) {
 	argType := expr.GetType()
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {
