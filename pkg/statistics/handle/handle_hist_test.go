@@ -347,7 +347,7 @@ func TestRetry(t *testing.T) {
 func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	originConfig := config.GetGlobalConfig()
 	newConfig := config.NewConfig()
-	newConfig.Performance.StatsLoadConcurrency = -1 // no worker to consume channel
+	newConfig.Performance.StatsLoadConcurrency = 0 // no worker to consume channel
 	newConfig.Performance.StatsLoadQueueSize = 10000
 	config.StoreGlobalConfig(newConfig)
 	defer config.StoreGlobalConfig(originConfig)
@@ -366,12 +366,12 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
+	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false}, FullLoad: true})
+		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
 	}
 	stmtCtx := stmtctx.NewStmtCtx()
 	timeout := time.Nanosecond * 100
