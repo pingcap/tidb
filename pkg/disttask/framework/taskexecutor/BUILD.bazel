@@ -50,7 +50,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-    shard_count = 13,
+    shard_count = 14,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
@@ -65,6 +65,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",

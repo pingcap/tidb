@@ -633,7 +633,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.EqualValues(t, 4, e.stepExecutor.GetResource().CPU.Capacity())
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs2Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne, unfinishedNormalSubtaskStates...).DoAndReturn(
@@ -683,7 +682,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.EqualValues(t, 10, e.stepExecutor.GetResource().CPU.Capacity())
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(&concurrencyIs14Task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne, unfinishedNormalSubtaskStates...).DoAndReturn(
@@ -728,7 +726,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.Nil(t, e.taskExecutor.task.Load().Meta)
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		// second round
 		newMetaTask1 := *e.task1
@@ -758,7 +755,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.EqualValues(t, 3, e.stepExecutor.GetResource().CPU.Capacity())
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), subtask2).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", subtask2.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
@@ -783,7 +779,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.Nil(t, e.taskExecutor.task.Load().Meta)
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		// second round
 		newMetaTask1 := *e.task1
@@ -805,7 +800,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.EqualValues(t, 3, e.stepExecutor.GetResource().CPU.Capacity())
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), subtask2).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", subtask2.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
@@ -830,7 +824,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.Nil(t, e.taskExecutor.task.Load().Meta)
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), e.pendingSubtask1).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", e.pendingSubtask1.ID, gomock.Any()).Return(nil)
 		// second round
 		newMetaTask1 := *e.task1
@@ -855,7 +848,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			require.EqualValues(t, 6, e.stepExecutor.GetResource().CPU.Capacity())
 			return nil
 		})
-		e.stepExecutor.EXPECT().OnFinished(gomock.Any(), step2Subtask2).Return(nil)
 		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", step2Subtask2.ID, gomock.Any()).Return(nil)
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(nil, storage.ErrTaskNotFound)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)

@@ -22,6 +22,7 @@ import (
 
 var factoryFns = make(map[proto.TaskType]FactoryFn)
 
+// FactoryFn is a function to create a TaskExecutor.
 type FactoryFn func(ctx context.Context, task *proto.Task, param Param) TaskExecutor
 
 // RegisterTaskType registers the task type.
