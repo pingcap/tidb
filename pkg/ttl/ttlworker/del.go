@@ -81,10 +81,21 @@ func (l *delRateLimiter) reset() (newLimit int64) {
 }
 
 type ttlDeleteTask struct {
+	jobID      string
+	scanID     int64
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
 	statistics *ttlStatistics
+}
+
+func (t *ttlDeleteTask) taskLogger() *zap.Logger {
+	return logutil.BgLogger().With(
+		zap.String("jobID", t.jobID),
+		zap.Int64("scanID", t.scanID),
+		zap.Int64("tableID", t.tbl.ID),
+		zap.String("table", t.tbl.FullName()),
+	)
 }
 
 func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (retryRows [][]types.Datum) {
@@ -114,18 +125,23 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
 		if err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
-			logutil.BgLogger().Warn(
+			t.taskLogger().Warn(
 				"build delete SQL in TTL failed",
 				zap.Error(err),
-				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
 			)
 			return
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
 		if err = globalDelRateLimiter.Wait(ctx); err != nil {
-			t.statistics.IncErrorRows(len(delBatch))
-			return
+			tracer.EnterPhase(metrics.PhaseOther)
+			t.taskLogger().Info(
+				"wait TTL delete rate limiter interrupted",
+				zap.Error(err),
+				zap.Int("delBatchCnt", len(delBatch)),
+			)
+			retryRows = append(retryRows, delBatch...)
+			continue
 		}
 		tracer.EnterPhase(metrics.PhaseOther)
 
@@ -134,7 +150,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		sqlInterval := time.Since(sqlStart)
 		if err != nil {
 			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
-			logutil.BgLogger().Warn(
+			t.taskLogger().Warn(
 				"delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("SQL", sql),
@@ -243,6 +259,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 	}
 
 	if retryCnt >= b.maxRetry {
+		task.taskLogger().Warn(
+			"discard TTL rows that has failed more than maxRetry times",
+			zap.Int("rowCnt", len(retryRows)),
+			zap.Int("retryCnt", retryCnt),
+		)
 		task.statistics.IncErrorRows(len(retryRows))
 		return false
 	}
@@ -250,6 +271,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 	for b.list.Len() > 0 && b.list.Len() >= b.maxSize {
 		ele := b.list.Front()
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
+			task.taskLogger().Warn(
+				"discard TTL rows because the retry buffer is full",
+				zap.Int("rowCnt", len(retryRows)),
+				zap.Int("bufferSize", b.list.Len()),
+			)
 			item.task.statistics.IncErrorRows(len(item.task.rows))
 		} else {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))

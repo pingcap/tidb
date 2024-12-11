@@ -123,9 +123,7 @@ func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 		zap.String("jobID", t.JobID),
 		zap.Int64("scanID", t.ScanID),
 		zap.Int64("tableID", t.TableID),
-		zap.String("db", t.tbl.Schema.O),
-		zap.String("table", t.tbl.Name.O),
-		zap.String("partition", t.tbl.Partition.O),
+		zap.String("table", t.tbl.FullName()),
 	)
 }
 
@@ -277,6 +275,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		}
 
 		delTask := &ttlDeleteTask{
+			jobID:      t.JobID,
+			scanID:     t.ScanID,
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
 			rows:       lastResult,
