@@ -608,6 +608,7 @@ func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int);")
 	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("insert into t values (1, 1);")
 	err = dom.StatsHandle().DumpStatsDeltaToKV(true)
