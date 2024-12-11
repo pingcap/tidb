@@ -198,8 +198,9 @@ func TestExtremCaseOfGC(t *testing.T) {
 	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 0)
 	h := dom.StatsHandle()
-	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/mockGCStatsLastTSOffset", `return(0)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
 	h.GCStats(dom.InfoSchema(), time.Second*3)
 	rs = testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
 	require.Len(t, rs.Rows(), 1)
+	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset")
 }

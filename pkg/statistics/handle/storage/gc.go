@@ -92,7 +92,7 @@ func GCStats(
 		return nil
 	}
 
-	failpoint.Inject("mockGCStatsLastTSOffset", func(val failpoint.Value) {
+	failpoint.Inject("injectGCStatsLastTSOffset", func(val failpoint.Value) {
 		offset = uint64(val.(int))
 	})
 
@@ -285,7 +285,7 @@ func gcTableStats(sctx sessionctx.Context,
 	if !ok {
 		if len(rows) > 0 {
 			// It's the first time to run into it. Delete column/index stats to notify other TiDB nodes.
-			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
+			logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("tableID", physicalID))
 			return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
 				return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
 			})
