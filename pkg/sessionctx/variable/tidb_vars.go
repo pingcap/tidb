@@ -1218,6 +1218,12 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBEnableProcedure if enable store procedure
+	TiDBEnableProcedure = "tidb_enable_procedure"
+	// TiDBEnableProcedureAstCache indicates whether tidb need enable or disable ast cache.
+	TiDBEnableProcedureAstCache = "tidb_enable_sp_ast_cache"
+	//TiDBProcedureLastErrorSQL procedure last hander SQL warning/error.
+	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
 )
 
 // TiDB intentional limits
@@ -1568,6 +1574,8 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefStoredProgramCacheSize                         = 256
+	DefTiDBEnableProcedure                            = false
 )
 
 // Process global variables.
@@ -1690,6 +1698,10 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	StoredProgramCacheSize    = atomic.NewInt64(DefStoredProgramCacheSize)
+	TiDBEnableSPAstReuse      = atomic.NewBool(true)
+	TiDBEnableProcedureValue  = atomic.NewBool(DefTiDBEnableProcedure)
+	AutomaticSPPrivileges     = atomic.NewBool(true)
 )
 
 var (

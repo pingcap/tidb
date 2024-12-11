@@ -353,7 +353,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.Len(t, progress.GetColSize(), 3)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 14585065391351463171), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 18171781844378606789), *checksumMap[verify.DataKVGroupID])
 	})
 }
 

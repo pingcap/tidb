@@ -318,6 +318,22 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildExpand(v)
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
+	case *plannercore.CreateProcedure:
+		if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = errors.New("if enterprise edition, please set global tidb_enable_procedure = ON")
+			return nil
+		}
+		return b.buildCreateProcedure(v)
+	case *plannercore.DropProcedure:
+		return b.buildDropProcedure(v)
+	case *plannercore.CallStmt:
+		if !variable.TiDBEnableProcedureValue.Load() {
+			b.err = errors.New("if enterprise edition, please set global tidb_enable_procedure = ON")
+			return nil
+		}
+		return b.buildCallProcedure(v)
+	case *plannercore.AlterProcedure:
+		return b.buildAlterProcedure(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()
@@ -881,6 +897,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		CountWarningsOrErrors: v.CountWarningsOrErrors,
 		DBName:                pmodel.NewCIStr(v.DBName),
 		Table:                 v.Table,
+		Procedure:             v.Procedure,
 		Partition:             v.Partition,
 		Column:                v.Column,
 		IndexName:             v.IndexName,
@@ -2279,7 +2296,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
-			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
+			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableRoutines):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

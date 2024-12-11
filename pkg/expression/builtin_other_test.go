@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -369,4 +370,176 @@ func TestGetParam(t *testing.T) {
 	d, err := evalBuiltinFunc(fn, ctx, chunk.Row{})
 	require.Equal(t, exprctx.ErrParamIndexExceedParamCounts, err)
 	require.True(t, d.IsNull())
+}
+
+func TestSetProcedureVar(t *testing.T) {
+	ctx := createContext(t)
+	con := variable.NewProcedureContext(0)
+	ctx.GetSessionVars().SetInCallProcedure()
+	err := ctx.GetSessionVars().SetProcedureContext(con)
+	require.NoError(t, err)
+	fc := &setProcedureVarFunctionClass{baseFunctionClass{ast.SetProcedureVar, 2, 2}}
+	dec := types.NewDecFromInt(5)
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
+	testCases := []struct {
+		args []interface{}
+		res  interface{}
+	}{
+		{[]interface{}{"a", "12"}, "12"},
+		{[]interface{}{"b", "34"}, "34"},
+		{[]interface{}{"c", nil}, nil},
+		{[]interface{}{"c", "ABC"}, "ABC"},
+		{[]interface{}{"c", "dEf"}, "dEf"},
+		{[]interface{}{"d", int64(3)}, int64(3)},
+		{[]interface{}{"e", float64(2.5)}, float64(2.5)},
+		{[]interface{}{"f", dec}, dec},
+		{[]interface{}{"g", timeDec}, timeDec},
+	}
+	typeCases := []struct {
+		name     string
+		feldType *types.FieldType
+	}{
+		{"a", types.NewFieldType(mysql.TypeVarchar)},
+		{"b", types.NewFieldType(mysql.TypeVarchar)},
+		{"c", types.NewFieldType(mysql.TypeVarchar)},
+		{"d", types.NewFieldType(mysql.TypeInt24)},
+		{"e", types.NewFieldType(mysql.TypeDouble)},
+		{"f", types.NewFieldType(mysql.TypeNewDecimal)},
+		{"g", types.NewFieldType(mysql.TypeTimestamp)},
+	}
+	for _, typeCase := range typeCases {
+		pvar := variable.NewProcedureVars(typeCase.name, typeCase.feldType)
+		con.Vars = append(con.Vars, pvar)
+	}
+
+	for _, tc := range testCases {
+		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
+		require.NoError(t, err)
+		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		require.NoError(t, err)
+		require.Equal(t, tc.res, d.GetValue())
+		if tc.args[1] != nil {
+			key, ok := tc.args[0].(string)
+			require.Equal(t, true, ok)
+			_, sessionVar, ok := ctx.GetSessionVars().GetProcedureVariable(key)
+			require.Equal(t, false, ok)
+			require.Equal(t, tc.res, sessionVar.GetValue())
+		}
+	}
+}
+
+func TestGetProcedureVar(t *testing.T) {
+	ctx := createContext(t)
+	con := variable.NewProcedureContext(0)
+	ctx.GetSessionVars().SetInCallProcedure()
+	err := ctx.GetSessionVars().SetProcedureContext(con)
+	require.NoError(t, err)
+	dec := types.NewDecFromInt(5)
+	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
+	sessionVars := []struct {
+		key string
+		val interface{}
+	}{
+		{"a", "中"},
+		{"b", "文字符chuan"},
+		{"c", ""},
+		{"d", nil},
+		{"e", int64(3)},
+		{"f", float64(2.5)},
+		{"g", dec},
+		{"h", timeDec},
+	}
+	for _, kv := range sessionVars {
+		var tp *types.FieldType
+		if _, ok := kv.val.(types.Time); ok {
+			tp = types.NewFieldType(mysql.TypeDatetime)
+		} else {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		pvar := variable.NewProcedureVars(kv.key, tp)
+		con.Vars = append(con.Vars, pvar)
+		sessVars := ctx.GetSessionVars()
+		sessVars.SetProcedureContext(con)
+		err = UpdateVariableVar(kv.key, types.NewDatum(kv.val), sessVars)
+		require.NoError(t, err)
+	}
+
+	testCases := []struct {
+		args []interface{}
+		res  interface{}
+	}{
+		{[]interface{}{"a"}, "中"},
+		{[]interface{}{"b"}, "文字符chuan"},
+		{[]interface{}{"c"}, ""},
+		{[]interface{}{"d"}, nil},
+		{[]interface{}{"e"}, "3"},
+		{[]interface{}{"f"}, "2.5"},
+		{[]interface{}{"g"}, string(dec.ToString())},
+		{[]interface{}{"h"}, timeDec},
+	}
+	for _, tc := range testCases {
+		tp, _, notFind := ctx.GetSessionVars().GetProcedureVariable(tc.args[0].(string))
+		if notFind {
+			tp = types.NewFieldType(mysql.TypeVarString)
+		}
+		fn, err := BuildGetProcedureVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
+		require.NoError(t, err)
+		d, err := fn.Eval(ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.Equal(t, tc.res, d.GetValue())
+	}
+}
+
+func TestSetProcedureVarFromColumn(t *testing.T) {
+	ctx := createContext(t)
+	con := variable.NewProcedureContext(0)
+	ctx.GetSessionVars().SetInCallProcedure()
+	err := ctx.GetSessionVars().SetProcedureContext(con)
+	require.NoError(t, err)
+	ft1 := types.FieldType{}
+	ft1.SetType(mysql.TypeVarString)
+	ft1.SetFlen(20)
+
+	pvar := variable.NewProcedureVars("a", &ft1)
+	con.Vars = append(con.Vars, pvar)
+	ft2 := ft1.Clone()
+	ft3 := ft1.Clone()
+	// Construct arguments.
+	argVarName := &Constant{
+		Value:   types.NewStringDatum("a"),
+		RetType: &ft1,
+	}
+	argCol := &Column{
+		RetType: ft2,
+		Index:   0,
+	}
+
+	// Construct SetVar function.
+	funcSetProcedureVar, err := NewFunction(
+		ctx,
+		ast.SetProcedureVar,
+		ft3,
+		[]Expression{argVarName, argCol}...,
+	)
+	require.NoError(t, err)
+
+	// Construct input and output Chunks.
+	inputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+	inputChunk.AppendString(0, "a")
+	outputChunk := chunk.NewChunkWithCapacity([]*types.FieldType{argCol.RetType}, 1)
+
+	// Evaluate the SetVar function.
+	err = evalOneCell(ctx, funcSetProcedureVar, inputChunk.GetRow(0), outputChunk, 0)
+	require.NoError(t, err)
+	require.Equal(t, "a", outputChunk.GetRow(0).GetString(0))
+
+	// Change the content of the underlying Chunk.
+	inputChunk.Reset()
+	inputChunk.AppendString(0, "b")
+
+	// Check whether the user variable changed.
+	sessionVars := ctx.GetSessionVars()
+	_, sessionVar, notFind := sessionVars.GetProcedureVariable("a")
+	require.Equal(t, false, notFind)
+	require.Equal(t, "a", sessionVar.GetString())
 }

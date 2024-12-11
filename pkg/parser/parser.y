@@ -10912,7 +10912,7 @@ VariableAssignment:
 	VariableName EqOrAssignmentEq SetExpr
 	{
 		if parser.inProcedure {
-			$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: false}
+			$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true, CanSPVariable: true}
 		} else {
 			$$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
 		}

@@ -2076,22 +2076,57 @@ func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 	return false, 0
 }
 
-func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (count uint64,
+func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit, sessVars *variable.SessionVars) (count uint64,
 	offset uint64, err error) {
 	var isExpectedType bool
 	if limit.Count != nil {
-		count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
-		if !isExpectedType {
-			return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		v, ok := limit.Count.(*ast.ProcedureVar)
+		if ok {
+
+			count, err = tryGetProcedureIntVariable(sessVars, v)
+			if err != nil {
+				return 0, 0, err
+			}
+		} else {
+			count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
+			if !isExpectedType {
+				return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+			}
 		}
 	}
 	if limit.Offset != nil {
-		offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset, true)
-		if !isExpectedType {
-			return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+		v, ok := limit.Offset.(*ast.ProcedureVar)
+		if ok {
+			offset, err = tryGetProcedureIntVariable(sessVars, v)
+			if err != nil {
+				return 0, 0, err
+			}
+		} else {
+			offset, _, isExpectedType = getUintFromNode(ctx, limit.Offset, true)
+			if !isExpectedType {
+				return 0, 0, plannererrors.ErrWrongArguments.GenWithStackByArgs("LIMIT")
+			}
 		}
 	}
 	return count, offset, nil
+}
+
+func tryGetProcedureIntVariable(sessVars *variable.SessionVars,  procedureVar *ast.ProcedureVar) (uint64, error) {
+	_, d, notFind := sessVars.GetProcedureVariable(procedureVar.Name.L)
+	if notFind {
+		return 0, plannererrors.ErrSpUndeclaredVar.GenWithStackByArgs(procedureVar.Name.O)
+	}
+	err := sessVars.AddUchangableName(procedureVar.Name.L)
+	if err != nil {
+		return 0, err
+	}
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	tp.AddFlag(mysql.UnsignedFlag)
+	d, err = d.ConvertTo(sessVars.StmtCtx.TypeCtx(), tp)
+	if err != nil {
+		return 0, err
+	}
+	return d.GetUint64(), nil
 }
 
 func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
@@ -2104,7 +2139,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 		offset, count uint64
 		err           error
 	)
-	if count, offset, err = extractLimitCountOffset(b.ctx.GetExprCtx(), limit); err != nil {
+	if count, offset, err = extractLimitCountOffset(b.ctx.GetExprCtx(), limit, b.ctx.GetSessionVars()); err != nil {
 		return nil, err
 	}
 

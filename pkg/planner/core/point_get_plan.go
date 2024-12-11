@@ -1306,7 +1306,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	if selStmt.Having != nil || selStmt.OrderBy != nil {
 		return nil
 	} else if selStmt.Limit != nil {
-		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit)
+		count, offset, err := extractLimitCountOffset(ctx.GetExprCtx(), selStmt.Limit, ctx.GetSessionVars())
 		if err != nil || count == 0 || offset > 0 {
 			return nil
 		}

@@ -17,11 +17,13 @@ package executor
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -44,6 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -347,6 +351,9 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 		if err != nil {
 			return err
 		}
+	}
+	if err == nil {
+		err = e.dropProcedure(dbName)
 	}
 	return err
 }
@@ -762,4 +769,33 @@ func (e *DDLExec) executeDropResourceGroup(s *ast.DropResourceGroupStmt) error {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	return e.ddlExecutor.DropResourceGroup(e.Ctx(), s)
+}
+
+func (e *DDLExec) dropProcedure(schemaName pmodel.CIStr) error {
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnProcedure)
+	sysSession, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	defer e.ReleaseSysSession(internalCtx, sysSession)
+	sysvar := variable.GetSysVar(variable.LowerCaseTableNames)
+	val, err := strconv.Atoi(sysvar.Value)
+	if err != nil {
+		return err
+	}
+	is := schematracker.NewSchemaTracker(val)
+	key := is.InfoStore.CiStr2Key(schemaName)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "delete from  %n.%n where route_schema = %?", mysql.SystemDB, mysql.Routines, key)
+	logutil.BgLogger().Error(sql.String())
+	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
+	if err != nil {
+		return err
+	}
+	_, err = sqlExecutor.ExecuteInternal(internalCtx, "commit")
+	if err != nil {
+		return err
+	}
+	return nil
 }

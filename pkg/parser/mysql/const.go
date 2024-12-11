@@ -230,6 +230,10 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// Routines is the table in system db contains procedure.
+	Routines = "routines"
+	// ProcsPriv is the table in system db contains routine privilege.
+	ProcsPriv = "procs_priv"
 )
 
 // MySQL type maximum length.

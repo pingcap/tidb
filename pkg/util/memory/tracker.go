@@ -910,6 +910,8 @@ const (
 	LabelForSortPartition int = -31
 	// LabelForHashTableInHashJoinV2 represents the label of the hash join v2's hash table
 	LabelForHashTableInHashJoinV2 int = -32
+	// LabelForFetchInto represents the label of the execution of fetch into
+	LabelForFetchInto int = -33
 )
 
 // MetricsTypes is used to get label for metrics

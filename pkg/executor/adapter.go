@@ -1020,6 +1020,15 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 	return nil, err
 }
 
+// CallStmt is used to execute procedure. If call the function txnManager.OnPessimisticStmtStart(ctx), it will create KVTxn.aggressiveLockingContext,
+// when it goes to the first statement of the procedure, it will call the function txnManager.OnPessimisticStmtStart(ctx) again which leads to panic at driver/txn/txn_driver.go:385.
+// So it needs to skip txnManager.OnPessimisticStmtStart(ctx) for callStmt.
+// The executing of sql statements in procedure will call txnManager.OnPessimisticStmtStart and txnManager.OnPessimisticStmtEnd.
+func (a *ExecStmt) needSkipPessimisticStmtStart() bool {
+	_, ok := a.StmtNode.(*ast.CallStmt)
+	return ok
+}
+
 func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (err error) {
 	sctx := a.Ctx
 	// Do not activate the transaction here.
@@ -1050,15 +1059,22 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 	}()
 
 	txnManager := sessiontxn.GetTxnManager(a.Ctx)
-	err = txnManager.OnPessimisticStmtStart(ctx)
+	if !a.needSkipPessimisticStmtStart() {
+		err = txnManager.OnPessimisticStmtStart(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	if err != nil {
 		return err
 	}
 	defer func() {
 		isSuccessful := err == nil
-		err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
-		if err == nil && err1 != nil {
-			err = err1
+		if !a.needSkipPessimisticStmtStart() {
+			err1 := txnManager.OnPessimisticStmtEnd(ctx, isSuccessful)
+			if err == nil && err1 != nil {
+				err = err1
+			}
 		}
 	}()
 

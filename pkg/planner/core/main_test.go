@@ -51,6 +51,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher.(*worker).run"),
+		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
+		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 	}
 
 	callback := func(i int) int {

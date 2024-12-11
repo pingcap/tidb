@@ -85,4 +85,6 @@ type Session interface {
 
 	// SetExtensions sets the `*extension.SessionExtensions` object
 	SetExtensions(extensions *extension.SessionExtensions)
+	SetSessionExec(cc sessionctx.SessionExec)
+	GetSessionExec() sessionctx.SessionExec
 }

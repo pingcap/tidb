@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -233,12 +234,21 @@ type Execute struct {
 // Because GetVar use String to represent BinaryLiteral, here we need to convert string back to BinaryLiteral.
 func isGetVarBinaryLiteral(sctx base.PlanContext, expr expression.Expression) (res bool) {
 	scalarFunc, ok := expr.(*expression.ScalarFunction)
-	if ok && scalarFunc.FuncName.L == ast.GetVar {
-		name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
-		if err != nil || isNull {
-			res = false
-		} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
-			res = dt.Kind() == types.KindBinaryLiteral
+	if ok {
+		if scalarFunc.FuncName.L == ast.GetVar {
+			name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			if err != nil || isNull {
+				res = false
+			} else if dt, ok2 := sctx.GetSessionVars().GetUserVarVal(name); ok2 {
+				res = dt.Kind() == types.KindBinaryLiteral
+			}
+		} else if scalarFunc.FuncName.L == ast.GetProcedureVar {
+			name, isNull, err := scalarFunc.GetArgs()[0].EvalString(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			if err != nil || isNull {
+				res = false
+			} else if _, dt, notFind := sctx.GetSessionVars().GetProcedureVariable(name); !notFind {
+				res = dt.Kind() == types.KindBinaryLiteral
+			}
 		}
 	}
 	return res
@@ -1503,4 +1513,35 @@ func IsAutoCommitTxn(vars *variable.SessionVars) bool {
 // AdminShowBDRRole represents a show bdr role plan.
 type AdminShowBDRRole struct {
 	baseSchemaProducer
+}
+
+// CreateProcedure create procedure plan
+type CreateProcedure struct {
+	baseSchemaProducer
+	CreateProcedureInfo ast.StmtNode
+	is                  infoschema.InfoSchema
+}
+
+// DropProcedure drop procedure plan
+type DropProcedure struct {
+	baseSchemaProducer
+	Procedure *ast.DropProcedureStmt
+}
+
+// CallStmt call plan
+type CallStmt struct {
+	baseSchemaProducer
+	Callstmt        *ast.CallStmt
+	Is              infoschema.InfoSchema
+	ProcedureSQLMod string
+	// Whether the operating environment is in strict mode
+	IsStrictMode        bool
+	Plan                *ProcedurePlan
+	CachedProcedurePlan *RoutineCacahe
+}
+
+// AlterProcedure alter procedure plan
+type AlterProcedure struct {
+	baseSchemaProducer
+	Procedure *ast.AlterProcedureStmt
 }

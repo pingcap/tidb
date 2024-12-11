@@ -95,7 +95,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	switch stmt := paramStmt.(type) {
-	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
+	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt, *ast.CreateProcedureInfo,
+		*ast.AlterProcedureStmt, *ast.DropProcedureStmt:
 		return nil, nil, 0, plannererrors.ErrUnsupportedPs
 	case *ast.SelectStmt:
 		if stmt.SelectIntoOpt != nil {
@@ -580,6 +581,10 @@ type PlanCacheStmt struct {
 	//  NormalizedSQL4PC: select * from `test` . `t` where `a` > ? and `b` < ? --> schema name is added,
 	//  StmtText: select * from t where a>1 and b <? --> just format the original query;
 	StmtText string
+
+	// InUse is used to mark plan cache is used.
+	// Avoid stored procedures being recursively called in prepare.
+	InUse bool
 
 	// dbName and tbls are used to add metadata lock.
 	dbName []model.CIStr

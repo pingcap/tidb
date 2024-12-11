@@ -380,6 +380,10 @@ const (
 	NextVal = "nextval"
 	LastVal = "lastval"
 	SetVal  = "setval"
+
+	// procedure variable function
+	SetProcedureVar = "setprocedurevar"
+	GetProcedureVar = "getprocedurevar"
 )
 
 type FuncCallExprType int8

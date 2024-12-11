@@ -1136,6 +1136,16 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType) (_ float64, err e
 		}
 		return -math.MaxFloat32, overflow(f, target.GetType())
 	}
+
+	// FieldType = TypeDouble && FieldLen = 12 && DecimalLen = -1 means that the type of this field is float
+	// tidb/planner/core/procedure_plan.go: (b *PlanBuilder) setDefaultLengthAndCharse convert Float type to double type.
+	defaultLen, defaultdecimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeFloat)
+	if target.GetType() == mysql.TypeDouble && (target.GetFlen() == defaultLen && target.GetDecimal() == defaultdecimal) && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
+		if f > 0 {
+			return math.MaxFloat32, overflow(f, mysql.TypeFloat)
+		}
+		return -math.MaxFloat32, overflow(f, mysql.TypeFloat)
+	}
 	return f, errors.Trace(err)
 }
 

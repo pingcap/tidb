@@ -201,6 +201,68 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
 }
 
+// RequestProcedureVerification implements the procedure Manager interface.
+func (p *UserPrivileges) RequestProcedureVerification(activeRoles []*auth.RoleIdentity, db, routeName string, priv mysql.PrivilegeType) bool {
+	if SkipWithGrant {
+		return true
+	}
+
+	if p.user == "" && p.host == "" {
+		return true
+	}
+
+	// Skip check for system databases.
+	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
+	dbLowerName := strings.ToLower(db)
+	procsLowerName := strings.ToLower(routeName)
+	// If SEM is enabled and the user does not have the RESTRICTED_TABLES_ADMIN privilege
+	// There are some hard rules which overwrite system tables and schemas as read-only at most.
+	semEnabled := sem.IsEnabled()
+	if semEnabled && !p.RequestDynamicVerification(activeRoles, "RESTRICTED_TABLES_ADMIN", false) {
+		if sem.IsInvisibleTable(dbLowerName, "") {
+			return false
+		}
+		if util.IsMemOrSysDB(dbLowerName) {
+			switch priv {
+			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
+				return false
+			}
+		}
+	}
+
+	if util.IsMemDB(dbLowerName) {
+		switch priv {
+		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
+			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
+			mysql.ShowViewPriv, mysql.LockTablesPriv:
+			return false
+		}
+		if dbLowerName == util.InformationSchemaName.L {
+			return true
+		} else if dbLowerName == util.MetricSchemaName.L {
+			// PROCESS is the same with SELECT for metrics_schema.
+			if priv == mysql.SelectPriv && infoschema.IsMetricTable("") {
+				priv |= mysql.ProcessPriv
+			}
+		}
+	}
+
+	for _, fn := range p.extensionAccessCheckFuncs {
+		for _, dynPriv := range fn(db, "", "", priv, semEnabled) {
+			if !p.RequestDynamicVerification(activeRoles, dynPriv, false) {
+				return false
+			}
+		}
+	}
+	mysqlPriv := p.Handle.Get()
+	if mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, "", "", priv) {
+		return true
+	}
+	return mysqlPriv.RequestProcedureVerification(activeRoles, p.user, p.host, db, procsLowerName, priv)
+}
+
+
 // RequestVerificationWithUser implements the Manager interface.
 func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
 	if SkipWithGrant {

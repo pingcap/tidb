@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	tablelock "github.com/pingcap/tidb/pkg/lock/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/session/cursor"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -207,6 +208,10 @@ type Context interface {
 	GetCursorTracker() cursor.Tracker
 	// GetCommitWaitGroup returns the wait group for async commit and secondary lock cleanup background goroutines
 	GetCommitWaitGroup() *sync.WaitGroup
+	// SetSessionExec set procedure interface.
+	SetSessionExec(cc SessionExec)
+	// GetSessionExec get procedure interface.
+	GetSessionExec() SessionExec
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after
@@ -243,4 +248,9 @@ const (
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
 func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64) error {
 	return store.GetOracle().ValidateSnapshotReadTS(ctx, readTS, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+}
+
+// SessionExec procedure implementation interface
+type SessionExec interface {
+	MultiHanldeNodeWithResult(ctx context.Context, stmt ast.StmtNode) error
 }

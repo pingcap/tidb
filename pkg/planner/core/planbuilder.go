@@ -296,6 +296,14 @@ type PlanBuilder struct {
 	allowBuildCastArray bool
 	// resolveCtx is set when calling Build, it's only effective in the current Build call.
 	resolveCtx *resolve.Context
+	// procedurePlan indicates procedure execlist.
+	procedurePlan ProcedureExec
+
+	// procedureNowContext indicates this block context.
+	procedureNowContext *variable.ProcedureContext
+
+	// procedureGoSet indicates waiting for the completed labels.
+	procedureGoSet []*variable.ProcedureLabel
 }
 
 type handleColHelper struct {
@@ -573,6 +581,14 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
 		return b.buildRecommendIndex(x)
+	case *ast.CreateProcedureInfo:
+		return b.buildCreateProcedure(ctx, x)
+	case *ast.DropProcedureStmt:
+		return b.buildDropProcedure(ctx, x)
+	case *ast.CallStmt:
+		return b.buildCallProcedure(ctx, x)
+	case *ast.AlterProcedureStmt:
+		return b.buildAlterProcedure(ctx, x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }
@@ -686,15 +702,42 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESTRICTED_VARIABLES_ADMIN"}, false, err)
 		}
 		assign := &expression.VarAssignment{
-			Name:     vars.Name,
-			IsGlobal: vars.IsGlobal,
-			IsSystem: vars.IsSystem,
+			Name:          vars.Name,
+			IsGlobal:      vars.IsGlobal,
+			IsSystem:      vars.IsSystem,
+			CanSPVariable: vars.CanSPVariable,
 		}
+		if vars.IsSystem {
+			if b.ctx.GetSessionVars().GetCallProcedure() {
+				_, _, notFind := b.ctx.GetSessionVars().GetProcedureVariable(strings.ToLower(vars.Name))
+				if !notFind {
+					err := b.ctx.GetSessionVars().AddUpdatableVarName(strings.ToLower(vars.Name))
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+		procedureVar := false
+
 		if _, ok := vars.Value.(*ast.DefaultExpr); !ok {
 			if cn, ok2 := vars.Value.(*ast.ColumnNameExpr); ok2 && cn.Name.Table.L == "" {
 				// Convert column name expression to string value expression.
 				char, col := b.ctx.GetSessionVars().GetCharsetInfo()
-				vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				// support set a=b in sp
+				varType, _, notFind := b.ctx.GetSessionVars().GetProcedureVariable(cn.Name.Name.L)
+				if !notFind {
+					procedureVar = true
+					retType := varType.Clone()
+					procedureVars, err := expression.NewFunction(b.ctx.GetExprCtx(), ast.GetProcedureVar, retType,
+						expression.DatumToConstant(types.NewStringDatum(cn.Name.Name.L), mysql.TypeString, 0))
+					if err != nil {
+						return nil, err
+					}
+					assign.Expr = procedureVars
+				} else {
+					vars.Value = ast.NewValueExpr(cn.Name.Name.O, char, col)
+				}
 			}
 			// The mocked plan need one output for the complex cases.
 			// See the following IF branch.
@@ -704,6 +747,14 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (base.Plan, 
 			assign.Expr, possiblePlan, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
 			if err != nil {
 				return nil, err
+			}
+			if !procedureVar {
+				mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				var err error
+				assign.Expr, _, err = b.rewrite(ctx, vars.Value, mockTablePlan, nil, true)
+				if err != nil {
+					return nil, err
+				}
 			}
 			// It's possible that the subquery of the SET_VAR is a complex one so we need to get the result by evaluating the plan.
 			if _, ok := possiblePlan.(*logicalop.LogicalTableDual); !ok {
@@ -3390,6 +3441,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Tp:                    show.Tp,
 			CountWarningsOrErrors: show.CountWarningsOrErrors,
 			DBName:                show.DBName,
+			Procedure:             show.Procedure,
 			Table:                 tnW,
 			Partition:             show.Partition,
 			Column:                show.Column,
@@ -3412,7 +3464,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowProcedureStatus, ast.ShowFunctionStatus:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
@@ -3540,7 +3592,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		proj.SetOutputNames(np.OutputNames())
 		np = proj
 	}
-	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus {
+	if show.Tp == ast.ShowVariables || show.Tp == ast.ShowStatus ||
+		show.Tp == ast.ShowProcedureStatus || show.Tp == ast.ShowFunctionStatus {
 		b.curClause = orderByClause
 		orderByCol := np.Schema().Columns[0].Clone().(*expression.Column)
 		sort := logicalop.LogicalSort{
@@ -3692,24 +3745,42 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 	}
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
-	for _, item := range stmt.Privs {
-		if item.Priv == mysql.ExtendedPriv {
-			vi = appendDynamicVisitInfo(vi, []string{strings.ToUpper(item.Name)}, true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
-			continue
-		}
-		nonDynamicPrivilege = true
-		if item.Priv == mysql.AllPriv {
-			switch stmt.Level.Level {
-			case ast.GrantLevelGlobal:
-				allPrivs = mysql.AllGlobalPrivs
-			case ast.GrantLevelDB:
-				allPrivs = mysql.AllDBPrivs
-			case ast.GrantLevelTable:
-				allPrivs = mysql.AllTablePrivs
+	if stmt.ObjectType.IsRoutineType() {
+		for _, item := range stmt.Privs {
+			if item.Priv == mysql.ExtendedPriv {
+				vi = appendDynamicVisitInfo(vi, []string{strings.ToUpper(item.Name)}, true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+				continue
 			}
-			break
+			nonDynamicPrivilege = true
+			if item.Priv == mysql.AllPriv {
+				if stmt.Level.Level != ast.GrantLevelTable {
+					return nil, errors.New("internal error, the privilege of routine to be revorked is not table level")
+				}
+				allPrivs = mysql.AllRoutinePrivs
+				break
+			}
+			vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
 		}
-		vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+	} else {
+		for _, item := range stmt.Privs {
+			if item.Priv == mysql.ExtendedPriv {
+				vi = appendDynamicVisitInfo(vi, []string{strings.ToUpper(item.Name)}, true, nil) // verified in MySQL: requires the dynamic grant option to revoke.
+				continue
+			}
+			nonDynamicPrivilege = true
+			if item.Priv == mysql.AllPriv {
+				switch stmt.Level.Level {
+				case ast.GrantLevelGlobal:
+					allPrivs = mysql.AllGlobalPrivs
+				case ast.GrantLevelDB:
+					allPrivs = mysql.AllDBPrivs
+				case ast.GrantLevelTable:
+					allPrivs = mysql.AllTablePrivs
+				}
+				break
+			}
+			vi = appendVisitInfo(vi, item.Priv, dbName, tableName, "", nil)
+		}
 	}
 
 	for _, priv := range allPrivs {
@@ -5592,6 +5663,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		} else {
 			names = []string{"Table", "Create Table"}
 		}
+	case ast.ShowCreateProcedure:
+		names = []string{"Procedure", "sql_mode", "Create Procedure", "character_set_client", "collation_connection", "Database Collation"}
 	case ast.ShowCreatePlacementPolicy:
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:

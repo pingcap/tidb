@@ -993,6 +993,29 @@ func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.message = ""
 }
 
+// CopyMuForCallProcedure copy the changed states for srcCtx.mu at end of call and
+// Clear the execution status of the last SQL, use call instead .
+func (sc *StatementContext) CopyMuForCallProcedure(srcCtx *StatementContext) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	// Inherit the execution information of the last SQL.
+	srcCtx.mu.affectedRows = sc.mu.affectedRows
+	srcCtx.mu.foundRows = sc.mu.foundRows
+	srcCtx.mu.records = sc.mu.records
+	srcCtx.mu.deleted = sc.mu.deleted
+	srcCtx.mu.updated = sc.mu.updated
+	srcCtx.mu.copied = sc.mu.copied
+	srcCtx.mu.touched = sc.mu.touched
+	srcCtx.mu.message = sc.mu.message
+	srcCtx.WarnHandler.SetWarnings(sc.GetWarnings())
+	//
+	d := srcCtx.SyncExecDetails.GetExecDetails()
+	sc.SyncExecDetails.Reset()
+	sc.SyncExecDetails.MergeExecDetails(&d, nil)
+	sc.MemTracker = srcCtx.MemTracker
+	sc.DiskTracker = srcCtx.DiskTracker
+}
+
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.resetMuForRetry()
@@ -1400,4 +1423,39 @@ func (r StatsLoadResult) ErrorMsg() string {
 	b.WriteString(", err:")
 	b.WriteString(r.Error.Error())
 	return b.String()
+}
+
+// BackupStmtCtx records the backup session status
+type BackupStmtCtx struct {
+	AffectedRows int64
+	FoundRows    uint64
+	Records      uint64
+	Deleted      uint64
+	Updated      uint64
+	Copied       uint64
+	Touched      uint64
+
+	Message       string
+	Warnings      []SQLWarn
+	ErrorCount    uint16
+	ExtraWarnings []SQLWarn
+}
+
+// BackupForHandler backups session status.
+func (sc *StatementContext) BackupForHandler() (b *BackupStmtCtx) {
+	b = &BackupStmtCtx{}
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	b.AffectedRows = sc.PrevAffectedRows
+	b.FoundRows = sc.mu.foundRows
+	b.Records = sc.mu.records
+	b.Deleted = sc.mu.deleted
+	b.Updated = sc.mu.updated
+	b.Copied = sc.mu.copied
+	b.Touched = sc.mu.touched
+	b.Message = sc.mu.message
+	b.Warnings = make([]SQLWarn, len(sc.WarnHandler.GetWarnings()))
+	copy(b.Warnings, sc.WarnHandler.GetWarnings())
+	b.ErrorCount = 0
+	return
 }

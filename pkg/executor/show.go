@@ -93,6 +93,7 @@ type ShowExec struct {
 	DBName            pmodel.CIStr
 	Table             *resolve.TableNameW  // Used for showing columns.
 	Partition         pmodel.CIStr         // Used for showing partition
+	Procedure         *ast.TableName
 	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         pmodel.CIStr         // Used for show table regions.
 	ResourceGroupName pmodel.CIStr         // Used for showing resource group
@@ -183,6 +184,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowClusterConfigs()
 	case ast.ShowCreateTable:
 		return e.fetchShowCreateTable()
+	case ast.ShowCreateProcedure:
+		return e.fetchShowCreateProcdure(ctx)
 	case ast.ShowCreateSequence:
 		return e.fetchShowCreateSequence()
 	case ast.ShowCreateUser:
@@ -204,7 +207,9 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowIndex:
 		return e.fetchShowIndex()
 	case ast.ShowProcedureStatus:
-		return e.fetchShowProcedureStatus()
+		return e.fetchShowProcedureStatus(ctx, "PROCEDURE")
+	case ast.ShowFunctionStatus:
+		return e.fetchShowProcedureStatus(ctx, "FUNCTION")
 	case ast.ShowStatus:
 		return e.fetchShowStatus()
 	case ast.ShowTables:
@@ -1938,10 +1943,6 @@ func (e *ShowExec) fetchShowPrivileges() error {
 }
 
 func (*ShowExec) fetchShowTriggers() error {
-	return nil
-}
-
-func (*ShowExec) fetchShowProcedureStatus() error {
 	return nil
 }
 

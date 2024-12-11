@@ -171,6 +171,9 @@ const (
 	inImportInto
 	// inAnalyze is set when visiting an analyze statement.
 	inAnalyze
+	// inCreateRoutine is set when visiting routine.
+	// skip table && execute precheck
+	inCreateRoutine
 )
 
 // Make linter happy.
@@ -373,8 +376,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		if node.FnName.L == ast.NextVal || node.FnName.L == ast.LastVal || node.FnName.L == ast.SetVal {
 			p.flag |= inSequenceFunction
 		}
-		// not support procedure right now.
-		if node.Schema.L != "" {
+		// not support function right now.
+		if node.Schema.L != "" && p.stmtTp == TypeSelect {
 			p.err = expression.ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", node.Schema.L+"."+node.FnName.L)
 		}
 	case *ast.BRIEStmt:
@@ -419,6 +422,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.CreateProcedureInfo:
+		p.flag |= inCreateRoutine
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -672,6 +677,8 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
 		}
+	case *ast.CreateProcedureInfo:
+		p.flag &= ^inCreateOrDropTable
 	case *ast.SetOprStmt:
 		if x.With != nil {
 			p.preprocessWith.cteStack = p.preprocessWith.cteStack[0 : len(p.preprocessWith.cteStack)-1]
@@ -1568,6 +1575,10 @@ func (p *preprocessor) stmtType() string {
 }
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
+	// Creating routine doesn't check tables exist or not.
+	if p.flag&inCreateRoutine == inCreateRoutine {
+		return
+	}
 	if tn.Schema.L == "" {
 		for _, cte := range p.preprocessWith.cteCanUsed {
 			if cte == tn.Name.L {
@@ -1696,6 +1707,9 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 }
 
 func (p *preprocessor) resolveExecuteStmt(node *ast.ExecuteStmt) {
+	if p.flag&inCreateRoutine == inCreateRoutine {
+		return
+	}
 	prepared, err := GetPreparedStmt(node, p.sctx.GetSessionVars())
 	if err != nil {
 		p.err = err

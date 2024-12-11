@@ -80,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -212,6 +213,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableRoutines:
+			err = e.setDataForRoutines(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -961,6 +964,56 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	e.retrieved = len(e.rows) == 0
 
 	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,
+	character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from mysql.routines;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 18 {
+			continue
+		}
+		routineType := chunkRow.GetEnum(2)
+		if routineType.String() != "PROCEDURE" {
+			return errors.Errorf("Not support %s", routineType.String())
+		}
+		routeSchema := chunkRow.GetString(0)
+		name := chunkRow.GetString(1)
+		definitionUtf8 := chunkRow.GetString(3)
+		isDeterministic := chunkRow.GetInt64(5)
+		sqlDataAccess := chunkRow.GetEnum(6)
+		securityType := chunkRow.GetEnum(7)
+		definer := chunkRow.GetString(8)
+		sqlMode := chunkRow.GetSet(9)
+		characterSetClient := chunkRow.GetString(10)
+		connectionCollation := chunkRow.GetString(11)
+		schemaCollation := chunkRow.GetString(12)
+		created := chunkRow.GetTime(13)
+		lastAltered := chunkRow.GetTime(14)
+		comment := chunkRow.GetString(15)
+		externalLanguage := chunkRow.GetString(17)
+		deterministicStatus := "NO"
+		if isDeterministic == 1 {
+			deterministicStatus = "YES"
+		}
+		// unspport function
+		row := types.MakeDatums(name, "def", routeSchema, name, routineType.String(), "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
+			definitionUtf8, nil, externalLanguage, "SQL", deterministicStatus, sqlDataAccess.String(), nil, securityType.String(), created,
+			lastAltered, sqlMode.String(), comment, definer, characterSetClient, connectionCollation, schemaCollation)
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
+	return nil
 }
 
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {

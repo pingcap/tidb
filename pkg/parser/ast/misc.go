@@ -805,6 +805,9 @@ type VariableAssignment struct {
 	IsGlobal bool
 	IsSystem bool
 
+	// The syntax can be used to stored procedure internal variables
+	CanSPVariable bool
+
 	// ExtendValue is a way to store extended info.
 	// VariableAssignment should be able to store information for SetCharset/SetPWD Stmt.
 	// For SetCharsetStmt, Value is charset, ExtendValue is collation.
@@ -814,16 +817,18 @@ type VariableAssignment struct {
 
 // Restore implements Node interface.
 func (n *VariableAssignment) Restore(ctx *format.RestoreCtx) error {
-	if n.IsSystem {
-		ctx.WritePlain("@@")
-		if n.IsGlobal {
-			ctx.WriteKeyWord("GLOBAL")
-		} else {
-			ctx.WriteKeyWord("SESSION")
+	if !n.CanSPVariable {
+		if n.IsSystem {
+			ctx.WritePlain("@@")
+			if n.IsGlobal {
+				ctx.WriteKeyWord("GLOBAL")
+			} else {
+				ctx.WriteKeyWord("SESSION")
+			}
+			ctx.WritePlain(".")
+		} else if n.Name != SetNames && n.Name != SetCharset {
+			ctx.WriteKeyWord("@")
 		}
-		ctx.WritePlain(".")
-	} else if n.Name != SetNames && n.Name != SetCharset {
-		ctx.WriteKeyWord("@")
 	}
 	if n.Name == SetNames {
 		ctx.WriteKeyWord("NAMES ")
@@ -2915,6 +2920,11 @@ func (n ObjectTypeType) Restore(ctx *format.RestoreCtx) error {
 		return errors.New("Unsupported object type")
 	}
 	return nil
+}
+
+// IsRoutineType checks whether it is a routine type
+func (n ObjectTypeType) IsRoutineType() bool {
+	return n == ObjectTypeProcedure || n == ObjectTypeFunction
 }
 
 // GrantLevelType is the type for grant level.

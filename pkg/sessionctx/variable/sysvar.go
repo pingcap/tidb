@@ -710,6 +710,29 @@ var defaultSysVars = []*SysVar{
 			return strconv.FormatInt(int64(PasswordValidationSpecialCharCount.Load()), 10), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBEnableProcedure, Value: Off, Type: TypeBool,
+		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+			on := TiDBOptOn(val)
+			// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
+			// if on && s.StmtCtx.StmtType == "Set" {
+			// 	s.EnableSPParamSubstitute = on
+			// 	err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableSPParamSubstitute, "ON")
+			// 	if err != nil {
+			// 		return err
+			// 	}
+			// }
+			TiDBEnableProcedureValue.Store(on)
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
+	},
+	},
+	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		AutomaticSPPrivileges.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(AutomaticSPPrivileges.Load()), nil
+	}},
 	{Scope: ScopeGlobal, Name: ValidatePasswordDictionary, Value: "", Type: TypeStr},
 	{Scope: ScopeGlobal, Name: DefaultPasswordLifetime, Value: "0", Type: TypeInt, MinValue: 0, MaxValue: math.MaxUint16},
 	{Scope: ScopeGlobal, Name: DisconnectOnExpiredPassword, Value: On, Type: TypeBool, ReadOnly: true, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -3394,6 +3417,35 @@ var defaultSysVars = []*SysVar{
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
+	{Scope: ScopeGlobal, Name: SPCacheSize, Value: strconv.Itoa(DefStoredProgramCacheSize), Type: TypeInt, MinValue: 0, MaxValue: 524288, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		val, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return err
+		}
+		StoredProgramCacheSize.Store(val)
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return strconv.Itoa(int(StoredProgramCacheSize.Load())), nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: MaxSpRecursionDepth, Type: TypeInt, Value: "0", MinValue: 0, MaxValue: 255, SetSession: func(s *SessionVars, val string) error {
+		s.MaxSpRecursionDepth = TidbOptInt(val, 0)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		AutomaticSPPrivileges.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(AutomaticSPPrivileges.Load()), nil
+	}},
+	{Scope: ScopeSession, Name: TiDBProcedureLastErrorSQL, Value: "", Type: TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return s.LastProcedureErrorStr, nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableProcedureAstCache, Value: BoolToOnOff(TiDBEnableSPAstReuse.Load()), Type: TypeBool, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(TiDBEnableSPAstReuse.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		TiDBEnableSPAstReuse.Store(TiDBOptOn(val))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIdleTransactionTimeout, Value: strconv.Itoa(DefTiDBIdleTransactionTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
 		SetSession: func(s *SessionVars, val string) error {
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
@@ -3824,4 +3876,6 @@ const (
 	ValidatePasswordSpecialCharCount = "validate_password.special_char_count"
 	// ValidatePasswordDictionary specified the dictionary that validate_password uses for checking passwords. Each word is separated by semicolon (;).
 	ValidatePasswordDictionary = "validate_password.dictionary"
+	// SPCacheSize specified the soft upper limit for number of cached stored routines for one connection.
+	SPCacheSize = "stored_program_cache"
 )

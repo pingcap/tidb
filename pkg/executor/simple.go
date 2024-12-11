@@ -2383,6 +2383,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			break
 		}
 
+		// delete privileges from mysql.procs_priv
+		sql.Reset()
+		sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.ProcsPriv, user.Hostname, user.Username)
+		if _, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// delete from activeRoles
 		if s.IsDropRole {
 			for i := 0; i < len(activeRoles); i++ {

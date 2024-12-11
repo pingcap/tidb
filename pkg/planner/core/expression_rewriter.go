@@ -2443,6 +2443,16 @@ func (er *expressionRewriter) clause() clauseCode {
 }
 
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
+	if v.Table.String() == "" && er.planCtx != nil && er.planCtx.builder.ctx.GetSessionVars().GetCallProcedure() {
+		notFind, err := er.searchSpVariables(v.Name.L)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if !notFind {
+			return
+		}
+	}
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2639,4 +2649,31 @@ func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 		return false
 	}
 	return strings.ToLower(x) == ast.CurrentTimestamp
+}
+
+func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
+	sessionVar := er.planCtx.builder.ctx.GetSessionVars()
+	if !sessionVar.GetCallProcedure() {
+		return true, nil
+	}
+	varType, _, notFind := sessionVar.GetProcedureVariable(name)
+	if notFind {
+		return true, nil
+	}
+
+	var expr expression.Expression
+	var err error
+	retType := varType.Clone()
+	// check if the variable is substitute-able
+	// if sessionVar.EnableSPParamSubstitute && er.clauseSubstituteAbleForUDV() {
+	// 	expr = er.assembleConstant(d, retType)
+	// } else {
+	expr, err = er.newFunction(ast.GetProcedureVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
+	if err != nil {
+		return false, err
+	}
+	expr.SetCoercibility(expression.CoercibilityImplicit)
+	//}
+	er.ctxStackAppend(expr, types.EmptyName)
+	return false, nil
 }

@@ -822,6 +822,7 @@ const (
 	ErrMustChangePasswordLogin                               = 1862
 	ErrRowInWrongPartition                                   = 1863
 	ErrErrorLast                                             = 1863
+	ErrGetStackedDaWithoutActiveHandler                      = 3004
 	ErrForeignKeyCascadeDepthExceeded                        = 3008
 	ErrInvalidFieldSize                                      = 3013
 	ErrPasswordExpireAnonymousUser                           = 3016
@@ -863,6 +864,7 @@ const (
 	ErrInvalidJSONPathArrayCell                              = 3165
 	ErrInvalidEncryptionOption                               = 3184
 	ErrTooLongValueForType                                   = 3505
+	ErrTooLongRoutineComment                                 = 3511
 	ErrPKIndexCantBeInvisible                                = 3522
 	ErrGrantRole                                             = 3523
 	ErrRoleNotGranted                                        = 3530
@@ -944,6 +946,7 @@ const (
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
+	ErrSPvarNonintegerType                  = 4008
 	ErrOnlyOneDefaultPartionAllowed         = 4030
 	ErrWrongPartitionTypeExpectedSystemTime = 4113
 	ErrSystemVersioningWrongPartitions      = 4128

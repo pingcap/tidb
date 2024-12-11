@@ -1914,7 +1914,8 @@ func ExprHasSetVarOrSleep(expr Expression) bool {
 	if !isScalaFunc {
 		return false
 	}
-	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep {
+	if scalaFunc.FuncName.L == ast.SetVar || scalaFunc.FuncName.L == ast.Sleep ||
+		scalaFunc.FuncName.L == ast.SetProcedureVar {
 		return true
 	}
 	for _, arg := range scalaFunc.GetArgs() {

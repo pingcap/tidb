@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -110,6 +111,18 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expression.VarAssignment) error {
+	// According to the grammar rule, the procedure local variable is parsed as a system variable.
+	// VariableName EqOrAssignmentEq SetExpr
+	// $$ = &ast.VariableAssignment{Name: $1, Value: $3, IsSystem: true}
+	if v.IsSystem && v.CanSPVariable {
+		notFind, err := e.setSPVariable(name, v)
+		if err != nil {
+			return err
+		}
+		if !notFind {
+			return nil
+		}
+	}
 	sessionVars := e.Ctx().GetSessionVars()
 	sysVar := variable.GetSysVar(name)
 	if sysVar == nil {
@@ -346,4 +359,22 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 
 	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
 	return nil
+}
+
+func (e *SetExecutor) setSPVariable(name string, v *expression.VarAssignment) (bool, error) {
+	if !e.Ctx().GetSessionVars().GetCallProcedure() {
+		return true, nil
+	}
+	_, _, notFind := e.Ctx().GetSessionVars().GetProcedureVariable(name)
+	if notFind {
+		return true, nil
+	}
+	datum, err := v.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return false, err
+	}
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
+	err = core.UpdateVariableVar(name, datum, e.Ctx().GetSessionVars())
+	return false, err
 }

@@ -228,6 +228,8 @@ type session struct {
 
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
+
+	writeResultset sessionctx.SessionExec
 }
 
 var parserPool = &sync.Pool{New: func() any { return parser.New() }}
@@ -2031,6 +2033,10 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		return nil, err
 	}
 	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		if preparedCore, ok := execStmt.PrepStmt.(*plannercore.PlanCacheStmt); ok {
+			preparedCore.InUse = true
+			defer func() { preparedCore.InUse = false }()
+		}
 		if binParam, ok := execStmt.BinaryArgs.([]param.BinaryParam); ok {
 			args, err := expression.ExecBinaryParam(s.GetSessionVars().StmtCtx.TypeCtx(), binParam)
 			if err != nil {
@@ -4714,4 +4720,12 @@ func (s *session) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
 func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 	return &s.commitWaitGroup
+}
+
+func (s *session) SetSessionExec(cc sessionctx.SessionExec) {
+	s.writeResultset = cc
+}
+
+func (s *session) GetSessionExec() sessionctx.SessionExec {
+	return s.writeResultset
 }

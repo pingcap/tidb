@@ -1606,6 +1606,11 @@ error = '''
 Unknown database '%-.192s'
 '''
 
+["executor:1054"]
+error = '''
+Unknown column '%-.192s' in '%-.192s'
+'''
+
 ["executor:1133"]
 error = '''
 Can't find any matching row in the user table
@@ -1629,6 +1634,16 @@ Deadlock found when trying to get lock; try restarting transaction
 ["executor:1221"]
 error = '''
 Incorrect usage of %s and %s
+'''
+
+["executor:1227"]
+error = '''
+Access denied; you need (at least one of) the %-.128s privilege(s) for this operation
+'''
+
+["executor:1231"]
+error = '''
+Variable '%-.64s' can't be set to the value of '%-.200s'
 '''
 
 ["executor:1235"]
@@ -1661,6 +1676,11 @@ error = '''
 This command is not supported in the prepared statement protocol yet
 '''
 
+["executor:1304"]
+error = '''
+%s %s already exists
+'''
+
 ["executor:1305"]
 error = '''
 %s %s does not exist
@@ -1669,6 +1689,16 @@ error = '''
 ["executor:1317"]
 error = '''
 Query execution was interrupted
+'''
+
+["executor:1318"]
+error = '''
+Incorrect number of arguments for %s %s; expected %d, got %d
+'''
+
+["executor:1330"]
+error = '''
+Duplicate parameter: %s
 '''
 
 ["executor:1347"]
@@ -1696,6 +1726,11 @@ error = '''
 You are not allowed to create a user with GRANT
 '''
 
+["executor:1456"]
+error = '''
+Recursive limit %d (as set by the maxSpRecursionDepth variable) was exceeded for routine %.192s
+'''
+
 ["executor:1524"]
 error = '''
 Plugin '%-.192s' is not loaded
@@ -1706,9 +1741,19 @@ error = '''
 Transaction characteristics can't be changed while a transaction is in progress
 '''
 
+["executor:1648"]
+error = '''
+Data too long for condition item '%s'
+'''
+
 ["executor:1699"]
 error = '''
 SET PASSWORD has no significance for user '%-.48s'@'%-.255s' as authentication plugin does not support it.
+'''
+
+["executor:1758"]
+error = '''
+Invalid condition number
 '''
 
 ["executor:1819"]
@@ -1726,6 +1771,11 @@ error = '''
 The password hash doesn't have the expected format. Check if the correct password algorithm is being used with the PASSWORD() function.
 '''
 
+["executor:3004"]
+error = '''
+GET STACKED DIAGNOSTICS when handler not active
+'''
+
 ["executor:3008"]
 error = '''
 Foreign key cascade delete/update exceeds max depth of %v.
@@ -1739,6 +1789,11 @@ The password for anonymous user cannot be expired.
 ["executor:3024"]
 error = '''
 Query execution was interrupted, maximum statement execution time exceeded
+'''
+
+["executor:3511"]
+error = '''
+Comment for routine '%-.64s' is too long (max = %d).
 '''
 
 ["executor:3523"]
@@ -2251,6 +2306,11 @@ error = '''
 Column '%-.192s' cannot be null
 '''
 
+["planner:1049"]
+error = '''
+Unknown database '%-.192s'
+'''
+
 ["planner:1051"]
 error = '''
 Unknown table '%-.100s'
@@ -2274,6 +2334,11 @@ Expression #%d of %s is not in GROUP BY clause and contains nonaggregated column
 ["planner:1056"]
 error = '''
 Can't group on '%-.192s'
+'''
+
+["planner:1059"]
+error = '''
+Identifier name '%-.100s' is too long
 '''
 
 ["planner:1060"]
@@ -2326,6 +2391,11 @@ error = '''
 Key '%-.192s' doesn't exist in table '%-.192s'
 '''
 
+["planner:1193"]
+error = '''
+Unknown system variable '%-.64s'
+'''
+
 ["planner:1210"]
 error = '''
 Incorrect arguments to %s
@@ -2376,6 +2446,96 @@ error = '''
 The target table %-.100s of the %s is not updatable
 '''
 
+["planner:1305"]
+error = '''
+%s %s does not exist
+'''
+
+["planner:1308"]
+error = '''
+%s with no matching label: %s
+'''
+
+["planner:1309"]
+error = '''
+Redefining label %s
+'''
+
+["planner:1310"]
+error = '''
+End-label %s without match
+'''
+
+["planner:1318"]
+error = '''
+Incorrect number of arguments for %s %s; expected %d, got %d
+'''
+
+["planner:1324"]
+error = '''
+Undefined CURSOR: %s
+'''
+
+["planner:1325"]
+error = '''
+Cursor is already open
+'''
+
+["planner:1326"]
+error = '''
+Cursor is not open
+'''
+
+["planner:1327"]
+error = '''
+Undeclared variable: %s
+'''
+
+["planner:1328"]
+error = '''
+Incorrect number of FETCH variables
+'''
+
+["planner:1329"]
+error = '''
+No data - zero rows fetched, selected, or processed
+'''
+
+["planner:1330"]
+error = '''
+Duplicate parameter: %s
+'''
+
+["planner:1331"]
+error = '''
+Duplicate variable: %s
+'''
+
+["planner:1332"]
+error = '''
+Duplicate condition: %s
+'''
+
+["planner:1333"]
+error = '''
+Duplicate cursor: %s
+'''
+
+["planner:1337"]
+error = '''
+Variable or condition declaration after cursor or handler declaration
+'''
+
+["planner:1338"]
+error = '''
+Cursor declaration after handler declaration
+'''
+
+["planner:1339"]
+error = '''
+Case not found for CASE statement
+'''
+
 ["planner:1345"]
 error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
@@ -2391,9 +2551,39 @@ error = '''
 View '%-.192s.%-.192s' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 '''
 
+["planner:1370"]
+error = '''
+%-.16s command denied to user '%-.48s'@'%-.255s' for routine '%-.192s'
+'''
+
 ["planner:1391"]
 error = '''
 Key part '%-.192s' length cannot be 0
+'''
+
+["planner:1407"]
+error = '''
+Bad SQLSTATE: '%s'
+'''
+
+["planner:1413"]
+error = '''
+Duplicate handler declared in the same block
+'''
+
+["planner:1414"]
+error = '''
+OUT or INOUT argument %d for routine %s is not a variable or NEW pseudo-variable in BEFORE trigger
+'''
+
+["planner:1444"]
+error = '''
+The prepared statement contains a stored routine call that refers to that same statement. It's not allowed to execute a prepared statement in such a recursive manner
+'''
+
+["planner:1449"]
+error = '''
+The user specified as a definer ('%-.64s'@'%-.255s') does not exist
 '''
 
 ["planner:1451"]
@@ -2406,9 +2596,24 @@ error = '''
 Cannot add or update a child row: a foreign key constraint fails (%.192s)
 '''
 
+["planner:1456"]
+error = '''
+Recursive limit %d (as set by the maxSpRecursionDepth variable) was exceeded for routine %.192s
+'''
+
+["planner:1458"]
+error = '''
+Incorrect routine name '%-.192s'
+'''
+
 ["planner:1462"]
 error = '''
 `%-.192s`.`%-.192s` contains view recursion
+'''
+
+["planner:1525"]
+error = '''
+Incorrect %-.32s value: '%-.128s'
 '''
 
 ["planner:1562"]
@@ -2599,6 +2804,11 @@ Argument %s of GROUPING function is not in GROUP BY
 ["planner:3637"]
 error = '''
 Variable '%s' might not be affected by SET_VAR hint.
+'''
+
+["planner:4008"]
+error = '''
+The variable "%s" has a non-integer based type
 '''
 
 ["planner:8006"]

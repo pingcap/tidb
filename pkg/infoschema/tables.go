@@ -107,7 +107,8 @@ const (
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
 	TableViews           = "VIEWS"
-	tableRoutines        = "ROUTINES"
+	// TableRoutines is the string constant of infoschema table.
+	TableRoutines        = "ROUTINES"
 	tableParameters      = "PARAMETERS"
 	tableEvents          = "EVENTS"
 	tableGlobalStatus    = "GLOBAL_STATUS"
@@ -268,7 +269,7 @@ var tableIDMap = map[string]int64{
 	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
-	tableRoutines:                           autoid.InformationSchemaDBID + 24,
+	TableRoutines:                           autoid.InformationSchemaDBID + 24,
 	tableParameters:                         autoid.InformationSchemaDBID + 25,
 	tableEvents:                             autoid.InformationSchemaDBID + 26,
 	tableGlobalStatus:                       autoid.InformationSchemaDBID + 27,
@@ -482,7 +483,7 @@ var columnsCols = []columnInfo{
 	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
 	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 48},
 	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
 	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
 	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
@@ -2324,7 +2325,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	tableColumnPrivileges:                   tableColumnPrivilegesCols,
 	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
-	tableRoutines:                           tableRoutinesCols,
+	TableRoutines:                           tableRoutinesCols,
 	tableParameters:                         tableParametersCols,
 	tableEvents:                             tableEventsCols,
 	tableGlobalStatus:                       tableGlobalStatusCols,

@@ -67,6 +67,13 @@ type Manager interface {
 	// Dynamic privileges are only assignable globally, and have their own grantable attribute.
 	RequestDynamicVerification(activeRoles []*auth.RoleIdentity, privName string, grantable bool) bool
 
+	// RequestProcedureVerification verifies user privilege for the routine request.
+	// If routeName is "", only check global/db scope privileges.
+	// If routeName is not "", check global/db/routine scope privileges.
+	// priv should be a defined constant like CreatePriv, if pass AllPrivMask to priv,
+	// this means any privilege would be OK.
+	RequestProcedureVerification(activeRoles []*auth.RoleIdentity, db, routeName string, priv mysql.PrivilegeType) bool
+
 	// RequestDynamicVerificationWithUser verifies a DYNAMIC privilege for a specific user.
 	RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool
 

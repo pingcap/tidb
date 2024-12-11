@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -79,6 +80,7 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
+	oldUsr := internalSession.GetSessionVars().User
 	defer func() {
 		if !isCommit {
 			_, err := internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "rollback")
@@ -86,9 +88,11 @@ func (e *RevokeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
 			}
 		}
+		internalSession.GetSessionVars().User = oldUsr
 		e.ReleaseSysSession(internalCtx, internalSession)
 	}()
 
+	internalSession.GetSessionVars().User = e.ctx.GetSessionVars().User
 	_, err = internalSession.GetSQLExecutor().ExecuteInternal(internalCtx, "begin")
 	if err != nil {
 		return err
@@ -163,12 +167,29 @@ func (e *RevokeExec) revokeOneUser(ctx context.Context, internalSession sessionc
 			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on database %s", user, host, dbName)
 		}
 	case ast.GrantLevelTable:
-		ok, err := tableUserExists(internalSession, user, host, dbName, e.Level.TableName)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, dbName, e.Level.TableName)
+		switch e.ObjectType {
+		case ast.ObjectTypeNone, ast.ObjectTypeTable:
+			ok, err := tableUserExists(internalSession, user, host, dbName, e.Level.TableName)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on table %s.%s", user, host, dbName, e.Level.TableName)
+			}
+		case ast.ObjectTypeFunction, ast.ObjectTypeProcedure:
+			var routineType string
+			if e.ObjectType == ast.ObjectTypeFunction {
+				routineType = "FOUCTION"
+			} else if e.ObjectType == ast.ObjectTypeProcedure {
+				routineType = "PROCEDURE"
+			}
+			ok, err := procedureUserExists(internalSession, user, host, dbName, e.Level.TableName, routineType)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.Errorf("There is no such grant defined for user '%s' on host '%s' on procedure %s.%s", user, host, dbName, e.Level.TableName)
+			}
 		}
 	}
 
@@ -262,6 +283,29 @@ func (e *RevokeExec) revokeDBPriv(internalSession sessionctx.Context, priv *ast.
 	return err
 }
 
+func prepareRevokeRoutinePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host, dbName, routineName, routineType string, sql *strings.Builder) error {
+	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.ProcsPriv)
+	isDelRow, err := composeProcPrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, routineName, routineType)
+	if err != nil {
+		return err
+	}
+
+	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Routine_name=%? AND Routine_type=%?", user, host, dbName, routineName, routineType)
+	_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return err
+	}
+
+	if isDelRow {
+		sql.Reset()
+		sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Routine_name=%? AND Routine_type=%?",
+			mysql.SystemDB, mysql.ProcsPriv, user, host, dbName, routineName, routineType)
+		_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+		return err
+	}
+	return nil
+}
+
 func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	dbName, tbl, err := getTargetSchemaAndTable(ctx, e.Ctx(), e.Level.DBName, e.Level.TableName, e.is)
@@ -275,24 +319,40 @@ func (e *RevokeExec) revokeTablePriv(ctx context.Context, internalSession sessio
 		tblName = tbl.Meta().Name.O
 	}
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
-	isDelRow, err := composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tblName)
-	if err != nil {
-		return err
-	}
+	switch e.ObjectType {
+	case ast.ObjectTypeNone, ast.ObjectTypeTable:
+		sqlescape.MustFormatSQL(sql, "UPDATE %n.%n SET ", mysql.SystemDB, mysql.TablePrivTable)
+		isDelRow, err := composeTablePrivUpdateForRevoke(internalSession, sql, priv.Priv, user, host, dbName, tblName)
+		if err != nil {
+			return err
+		}
 
-	sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tblName)
-	_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return err
-	}
-
-	if isDelRow {
-		sql.Reset()
-		sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, dbName, tblName)
+		sqlescape.MustFormatSQL(sql, " WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", user, host, dbName, tblName)
 		_, err = internalSession.GetSQLExecutor().ExecuteInternal(ctx, sql.String())
+		if err != nil {
+			return err
+		}
+
+		if isDelRow {
+			sql.Reset()
+			sqlescape.MustFormatSQL(sql, "DELETE FROM %n.%n WHERE User=%? AND Host=%? AND DB=%? AND Table_name=%?", mysql.SystemDB, mysql.TablePrivTable, user, host, dbName, tblName)
+			_, err = internalSession.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql.String())
+			return err
+		}
+	case ast.ObjectTypeProcedure:
+		err := prepareRevokeRoutinePriv(ctx, internalSession, priv, user, host, dbName, tblName, "PROCEDURE", sql)
+		if err != nil {
+			return err
+		}
+	case ast.ObjectTypeFunction:
+		err := prepareRevokeRoutinePriv(ctx, internalSession, priv, user, host, dbName, tblName, "FUNCTION", sql)
+		if err != nil {
+			return err
+		}
+	default:
+		return errors.Errorf("revoke unsupport ObjectType:%T", e.ObjectType)
 	}
-	return err
+	return nil
 }
 
 func (e *RevokeExec) revokeColumnPriv(ctx context.Context, internalSession sessionctx.Context, priv *ast.PrivElem, user, host string) error {
@@ -396,4 +456,32 @@ func composeColumnPrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Build
 
 	sqlescape.MustFormatSQL(sql, `Column_priv=%?`, strings.Join(newColumnPriv, ","))
 	return len(newColumnPriv) == 0, nil
+}
+
+func composeProcPrivUpdateForRevoke(ctx sessionctx.Context, sql *strings.Builder, priv mysql.PrivilegeType, name string, host string, db string, tbl, routineType string) (bool, error) {
+	var newProcPriv []string
+
+	currProcPriv, err := getRoutinePriv(ctx, name, host, db, tbl, routineType)
+	if err != nil {
+		return false, err
+	}
+
+	if priv == mysql.AllPriv {
+		// Revoking `ALL` does not revoke the Grant option,
+		// so we only need to check if the user had this previously.
+		tmp := SetFromString(currProcPriv)
+		for _, p := range tmp {
+			if p == mysql.Priv2SetStr[mysql.GrantPriv] {
+				newProcPriv = []string{mysql.Priv2SetStr[mysql.GrantPriv]}
+			}
+		}
+	} else {
+		newProcPriv = SetFromString(currProcPriv)
+		newProcPriv, err = privUpdateForRevoke(newProcPriv, priv)
+		if err != nil {
+			return false, err
+		}
+	}
+	sqlescape.MustFormatSQL(sql, `Proc_priv=%?, Grantor=%?`, strings.Join(newProcPriv, ","), ctx.GetSessionVars().User.String())
+	return len(newProcPriv) == 0, nil
 }

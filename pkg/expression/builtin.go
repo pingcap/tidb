@@ -986,6 +986,8 @@ var funcs = map[string]functionClass{
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},
 	ast.LastVal: &lastValFunctionClass{baseFunctionClass{ast.LastVal, 1, 1}},
 	ast.SetVal:  &setValFunctionClass{baseFunctionClass{ast.SetVal, 2, 2}},
+
+	ast.SetProcedureVar: &setProcedureVarFunctionClass{baseFunctionClass{ast.SetProcedureVar, 2, 2}},
 }
 
 // IsFunctionSupported check if given function name is a builtin sql function.
@@ -1008,7 +1010,7 @@ func GetDisplayName(name string) string {
 // GetBuiltinList returns a list of builtin functions
 func GetBuiltinList() []string {
 	res := make([]string, 0, len(funcs))
-	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull}
+	notImplementedFunctions := []string{ast.RowFunc, ast.IsTruthWithNull, ast.SetProcedureVar}
 	for funcName := range funcs {
 		skipFunc := false
 		// Skip not implemented functions

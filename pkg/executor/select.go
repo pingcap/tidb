@@ -898,6 +898,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc = vars.InitStatementContext()
 	}
+	// If it's a stmt in procedure, the flag associated with sql_mode needs to be reset.
+	if ctx.GetSessionVars().GetCallProcedure() {
+		plannercore.ResetFlagBySQLMode(sc, vars)
+	}
 	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
 	if sc.CTEStorageMap == nil {
@@ -973,7 +977,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		vars.MemTracker.SetBytesLimit(-1)
 		vars.MemTracker.AttachTo(GlobalAnalyzeMemoryTracker)
 	} else {
-		sc.InitMemTracker(memory.LabelForSQLText, -1)
+		// call stmt will not directly read tikv data and does not require initialization track.
+		// call stmt will be initialized indirectly from the ExecRestrictedSQL interface.
+		if _, ok := s.(*ast.CallStmt); !ok {
+			sc.InitMemTracker(memory.LabelForSQLText, -1)
+		}
 	}
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 	switch variable.OOMAction.Load() {
@@ -988,9 +996,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	sc.MemTracker.SessionID.Store(vars.ConnectionID)
-	sc.MemTracker.AttachTo(vars.MemTracker)
-	sc.InitDiskTracker(memory.LabelForSQLText, -1)
+	if _, ok := s.(*ast.CallStmt); !ok {
+		sc.MemTracker.SessionID.Store(vars.ConnectionID)
+		sc.MemTracker.AttachTo(vars.MemTracker)
+		sc.InitDiskTracker(memory.LabelForSQLText, -1)
+	}
 	globalConfig := config.GetGlobalConfig()
 	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
@@ -1135,6 +1145,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+	case *ast.CallStmt, *ast.CreateProcedureInfo:
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(!strictSQLMode).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
+				!vars.SQLMode.HasNoZeroDateMode() ||
+				!strictSQLMode ||
+				vars.SQLMode.HasAllowInvalidDatesMode()))
+		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+			!vars.SQLMode.HasErrorForDivisionByZeroMode(), !strictSQLMode)
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(true).

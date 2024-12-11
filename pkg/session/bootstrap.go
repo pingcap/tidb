@@ -759,6 +759,45 @@ const (
         status varchar(128),
         description text,
         primary key(module, name))`
+
+	// CreateRouteTable is a table save routines info.
+	// To do :Make as hidden table and query through the view
+	CreateRouteTable = `CREATE TABLE IF NOT EXISTS mysql.routines (
+        route_schema varchar(64) NOT NULL,
+        name varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
+        type enum('FUNCTION','PROCEDURE') COLLATE utf8mb4_bin NOT NULL,
+        definition longblob,
+        definition_utf8 longtext COLLATE utf8mb4_bin,
+        parameter_str blob,
+        is_deterministic tinyint(1) NOT NULL,
+        sql_data_access enum('CONTAINS SQL','NO SQL','READS SQL DATA','MODIFIES SQL DATA') COLLATE utf8mb4_bin NOT NULL,
+        security_type enum('DEFAULT','INVOKER','DEFINER') COLLATE utf8mb4_bin NOT NULL,
+        definer varchar(288) COLLATE utf8mb4_bin NOT NULL,
+        sql_mode set('REAL_AS_FLOAT','PIPES_AS_CONCAT','ANSI_QUOTES','IGNORE_SPACE','NOT_USED','ONLY_FULL_GROUP_BY','NO_UNSIGNED_SUBTRACTION','NO_DIR_IN_CREATE','POSTGRESQL','ORACLE','MSSQL','DB2','MAXDB','NO_KEY_OPTIONS','NO_TABLE_OPTIONS','NO_FIELD_OPTIONS','MYSQL323','MYSQL40','ANSI','NO_AUTO_VALUE_ON_ZERO','NO_BACKSLASH_ESCAPES','STRICT_TRANS_TABLES','STRICT_ALL_TABLES','NO_ZERO_IN_DATE','NO_ZERO_DATE','INVALID_DATES','ALLOW_INVALID_DATES','ERROR_FOR_DIVISION_BY_ZERO','TRADITIONAL','NO_AUTO_CREATE_USER','HIGH_NOT_PRECEDENCE','NO_ENGINE_SUBSTITUTION','PAD_CHAR_TO_FULL_LENGTH','TIME_TRUNCATE_FRACTIONAL') COLLATE utf8mb4_bin NOT NULL,
+        character_set_client varchar(100) NOT NULL,
+        connection_collation varchar(100) NOT NULL,
+        schema_collation varchar(100) NOT NULL,
+        created timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+        last_altered timestamp(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+        comment text COLLATE utf8mb4_bin NOT NULL,
+        options mediumtext COLLATE utf8mb4_bin,
+        external_language varchar(64) COLLATE utf8mb4_bin NOT NULL DEFAULT 'SQL',
+        PRIMARY KEY (route_schema, name, type)
+        ) ;`
+
+	// CreateProcsPriv is a table saving routines privilege.
+	CreateProcsPriv = `CREATE TABLE IF NOT EXISTS mysql.procs_priv (
+		Host char(255) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT '',
+		Db char(64) NOT NULL DEFAULT '',
+		User char(32) NOT NULL DEFAULT '',
+		Routine_name char(64) COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+		Routine_type enum('FUNCTION','PROCEDURE') NOT NULL,
+		Grantor varchar(288) NOT NULL DEFAULT '',
+		Proc_priv set('Execute','Alter Routine','Grant') COLLATE utf8mb4_general_ci NOT NULL DEFAULT '',
+		Timestamp timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		PRIMARY KEY (Host,User,Db,Routine_name,Routine_type) /*T![clustered_index] CLUSTERED */,
+		KEY Grantor (Grantor)
+	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Procedure privileges'`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3347,7 +3386,7 @@ func upgradeToEEVer4(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion4 {
 		return
 	}
-	// TODO
+	doReentrantDDL(s, CreateRouteTable)
 }
 
 func upgradeToEEVer5(s sessiontypes.Session, ver int64) {
@@ -3361,7 +3400,7 @@ func upgradeToEEVer6(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion6 {
 		return
 	}
-	// TODO
+	doReentrantDDL(s, CreateProcsPriv)
 }
 
 func upgradeToEEVer7(s sessiontypes.Session, ver int64) {
@@ -3544,6 +3583,10 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateGlobalTaskHistory)
 	// Create tidb_import_jobs
 	mustExecute(s, CreateImportJobs)
+	// Create route table mysql.routines
+	mustExecute(s, CreateRouteTable)
+	// Create routine privilege table mysql.procs_priv
+	mustExecute(s, CreateProcsPriv)
 	// create runaway_watch
 	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries

@@ -866,6 +866,8 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrInvalidJSONPathArrayCell:                              mysql.Message("A path expression is not a path to a cell in an array.", nil),
 	ErrInvalidEncryptionOption:                               mysql.Message("Invalid encryption option.", nil),
 	ErrTooLongValueForType:                                   mysql.Message("Too long enumeration/set value for column %s.", nil),
+	ErrTooLongRoutineComment:                                 mysql.Message("Comment for routine '%-.64s' is too long (max = %d).", nil),
+	ErrGetStackedDaWithoutActiveHandler:                      mysql.Message("GET STACKED DIAGNOSTICS when handler not active", nil),
 	ErrPKIndexCantBeInvisible:                                mysql.Message("A primary key index cannot be invisible", nil),
 	ErrWindowNoSuchWindow:                                    mysql.Message("Window name '%s' is not defined.", nil),
 	ErrWindowCircularityInWindowGraph:                        mysql.Message("There is a circularity in the window dependency graph.", nil),
@@ -945,6 +947,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
 	// MariaDB errors.
+	ErrSPvarNonintegerType:                  mysql.Message("The variable \"%s\" has a non-integer based type", nil),
 	ErrOnlyOneDefaultPartionAllowed:         mysql.Message("Only one DEFAULT partition allowed", nil),
 	ErrWrongPartitionTypeExpectedSystemTime: mysql.Message("Wrong partitioning type, expected type: `SYSTEM_TIME`", nil),
 	ErrSystemVersioningWrongPartitions:      mysql.Message("Wrong Partitions: must have at least one HISTORY and exactly one last CURRENT", nil),
