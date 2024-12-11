@@ -635,6 +635,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 
 	statsJSONFromOldVersion := `{
