@@ -719,56 +719,6 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	return "", nil
 }
 
-// generateIndexMergeOnDNF4MVIndex generates IndexMerge paths for MVIndex upon DNF filters.
-/*
-	select * from t where ((1 member of (a) and b=1) or (2 member of (a) and b=2)) and (c > 10)
-		IndexMerge(OR)
-			IndexRangeScan(a, b, [1 1, 1 1])
-			IndexRangeScan(a, b, [2 2, 2 2])
-			Selection(c > 10)
-				TableRowIdScan(t)
-	Two limitations now:
-	1). all filters in the DNF have to be used as access-filters: ((1 member of (a)) or (2 member of (a)) or b > 10) cannot be used to access the MVIndex.
-	2). cannot support json_contains: (json_contains(a, '[1, 2]') or json_contains(a, '[3, 4]')) is not supported since a single IndexMerge cannot represent this SQL.
-*/
-func generateIndexMergeOnDNF4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) (mvIndexPaths []*util.AccessPath, err error) {
-	for idx := 0; idx < normalPathCnt; idx++ {
-		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
-			continue // not a MVIndex path
-		}
-
-		// for single MV index usage, if specified use the specified one, if not, all can be access and chosen by cost model.
-		if !isInIndexMergeHints(ds, ds.PossibleAccessPaths[idx].Index.Name.L) {
-			continue
-		}
-
-		for current, filter := range filters {
-			sf, ok := filter.(*expression.ScalarFunction)
-			if !ok || sf.FuncName.L != ast.LogicOr {
-				continue
-			}
-			dnfFilters := expression.SplitDNFItems(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
-
-			unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
-				ds,
-				dnfFilters,
-				[]*util.AccessPath{ds.PossibleAccessPaths[idx]},
-			)
-			finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
-				ds,
-				filters,
-				current,
-				[]*util.AccessPath{ds.PossibleAccessPaths[idx]},
-				unfinishedIndexMergePath,
-			)
-			if finishedIndexMergePath != nil {
-				mvIndexPaths = append(mvIndexPaths, finishedIndexMergePath)
-			}
-		}
-	}
-	return
-}
-
 // generateIndexMerge4ComposedIndex generates index path composed of multi indexes including multivalued index from
 // (json_member_of / json_overlaps / json_contains) and single-valued index from normal indexes.
 /*
@@ -860,51 +810,6 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 		return nil
 	}
 
-	//for current, filter := range indexMergeConds {
-	//	// DNF path.
-	//	sf, ok := filter.(*expression.ScalarFunction)
-	//	if !ok || sf.FuncName.L != ast.LogicOr {
-	//		// targeting: cond1 or cond2 or cond3
-	//		continue
-	//	}
-	//	dnfFilters := expression.SplitDNFItems(sf)
-	//
-	//	unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
-	//		ds,
-	//		dnfFilters,
-	//		candidateAccessPaths,
-	//	)
-	//	finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
-	//		ds,
-	//		indexMergeConds,
-	//		current,
-	//		candidateAccessPaths,
-	//		unfinishedIndexMergePath,
-	//	)
-	//	if finishedIndexMergePath == nil {
-	//		continue
-	//	}
-	//
-	//	var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
-	//	for _, oneAlternative := range finishedIndexMergePath.PartialAlternativeIndexPaths {
-	//		for _, paths := range oneAlternative {
-	//			for _, path := range paths {
-	//				if isMVIndexPath(path) {
-	//					mvIndexPartialPathCnt++
-	//				} else {
-	//					normalIndexPartialPathCnt++
-	//				}
-	//			}
-	//		}
-	//	}
-	//
-	//	// Keep the same behavior with previous implementation, we only handle the "composed" case here.
-	//	if mvIndexPartialPathCnt == 0 || (mvIndexPartialPathCnt == 1 && normalIndexPartialPathCnt == 0) {
-	//		continue
-	//	}
-	//	ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
-	//	continue
-	//}
 	// CNF path.
 
 	// after fillIndexPath, all cnf items are filled into the suitable index paths, for these normal index paths,
@@ -996,12 +901,6 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 			TableRowIdScan(t)
 */
 func generateIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) error {
-	//dnfMVIndexPaths, err := generateIndexMergeOnDNF4MVIndex(ds, normalPathCnt, filters)
-	//if err != nil {
-	//	return err
-	//}
-	//ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, dnfMVIndexPaths...)
-
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			continue // not a MVIndex path

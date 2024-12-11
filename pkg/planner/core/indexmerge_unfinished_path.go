@@ -154,7 +154,6 @@ func initUnfinishedPathsFromExpr(
 			)
 			if partialPath != nil {
 				ret[i].initedAsFinished = true
-				//ret[i].accessFilters = partialPath.AccessConds
 				ret[i].needKeepFilter = needSelection
 				ret[i].accessFilters = []expression.Expression{expr}
 				continue
@@ -328,17 +327,12 @@ func buildIntoAccessPath(
 
 	// 1. Generate one or more partial access path for each partial unfinished path (access filter on mv index may
 	// produce several partial paths).
-	//partialPaths := make([]*util.AccessPath, 0, len(indexMergePath.indexMergeORPartialPaths))
 
 	allAllPaths := make([][][]*util.AccessPath, 0, len(indexMergePath.indexMergeORPartialPaths))
 
 	// for each partial path
 	for _, unfinishedPathList := range indexMergePath.indexMergeORPartialPaths {
 		var (
-			//bestPaths            []*util.AccessPath
-			//bestCountAfterAccess float64
-			//bestNeedSelection bool
-
 			allPathsForORBranch [][]*util.AccessPath
 		)
 
@@ -402,34 +396,12 @@ func buildIntoAccessPath(
 			if needSelection {
 				paths[0].KeepIndexMergeORSourceFilter = true
 			}
-			// If there are several partial paths, we use the max CountAfterAccess for comparison.
-			//maxCountAfterAccess := -1.0
-			//for _, p := range paths {
-			//	maxCountAfterAccess = math.Max(maxCountAfterAccess, p.CountAfterAccess)
-			//}
 			allPathsForORBranch = append(allPathsForORBranch, paths)
-			// Choose the best partial path for this partial path.
-			//if len(bestPaths) == 0 {
-			//	bestPaths = paths
-			//	bestCountAfterAccess = maxCountAfterAccess
-			//	bestNeedSelection = needSelection
-			//} else if bestCountAfterAccess > maxCountAfterAccess {
-			//	bestPaths = paths
-			//	bestCountAfterAccess = maxCountAfterAccess
-			//	bestNeedSelection = needSelection
-			//}
 		}
 		if len(allPathsForORBranch) == 0 {
 			return nil
 		}
-		//if len(bestPaths) == 0 {
-		//	return nil
-		//}
 		allAllPaths = append(allAllPaths, allPathsForORBranch)
-		// TODO: keep all paths instead of only the best
-		// Succeeded to get valid path(s) for this partial path.
-		//partialPaths = append(partialPaths, bestPaths...)
-		//needSelectionGlobal = needSelectionGlobal || bestNeedSelection
 	}
 
 	// 2. Collect the final table filter
@@ -442,8 +414,6 @@ func buildIntoAccessPath(
 
 	// 3. Build the final access path
 	possiblePath := buildIndexMergeOrPath(allConds, allAllPaths, orListIdxInAllConds, false)
-	// TODO: switch to buildIndexMergeOrPath()
-	//ret := buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
 	// 3.1 need to set CountAfterAccess
 	// If containMVPath, we need to use CalcTotalSelectivityForMVIdxPath instead of Selectivity to estimate
 	accessConds := make([]expression.Expression, 0, len(allAllPaths))
