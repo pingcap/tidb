@@ -1183,25 +1183,25 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
-		taskResp, err := worker.handleTaskOnce(bo, curTask)
+		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.sendToRespCh(resp, respCh, true)
 			return
 		}
-		if taskResp != nil {
-			if taskResp.resp != nil {
-				worker.sendToRespCh(taskResp.resp, respCh, true)
+		if result != nil {
+			if result.resp != nil {
+				worker.sendToRespCh(result.resp, respCh, true)
 			}
-			for _, resp := range taskResp.batchRespList {
+			for _, resp := range result.batchRespList {
 				worker.sendToRespCh(resp, respCh, true)
 			}
 		}
 		if worker.finished() {
 			break
 		}
-		if taskResp != nil && len(taskResp.remains) > 0 {
-			remainTasks = append(taskResp.remains, remainTasks[1:]...)
+		if result != nil && len(result.remains) > 0 {
+			remainTasks = append(result.remains, remainTasks[1:]...)
 		} else {
 			remainTasks = remainTasks[1:]
 		}
@@ -1443,16 +1443,13 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 // if we're handling coprocessor paging response, lastRange is the range of last
 // successful response, otherwise it's nil.
 func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
-	result := &copTaskResult{}
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
 	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
-			//worker.sendToRespCh(resp, ch, true)
-			result.resp = resp
-			return result, nil
+			return &copTaskResult{resp: resp}, nil
 		}
 		errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 			task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
@@ -1468,31 +1465,16 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			ignoreTiKVClientReadTimeout: true,
 		})
 		if err != nil {
-			//result.remains = remains
 			return nil, err
 		}
-		//result.remains = append(result.remains, remains...)
-		batchRespList, batchRemainTasks, err := worker.handleBatchRemainsOnErr(bo, rpcCtx, resp.pbResp, task)
-		if err != nil {
-			return nil, err
-		}
-		result.batchRespList = batchRespList
-		result.remains = append(remains, batchRemainTasks...)
-		return result, err
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
 		task.meetLockFallback = true
-		remains := []*copTask{task}
-		batchRespList, batchRemainTasks, err := worker.handleBatchRemainsOnErr(bo, rpcCtx, resp.pbResp, task)
-		if err != nil {
-			return nil, err
-		}
-		result.batchRespList = batchRespList
-		result.remains = append(remains, batchRemainTasks...)
-		return result, err
+		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1532,8 +1514,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		return nil, err
 	}
 
-	//worker.sendToRespCh(resp, ch, true)
-	result.resp = resp
+	result := &copTaskResult{resp: resp}
 	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp.pbResp, task.batchTaskList)
 	if err != nil {
 		return result, err
@@ -1543,13 +1524,20 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	return result, nil
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response, task *copTask) (batchRespList []*copResponse, remainTasks []*copTask, err error) {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, resp *coprocessor.Response, task *copTask) (*copTaskResult, error) {
 	if len(task.batchTaskList) == 0 {
-		return nil, nil, nil
+		return &copTaskResult{remains: remains}, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	return worker.handleBatchCopResponse(bo, rpcCtx, resp, batchedTasks)
+	batchRespList, remainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp, batchedTasks)
+	if err != nil {
+		return nil, err
+	}
+	return &copTaskResult{
+		batchRespList: batchRespList,
+		remains:       append(remains, remainTasks...),
+	}, nil
 }
 
 // handle the batched cop response.
@@ -1955,16 +1943,14 @@ func (worker *copIteratorWorker) handleTiDBSendReqErr(err error, task *copTask) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	resp := &copTaskResult{
+	return &copTaskResult{
 		resp: &copResponse{
 			pbResp: &coprocessor.Response{
 				Data: data,
 			},
 			detail: &CopRuntimeStats{},
 		},
-	}
-	//worker.sendToRespCh(resp, ch, true)
-	return resp, nil
+	}, nil
 }
 
 // calculateRetry splits the input ranges into two, and take one of them according to desc flag.
