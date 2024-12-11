@@ -1200,7 +1200,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		if worker.finished() {
 			break
 		}
-		if len(taskResp.remains) > 0 {
+		if taskResp != nil && len(taskResp.remains) > 0 {
 			remainTasks = append(taskResp.remains, remainTasks[1:]...)
 		} else {
 			remainTasks = remainTasks[1:]
