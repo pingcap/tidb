@@ -332,11 +332,11 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	statsTblNew := h.GetTableStats(table.Meta())
 
-	// Search for a not found value based upon statistics - count should be > 100 and <150
+	// Search for a not found value based upon statistics - count should be > 20 and < 40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblNew.RealtimeCount, statsTblNew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 150, "expected: between 100 to 150, got: %v", count)
-	require.Truef(t, count > 100, "expected: between 10 to 150, got: %v", count)
+	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
 }
 
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
