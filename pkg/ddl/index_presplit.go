@@ -42,7 +42,7 @@ import (
 
 // TODO(tangenta): support global index.
 // Wrap the job.Query to with special comments.
-func presplitIndexRegions(
+func preSplitIndexRegions(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	store kv.Storage,
