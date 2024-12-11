@@ -560,7 +560,7 @@ IndexHashJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__c
     └─TableRowIDScan	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.b=t2.b;
 id	estRows	task	access object	operator info
-MergeJoin	12487.50	root		left outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.b, right key:planner__core__casetest__rule__rule_join_reorder.t2.b
+MergeJoin	12487.50	root		left outer join, left side:Sort, left key:planner__core__casetest__rule__rule_join_reorder.t1.b, right key:planner__core__casetest__rule__rule_join_reorder.t2.b
 ├─Sort(Build)	9990.00	root		planner__core__casetest__rule__rule_join_reorder.t2.b
 │ └─TableReader	9990.00	root		data:Selection
 │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
@@ -570,7 +570,7 @@ MergeJoin	12487.50	root		left outer join, left key:planner__core__casetest__rule
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexHashJoin	12487.50	root		left outer join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+IndexHashJoin	12487.50	root		left outer join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	12487.50	root		
@@ -579,7 +579,7 @@ IndexHashJoin	12487.50	root		left outer join, inner:IndexLookUp, outer key:plann
   └─TableRowIDScan(Probe)	12487.50	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.b=t2.b;
 id	estRows	task	access object	operator info
-MergeJoin	12487.50	root		right outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.b, right key:planner__core__casetest__rule__rule_join_reorder.t2.b
+MergeJoin	12487.50	root		right outer join, left side:Sort, left key:planner__core__casetest__rule__rule_join_reorder.t1.b, right key:planner__core__casetest__rule__rule_join_reorder.t2.b
 ├─Sort(Build)	9990.00	root		planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─TableReader	9990.00	root		data:Selection
 │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
@@ -589,7 +589,7 @@ MergeJoin	12487.50	root		right outer join, left key:planner__core__casetest__rul
     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-IndexHashJoin	12487.50	root		right outer join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+IndexHashJoin	12487.50	root		right outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	12487.50	root		
@@ -671,7 +671,7 @@ HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rul
   └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ no_merge_join(t2) */ * from t1 right join t2 on t1.a=t2.a;
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+HashJoin	12487.50	root		right outer join, left side:IndexReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
 ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
 │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 └─IndexReader(Probe)	10000.00	root		index:IndexFullScan
@@ -2599,7 +2599,7 @@ Projection	43857.47	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     │ └─TableReader	9990.00	root		data:Selection
     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	46781.30	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	46781.30	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─PartitionUnion(Build)	39960.00	root		
       │ ├─TableReader	9990.00	root		data:Selection
       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
@@ -2670,7 +2670,7 @@ Projection	43857.47	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     │ └─TableReader	9990.00	root		data:Selection
     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	46781.30	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	46781.30	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─PartitionUnion(Build)	39960.00	root		
       │ ├─TableReader	9990.00	root		data:Selection
       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
@@ -2741,7 +2741,7 @@ Projection	43857.47	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     │ └─TableReader	9990.00	root		data:Selection
     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	46781.30	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	46781.30	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─PartitionUnion(Build)	39960.00	root		
       │ ├─TableReader	9990.00	root		data:Selection
       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
@@ -2812,7 +2812,7 @@ Projection	43857.47	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     │ └─TableReader	9990.00	root		data:Selection
     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	46781.30	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	46781.30	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─PartitionUnion(Build)	39960.00	root		
       │ ├─TableReader	9990.00	root		data:Selection
       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
@@ -2883,7 +2883,7 @@ Projection	43857.47	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     │ └─TableReader	9990.00	root		data:Selection
     │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	46781.30	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	46781.30	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─PartitionUnion(Build)	39960.00	root		
       │ ├─TableReader	9990.00	root		data:Selection
       │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
@@ -2925,7 +2925,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	50000.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	50000.00	root		
 │ ├─TableReader	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
@@ -2937,7 +2937,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p3	keep order:false, stats:pseudo
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	39960.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	39960.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─PartitionUnion(Build)	29970.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
@@ -2965,7 +2965,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	50000.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	50000.00	root		
 │ ├─TableReader	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
@@ -2977,7 +2977,7 @@ HashJoin	50000.00	root		left outer join, equal:[eq(planner__core__casetest__rule
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p3	keep order:false, stats:pseudo
 │ └─TableReader	10000.00	root		data:TableFullScan
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	39960.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	39960.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─PartitionUnion(Build)	29970.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
@@ -3006,7 +3006,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	58476.62	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	50000.00	root		
 │ ├─TableReader	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
@@ -3062,7 +3062,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	58476.62	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	58476.62	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	50000.00	root		
 │ ├─TableReader	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
@@ -3118,7 +3118,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	54821.83	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	54821.83	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	54821.83	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─Projection(Build)	46781.30	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
   │ └─HashJoin	46781.30	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   │   ├─PartitionUnion(Build)	39960.00	root		
@@ -3207,7 +3207,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	54821.83	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	54821.83	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	54821.83	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─Projection(Build)	46781.30	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
   │ └─HashJoin	46781.30	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   │   ├─PartitionUnion(Build)	39960.00	root		
@@ -3296,7 +3296,7 @@ Warning	1815	We can only use one leading hint at most, when multiple leading hin
 explain format = 'brief' select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	54821.83	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	54821.83	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	54821.83	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─Projection(Build)	46781.30	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
   │ └─HashJoin	46781.30	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   │   ├─PartitionUnion(Build)	39960.00	root		
@@ -3386,7 +3386,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	46828.12	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	46828.12	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	46828.12	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─Projection(Build)	37462.50	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b
   │ └─HashJoin	37462.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
   │   ├─PartitionUnion(Build)	29970.00	root		
@@ -3458,7 +3458,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	46828.12	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	46828.12	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	46828.12	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─Projection(Build)	37462.50	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b
   │ └─HashJoin	37462.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
   │   ├─PartitionUnion(Build)	29970.00	root		
@@ -3530,7 +3530,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	46828.12	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	46828.12	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	46828.12	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─Projection(Build)	37462.50	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b
   │ └─HashJoin	37462.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t4.a)]
   │   ├─PartitionUnion(Build)	29970.00	root		
@@ -3601,7 +3601,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	50000.00	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	50000.00	root		right outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	49950.00	root		
 │ ├─TableReader	9990.00	root		data:Selection
 │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
@@ -3618,7 +3618,7 @@ HashJoin	50000.00	root		right outer join, equal:[eq(planner__core__casetest__rul
 │ └─TableReader	9990.00	root		data:Selection
 │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
 │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	40000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	40000.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─PartitionUnion(Build)	29970.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
@@ -3642,7 +3642,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	50000.00	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	50000.00	root		right outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─PartitionUnion(Build)	49950.00	root		
 │ ├─TableReader	9990.00	root		data:Selection
 │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
@@ -3659,7 +3659,7 @@ HashJoin	50000.00	root		right outer join, equal:[eq(planner__core__casetest__rul
 │ └─TableReader	9990.00	root		data:Selection
 │   └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
 │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p4	keep order:false, stats:pseudo
-└─HashJoin(Probe)	40000.00	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	40000.00	root		left outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─PartitionUnion(Build)	29970.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
@@ -3684,7 +3684,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
 Projection	58476.62	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─HashJoin	58476.62	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	58476.62	root		right outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─PartitionUnion(Build)	49950.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
@@ -3744,7 +3744,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
 Projection	58476.62	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─HashJoin	58476.62	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	58476.62	root		right outer join, left side:PartitionUnion, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─PartitionUnion(Build)	49950.00	root		
   │ ├─TableReader	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
@@ -4102,7 +4102,7 @@ HashJoin	1000000000000.00	root		CARTESIAN inner join
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15609.38	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4115,7 +4115,7 @@ HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4273,7 +4273,7 @@ Warning	1815	leading hint is inapplicable, check the join type or the join algor
 explain format = 'brief' select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	15609.38	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+└─HashJoin	15609.38	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4291,7 +4291,7 @@ Projection	15609.38	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  └─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4305,7 +4305,7 @@ Projection	15609.38	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  └─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4319,7 +4319,7 @@ Projection	15609.38	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  └─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4328,7 +4328,7 @@ Projection	15609.38	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15609.38	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -4343,7 +4343,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -4356,7 +4356,7 @@ HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rul
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -4369,7 +4369,7 @@ HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rul
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -4385,7 +4385,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t2) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -4401,7 +4401,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t1) */ * from t1 join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -4487,7 +4487,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4500,7 +4500,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -4510,10 +4510,10 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table has join conditions with other tables
 explain format = 'brief' select /*+ leading(t3, t1) */ * from t1 right join t2 on t1.a=t2.a right join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15609.38	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	15609.38	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4528,7 +4528,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4539,7 +4539,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -4550,7 +4550,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4561,7 +4561,7 @@ id	estRows	task	access object	operator info
 HashJoin	124875000.00	root		CARTESIAN inner join
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -4582,7 +4582,7 @@ insert into t3 values(1, 1), (2, 2), (3, 3);
 analyze table t3 all columns;
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4595,7 +4595,7 @@ HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4607,7 +4607,7 @@ HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4620,7 +4620,7 @@ HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4633,7 +4633,7 @@ HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#11->Column#13
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#7, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexReader	10000.00	root		index:IndexFullScan
   │   └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
@@ -4645,7 +4645,7 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -4674,7 +4674,7 @@ HashJoin	4.69	root		inner join, equal:[eq(planner__core__casetest__rule__rule_jo
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4751,7 +4751,7 @@ Projection	3.75	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <ni
       └─IndexRangeScan	3.75	cop[tikv]	table:t1, index:a(a)	range: decided by [eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)], keep order:true, stats:pseudo
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	12475.01	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4769,7 +4769,7 @@ HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4784,7 +4784,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4800,7 +4800,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4816,7 +4816,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4832,7 +4832,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4848,7 +4848,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	12475.01	root		anti semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─Projection(Probe)	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -4865,7 +4865,7 @@ HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule_
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4879,7 +4879,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4894,7 +4894,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4909,7 +4909,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4924,7 +4924,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -4939,7 +4939,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	12475.01	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4957,7 +4957,7 @@ HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4972,7 +4972,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -4988,7 +4988,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -5004,7 +5004,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -5020,7 +5020,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:Selection
 │ └─Selection	3.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
@@ -5036,7 +5036,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	12475.01	root		anti semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─Projection(Probe)	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5053,7 +5053,7 @@ HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule_
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5067,7 +5067,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5082,7 +5082,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5097,7 +5097,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5112,7 +5112,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	3.00	root		data:TableFullScan
 │ └─TableFullScan	3.00	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5128,7 +5128,7 @@ Warning	1815	leading hint is inapplicable, check the join type or the join algor
 explain format = 'brief' select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5144,7 +5144,7 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
 explain format = 'brief' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5162,7 +5162,7 @@ Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LE
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5180,7 +5180,7 @@ Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5199,7 +5199,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5217,7 +5217,7 @@ Warning	1815	There are no matching table names for (t3, t2) in optimizer hint /*
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─IndexMergeJoin	3.75	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a
   │   ├─IndexReader(Build)	3.00	root		index:IndexFullScan
@@ -5532,7 +5532,7 @@ IndexMergeJoin	4.69	root		inner join, inner:Projection, outer key:planner__core_
     └─TableRowIDScan(Probe)	4.69	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	12475.01	root		Null-aware anti semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─Projection(Probe)	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -5549,7 +5549,7 @@ HashJoin	12475.01	root		Null-aware anti semi join, equal:[eq(planner__core__case
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5563,7 +5563,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5578,7 +5578,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5593,7 +5593,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5608,7 +5608,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	3.00	root		index:IndexFullScan
 │ └─IndexFullScan	3.00	cop[tikv]	table:t3, index:a(a)	keep order:false
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -5869,7 +5869,7 @@ Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	15593.77	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	15593.77	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─TableReader(Build)	9990.00	root		data:Selection
       │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -5885,7 +5885,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	24365.26	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	24365.26	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -5915,7 +5915,7 @@ Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	15593.77	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	15593.77	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─TableReader(Build)	9990.00	root		data:Selection
       │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -5939,7 +5939,7 @@ Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─HashJoin(Probe)	15593.77	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+    └─HashJoin(Probe)	15593.77	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
       ├─TableReader(Build)	9990.00	root		data:Selection
       │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
       │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -5955,7 +5955,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t2, t) */ * from t4 join t on t4.a=t.a left join t1 on t.a = t1.a join t2 on t.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	24365.26	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	24365.26	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -5976,10 +5976,10 @@ Projection	24365.26	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
             └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	15609.38	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -5988,10 +5988,10 @@ HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	15609.38	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	15609.38	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6003,7 +6003,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	19492.21	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─HashJoin(Probe)	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
@@ -6022,7 +6022,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	19492.21	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─Projection(Probe)	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
@@ -6040,7 +6040,7 @@ HashJoin	19492.21	root		left outer join, equal:[eq(planner__core__casetest__rule
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	30426.12	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	30426.12	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	30426.12	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─Projection(Build)	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
   │ └─HashJoin	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6067,7 +6067,7 @@ Projection	30426.12	root		planner__core__casetest__rule__rule_join_reorder.t2.a,
 explain format = 'brief' select /*+ leading(t3, t4) leading(t5, t6) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	30426.12	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	30426.12	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	30426.12	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─HashJoin(Build)	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   │ ├─TableReader(Build)	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
@@ -6095,7 +6095,7 @@ Warning	1815	We can only use one leading hint at most, when multiple leading hin
 explain format = 'brief' select /*+ leading(t5, t6, t3, t4) */ * from t2 left join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b join t5 on t2.a = t5.a join t6 on t5.b=t6.b;
 id	estRows	task	access object	operator info
 Projection	30426.12	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t5.a, planner__core__casetest__rule__rule_join_reorder.t5.b, planner__core__casetest__rule__rule_join_reorder.t6.a, planner__core__casetest__rule__rule_join_reorder.t6.b
-└─HashJoin	30426.12	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	30426.12	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─HashJoin(Build)	15593.77	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   │ ├─TableReader(Build)	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
@@ -6123,7 +6123,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t1, t2) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	24389.65	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+HashJoin	24389.65	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
 ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │ ├─TableReader(Build)	9990.00	root		data:Selection
 │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
@@ -6145,7 +6145,7 @@ HashJoin	24389.65	root		right outer join, equal:[eq(planner__core__casetest__rul
 explain format = 'brief' select /*+ leading(t2, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
 Projection	24389.65	root		planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	24389.65	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	24389.65	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
   │ ├─TableReader(Build)	9990.00	root		data:Selection
   │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
@@ -6166,7 +6166,7 @@ Projection	24389.65	root		planner__core__casetest__rule__rule_join_reorder.t4.a,
           └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t1, t3) */ * from t4 join t on t4.a=t.a right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	24389.65	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+HashJoin	24389.65	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
 ├─HashJoin(Build)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │ ├─TableReader(Build)	9990.00	root		data:Selection
 │ │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
@@ -6189,11 +6189,11 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format = 'brief' select /*+ leading(t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+HashJoin	15593.77	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6201,11 +6201,11 @@ HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rul
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2, t1, t3) */ * from t2 right join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	15593.77	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6218,7 +6218,7 @@ Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t2.a,
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+  └─HashJoin(Probe)	15593.77	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6234,7 +6234,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t4) */ * from t2 right join (t1 join t3 on t1.a=t3.a join t4 on t3.b = t4.b) on t2.b=t1.b;
 id	estRows	task	access object	operator info
 Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+└─HashJoin	19492.21	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6331,7 +6331,7 @@ Projection	243165526.37	root		planner__core__casetest__rule__rule_join_reorder.t
               └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) hash_join(t2) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6349,7 +6349,7 @@ HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rul
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) hash_join(t1) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6367,7 +6367,7 @@ HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rul
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) hash_join(t3) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6436,7 +6436,7 @@ HashJoin	19492.21	root		inner join, equal:[eq(planner__core__casetest__rule__rul
         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 │   ├─TableReader(Build)	9990.00	root		data:Selection
@@ -6456,7 +6456,7 @@ HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rul
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) INL_JOIN(t3) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6477,7 +6477,7 @@ Warning	1815	Optimizer Hint /*+ INL_JOIN(t3) */ or /*+ TIDB_INLJ(t3) */ is inapp
 explain format = 'brief' select /*+ leading(t3) INL_JOIN(t1) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
 Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+└─HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
   ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
   │ └─IndexJoin	12475.01	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─TableReader(Build)	9990.00	root		data:Selection
@@ -6498,7 +6498,7 @@ Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t.a, 
 explain format = 'brief' select /*+ leading(t3) INL_JOIN(t3) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
 Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+└─HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
   ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
   │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
   │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6518,7 +6518,7 @@ Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t3) */ or /*+ TIDB_INLJ(t3) */ is inapplicable
 explain format = 'brief' select /*+ leading(t2) merge_join(t2) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6558,7 +6558,7 @@ Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t.a, 
             └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t2) merge_join(t3) */ * from t left join t1 on t.a = t1.a right join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
-HashJoin	19492.21	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
+HashJoin	19492.21	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)]
 ├─Projection(Build)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b
 │ └─HashJoin	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t.a)]
 │   ├─TableReader(Build)	9980.01	root		data:Selection
@@ -6599,7 +6599,7 @@ Projection	19492.21	root		planner__core__casetest__rule__rule_join_reorder.t.a, 
 explain format = 'brief' select /*+ leading(t3) merge_join(t2) */ * from t right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
 Projection	19511.72	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	19511.72	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	19511.72	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -6619,7 +6619,7 @@ Projection	19511.72	root		planner__core__casetest__rule__rule_join_reorder.t.a, 
 explain format = 'brief' select /*+ leading(t3) merge_join(t2) */ * from t right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
 Projection	19511.72	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	19511.72	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	19511.72	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -6639,7 +6639,7 @@ Projection	19511.72	root		planner__core__casetest__rule__rule_join_reorder.t.a, 
 explain format = 'brief' select /*+ leading(t3) merge_join(t3) */ * from t right join t1 on t.a = t1.a join t2 on t1.b = t2.b join t3 on t2.b = t3.b ;
 id	estRows	task	access object	operator info
 Projection	19511.72	root		planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t.b, planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t3.b
-└─HashJoin	19511.72	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+└─HashJoin	19511.72	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -6699,7 +6699,7 @@ Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapp
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	12475.01	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6717,11 +6717,11 @@ HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12475.01	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12475.01	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9980.01	root		data:Selection
   │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -6732,7 +6732,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─TableReader(Build)	9980.01	root		data:Selection
 │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6748,10 +6748,10 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	12475.01	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+└─HashJoin(Probe)	15593.77	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -6763,10 +6763,10 @@ HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule_
         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6776,10 +6776,10 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -6790,7 +6790,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	12475.01	root		semi join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6808,11 +6808,11 @@ HashJoin	12475.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6823,7 +6823,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9980.01	root		semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9980.01	root		semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -6839,10 +6839,10 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	12475.01	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+└─HashJoin(Probe)	15593.77	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
   └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -6854,10 +6854,10 @@ HashJoin	12475.01	root		anti semi join, equal:[eq(planner__core__casetest__rule_
         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -6867,10 +6867,10 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a where not exists (select t3.a from t3 where t1.b = t3.b);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+HashJoin	9990.00	root		anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -6882,7 +6882,7 @@ Warning	1815	leading hint is inapplicable, check the join type or the join algor
 explain format = 'brief' select /*+ leading(t1) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   │   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
@@ -6897,7 +6897,7 @@ Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Col
 explain format = 'brief' select /*+ leading(t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   │   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
@@ -6914,7 +6914,7 @@ Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LE
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ t1.a, (select min(t1.a) from t2 where t2.a > t1.a) from t1 join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column#14->Column#16
-└─Apply	1.00	root		CARTESIAN left outer join
+└─Apply	1.00	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	1.00	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column#10, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
   │ └─MergeJoin	12487.50	root		inner join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   │   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
@@ -6985,7 +6985,7 @@ HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rul
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12475.01	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	12475.01	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9980.01	root		data:Selection
     │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -7007,7 +7007,7 @@ HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rul
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12475.01	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	12475.01	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9980.01	root		data:Selection
     │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -7030,7 +7030,7 @@ HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rul
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12475.01	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	12475.01	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9980.01	root		data:Selection
     │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -7050,7 +7050,7 @@ Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
   │     └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column#19
   │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
   │         └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	15593.77	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	15593.77	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -7074,7 +7074,7 @@ HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rul
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12475.01	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	12475.01	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9980.01	root		data:Selection
     │ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -7127,7 +7127,7 @@ Projection	15593.77	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
           └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+HashJoin	12487.50	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
 ├─HashJoin(Build)	9990.00	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)]
 │ ├─StreamAgg(Build)	7992.00	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
 │ │ └─IndexReader	7992.00	root		index:StreamAgg
@@ -7156,13 +7156,13 @@ Projection	99800100.00	root		planner__core__casetest__rule__rule_join_reorder.t1
         └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	12487.50	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
 │ └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
-└─HashJoin(Probe)	15609.38	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+└─HashJoin(Probe)	15609.38	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  └─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -7171,10 +7171,10 @@ HashJoin	12487.50	root		Null-aware anti semi join, equal:[eq(planner__core__case
         └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
 │ └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -7184,7 +7184,7 @@ Level	Code	Message
 Warning	1815	leading hint is inapplicable, check the join type or the join algorithm hint
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a not in (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	9990.00	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
+HashJoin	9990.00	root		Null-aware anti semi join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
 ├─IndexReader(Build)	10000.00	root		index:IndexFullScan
 │ └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:a(a)	keep order:false, stats:pseudo
 └─HashJoin(Probe)	12487.50	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -7212,7 +7212,7 @@ Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where not exists (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+HashJoin	15593.77	root		right outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─HashJoin(Probe)	12475.01	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
@@ -7224,7 +7224,7 @@ HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rul
       └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a where not exists (select t3.a from t3);
 id	estRows	task	access object	operator info
-HashJoin	12487.50	root		left outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -7266,7 +7266,7 @@ HashJoin	15609.38	root		inner join, equal:[eq(planner__core__casetest__rule__rul
 ├─TableReader(Build)	9990.00	root		data:Selection
 │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
 │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	12487.50	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+└─HashJoin(Probe)	12487.50	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -7277,7 +7277,7 @@ Level	Code	Message
 Warning	1815	There are no matching table names for (t4) in optimizer hint /*+ LEADING(t2, t4) */. Maybe you can use the table alias name
 explain format = 'brief' select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a right join (select * from t4) t3 on t2.b=t3.b;
 id	estRows	task	access object	operator info
-HashJoin	15593.77	root		right outer join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+HashJoin	15593.77	root		right outer join, left side:Projection, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─Projection(Probe)	12475.01	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b
@@ -7318,7 +7318,7 @@ Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a,
 explain format = 'brief' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 left join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
-└─MergeJoin	12487.50	root		left outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
+└─MergeJoin	12487.50	root		left outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t3, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	10000.00	root		index:IndexFullScan
@@ -7329,7 +7329,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format = 'brief' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 id	estRows	task	access object	operator info
 Projection	12487.50	root		planner__core__casetest__rule__rule_join_reorder.t1.a, <nil>->Column#14
-└─MergeJoin	12487.50	root		right outer join, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
+└─MergeJoin	12487.50	root		right outer join, left side:IndexReader, left key:planner__core__casetest__rule__rule_join_reorder.t1.a, right key:planner__core__casetest__rule__rule_join_reorder.t3.a
   ├─IndexReader(Build)	9990.00	root		index:IndexFullScan
   │ └─IndexFullScan	9990.00	cop[tikv]	table:t1, index:a(a)	keep order:true, stats:pseudo
   └─IndexReader(Probe)	10000.00	root		index:IndexFullScan

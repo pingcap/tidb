@@ -32,7 +32,7 @@ import (
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor

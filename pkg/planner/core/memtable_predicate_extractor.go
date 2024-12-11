@@ -51,6 +51,9 @@ import (
 type extractHelper struct {
 	enableScalarPushDown bool
 	pushedDownFuncs      map[string]func(string) string
+
+	// Store whether the extracted strings for a specific column are converted to lower case
+	extractLowerString map[string]bool
 }
 
 func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
@@ -342,6 +345,11 @@ func (helper *extractHelper) extractCol(
 			break
 		}
 	}
+
+	if helper.extractLowerString == nil {
+		helper.extractLowerString = make(map[string]bool)
+	}
+	helper.extractLowerString[extractColName] = valueToLower
 	return
 }
 

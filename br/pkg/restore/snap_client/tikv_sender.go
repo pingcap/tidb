@@ -25,15 +25,13 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
@@ -91,7 +89,7 @@ func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
 }
 
 // filterOutFiles filters out files that exist in the checkpoint set.
-func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, updateCh glue.Progress) []*backuppb.File {
+func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, onProgress func(int64)) []*backuppb.File {
 	progress := int(0)
 	totalKVs := uint64(0)
 	totalBytes := uint64(0)
@@ -110,7 +108,7 @@ func filterOutFiles(checkpointSet map[string]struct{}, files []*backuppb.File, u
 	}
 	if progress > 0 {
 		// (split/scatter + download/ingest) / (default cf + write cf)
-		updateCh.IncBy(int64(progress) * 2 / 2)
+		onProgress(int64(progress) * 2 / 2)
 		summary.CollectSuccessUnit(summary.TotalKV, progress, totalKVs)
 		summary.CollectSuccessUnit(summary.SkippedKVCountByCheckpoint, progress, totalKVs)
 		summary.CollectSuccessUnit(summary.TotalBytes, progress, totalBytes)
@@ -130,8 +128,8 @@ func SortAndValidateFileRanges(
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
-	updateCh glue.Progress,
-) ([][]byte, [][]TableIDWithFiles, error) {
+	onProgress func(int64),
+) ([][]byte, []restore.BatchBackupFileSet, error) {
 	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
 	// mapping table ID to its backup files
 	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
@@ -144,8 +142,8 @@ func SortAndValidateFileRanges(
 		lastKey         []byte = nil
 
 		// group the files by the generated split keys
-		tableIDWithFilesGroup                    = make([][]TableIDWithFiles, 0, hintSplitKeyCount)
-		lastFilesGroup        []TableIDWithFiles = nil
+		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0, hintSplitKeyCount)
+		lastFilesGroup        restore.BatchBackupFileSet = nil
 
 		// statistic
 		mergedRangeCount = 0
@@ -232,17 +230,17 @@ func SortAndValidateFileRanges(
 			// checkpoint filter out the import done files in the previous restore executions.
 			// Notice that skip ranges after select split keys in order to make the split keys
 			// always the same.
-			newFiles := filterOutFiles(checkpointSet, rg.Files, updateCh)
+			newFiles := filterOutFiles(checkpointSet, rg.Files, onProgress)
 			// append the new files into the group
 			if len(newFiles) > 0 {
 				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
-					lastFilesGroup = append(lastFilesGroup, TableIDWithFiles{
+					lastFilesGroup = append(lastFilesGroup, restore.BackupFileSet{
 						TableID:      table.NewPhysicalID,
-						Files:        nil,
+						SSTFiles:     nil,
 						RewriteRules: table.RewriteRules,
 					})
 				}
-				lastFilesGroup[len(lastFilesGroup)-1].Files = append(lastFilesGroup[len(lastFilesGroup)-1].Files, newFiles...)
+				lastFilesGroup[len(lastFilesGroup)-1].SSTFiles = append(lastFilesGroup[len(lastFilesGroup)-1].SSTFiles, newFiles...)
 			}
 		}
 
@@ -286,7 +284,7 @@ func (rc *SnapClient) RestoreTables(
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
-	updateCh glue.Progress,
+	onProgress func(int64),
 ) error {
 	if err := placementRuleManager.SetPlacementRule(ctx, createdTables); err != nil {
 		return errors.Trace(err)
@@ -299,20 +297,21 @@ func (rc *SnapClient) RestoreTables(
 	}()
 
 	start := time.Now()
-	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, updateCh)
+	sortedSplitKeys, tableIDWithFilesGroup, err := SortAndValidateFileRanges(createdTables, allFiles, checkpointSetWithTableID, splitSizeBytes, splitKeyCount, splitOnTable, onProgress)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Restore Stage Duration", zap.String("stage", "merge ranges"), zap.Duration("take", time.Since(start)))
 
+	newProgress := func(i int64) { onProgress(i) }
 	start = time.Now()
-	if err = rc.SplitPoints(ctx, sortedSplitKeys, updateCh, false); err != nil {
+	if err = rc.SplitPoints(ctx, sortedSplitKeys, newProgress, false); err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("Restore Stage Duration", zap.String("stage", "split regions"), zap.Duration("take", time.Since(start)))
 
 	start = time.Now()
-	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, updateCh); err != nil {
+	if err = rc.RestoreSSTFiles(ctx, tableIDWithFilesGroup, newProgress); err != nil {
 		return errors.Trace(err)
 	}
 	elapsed := time.Since(start)
@@ -327,15 +326,14 @@ func (rc *SnapClient) RestoreTables(
 func (rc *SnapClient) SplitPoints(
 	ctx context.Context,
 	sortedSplitKeys [][]byte,
-	updateCh glue.Progress,
+	onProgress func(int64),
 	isRawKv bool,
 ) error {
 	splitClientOpts := make([]split.ClientOptionalParameter, 0, 2)
 	splitClientOpts = append(splitClientOpts, split.WithOnSplit(func(keys [][]byte) {
-		for range keys {
-			updateCh.Inc()
-		}
+		onProgress(int64(len(keys)))
 	}))
+	// TODO seems duplicate with metaClient.
 	if isRawKv {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
 	}
@@ -366,13 +364,9 @@ func getFileRangeKey(f string) string {
 // RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.
 func (rc *SnapClient) RestoreSSTFiles(
 	ctx context.Context,
-	tableIDWithFilesGroup [][]TableIDWithFiles,
-	updateCh glue.Progress,
+	tableIDWithFilesGroup []restore.BatchBackupFileSet,
+	onProgress func(int64),
 ) (retErr error) {
-	if err := rc.setSpeedLimit(ctx, rc.rateLimit); err != nil {
-		return errors.Trace(err)
-	}
-
 	failpoint.Inject("corrupt-files", func(v failpoint.Value) {
 		if cmd, ok := v.(string); ok {
 			switch cmd {
@@ -382,7 +376,7 @@ func (rc *SnapClient) RestoreSSTFiles(
 			case "only-last-table-files": // check whether all the files, except last table files, are skipped by checkpoint
 				for _, tableIDWithFiless := range tableIDWithFilesGroup[:len(tableIDWithFilesGroup)-1] {
 					for _, tableIDWithFiles := range tableIDWithFiless {
-						if len(tableIDWithFiles.Files) > 0 {
+						if len(tableIDWithFiles.SSTFiles) > 0 {
 							log.Panic("has files but not the last table files")
 						}
 					}
@@ -391,69 +385,9 @@ func (rc *SnapClient) RestoreSSTFiles(
 		}
 	})
 
-	return rc.restoreSSTFilesInternal(ctx, tableIDWithFilesGroup, updateCh)
-}
-
-func (rc *SnapClient) restoreSSTFilesInternal(
-	ctx context.Context,
-	tableIDWithFilesGroup [][]TableIDWithFiles,
-	updateCh glue.Progress,
-) error {
-	eg, ectx := errgroup.WithContext(ctx)
-	for _, tableIDWithFiles := range tableIDWithFilesGroup {
-		if ectx.Err() != nil {
-			log.Warn("Restoring encountered error and already stopped, give up remained files.",
-				logutil.ShortError(ectx.Err()))
-			// We will fetch the error from the errgroup then (If there were).
-			// Also note if the parent context has been canceled or something,
-			// breaking here directly is also a reasonable behavior.
-			break
-		}
-		filesReplica := tableIDWithFiles
-		rc.fileImporter.WaitUntilUnblock()
-		rc.workerPool.ApplyOnErrorGroup(eg, func() (restoreErr error) {
-			fileStart := time.Now()
-			defer func() {
-				if restoreErr == nil {
-					log.Info("import files done", zapFilesGroup(filesReplica),
-						zap.Duration("take", time.Since(fileStart)))
-					updateCh.Inc()
-				}
-			}()
-			if importErr := rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rc.cipher, rc.dom.Store().GetCodec().GetAPIVersion()); importErr != nil {
-				return errors.Trace(importErr)
-			}
-
-			// the data of this range has been import done
-			if rc.checkpointRunner != nil && len(filesReplica) > 0 {
-				for _, filesGroup := range filesReplica {
-					rangeKeySet := make(map[string]struct{})
-					for _, file := range filesGroup.Files {
-						rangeKey := getFileRangeKey(file.Name)
-						// Assert that the files having the same rangeKey are all in the current filesGroup.Files
-						rangeKeySet[rangeKey] = struct{}{}
-					}
-					for rangeKey := range rangeKeySet {
-						// The checkpoint range shows this ranges of kvs has been restored into
-						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(ectx, rc.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
-							return errors.Trace(err)
-						}
-					}
-				}
-			}
-
-			return nil
-		})
+	retErr = rc.restorer.GoRestore(onProgress, tableIDWithFilesGroup...)
+	if retErr != nil {
+		return retErr
 	}
-
-	if err := eg.Wait(); err != nil {
-		summary.CollectFailureUnit("file", err)
-		log.Error("restore files failed", zap.Error(err))
-		return errors.Trace(err)
-	}
-	// Once the parent context canceled and there is no task running in the errgroup,
-	// we may break the for loop without error in the errgroup. (Will this happen?)
-	// At that time, return the error in the context here.
-	return ctx.Err()
+	return rc.restorer.WaitUntilFinish()
 }

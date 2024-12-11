@@ -413,6 +413,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			preInfoGetter,
 			nil,
 			nil,
+			nil,
 		)
 		preInfoGetter.dbInfosCache = rc.dbInfos
 		err = rc.checkCSVHeader(ctx)
@@ -465,6 +466,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		cfg,
 		dbMetas,
 		preInfoGetter,
+		nil,
 		nil,
 		nil,
 	)
@@ -623,6 +625,7 @@ func TestLocalResource(t *testing.T) {
 		cfg,
 		nil,
 		preInfoGetter,
+		nil,
 		nil,
 		nil,
 	)

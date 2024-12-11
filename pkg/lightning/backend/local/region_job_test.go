@@ -25,6 +25,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -536,6 +537,11 @@ func TestCancelBalancer(t *testing.T) {
 	jobWg.Wait()
 }
 
+func TestNewWriteRequest(T *testing.T) {
+	req := newWriteRequest(&sst.SSTMeta{}, "", "")
+	require.Equal(T, req.Context.TxnSource, uint64(kv.LightningPhysicalImportTxnSource))
+}
+
 func TestStoreBalancerNoRace(t *testing.T) {
 	jobToWorkerCh := make(chan *regionJob)
 	jobFromWorkerCh := make(chan *regionJob)
@@ -578,4 +584,26 @@ func TestStoreBalancerNoRace(t *testing.T) {
 	close(b.innerJobToWorkerCh)
 	<-done2
 	require.Len(t, jobFromWorkerCh, 0)
+}
+
+func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
+	backend := &Backend{
+		writeLimiter: newStoreWriteLimiter(0),
+	}
+
+	var wg sync.WaitGroup
+	concurrentRoutines := 100
+	for i := 0; i < concurrentRoutines; i++ {
+		wg.Add(2)
+		go func(limit int) {
+			defer wg.Done()
+			backend.UpdateWriteSpeedLimit(limit)
+		}(i)
+
+		go func() {
+			defer wg.Done()
+			_ = backend.GetWriteSpeedLimit()
+		}()
+	}
+	wg.Wait()
 }

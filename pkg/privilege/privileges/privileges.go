@@ -97,7 +97,7 @@ func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPri
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
-func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(ctx context.Context, privName string, grantable bool, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -106,6 +106,7 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, gra
 		return false
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(ctx, user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
@@ -205,7 +206,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 }
 
 // RequestVerificationWithUser implements the Manager interface.
-func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -222,7 +223,7 @@ func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, p
 		return true
 	}
 
-	terror.Log(p.Handle.ensureActiveUser(user.Username))
+	terror.Log(p.Handle.ensureActiveUser(ctx, user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
@@ -317,11 +318,12 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 }
 
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
-func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
+func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
 
+	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -348,10 +350,12 @@ func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, 
 }
 
 // GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+func (p *UserPrivileges) GetAuthPlugin(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
+
+	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
@@ -364,11 +368,11 @@ func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
 }
 
 // MatchIdentity implements the Manager interface.
-func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
+func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
 		return user, host, true
 	}
-	if err := p.Handle.ensureActiveUser(user); err != nil {
+	if err := p.Handle.ensureActiveUser(ctx, user); err != nil {
 		logutil.BgLogger().Error("ensure user data fail",
 			zap.String("user", user))
 	}
@@ -380,6 +384,7 @@ func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) 
 	return "", "", false
 }
 
+// MatchUserResourceGroupName implements the Manager interface.
 func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (u string, success bool) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sql := "SELECT user FROM mysql.user WHERE json_extract(user_attributes, '$.resource_group') = %? LIMIT 1"
@@ -899,7 +904,7 @@ func (p *UserPrivileges) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
+func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
@@ -909,12 +914,11 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	if err := p.Handle.ensureActiveUser(u); err != nil {
+	if err := p.Handle.ensureActiveUser(ctx, u); err != nil {
 		return nil, err
 	}
 	mysqlPrivilege := p.Handle.Get()
-
-	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
+	grants = mysqlPrivilege.showGrants(sctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
@@ -923,31 +927,29 @@ func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdent
 }
 
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
-func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+func (p *UserPrivileges) ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
 	if SkipWithGrant {
 		return true, ""
 	}
-	mysqlPrivilege := p.Handle.Get()
 	u := p.user
 	h := p.host
 	for _, r := range roleList {
-		ok := mysqlPrivilege.FindRole(u, h, r)
+		ok := findRole(ctx, p.Handle, u, h, r)
 		if !ok {
 			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
 		}
 	}
-	ctx.GetSessionVars().ActiveRoles = roleList
+	sctx.GetSessionVars().ActiveRoles = roleList
 	return true, ""
 }
 
 // FindEdge implements privilege.Manager FindRelationship interface.
-func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) FindEdge(ctx context.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return false
 	}
-	mysqlPrivilege := p.Handle.Get()
-	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
+	ok := findRole(ctx, p.Handle, user.Username, user.Hostname, role)
 	if !ok {
 		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
 		return false
@@ -956,10 +958,11 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 }
 
 // GetDefaultRoles returns all default roles for certain user.
-func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity {
+func (p *UserPrivileges) GetDefaultRoles(ctx context.Context, user, host string) []*auth.RoleIdentity {
 	if SkipWithGrant {
 		return make([]*auth.RoleIdentity, 0, 10)
 	}
+	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret

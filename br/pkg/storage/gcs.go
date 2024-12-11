@@ -113,6 +113,10 @@ type GCSStorage struct {
 	clients []*storage.Client
 }
 
+func (s *GCSStorage) MarkStrongConsistency() {
+	// See https://cloud.google.com/storage/docs/consistency#strongly_consistent_operations
+}
+
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
 	i := s.idx.Inc() % int64(len(s.handles))
@@ -431,7 +435,7 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			client.SetRetry(storage.WithErrorFunc(shouldRetry))
+			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 			s.clients[i] = client
 			return nil
 		})

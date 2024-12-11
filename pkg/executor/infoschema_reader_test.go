@@ -552,6 +552,15 @@ func TestTablesTable(t *testing.T) {
 		testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("select table_schema, table_name, tidb_table_id from information_schema.tables where table_schema = 'db1' and table_name = 't1' and tidb_table_id in (%s,%s)", tableMetas[0].id, tableMetas[1].id)).Check(
 		testkit.Rows(toString(tableMetas[0])))
+
+	selectTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables where upper(table_name) = 'T1'").Rows()[0][0].(string))
+	require.NoError(t, err)
+	totalTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables").Rows()[0][0].(string))
+	require.NoError(t, err)
+	remainTables, err := strconv.Atoi(tk.MustQuery("select count(*) from information_schema.tables where upper(table_name) != 'T1'").Rows()[0][0].(string))
+	require.NoError(t, err)
+	require.Equal(t, 2, selectTables)
+	require.Equal(t, totalTables, remainTables+selectTables)
 }
 
 func TestColumnTable(t *testing.T) {
@@ -859,21 +868,21 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"131|add index /* txn-merge */|public|124|129|t1|synced",
+		"131|add index|public|124|129|t1|synced",
 		"130|create table|public|124|129|t1|synced",
-		"117|add index /* txn-merge */|public|110|115|t1|synced",
+		"117|add index|public|110|115|t1|synced",
 		"116|create table|public|110|115|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"137|add index /* txn-merge */|public|124|135|t3|synced",
-		"134|add index /* txn-merge */|public|124|132|t2|synced",
-		"131|add index /* txn-merge */|public|124|129|t1|synced",
-		"128|add index /* txn-merge */|public|124|126|t0|synced",
+		"137|add index|public|124|135|t3|synced",
+		"134|add index|public|124|132|t2|synced",
+		"131|add index|public|124|129|t1|synced",
+		"128|add index|public|124|126|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"123|add index /* txn-merge */|public|110|121|t3|synced",
+		"123|add index|public|110|121|t3|synced",
 		"122|create table|public|110|121|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
@@ -881,19 +890,19 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 
 	// Test running job
 	loaded := atomic.Bool{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index /* txn-merge */ write only 110 112 t0 running",
+				"138 add index write only 110 112 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index /* txn-merge */ write only 110 112 t0 running",
+				"138 add index write only 110 112 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"138 add index /* txn-merge */ write only 110 112 t0 running",
+				"138 add index write only 110 112 t0 running",
 			))
 		}
 	})
@@ -1051,16 +1060,21 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		{"select table_name, table_schema from information_schema.tables", true},
 		{"select table_name from information_schema.tables", true},
 		{"select table_name from information_schema.tables where table_schema = 'test'", true},
+		{"select table_name, table_schema from information_schema.tables where table_name = 't'", true},
 		{"select table_schema from information_schema.tables", true},
+		{"select table_schema from information_schema.tables where tidb_table_id = 4611686018427387967", false},
 		{"select count(table_schema) from information_schema.tables", true},
 		{"select count(table_name) from information_schema.tables", true},
 		{"select count(table_rows) from information_schema.tables", false},
 		{"select count(1) from information_schema.tables", true},
 		{"select count(*) from information_schema.tables", true},
+		{"select count(*) from information_schema.tables where tidb_table_id = 4611686018427387967", false},
 		{"select count(1) from (select table_name from information_schema.tables) t", true},
 		{"select * from information_schema.tables", false},
 		{"select table_name, table_catalog from information_schema.tables", true},
+		{"select table_name, table_catalog from information_schema.tables where table_catalog = 'normal'", true},
 		{"select table_name, table_rows from information_schema.tables", false},
+		{"select table_name, table_schema, tidb_table_id from information_schema.tables where tidb_table_id = 4611686018427387967", false},
 	} {
 		var covered bool
 		ctx := context.WithValue(context.Background(), "cover-check", &covered)
