@@ -294,15 +294,23 @@ func TestWatchOwner(t *testing.T) {
 	defer tInfo.Close(t)
 	ownerManager := d.OwnerManager()
 
-	// failed to get owner id.
+	// failed to get owner id before CampaignOwner().
 	ctx := context.Background()
 	_, err := ownerManager.GetOwnerID(ctx)
+	require.ErrorContains(t, err, "election: no leader")
+	_, _, err = owner.GetOwnerKeyInfo(ctx, ctx, client, DDLOwnerKey, ownerManager.ID())
 	require.ErrorContains(t, err, "election: no leader")
 
 	// start CampaignOwner.
 	require.NoError(t, ownerManager.CampaignOwner())
 	isOwner := checkOwner(d, true)
 	require.True(t, isOwner)
+
+	// get the owner id with a canceled context.
+	ctx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, _, err = owner.GetOwnerKeyInfo(ctx, ctx, client, DDLOwnerKey, ownerManager.ID())
+	require.ErrorContains(t, err, "ownerInfoNotMatch")
 
 	// get the owner id.
 	ctx = context.Background()

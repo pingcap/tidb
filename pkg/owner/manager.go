@@ -441,10 +441,11 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 // WatchOwnerForTest watches the ownerKey.
 // This function is used to test watchOwner().
 func WatchOwnerForTest(ctx context.Context, m Manager, etcdSession *concurrency.Session, key string, createRevison int64) error {
+	var err error
 	if ownerManager, ok := m.(*ownerManager); ok {
-		return ownerManager.watchOwner(ctx, etcdSession, key, createRevison)
+		err = ownerManager.watchOwner(ctx, etcdSession, key, createRevison)
 	}
-	return nil
+	return err
 }
 
 func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string, currRev int64) error {
