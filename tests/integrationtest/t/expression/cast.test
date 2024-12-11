@@ -87,3 +87,29 @@ select t0.c0 > 1.194192591e9 from t0;
 select t0.c0 < 1.194192591e9 from t0;
 select 1.194192591e9 > t0.c0 from t0;
 select 1.194192591e9 < t0.c0 from t0;
+
+# TestCastAsStringExplicitCharSet
+drop table if exists test;
+CREATE TABLE `test` (
+    `id` bigint(20) NOT NULL,
+    `update_user` varchar(32) DEFAULT NULL,
+    PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into test values(1,'张三');
+insert into test values(2,'李四');
+insert into test values(3,'张三');
+insert into test values(4,'李四');
+select * from test order by cast(update_user as char character set gbk) desc , id limit 3;
+
+drop table test;
+CREATE TABLE `test` (
+  `id` bigint NOT NULL,
+  `update_user` varchar(32) CHARACTER SET gbk COLLATE gbk_chinese_ci DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into test values(1,'张三');
+insert into test values(2,'李四');
+insert into test values(3,'张三');
+insert into test values(4,'李四');
+select * from test order by cast(update_user as char) desc , id limit 3;
+
