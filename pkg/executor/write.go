@@ -189,6 +189,7 @@ func updateRecord(
 		var err error
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) && onUpdateNeedModify[i] {
 			newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
+			modified[i] = true
 			// For update statement, evalBuffer is initialized on demand.
 			if chunk.Row(evalBuffer).Chunk() != nil {
 				evalBuffer.SetDatum(i+offset, newData[i])
@@ -205,32 +206,32 @@ func updateRecord(
 				handleChanged = true
 			}
 		}
+	}
 
-		// Step 4: fill auto generated columns
-		evalCtx := sctx.GetExprCtx().GetEvalCtx()
-		for _, assign := range assignments {
-			// Insert statements may have LazyErr, handle it first.
-			if assign.LazyErr != nil {
-				return false, false, assign.LazyErr
-			}
+	// Step 4: fill auto generated columns
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	for _, assign := range assignments {
+		// Insert statements may have LazyErr, handle it first.
+		if assign.LazyErr != nil {
+			return false, false, assign.LazyErr
+		}
 
-			// For Update statements, Index may be larger than len(newData)
-			// e.g. update t a, t b set a.c1 = 1, b.c2 = 2;
-			idxInCols := assign.Col.Index - offset
-			rawVal, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
-			if err == nil {
-				newData[idxInCols], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
-			}
-			evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
+		// For Update statements, Index may be larger than len(newData)
+		// e.g. update t a, t b set a.c1 = 1, b.c2 = 2;
+		idxInCols := assign.Col.Index - offset
+		rawVal, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
+		if err == nil {
+			newData[idxInCols], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
+		}
+		evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
 
-			err = errorHandler(sctx, assign, &rawVal, err)
-			if err != nil {
-				return false, false, err
-			}
+		err = errorHandler(sctx, assign, &rawVal, err)
+		if err != nil {
+			return false, false, err
+		}
 
-			if err := checkColumnFunc(idxInCols, false); err != nil {
-				return false, false, err
-			}
+		if err := checkColumnFunc(idxInCols, false); err != nil {
+			return false, false, err
 		}
 	}
 
