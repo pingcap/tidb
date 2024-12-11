@@ -428,3 +428,20 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 	_, err = cli.Delete(context.Background(), string(resp.Kvs[0].Key))
 	return errors.Trace(err)
 }
+
+func TestImmediatelyCancel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	d := tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	for i := 0; i < 10; i++ {
+		err := ownerManager.CampaignOwner()
+		require.NoError(t, err)
+		ownerManager.CampaignCancel()
+	}
+}
