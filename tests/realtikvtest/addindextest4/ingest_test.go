@@ -669,4 +669,7 @@ func TestIssue55808(t *testing.T) {
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed"))
+
+	tk.MustExec("set global tidb_enable_dist_task = default;")
+	tk.MustExec("set global tidb_ddl_error_count_limit = default")
 }
