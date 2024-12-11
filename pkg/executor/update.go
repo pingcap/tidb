@@ -42,7 +42,8 @@ import (
 type UpdateExec struct {
 	exec.BaseExecutor
 
-	OrderedList []*expression.Assignment
+	OrderedList         []*expression.Assignment
+	assignmentsPerTable map[int][]*expression.Assignment
 
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
@@ -122,7 +123,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	return nil
 }
 
-func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
+func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
@@ -154,7 +155,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
 			mergedData = v
 			for i, flag := range flags {
-				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
+				if tbl.WritableCols()[i].IsGenerated() {
 					continue
 				}
 				mergedData[i].Copy(&oldData[i])
@@ -177,6 +178,10 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 }
 
 func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
+	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
+		return nil
+	}
+
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
 	var totalMemDelta int64
@@ -221,6 +226,10 @@ func (e *UpdateExec) newDataToMerge(newData []types.Datum, i int) error {
 }
 
 func (e *UpdateExec) mergeToOldData(row []types.Datum, i int) error {
+	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
+		return nil
+	}
+
 	var mergedData []types.Datum
 	// merge updates from and into mergedRowData
 	var totalMemDelta int64
@@ -248,7 +257,7 @@ func (e *UpdateExec) mergeToOldData(row []types.Datum, i int) error {
 	tbl := e.tblID2table[content.TblID]
 	oldData := row[content.Start:content.End]
 
-	// We don't check the second return value here because we have already called merge() before.
+	// We don't check the second return value here because we have already called mergeNonGenerated() before.
 	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
 	for i := range flags {
 		if !tbl.WritableCols()[i].IsGenerated() {
@@ -306,20 +315,9 @@ func (e *UpdateExec) exec(
 
 		// Evaluate generated columns and write to table.
 		// Evaluated values will be stored in newRow.
-		assignments := make([]*expression.Assignment, 0)
-		for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-			tblIdx := e.assignFlag[assign.Col.Index]
-			if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
-				continue
-			}
-
-			if tblIdx >= 0 && content.TblID == e.tblColPosInfos[tblIdx].TblID && assign.Col.Index < len(newTableData) {
-				assignments = append(assignments, assign)
-			}
-		}
-
-		if len(assignments) > 0 {
-			e.evalBuffer.SetDatums(newTableData...)
+		var assignments []*expression.Assignment
+		if a, ok := e.assignmentsPerTable[i]; ok {
+			assignments = a
 		}
 
 		// Copy data from merge row to old row
@@ -331,7 +329,7 @@ func (e *UpdateExec) exec(
 		changed, ignored, err := updateRecord(
 			ctx, e.Ctx(),
 			handle, oldData, newTableData,
-			assignments, e.evalBuffer, errorHandler,
+			content.Start, assignments, e.evalBuffer, errorHandler,
 			flags, tbl, false, e.memTracker,
 			e.fkChecks[content.TblID],
 			e.fkCascades[content.TblID],
@@ -419,6 +417,20 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	if e.virtualAssignmentsOffset < len(e.OrderedList) {
+		e.assignmentsPerTable = make(map[int][]*expression.Assignment, 0)
+		for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
+			tblIdx := e.assignFlag[assign.Col.Index]
+			if tblIdx < 0 {
+				continue
+			}
+			if _, ok := e.assignmentsPerTable[tblIdx]; !ok {
+				e.assignmentsPerTable[tblIdx] = make([]*expression.Assignment, 0)
+			}
+			e.assignmentsPerTable[tblIdx] = append(e.assignmentsPerTable[tblIdx], assign)
+		}
+	}
+
 	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -459,8 +471,12 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				return 0, err
 			}
 			// merge non-generated columns
-			if err := e.merge(datumRow, newRow, false); err != nil {
+			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
 				return 0, err
+			}
+
+			if e.virtualAssignmentsOffset < len(e.OrderedList) {
+				e.evalBuffer.SetDatums(newRow...)
 			}
 
 			if err := e.exec(

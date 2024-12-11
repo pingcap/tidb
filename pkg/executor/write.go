@@ -48,24 +48,37 @@ var (
 	_ exec.Executor = &LoadDataExec{}
 )
 
-// updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
-// It is used both in update/insert on duplicate statements.
-//
-// `modified` indicates whether columns are explicitly set.
-// This slice will be reused in this function to record which columns are really modified, which is used for secondary indices.
-//
-// assignments, evalBuffer and errorHandler are used to update auto-generated columns.
-// See the comments in this function for details.
-//
-// Length of `oldData` and `newData` equals to length of `t.Cols()`.
-//
-// The return values:
-//  1. changed (bool): does the update really change the row values. e.g. update set i = 1 where i = 1;
-//  2. ignored (bool): does the row is ignored during fkcheck
-//  3. err (error): error in the update.
+/*
+ * updateRecord updates the row specified by the handle `h`, from `oldData` to `newData`.
+ * It is used both in update/insert on duplicate statements.
+ *
+ * The `modified` inputed indicates whether columns are explicitly set.
+ * And this slice will be reused in this function to record which columns are really modified, which is used for secondary indices.
+ *
+ * offset, assignments, evalBuffer and errorHandler are used to update auto-generated columns.
+ * We need to evaluate assignments, and set the result value in newData and evalBuffer respectively.
+ * Since the indices in assignments are based on evalbuffer, and newData may be a subset of evalBuffer,
+ * offset is needed when assigning to newData.
+ *
+ *	                   |<---- newData ---->|
+ * -------------------------------------------------------
+ * |        t1         |        t1         |     t3      |
+ * -------------------------------------------------------
+ * |<------------------ evalBuffer ---|----------------->|
+ *                                    |
+ *                              assign.Col.Idx
+ *
+ * Length of `oldData` and `newData` equals to length of `t.Cols()`.
+ *
+ * The return values:
+ *  1. changed (bool): does the update really change the row values. e.g. update set i = 1 where i = 1;
+ *  2. ignored (bool): does the row is ignored during fkcheck
+ *  3. err (error): error in the update.
+ */
 func updateRecord(
 	ctx context.Context, sctx sessionctx.Context,
 	h kv.Handle, oldData, newData []types.Datum,
+	offset int,
 	assignments []*expression.Assignment,
 	evalBuffer chunk.MutRow,
 	errorHandler func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error,
@@ -177,7 +190,7 @@ func updateRecord(
 			newData[i], err = expression.GetTimeValue(sctx.GetExprCtx(), strings.ToUpper(ast.CurrentTimestamp), col.GetType(), col.GetDecimal(), nil)
 			// For update statement, evalBuffer is initialized on demand.
 			if chunk.Row(evalBuffer).Chunk() != nil {
-				evalBuffer.SetDatum(i, newData[i])
+				evalBuffer.SetDatum(i+offset, newData[i])
 			}
 			if err != nil {
 				return false, false, err
@@ -202,19 +215,19 @@ func updateRecord(
 
 			// For Update statements, Index may be larger than len(newData)
 			// e.g. update t a, t b set a.c1 = 1, b.c2 = 2;
-			idx := assign.Col.Index % len(newData)
+			idxInCols := assign.Col.Index - offset
 			rawVal, err := assign.Expr.Eval(evalCtx, evalBuffer.ToRow())
 			if err == nil {
-				newData[idx], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
+				newData[idxInCols], err = table.CastValue(sctx, rawVal, assign.Col.ToInfo(), false, false)
 			}
-			evalBuffer.SetDatum(assign.Col.Index, newData[idx])
+			evalBuffer.SetDatum(assign.Col.Index, newData[idxInCols])
 
 			err = errorHandler(sctx, assign, &rawVal, err)
 			if err != nil {
 				return false, false, err
 			}
 
-			if err := checkColumnFunc(idx, false); err != nil {
+			if err := checkColumnFunc(idxInCols, false); err != nil {
 				return false, false, err
 			}
 		}
