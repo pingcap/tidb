@@ -7265,7 +7265,7 @@ type builtinTruncDatetimeSig struct {
 
 func (b *builtinTruncDatetimeSig) Clone() builtinFunc {
 	newSig := &builtinTruncDatetimeSig{}
-  newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.cloneFrom(&b.baseBuiltinFunc)
 	return newSig
 }
 
