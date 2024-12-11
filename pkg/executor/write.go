@@ -57,7 +57,7 @@ var (
  *
  * offset, assignments, evalBuffer and errorHandler are used to update auto-generated columns.
  * We need to evaluate assignments, and set the result value in newData and evalBuffer respectively.
- * Since the indices in assignments are based on evalbuffer, and newData may be a subset of evalBuffer,
+ * Since the column indices in assignments are based on evalbuffer, and newData may be a subset of evalBuffer,
  * offset is needed when assigning to newData.
  *
  *	                   |<---- newData ---->|
@@ -66,7 +66,8 @@ var (
  * -------------------------------------------------------
  * |<------------------ evalBuffer ---|----------------->|
  *                                    |
- *                              assign.Col.Idx
+ * 	                                  |
+ * |<------------------------- assign.Col.Idx
  *
  * Length of `oldData` and `newData` equals to length of `t.Cols()`.
  *
@@ -108,14 +109,6 @@ func updateRecord(
 	// causes all writable columns are after public columns.
 	cols := t.Cols()
 
-	// Before do actual update, We need to ensure that all columns are evaluated in the following order:
-	// Step 1: non-generated columns (These columns should be evaluated outside this function).
-	// Step 2: check whether there are some columns changed.
-	// Step 3: on-update-now columns if non-generated columns are changed.
-	// Step 4: generated columns if non-generated columns are changed.
-	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
-	// After these are done, we can finally update the record.
-
 	// A wrapper function to check whether certain column is changed after evaluation.
 	checkColumnFunc := func(i int, skipGenerated bool) error {
 		col := cols[i]
@@ -123,7 +116,7 @@ func updateRecord(
 			return nil
 		}
 
-		// modified[i] == false means this field is not explicited set.
+		// modified[i] == false means this on-update-now field is not explicited set.
 		if mysql.HasOnUpdateNowFlag(col.GetFlag()) {
 			onUpdateNeedModify[i] = !modified[i]
 		}
@@ -160,6 +153,14 @@ func updateRecord(
 
 		return nil
 	}
+
+	// Before do actual update, We need to ensure that all columns are evaluated in the following order:
+	// Step 1: non-generated columns (These columns should be evaluated outside this function).
+	// Step 2: check whether there are some columns changed.
+	// Step 3: on-update-now columns if non-generated columns are changed.
+	// Step 4: generated columns if non-generated columns are changed.
+	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
+	// After these are done, we can finally update the record.
 
 	// Step 2: compare already evaluated columns and update changed, handleChanged and handleChanged flags.
 	for i := range cols {
