@@ -17,14 +17,17 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -40,7 +43,7 @@ func TestRecoverTable(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -123,6 +126,25 @@ func TestRecoverTable(t *testing.T) {
 	tk.MustExec("flashback table t_recover to t_recover_tmp")
 	err = tk.ExecToErr("recover table t_recover")
 	require.True(t, infoschema.ErrTableExists.Equal(err))
+
+	// Test drop table failed and then recover the table should also be failed.
+	tk.MustExec("drop table if exists t_recover2")
+	tk.MustExec("create table t_recover2 (a int);")
+	jobID := int64(0)
+
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
+		if job.Type == model.ActionDropTable && jobID == 0 {
+			jobID = job.ID
+		}
+	}
+	dom.DDL().SetHook(hook)
+
+	tk.MustExec("drop table t_recover2")
+	tk.MustExec("recover table by job " + strconv.Itoa(int(jobID)))
+	err = tk.ExecToErr("recover table by job " + strconv.Itoa(int(jobID)))
+	require.Error(t, err)
+	require.Equal(t, "[schema:1050]Table 't_recover2' already been recover to 't_recover2', can't be recover repeatedly", err.Error())
 
 	gcEnable, err := gcutil.CheckGCEnable(tk.Session())
 	require.NoError(t, err)

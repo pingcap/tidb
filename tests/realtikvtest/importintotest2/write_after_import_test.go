@@ -127,6 +127,12 @@ func (s *mockGCSSuite) TestWriteAfterImport() {
 		s.tk.MustExec("drop table if exists t;")
 	})
 	for _, c := range cases {
+		if c.autoIDCache1 {
+			// after we add autoid.CustomAutoIncCacheOption(1), single point
+			// allocator is used, those tests will report "autoid service leader not found"
+			// as it lacks the necessary setup for real-tikv-test.
+			continue
+		}
 		fmt.Println("current case ", c.createTableSQL)
 		s.tk.MustExec("drop table if exists t;")
 		s.tk.MustExec(c.createTableSQL)

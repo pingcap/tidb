@@ -109,7 +109,9 @@ func newFileCheckpointsDB(t *testing.T) *checkpoints.FileCheckpointsDB {
 	}
 	scm.MergeInto(cpd)
 	rcm := checkpoints.RebaseCheckpointMerger{
-		AllocBase: 132861,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
 	}
 	rcm.MergeInto(cpd)
 	cksum := checkpoints.TableChecksumMerger{
@@ -157,9 +159,11 @@ func TestGet(t *testing.T) {
 	cp, err := cpdb.Get(ctx, "`db1`.`t2`")
 	require.NoError(t, err)
 	expect := &checkpoints.TableCheckpoint{
-		Status:    checkpoints.CheckpointStatusAllWritten,
-		AllocBase: 132861,
-		Checksum:  verification.MakeKVChecksum(4492, 686, 486070148910),
+		Status:        checkpoints.CheckpointStatusAllWritten,
+		AutoRandBase:  132861,
+		AutoIncrBase:  132862,
+		AutoRowIDBase: 132863,
+		Checksum:      verification.MakeKVChecksum(4492, 686, 486070148910),
 		Engines: map[int32]*checkpoints.EngineCheckpoint{
 			-1: {
 				Status: checkpoints.CheckpointStatusLoaded,

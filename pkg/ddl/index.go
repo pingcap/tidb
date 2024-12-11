@@ -1816,9 +1816,12 @@ func writeChunkToLocal(
 		}
 	}()
 	needRestoreForIndexes := make([]bool, len(indexes))
-	restore := false
+	restore, pkNeedRestore := false, false
+	if c.PrimaryKeyInfo != nil && c.TableInfo.IsCommonHandle && c.TableInfo.CommonHandleVersion != 0 {
+		pkNeedRestore = tables.NeedRestoredData(c.PrimaryKeyInfo.Columns, c.TableInfo.Columns)
+	}
 	for i, index := range indexes {
-		needRestore := tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
+		needRestore := pkNeedRestore || tables.NeedRestoredData(index.Meta().Columns, c.TableInfo.Columns)
 		needRestoreForIndexes[i] = needRestore
 		restore = restore || needRestore
 	}

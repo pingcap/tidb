@@ -22,7 +22,6 @@ go_library(
         "//pkg/parser/model",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/mathutil",
         "//pkg/util/sqlexec",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",
@@ -42,7 +41,7 @@ go_test(
     embed = [":checkpoints"],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//br/pkg/lightning/checkpoints/checkpointspb",
         "//br/pkg/lightning/config",

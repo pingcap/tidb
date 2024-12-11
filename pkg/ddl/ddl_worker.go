@@ -1444,7 +1444,9 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.AffectedOpts = []*model.AffectedOption{{
 			TableID: ptTableID,
 		}}
-		if job.SchemaState != model.StatePublic {
+		// when job state transit from rolling-back to rollback-done, the schema state
+		// is also public, diff.TableID should be the old non-partitioned table ID too.
+		if job.State == model.JobStateRollbackDone || job.SchemaState != model.StatePublic {
 			// No change, just to refresh the non-partitioned table
 			// with its new ExchangePartitionInfo.
 			diff.TableID = job.TableID

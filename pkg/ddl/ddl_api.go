@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -1029,6 +1030,21 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 			if timeValue.GetMysqlTime().CoreTime() == types.ZeroCoreTime {
 				return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 			}
+		}
+	}
+	if value != nil && col.GetType() == mysql.TypeBit {
+		v, ok := value.(string)
+		if !ok {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+
+		uintVal, err := types.BinaryLiteral(v).ToInt(ctx.GetSessionVars().StmtCtx)
+		if err != nil {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
+		}
+		intest.Assert(col.GetFlen() > 0 && col.GetFlen() <= 64)
+		if col.GetFlen() < 64 && uintVal >= 1<<(uint64(col.GetFlen())) {
+			return hasDefaultValue, value, types.ErrInvalidDefault.GenWithStackByArgs(col.Name.O)
 		}
 	}
 	return hasDefaultValue, value, nil
@@ -4414,6 +4430,11 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return err
 	}
+	for _, idx := range newMeta.Indices {
+		if idx.Global {
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL INDEX with ALTER TABLE PARTITION BY")
+		}
+	}
 	newPartInfo := newMeta.Partition
 
 	if err = d.assignPartitionIDs(newPartInfo.Definitions); err != nil {
@@ -5278,13 +5299,14 @@ func SetDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		}
 		col.DefaultIsExpr = isSeqExpr
 	}
-
-	if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
-		return hasDefaultValue, errors.Trace(err)
-	}
-	value, err = convertTimestampDefaultValToUTC(ctx, value, col)
-	if err != nil {
-		return hasDefaultValue, errors.Trace(err)
+	if !col.DefaultIsExpr {
+		if hasDefaultValue, value, err = checkColumnDefaultValue(ctx, col, value); err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
+		value, err = convertTimestampDefaultValToUTC(ctx, value, col)
+		if err != nil {
+			return hasDefaultValue, errors.Trace(err)
+		}
 	}
 	err = setDefaultValueWithBinaryPadding(col, value)
 	if err != nil {

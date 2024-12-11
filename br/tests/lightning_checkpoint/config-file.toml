@@ -8,9 +8,8 @@ parallel-import = true
 
 [checkpoint]
 enable = true
-schema = "tidb_lightning_checkpoint_test_cppk"
-driver = "mysql"
-keep-after-success = "origin"
+driver = "file"
 
 [mydumper]
 read-block-size = 1
+filter = ['cppk_tsr.tbl1', 'cppk_tsr.tbl2', 'cppk_tsr.tbl7', 'cppk_tsr.tbl8', 'cppk_tsr.tbl9']
