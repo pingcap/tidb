@@ -3,91 +3,6 @@
 cur_path=`pwd`
 tidb_security_advanced_dir="tidb-security-advanced"
 tidb_enterprise_utilities_dir="tidb-enterprise-utilities"
-tidb_security_advanced_member="pingcap_enterprise"
-tidb_enterprise_utilities_member="pingcap_enterprise"
-tidb_security_advanced_branch="master"
-tidb_enterprise_utilities_branch="master"
-
-# get tidb_security_advanced_branch and tidb_enterprise_utilities_branch value from version.txt.
-function get_code_branches(){
-   echo "begin get branches."
-   # tidb-security-advanced
-   tidb_security_advanced_member=`grep -Po '(?<=tidb_security_advanced_member=).*' ${cur_path}/version.txt`
-   if [ $? -ne 0 ];then
-      echo "get tidb_security_advanced_member fail."
-      return 1
-   fi
-   tidb_security_advanced_branch=`grep -Po '(?<=tidb_security_advanced_branch=).*' ${cur_path}/version.txt`
-   if [ $? -ne 0 ];then
-      echo "get tidb_security_advanced_branch fail."
-      return 1
-   fi
-   # tidb-enterprise-utilities
-   tidb_enterprise_utilities_member=`grep -Po '(?<=tidb_enterprise_utilities_member=).*' ${cur_path}/version.txt`
-   if [ $? -ne 0 ];then 
-      echo "get tidb_enterprise_utilities_member fail."
-      return 1
-   fi
-   tidb_enterprise_utilities_branch=`grep -Po '(?<=tidb_enterprise_utilities_branch=).*' ${cur_path}/version.txt`
-   if [ $? -ne 0 ];then
-      echo "get tidb_enterprise_utilities_branch fail."
-      return 1
-   fi
-   echo "end get branches."
-   return 0
-}
-
-# get tidb_security_advanced code with barnch name from gitee.
-function get_tidb_security_advanced_code(){
-   echo "begin get tidb_security_advanced code."
-   if [ ! -d "$tidb_security_advanced_dir" ]; then
-      git clone -b $tidb_security_advanced_branch git@gitee.com:$tidb_security_advanced_member/tidb-security-advanced.git
-      if [ $? -ne 0 ];then
-         echo "checkout ${tidb_security_advanced_member}/tidb_security_advanced_branch version ${tidb_security_advanced_branch} failure."
-         return 1
-      fi
-      tmp_pr=`echo $PR_TITLE|grep -Eo "tidb_security_advanced_branch_pr=[0-9]+||"`
-      TMP_PR=$tmp_pr
-      security_pr="${TMP_PR#*=}"
-      echo $security_pr
-      if [[ -n $security_pr ]]; then
-        git config --global user.email "you@example.com"
-        cd $tidb_security_advanced_dir
-        git fetch git@gitee.com:$tidb_security_advanced_member/tidb-security-advanced.git pull/$security_pr/head:pr_$security_pr
-        git checkout pr_$security_pr
-        git pull --rebase git@gitee.com:$tidb_security_advanced_member/tidb-security-advanced.git $tidb_security_advanced_branch
-        cd ..
-      fi
-   fi
-   echo "end get tidb_security_advanced code."
-   return 0
-}
-
-# get tidb_enterprise_utilities code with barnch name from gitee.
-function get_tidb_enterprise_utilities_code(){
-   echo "begin get tidb_enterprise_utilities code."
-   if [ ! -d "$tidb_enterprise_utilities_dir" ]; then
-      git clone  -b $tidb_enterprise_utilities_branch git@gitee.com:$tidb_enterprise_utilities_member/tidb-enterprise-utilities.git
-      if [ $? -ne 0 ];then
-         echo "checkout tidb_enterprise_utilities ${tidb_enterprise_utilities_branch} failure."
-         return 1
-      fi
-      tmp_pr=` echo $PR_TITLE|grep -Eo "tidb_enterprise_utilities_branch_pr=[0-9]+||"`
-      TMP_PR=$tmp_pr
-      utilities_pr="${TMP_PR#*=}"
-      echo $utilities_pr
-      if [[ -n $utilities_pr ]]; then
-	git config --global user.email "you@example.com"
-	cd $tidb_enterprise_utilities_dir 
-	git fetch git@gitee.com:$tidb_enterprise_utilities_member/tidb-enterprise-utilities.git pull/$utilities_pr/head:pr_$utilities_pr
-	git checkout pr_$utilities_pr  
-	git pull --rebase git@gitee.com:$tidb_enterprise_utilities_member/tidb-enterprise-utilities.git $tidb_enterprise_utilities_branch
-	cd ..
-      fi 
-   fi
-   echo "end get tidb_enterprise_utilities code."
-   return 0
-}
 
 # copy all files in the specified directory and subdirectories to the target directory,
 # and keep the directory structure the same.
@@ -99,7 +14,7 @@ function cp_dir(){
    # if the source and destination are files, the file is copied directly.
    if [ ! -d $src_dir ];then
       if [ ! -d $dst_dir ];then 
-         cp $src_dir $dst_dir 
+         cp -v $src_dir $dst_dir 
          if [ $? -ne 0 ];then 
             echo "cp ${src_dir} ${dst_dir} fail."
             return 1 
@@ -186,21 +101,9 @@ function copy_utilities_files(){
 
 
 # main 
-get_code_branches
-if [ $? -ne 0 ];then 
-   echo "get branch fail."
-   exit 1
-fi
-echo "security: "$tidb_security_advanced_member/$tidb_security_advanced_branch
-echo "enterprise: "$tidb_enterprise_utilities_member/$tidb_enterprise_utilities_branch
-echo "NEED_CLONE: "$NEED_CLONE
+echo "NEED_COPY: "$NEED_COPY
 
-get_tidb_security_advanced_code
-if [ $? -ne 0 ];then 
-   echo "get tidb code fail."
-   exit 1
-fi
-if  [ -z ${NEED_CLONE} ] || [ ${NEED_CLONE} != "NO" ];then
+if  [ -z ${NEED_COPY} ] || [ ${NEED_COPY} != "NO" ];then
     copy_security_advanced_files
     if [ $? -ne 0 ];then 
         echo "copy security advanced files fail."
@@ -208,13 +111,7 @@ if  [ -z ${NEED_CLONE} ] || [ ${NEED_CLONE} != "NO" ];then
     fi
 fi
 
-get_tidb_enterprise_utilities_code
-if [ $? -ne 0 ];then 
-   echo "get tidb_enterprise_utilities code fail."
-   exit 1
-fi
-
-if [ -z ${NEED_CLONE} ] || [ $NEED_CLONE !=  "NO" ];then 
+if [ -z ${NEED_COPY} ] || [ $NEED_COPY !=  "NO" ];then 
     copy_utilities_files
     if [ $? -ne 0 ];then 
        echo "copy utilities files fail."

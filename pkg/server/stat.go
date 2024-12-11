@@ -27,9 +27,9 @@ import (
 )
 
 var (
-	serverNotAfter  = "Ssl_server_not_after"
-	serverNotBefore = "Ssl_server_not_before"
-	upTime          = "Uptime"
+	serverNotAfter   = "Ssl_server_not_after"
+	serverNotBefore  = "Ssl_server_not_before"
+	upTime           = "Uptime"
 	tlcpEncNotAfter  = "tlcp_server_enc_not_after"
 	tlcpEncNotBefore = "tlcp_server_enc_not_before"
 	tlcpSigNotAfter  = "tlcp_server_sign_not_after"
@@ -37,9 +37,9 @@ var (
 )
 
 var defaultStatus = map[string]*variable.StatusVal{
-	serverNotAfter:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
-	serverNotBefore: {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
-	upTime:          {Scope: variable.ScopeGlobal, Value: 0},
+	serverNotAfter:   {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
+	serverNotBefore:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
+	upTime:           {Scope: variable.ScopeGlobal, Value: 0},
 	tlcpEncNotAfter:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
 	tlcpEncNotBefore: {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},
 	tlcpSigNotAfter:  {Scope: variable.ScopeGlobal | variable.ScopeSession, Value: ""},

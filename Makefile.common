@@ -24,7 +24,7 @@ ifeq "$(GOPATH)" ""
   $(error Please set the environment variable GOPATH before running `make`)
 endif
 FAIL_ON_STDOUT := awk '{ print } END { if (NR > 0) { exit 1 } }'
-$(warning $(NEED_CLONE))
+$(warning $(NEED_COPY))
 PREPARETIDB=$(shell ./prepare_tidb.sh)
 $(warning  $(PREPARETIDB))
 TiDBEnterpriseUtilitiesGitHash:=$(shell cd $(UTILILIESDIR)/ ; git rev-parse HEAD)
@@ -82,11 +82,6 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseUtilit
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
-EXTENSION_FLAG =
-ifeq ($(shell if [ -f pkg/extension/enterprise/.git ]; then echo "true"; fi),true)
-	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"
-endif
-
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/pkg/config.checkBeforeDropLDFlag=1"
 COVERAGE_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/cmd/tidb-server.isCoverageServer=1"
 
@@ -143,8 +138,3 @@ endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
 
 NOGO_FLAG=true
-
-ifneq ("$(NEED_CLONE)", "NO")
-        CLEARDIR :=$(shell sh -x clear_dir.sh)
-        $(warning  $(CLEARDIR))
-endif
