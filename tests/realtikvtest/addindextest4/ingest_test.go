@@ -665,7 +665,8 @@ func TestIssue55808(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed", "return()"))
 	err := tk.ExecToErr("alter table t add index idx(a);")
 	require.ErrorContains(t, err, "injected error")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/doIngestFailed"))
 }
