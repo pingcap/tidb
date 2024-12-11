@@ -368,9 +368,11 @@ var funcName2Alias = map[string]string{
 	"last_month":     ast.LastMonth,
 	"to_number":      ast.ToNumber,
 	"get_guid":       ast.GetGUID,
-	"add_month":      ast.AddMonth,
+	"add_months":     ast.AddMonth,
 	"next_day":       ast.NextDay,
 	"months_between": ast.MonthsBetween,
+	"nvl":            ast.Nvl,
+	"nvl2":           ast.Nvl2,
 	"to_char":        ast.ToChar,
 	"date_to_char":   ast.DateToChar,
 }

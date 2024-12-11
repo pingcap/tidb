@@ -819,6 +819,7 @@ import (
 	voters                "VOTERS"
 	voter                 "VOTER"
 	watch                 "WATCH"
+	wmConcat           	  "WM_CONCAT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -852,6 +853,7 @@ import (
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
+	builtinWMConcat
 	cancel                     "CANCEL"
 	cardinality                "CARDINALITY"
 	cmSketch                   "CMSKETCH"
@@ -931,6 +933,7 @@ import (
 	SetExpr                         "Set variable statement value's expression"
 	BitExpr                         "bit expression"
 	SimpleExpr                      "simple expression"
+	WMConcatVar                     "wmconcat var"
 	SimpleIdent                     "Simple Identifier expression"
 	SumExpr                         "aggregate functions"
 	FunctionCallGeneric             "Function call with Identifier"
@@ -1159,6 +1162,7 @@ import (
 	EqOpt                                  "= or empty"
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
+	WMConcatList                           "wmconcat list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
 	MaxValueOrExpressionList               "maxvalue or expression list"
 	DefaultOrExpressionList                "default or expression list"
@@ -6167,6 +6171,21 @@ ExpressionList:
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
 
+WMConcatVar:
+	SimpleIdent
+|	Literal
+|	Variable
+
+WMConcatList:
+	WMConcatVar
+	{
+		$$ = []ast.ExprNode{$1}
+	}
+|	WMConcatList pipesAsOr WMConcatVar
+	{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
 MaxValueOrExpressionList:
 	MaxValueOrExpression
 	{
@@ -7186,6 +7205,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"WM_CONCAT"
 |	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
@@ -8517,6 +8537,20 @@ SumExpr:
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
 		} else {
 			agg := &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
+			if $5 != nil {
+				agg.Order = $5.(*ast.OrderByClause)
+			}
+			$$ = agg
+		}
+	}
+|	builtinWMConcat '(' BuggyDefaultFalseDistinctOpt WMConcatList OrderByOptional OptGConcatSeparator ')' OptWindowingClause
+	{
+		args := $4.([]ast.ExprNode)
+		args = append(args, $6.(ast.ExprNode))
+		if $8 != nil {
+			$$ = &ast.WindowFuncExpr{Name: "GROUP_CONCAT", Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
+		} else {
+			agg := &ast.AggregateFuncExpr{F: "GROUP_CONCAT", Args: args, Distinct: $3.(bool)}
 			if $5 != nil {
 				agg.Order = $5.(*ast.OrderByClause)
 			}

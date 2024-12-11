@@ -7658,3 +7658,20 @@ func TestVector(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestWMConcat(t *testing.T) {
+	table := []testCase{
+		{"select a,wm_concat(a||'hh'||c) as bc from testagg group by a;", true, "select a,wm_concat(a||'hh'||'c') as bc from testagg group by a;"},
+		{"select a,wm_concat(a+c||c) as bc from testagg group by a;", false, ""},
+	}
+
+	p := parser.New()
+	for _, tbl := range table {
+		_, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Errorf(t, err, "source %v", tbl.src, errors.Trace(err))
+			continue
+		}
+		require.NoErrorf(t, err, "source %v", tbl.src, errors.Trace(err))
+	}
+}

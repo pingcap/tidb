@@ -955,9 +955,6 @@ func (b *builtinNextDaySig) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime"))
 	}
 
-	// Ensure time is 00:00:00
-	resultTime.Truncate(24 * time.Hour)
-
 	// in case of datetime overflow
 	if resultTime.Year() == 0 {
 		hour, minute, second := resultTime.Clock()
@@ -7218,6 +7215,12 @@ func (c *monthsBetweenFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinMonthsBetweenSig struct {
 	baseBuiltinFunc
+}
+
+func (b *builtinMonthsBetweenSig) Clone() builtinFunc {
+	newSig := &builtinMonthsBetweenSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
 }
 
 // evalReal evals a builtinMonthsBetweenSig.

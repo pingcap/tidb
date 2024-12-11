@@ -24,6 +24,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1717,6 +1718,26 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	if err := b.args[1].VecEvalString(ctx, input, substr); err != nil {
 		return err
 	}
+	positions, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(positions)
+	if len(b.args) >= 3 {
+		if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
+			return err
+		}
+	}
+	occurrences, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(occurrences)
+	if len(b.args) >= 4 {
+		if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
+			return err
+		}
+	}
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
@@ -1734,7 +1755,31 @@ func (b *builtinInstrUTF8Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 			strI = str.GetString(i)
 			substrI = substr.GetString(i)
 		}
-		idx := strings.Index(strI, substrI)
+
+		position := int64(1)
+		if len(b.args) >= 3 {
+			position = positions.GetInt64(i)
+			if position == 0 {
+				res[i] = 0
+				continue
+			}
+		}
+
+		occurrence := int64(1)
+		if len(b.args) >= 4 {
+			occurrence = occurrences.GetInt64(i)
+			if occurrence <= 0 {
+				return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
+			}
+		}
+
+		var idx int
+		if position > 0 {
+			idx = findNthOccurrenceUTF8(strI, substrI, int(position-1), int(occurrence))
+		} else {
+			idx = findLastOccurrenceUTF8(strI, substrI, int(-position), int(occurrence))
+		}
+
 		if idx == -1 {
 			res[i] = 0
 			continue
@@ -2170,6 +2215,27 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	if err := b.args[1].VecEvalString(ctx, input, substr); err != nil {
 		return err
 	}
+	positions, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(positions)
+	if len(b.args) >= 3 {
+		if err := b.args[2].VecEvalInt(ctx, input, positions); err != nil {
+			return err
+		}
+	}
+	occurrences, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+	defer b.bufAllocator.put(occurrences)
+	if len(b.args) >= 4 {
+		if err := b.args[3].VecEvalInt(ctx, input, occurrences); err != nil {
+			return err
+		}
+	}
+
 	result.ResizeInt64(n, false)
 	result.MergeNulls(str, substr)
 	res := result.Int64s()
@@ -2179,7 +2245,31 @@ func (b *builtinInstrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		}
 		strI := str.GetString(i)
 		substrI := substr.GetString(i)
-		idx := strings.Index(strI, substrI)
+
+		position := int64(1)
+		if len(b.args) >= 3 {
+			position = positions.GetInt64(i)
+			if position == 0 {
+				res[i] = 0
+				continue
+			}
+		}
+
+		occurrence := int64(1)
+		if len(b.args) >= 4 {
+			occurrence = occurrences.GetInt64(i)
+			if occurrence <= 0 {
+				return errors.Errorf("Occurrence should not be negative, got %d", int(occurrence))
+			}
+		}
+
+		var idx int
+		if position > 0 {
+			idx = findNthOccurrence(strI, substrI, int(position-1), int(occurrence))
+		} else {
+			idx = findLastOccurrence(strI, substrI, int(-position), int(occurrence))
+		}
+
 		res[i] = int64(idx + 1)
 	}
 	return nil
