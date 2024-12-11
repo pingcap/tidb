@@ -86,7 +86,7 @@ type wrapTxn struct {
 }
 
 func (txn *wrapTxn) validOrPending() bool {
-	return txn.tsFuture != nil || (txn.Transaction != nil && txn.Transaction.Valid())
+	return txn.tsFuture != nil || txn.Transaction.Valid()
 }
 
 func (txn *wrapTxn) pending() bool {
@@ -300,15 +300,7 @@ func (c *Context) GetBuildPBCtx() *planctx.BuildPBContext {
 }
 
 // Txn implements sessionctx.Context Txn interface.
-func (c *Context) Txn(active bool) (kv.Transaction, error) {
-	if active {
-		if !c.txn.validOrPending() {
-			err := c.NewTxn(context.Background())
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
+func (c *Context) Txn(bool) (kv.Transaction, error) {
 	return &c.txn, nil
 }
 

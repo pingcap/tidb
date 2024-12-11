@@ -49,8 +49,11 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		require.IsType(t, copCtx, &copr.CopContextSingleIndex{})
 		startKey := tbl.RecordPrefix()
 		endKey := startKey.PrefixNext()
+		txn, err := store.Begin()
+		require.NoError(t, err)
 		copChunk, err := FetchChunk4Test(copCtx, tbl.(table.PhysicalTable), startKey, endKey, store, 10)
 		require.NoError(t, err)
+		require.NoError(t, txn.Rollback())
 
 		iter := chunk.NewIterator4Chunk(copChunk)
 		handles := make([]kv.Handle, 0, copChunk.NumRows())
