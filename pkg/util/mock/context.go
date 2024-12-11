@@ -86,7 +86,7 @@ type wrapTxn struct {
 }
 
 func (txn *wrapTxn) validOrPending() bool {
-	return txn.tsFuture != nil || txn.Transaction.Valid()
+	return txn.tsFuture != nil || (txn.Transaction != nil && txn.Transaction.Valid())
 }
 
 func (txn *wrapTxn) pending() bool {
