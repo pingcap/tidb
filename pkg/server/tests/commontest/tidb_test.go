@@ -2659,7 +2659,7 @@ func TestExtensionConnEvent(t *testing.T) {
 
 func TestSandBoxMode(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
-	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil,nil)
 	require.NoError(t, err)
 	_, err = Execute(context.Background(), qctx, "create user testuser;")
 	require.NoError(t, err)

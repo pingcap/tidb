@@ -215,6 +215,33 @@ endif
 init-submodule:
 	git submodule init && git submodule update --force
 
+.PHONY: enterprise-prepare
+enterprise-prepare:
+	cd pkg/extension/enterprise/generate && $(GO) generate -run genfile main.go
+
+.PHONY: enterprise-clear
+enterprise-clear:
+	cd pkg/extension/enterprise/generate && $(GO) generate -run clear main.go
+
+.PHONY: enterprise-docker
+enterprise-docker: init-submodule enterprise-prepare
+	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile.enterprise .
+
+.PHONY: enterprise-server-build
+enterprise-server-build: TIDB_EDITION=Enterprise
+enterprise-server-build:
+ifeq ($(TARGET), "")
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
+else
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
+endif
+
+.PHONY: enterprise-server
+enterprise-server:
+	$(MAKE) init-submodule
+	$(MAKE) enterprise-prepare
+	$(MAKE) enterprise-server-build
+
 .PHONY: server_check
 server_check:
 ifeq ($(TARGET), "")

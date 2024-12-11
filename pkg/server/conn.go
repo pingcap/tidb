@@ -165,7 +165,7 @@ type clientConn struct {
 	pkt          *internal.PacketIO      // a helper to read and write data in packet format.
 	bufReadConn  *util2.BufferedReadConn // a buffered-read net.Conn or buffered-read tls.Conn.
 	tlsConn      *tls.Conn               // TLS connection, nil if not TLS.
-	tlcpConn     *tlcp.Conn              // TLCP connection, nil if not TLCP.
+	tlcpConn     *tlcp.Conn		         // TLCP connection, nil if not TLCP.
 	server       *Server                 // a reference of server instance.
 	capability   uint32                  // client capability affects the way server handles client request.
 	connectionID uint64                  // atomically allocated by a global variable, unique in process scope.
