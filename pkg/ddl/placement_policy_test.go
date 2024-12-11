@@ -188,7 +188,7 @@ func testPlacementPolicy(t *testing.T) {
 	tk.MustExec("drop placement policy if exists x")
 
 	var policyID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if policyID != 0 {
 			return
 		}

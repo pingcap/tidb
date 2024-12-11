@@ -159,8 +159,3 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
 	return nil
 }
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
-	return nil
-}
