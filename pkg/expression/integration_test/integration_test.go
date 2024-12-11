@@ -638,7 +638,7 @@ func TestNvlAndNvl2(t *testing.T) {
 	);`
 	tk.MustExec(createTable)
 	tk.MustExec("insert into t value()")
-	tk.MustExec(`INSERT INTO t (varchar_column, int_column, float_column, decimal_column, datetime_column) 
+	tk.MustExec(`INSERT INTO t (varchar_column, int_column, float_column, decimal_column, datetime_column)
 			VALUES('Sample String', 100, 456.78, 98765.43, '2024-12-06')`)
 
 	// test nvl().
@@ -2129,7 +2129,6 @@ func TestTrunc(t *testing.T) {
 
 	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'MINUTE')").Check(testkit.Rows("2024-11-27 22:03:00"))
 	tk.MustQuery("SELECT trunc('2024-11-27 22:03:45', 'mi')").Check(testkit.Rows("2024-11-27 22:03:00"))
-
 }
 
 func TestCompareBuiltin(t *testing.T) {
