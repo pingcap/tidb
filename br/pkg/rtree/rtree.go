@@ -402,7 +402,6 @@ type ProgressRange struct {
 	Res        RangeTree
 	Incomplete []Range
 	Origin     Range
-	GroupKey   string
 }
 
 // Less impls btree.Item.

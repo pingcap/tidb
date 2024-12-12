@@ -120,7 +120,7 @@ func TestRangeTree(t *testing.T) {
 	assertAllComplete()
 
 	// Overwrite range BD, c-d should be empty
-	rangeTree.Update(*rangeB)
+	rangeTree.UpdateForce(*rangeB, true)
 	require.Equal(t, 4, rangeTree.Len())
 	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
@@ -129,6 +129,111 @@ func TestRangeTree(t *testing.T) {
 	rangeTree.Update(*rangeC)
 	require.Equal(t, 5, rangeTree.Len())
 	assertAllComplete()
+}
+
+func TestRangeTree2(t *testing.T) {
+	rangeTree := rtree.NewRangeTreeWithPhysicalID(100)
+
+	newRangeItem := func(tableID int64, rowStartID, rowEndID uint64, name string, physicalIDs ...int64) ([]byte, []byte, []*backuppb.File) {
+		startKey := encodeTableRowKey(tableID, rowStartID)
+		endKey := encodeTableRowKey(tableID, rowEndID)
+		tableMetas := make([]*backuppb.TableMeta, 0, len(physicalIDs))
+		for _, physicalID := range physicalIDs {
+			tableMetas = append(tableMetas, &backuppb.TableMeta{
+				PhysicalId: physicalID,
+				Crc64Xor:   uint64(physicalID),
+				TotalKvs:   uint64(physicalID),
+				TotalBytes: uint64(physicalID),
+			})
+		}
+		return startKey, endKey, []*backuppb.File{
+			{
+				Name:       name,
+				StartKey:   startKey,
+				EndKey:     endKey,
+				TableMetas: tableMetas,
+			},
+		}
+	}
+	startKey, endKey, files1 := newRangeItem(100, 1, 100, "1.sst", 98, 99, 100)
+	force := rangeTree.PutForce(startKey, endKey, files1, false)
+	require.True(t, force)
+	startKey, endKey, files2 := newRangeItem(100, 200, 300, "2.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files2, false)
+	require.True(t, force)
+	startKey, endKey, files3 := newRangeItem(100, 500, 600, "3.sst", 100, 101, 102)
+	force = rangeTree.PutForce(startKey, endKey, files3, false)
+	require.True(t, force)
+
+	// [200, 300] -overlap-> [200, 300]
+	startKey, endKey, files := newRangeItem(100, 200, 300, "4.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.False(t, force)
+
+	// [200, 300] -overlap-> [200, 300]
+	startKey, endKey, files = newRangeItem(100, 200, 300, "4.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, true)
+	require.True(t, force)
+	rg := rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "4.sst")
+
+	// [150, 300] -overlap-> [200, 300]
+	startKey, endKey, files = newRangeItem(100, 150, 300, "5.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "5.sst")
+
+	// [150, 350] -overlap-> [150, 300]
+	startKey, endKey, files = newRangeItem(100, 150, 350, "6.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "6.sst")
+
+	// [140, 400] -overlap-> [150, 350]
+	startKey, endKey, files = newRangeItem(100, 140, 400, "7.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "7.sst")
+
+	// [1, 100], [140, 400], [500, 600]
+	// [1, 110] -overlap-> [1, 100]
+	startKey, endKey, files = newRangeItem(100, 1, 110, "8.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "8.sst")
+	require.Len(t, files1[0].TableMetas, 3)
+	require.Equal(t, files1[0].TableMetas[0].PhysicalId, int64(98))
+	require.Equal(t, files1[0].TableMetas[1].PhysicalId, int64(99))
+	require.Nil(t, files1[0].TableMetas[2])
+
+	// [450, 600] -overlap-> [500, 600]
+	startKey, endKey, files = newRangeItem(100, 450, 600, "9.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "9.sst")
+	require.Len(t, files3[0].TableMetas, 3)
+	require.Nil(t, files3[0].TableMetas[0])
+	require.Equal(t, files3[0].TableMetas[1].PhysicalId, int64(101))
+	require.Equal(t, files3[0].TableMetas[2].PhysicalId, int64(102))
+
+	// [50, 550] -overlap-> [1, 110], [140, 400], [450, 600]
+	startKey, endKey, files = newRangeItem(100, 50, 550, "10.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "10.sst")
 }
 
 func TestRangeIntersect(t *testing.T) {
@@ -184,6 +289,11 @@ func BenchmarkRangeTreeUpdate(b *testing.B) {
 		}
 		rangeTree.Update(item)
 	}
+}
+
+func encodeTableRowKey(tableID int64, rowID uint64) []byte {
+	tablePrefix := tablecodec.GenTableRecordPrefix(tableID)
+	return tablecodec.EncodeRecordKey(tablePrefix, kv.IntHandle(rowID))
 }
 
 func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {

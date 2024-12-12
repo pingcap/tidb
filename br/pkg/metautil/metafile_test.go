@@ -332,3 +332,99 @@ func TestCalculateChecksumStatsOnFiles(t *testing.T) {
 	require.Equal(t, uint64(20+40+50+60+2000+2002), checksumStats.TotalBytes)
 	require.Equal(t, uint64(30^50^60^70^3000^3002), checksumStats.Crc64Xor)
 }
+
+func TestCalculateKvStatsOnFile(t *testing.T) {
+	totalKvs, totalBytes := CalculateKvStatsOnFile(&backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			{
+				PhysicalId: 1,
+				TotalKvs:   100,
+				TotalBytes: 100,
+				Crc64Xor:   100,
+			},
+			{
+				PhysicalId: 2,
+				TotalKvs:   200,
+				TotalBytes: 200,
+				Crc64Xor:   200,
+			},
+			{
+				PhysicalId: 3,
+				TotalKvs:   300,
+				TotalBytes: 300,
+				Crc64Xor:   300,
+			},
+		},
+	})
+	require.Equal(t, 600, totalKvs)
+	require.Equal(t, 600, totalBytes)
+	totalKvs, totalBytes = CalculateKvStatsOnFile(&backuppb.File{
+		TotalKvs:   100,
+		TotalBytes: 100,
+	})
+	require.Equal(t, 100, totalKvs)
+	require.Equal(t, 100, totalBytes)
+}
+
+func TestCalculateKvStatsOnFiles(t *testing.T) {
+	totalKvs, totalBytes := CalculateKvStatsOnFiles([]*backuppb.File{
+		{
+			TableMetas: []*backuppb.TableMeta{
+				{
+					PhysicalId: 1,
+					TotalKvs:   100,
+					TotalBytes: 100,
+					Crc64Xor:   100,
+				},
+				{
+					PhysicalId: 2,
+					TotalKvs:   200,
+					TotalBytes: 200,
+					Crc64Xor:   200,
+				},
+				{
+					PhysicalId: 3,
+					TotalKvs:   300,
+					TotalBytes: 300,
+					Crc64Xor:   300,
+				},
+			},
+		},
+		{
+			TableMetas: []*backuppb.TableMeta{
+				{
+					PhysicalId: 4,
+					TotalKvs:   400,
+					TotalBytes: 400,
+					Crc64Xor:   400,
+				},
+				{
+					PhysicalId: 5,
+					TotalKvs:   500,
+					TotalBytes: 500,
+					Crc64Xor:   500,
+				},
+				{
+					PhysicalId: 6,
+					TotalKvs:   600,
+					TotalBytes: 600,
+					Crc64Xor:   600,
+				},
+			},
+		},
+	})
+	require.Equal(t, uint64(2100), totalKvs)
+	require.Equal(t, uint64(2100), totalBytes)
+	totalKvs, totalBytes = CalculateKvStatsOnFiles([]*backuppb.File{
+		{
+			TotalKvs:   100,
+			TotalBytes: 100,
+		},
+		{
+			TotalKvs:   200,
+			TotalBytes: 200,
+		},
+	})
+	require.Equal(t, uint64(300), totalKvs)
+	require.Equal(t, uint64(300), totalBytes)
+}

@@ -5,7 +5,6 @@ package backup
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"slices"
@@ -598,7 +597,6 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
 	physicalID := tablecodec.DecodeTableID(r.StartKey)
-	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
 
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
@@ -607,8 +605,7 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 		Incomplete: []rtree.Range{
 			r,
 		},
-		Origin:   r,
-		GroupKey: groupKey,
+		Origin: r,
 	}
 }
 

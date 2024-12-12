@@ -36,7 +36,7 @@ go_test(
     embed = [":rtree"],
     flaky = True,
     race = "on",
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "//pkg/kv",
         "//pkg/tablecodec",

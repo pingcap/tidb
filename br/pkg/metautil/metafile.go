@@ -536,7 +536,7 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					log.Error("tableID must not equal to 0", logutil.File(file))
 					return nil, errors.Annotate(berrors.ErrInvalidRange, "the table ID of the file end key can not be 0")
 				}
-				if len(file.TableMetas) > 0 {
+				if len(file.TableMetas) > 1 {
 					firstTableID, lastTableID := file.TableMetas[0].PhysicalId, file.TableMetas[len(file.TableMetas)-1].PhysicalId
 					if firstTableID <= 0 || lastTableID <= 0 {
 						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
@@ -550,11 +550,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					// The firstTableID is the physical id of the first table meta.
 					// Notice that startTableID <= firstTableID <= lastTableID <= endTableID. That's because
 					// part of data may be overlapped by another backup response.
-					oldLastTableID := physicalRangeMap[file.TableMetas[0].PhysicalId]
+					oldLastTableID := physicalRangeMap[firstTableID]
 					if oldLastTableID == 0 {
 						// uninitialized physical range
-						physicalRangeMap[file.TableMetas[0].PhysicalId] = file.TableMetas[len(file.TableMetas)-1].PhysicalId
-					} else if oldLastTableID != file.TableMetas[len(file.TableMetas)-1].PhysicalId {
+						physicalRangeMap[firstTableID] = lastTableID
+					} else if oldLastTableID != lastTableID {
 						// The backup file is bad. It has valid data over from firstTableID0 to endTableID0, and another
 						// valid data over from firstTableID0 to endTableID1.
 						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
