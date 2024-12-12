@@ -119,14 +119,14 @@ const (
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
 		PRIMARY KEY (Host, User),
-		KEY (User));`
+		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (Host, User)," +
-		"KEY (User))"
+		"KEY i_user (User))"
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
@@ -165,7 +165,7 @@ const (
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (Host, DB, User),
-		KEY (User));`
+		KEY i_user (User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
@@ -177,7 +177,7 @@ const (
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name),
-		KEY (User));`
+		KEY i_user (User));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
@@ -188,7 +188,7 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
 		PRIMARY KEY (Host, DB, User, Table_name, Column_name),
-		KEY (User));`
+		KEY i_user (User));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -324,7 +324,7 @@ const (
 		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
 		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER),
-		KEY (USER))`
+		KEY i_user (USER))`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
 	CreateStatsTopNTable = `CREATE TABLE IF NOT EXISTS mysql.stats_top_n (
@@ -387,7 +387,7 @@ const (
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
 		PRIMARY KEY (USER,HOST,PRIV),
-		KEY (USER)
+		KEY i_user (USER)
 	);`
 	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
 	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
@@ -1391,6 +1391,7 @@ var (
 		upgradeToVer217,
 		upgradeToVer218,
 		upgradeToVer239,
+		upgradeToVer240,
 	}
 )
 
@@ -3288,26 +3289,26 @@ func upgradeToVer218(_ sessiontypes.Session, ver int64) {
 	// empty, just make lint happy.
 }
 
-func upgradeToVer240(s sessiontypes.Session, ver int64) {
-	if ver >= version40 {
-		return
-	}
-
-	mustExecute(s, "ALTER TABLE mysql.user ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.global_priv ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.db ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.tables_priv ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.columns_priv ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.global_grants ADD INDEX (user)")
-	mustExecute(s, "ALTER TABLE mysql.default_roles ADD INDEX (user)")
-}
-
 func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	if ver >= version239 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer240(s sessiontypes.Session, ver int64) {
+	if ver >= version240 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

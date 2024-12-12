@@ -625,7 +625,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 		} else {
 			// The second add index op.
 			// notice: upgrade `tidb_runaway_queries` table will happened in `upgradeToVer212` function which is before the second add index op.
-			// upgradeToVer239 the order is
+			// upgradeToVer240 the order is
 			// add index upgrade_tbl1
 			// add index user
 			// add index global priv
