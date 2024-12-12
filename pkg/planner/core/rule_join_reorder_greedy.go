@@ -19,11 +19,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/pkg/expression"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
->>>>>>> eebdcfebd5b (planner, stats: overflow estimation may lead to wrong join reorder (#56752))
 )
 
 type joinReorderGreedySolver struct {
@@ -100,15 +96,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
 		bestCost := math.MaxFloat64
-<<<<<<< HEAD
-		bestIdx := -1
-		var finalRemainOthers []expression.Expression
-		var bestJoin LogicalPlan
-=======
 		bestIdx, whateverValidOneIdx := -1, -1
 		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
-		var bestJoin, whateverValidOne base.LogicalPlan
->>>>>>> eebdcfebd5b (planner, stats: overflow estimation may lead to wrong join reorder (#56752))
+		var bestJoin, whateverValidOne LogicalPlan
 		for i, node := range s.curJoinGroup {
 			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
 			if newJoin == nil {
