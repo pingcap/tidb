@@ -760,8 +760,7 @@ type CopRuntimeStats struct {
 	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
 	timeDetail *util.TimeDetail
-	// do not use kv.StoreType because it will meet cycle import error
-	storeType kv.StoreType
+	storeType  kv.StoreType
 	sync.Mutex
 }
 
