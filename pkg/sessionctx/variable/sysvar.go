@@ -724,8 +724,8 @@ var defaultSysVars = []*SysVar{
 			TiDBEnableProcedureValue.Store(on)
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
-	},
+			return BoolToOnOff(TiDBEnableProcedureValue.Load()), nil
+		},
 	},
 	{Scope: ScopeGlobal, Name: AutomaticSpPrivileges, Value: BoolToOnOff(true), Type: TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		AutomaticSPPrivileges.Store(TiDBOptOn(val))

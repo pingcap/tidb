@@ -289,11 +289,11 @@ type immutable struct {
 }
 
 type extended struct {
-	UserMap       map[string][]UserRecord // Accelerate User searching
-	Global        map[string][]globalPrivRecord
-	Dynamic       map[string][]dynamicPrivRecord
-	DBMap         map[string][]dbRecord         // Accelerate DB searching
-	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+	UserMap        map[string][]UserRecord // Accelerate User searching
+	Global         map[string][]globalPrivRecord
+	Dynamic        map[string][]dynamicPrivRecord
+	DBMap          map[string][]dbRecord         // Accelerate DB searching
+	TablesPrivMap  map[string][]tablesPrivRecord // Accelerate TablesPriv searching
 	RoutinePrivMap map[string][]routinePrivRecord
 }
 

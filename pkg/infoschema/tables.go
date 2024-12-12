@@ -106,7 +106,7 @@ const (
 	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
-	TableViews           = "VIEWS"
+	TableViews = "VIEWS"
 	// TableRoutines is the string constant of infoschema table.
 	TableRoutines        = "ROUTINES"
 	tableParameters      = "PARAMETERS"

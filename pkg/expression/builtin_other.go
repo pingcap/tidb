@@ -102,7 +102,7 @@ var (
 
 // UpdateVariableVar converts data types like columns.
 // It's initialized at `tidb/pkg/planner/core/procedure_sp.go`.
-var UpdateVariableVar func(name string, val types.Datum,  sessVars *variable.SessionVars) error
+var UpdateVariableVar func(name string, val types.Datum, sessVars *variable.SessionVars) error
 
 type inFunctionClass struct {
 	baseFunctionClass

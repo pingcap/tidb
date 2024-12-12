@@ -399,7 +399,7 @@ func TLSCipher2String(n uint16) string {
 var (
 	// tlcpCipherSuites and tlcpCipherNames is the supported cipher suites for tlcp connection. DON'T CHANGE THIS!
 	tlcpCipherSuites []uint16
-	tlcpCipherNames []string
+	tlcpCipherNames  []string
 	tlcpCipherString = map[uint16]string{}
 )
 

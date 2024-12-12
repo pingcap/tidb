@@ -91,8 +91,8 @@ type ShowExec struct {
 
 	Tp                ast.ShowStmtType // Databases/Tables/Columns/....
 	DBName            pmodel.CIStr
-	Table             *resolve.TableNameW  // Used for showing columns.
-	Partition         pmodel.CIStr         // Used for showing partition
+	Table             *resolve.TableNameW // Used for showing columns.
+	Partition         pmodel.CIStr        // Used for showing partition
 	Procedure         *ast.TableName
 	Column            *ast.ColumnName      // Used for `desc table column`.
 	IndexName         pmodel.CIStr         // Used for show table regions.

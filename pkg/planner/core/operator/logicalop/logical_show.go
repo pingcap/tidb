@@ -44,8 +44,8 @@ type ShowContents struct {
 	DBName            string
 	Table             *resolve.TableNameW // Used for showing columns.
 	Procedure         *ast.TableName
-	Partition         model.CIStr         // Use for showing partition
-	Column            *ast.ColumnName     // Used for `desc table column`.
+	Partition         model.CIStr     // Use for showing partition
+	Column            *ast.ColumnName // Used for `desc table column`.
 	IndexName         model.CIStr
 	ResourceGroupName string               // Used for showing resource group
 	Flag              int                  // Some flag parsed from sql, such as FULL.

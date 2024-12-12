@@ -262,7 +262,6 @@ func (p *UserPrivileges) RequestProcedureVerification(activeRoles []*auth.RoleId
 	return mysqlPriv.RequestProcedureVerification(activeRoles, p.user, p.host, db, procsLowerName, priv)
 }
 
-
 // RequestVerificationWithUser implements the Manager interface.
 func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
 	if SkipWithGrant {

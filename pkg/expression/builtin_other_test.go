@@ -382,18 +382,18 @@ func TestSetProcedureVar(t *testing.T) {
 	dec := types.NewDecFromInt(5)
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 0)
 	testCases := []struct {
-		args []interface{}
-		res  interface{}
+		args []any
+		res  any
 	}{
-		{[]interface{}{"a", "12"}, "12"},
-		{[]interface{}{"b", "34"}, "34"},
-		{[]interface{}{"c", nil}, nil},
-		{[]interface{}{"c", "ABC"}, "ABC"},
-		{[]interface{}{"c", "dEf"}, "dEf"},
-		{[]interface{}{"d", int64(3)}, int64(3)},
-		{[]interface{}{"e", float64(2.5)}, float64(2.5)},
-		{[]interface{}{"f", dec}, dec},
-		{[]interface{}{"g", timeDec}, timeDec},
+		{[]any{"a", "12"}, "12"},
+		{[]any{"b", "34"}, "34"},
+		{[]any{"c", nil}, nil},
+		{[]any{"c", "ABC"}, "ABC"},
+		{[]any{"c", "dEf"}, "dEf"},
+		{[]any{"d", int64(3)}, int64(3)},
+		{[]any{"e", float64(2.5)}, float64(2.5)},
+		{[]any{"f", dec}, dec},
+		{[]any{"g", timeDec}, timeDec},
 	}
 	typeCases := []struct {
 		name     string
@@ -438,7 +438,7 @@ func TestGetProcedureVar(t *testing.T) {
 	timeDec := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	sessionVars := []struct {
 		key string
-		val interface{}
+		val any
 	}{
 		{"a", "中"},
 		{"b", "文字符chuan"},
@@ -465,17 +465,17 @@ func TestGetProcedureVar(t *testing.T) {
 	}
 
 	testCases := []struct {
-		args []interface{}
-		res  interface{}
+		args []any
+		res  any
 	}{
-		{[]interface{}{"a"}, "中"},
-		{[]interface{}{"b"}, "文字符chuan"},
-		{[]interface{}{"c"}, ""},
-		{[]interface{}{"d"}, nil},
-		{[]interface{}{"e"}, "3"},
-		{[]interface{}{"f"}, "2.5"},
-		{[]interface{}{"g"}, string(dec.ToString())},
-		{[]interface{}{"h"}, timeDec},
+		{[]any{"a"}, "中"},
+		{[]any{"b"}, "文字符chuan"},
+		{[]any{"c"}, ""},
+		{[]any{"d"}, nil},
+		{[]any{"e"}, "3"},
+		{[]any{"f"}, "2.5"},
+		{[]any{"g"}, string(dec.ToString())},
+		{[]any{"h"}, timeDec},
 	}
 	for _, tc := range testCases {
 		tp, _, notFind := ctx.GetSessionVars().GetProcedureVariable(tc.args[0].(string))
