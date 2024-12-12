@@ -186,7 +186,7 @@ func TestExtremCaseOfGC(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int)")
 	testKit.MustExec("insert into t values (1,2),(3,4)")
 	testKit.MustExec("analyze table t")
-	tbl, err := dom.InfoSchema().TableByName(context.TODO(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
