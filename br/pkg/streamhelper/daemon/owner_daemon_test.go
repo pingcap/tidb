@@ -137,7 +137,7 @@ func TestDaemon(t *testing.T) {
 	req := require.New(t)
 	app := newTestApp(t)
 	ow := owner.NewMockManager(ctx, "owner_daemon_test", nil, "owner_key")
-	d := daemon.New(app, ow, 100*time.Millisecond, 0)
+	d := daemon.New(app, ow, 100*time.Millisecond)
 
 	app.AssertService(req, false)
 	f, err := d.Begin(ctx)
@@ -154,39 +154,4 @@ func TestDaemon(t *testing.T) {
 	}, 1*time.Second, 100*time.Millisecond)
 	app.AssertStart(1 * time.Second)
 	app.AssertTick(1 * time.Second)
-
-	// make sure chaos did not kick in so never retires
-	req.Neverf(func() bool {
-		return !ow.IsOwner()
-	}, 5*time.Second, 100*time.Millisecond, "should never retire")
-}
-
-func TestDaemonWithChaos(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req := require.New(t)
-	app := newTestApp(t)
-	ow := owner.NewMockManager(ctx, "owner_daemon_test", nil, "owner_key")
-	d := daemon.New(app, ow, 100*time.Millisecond, 2*time.Second)
-
-	app.AssertService(req, false)
-	f, err := d.Begin(ctx)
-	req.NoError(err)
-	app.AssertService(req, true)
-	go f()
-
-	// wait for it to become owner
-	req.Eventually(func() bool {
-		return ow.IsOwner()
-	}, 1*time.Second, 100*time.Millisecond)
-
-	// wait for chaos test to kick in to auto retire
-	req.Eventually(func() bool {
-		return !ow.IsOwner()
-	}, 3*time.Second, 500*time.Millisecond)
-
-	// sanity check it will try to become leader in background again
-	req.Eventually(func() bool {
-		return ow.IsOwner()
-	}, 2*time.Second, 500*time.Millisecond)
 }

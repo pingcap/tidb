@@ -919,6 +919,8 @@ func RunStreamResume(
 func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
+	log.Info("starting", zap.String("cmd", cmdName))
+
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
@@ -936,13 +938,50 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer func() {
 		ownerMgr.Close()
 	}()
-	advancerd := daemon.New(advancer, ownerMgr, cfg.AdvancerCfg.TickDuration, cfg.AdvancerCfg.AdvancerOwnerRetireInterval)
+	advancerd := daemon.New(advancer, ownerMgr, cfg.AdvancerCfg.TickDuration)
 	loop, err := advancerd.Begin(ctx)
 	if err != nil {
 		return err
 	}
+	if cfg.AdvancerCfg.OwnershipCycleInterval > 0 {
+		err = advancerd.ForceToBeOwner(ctx)
+		if err != nil {
+			return err
+		}
+		log.Info("this advancerd forced to be the owner")
+		go runOwnershipCycle(ctx, advancerd, cfg.AdvancerCfg.OwnershipCycleInterval)
+	}
 	loop()
 	return nil
+}
+
+// runOwnershipCycle handles the periodic cycling of ownership for the advancer
+func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycleDuration time.Duration) {
+	ticker := time.NewTicker(cycleDuration)
+	defer ticker.Stop()
+
+	isOwner := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !isOwner {
+				// try to become owner
+				if err := advancerd.ForceToBeOwner(ctx); err != nil {
+					log.Error("failed to force ownership", zap.Error(err))
+					continue
+				}
+				log.Info("advancer forced to be the owner")
+				isOwner = true
+			} else {
+				// retire from being owner
+				advancerd.RetireIfOwner()
+				log.Info("advancer retired from being owner")
+				isOwner = false
+			}
+		}
+	}
 }
 
 func checkConfigForStatus(pd []string) error {
