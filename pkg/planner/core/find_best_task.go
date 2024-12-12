@@ -263,7 +263,7 @@ func iteratePhysicalPlan4BaseLogical(
 ) ([]base.Task, int64, []int64, error) {
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for pp
+	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
@@ -297,7 +297,7 @@ func iterateChildPlan4LogicalSequence(
 ) ([]base.Task, int64, []int64, error) {
 	// Find best child tasks firstly.
 	childTasks = childTasks[:0]
-	// The curCntPlan records the number of possible plans for pp
+	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
 	lastIdx := p.ChildLen() - 1
 	for j := 0; j < lastIdx; j++ {
@@ -761,6 +761,19 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil {
+		if path.Index == nil || path.Index.VectorInfo == nil {
+			return false
+		}
+		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
+			return false
+		}
+
+		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
+			return false
+		}
+		return true
+	}
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.GetPKIsHandleCol()
@@ -807,19 +820,6 @@ func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property
 				break
 			}
 		}
-	}
-	if prop.VectorProp.VectorHelper != nil && path.Index.VectorInfo != nil {
-		if path.Index == nil || path.Index.VectorInfo == nil {
-			return false
-		}
-		if ds.TableInfo.Columns[path.Index.Columns[0].Offset].ID != prop.VectorProp.Column.ID {
-			return false
-		}
-
-		if model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L] != path.Index.VectorInfo.DistanceMetric {
-			return false
-		}
-		return true
 	}
 	return isMatchProp
 }
@@ -1172,13 +1172,15 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		}
 	}
 
-	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1)
 	// If we've forced an index merge - we want to keep these plans
 	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
 		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
 		fixcontrol.Fix52869,
 		false,
 	)
+	// tidb_opt_prefer_range_scan is the master switch to control index preferencing
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan() &&
+		(preferMerge || (ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1))
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index, we just keep them. For other candidate paths, if there exists
 		// any range scan path, we remove full scan paths and keep range scan paths.
@@ -1197,9 +1199,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				equalPlan := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0
-				indexFilters := len(c.path.TableFilters) < len(c.path.IndexFilters)
-				if preferMerge || (((equalPlan || indexFilters) && prop.IsSortItemEmpty()) || c.isMatchProp) {
+				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
 				}
@@ -2266,6 +2267,7 @@ func (is *PhysicalIndexScan) addSelectionConditionForGlobalIndex(p *logicalop.Da
 		return nil, err
 	}
 	needNot := false
+	// TODO: Move all this into PartitionPruning or the PartitionProcessor!
 	pInfo := p.TableInfo.GetPartitionInfo()
 	if len(idxArr) == 1 && idxArr[0] == FullRange {
 		// Filter away partitions that may exists in Global Index,

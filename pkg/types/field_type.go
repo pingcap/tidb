@@ -197,6 +197,10 @@ func InferParamTypeFromUnderlyingValue(value any, tp *FieldType) {
 		tp.SetType(mysql.TypeVarString)
 		tp.SetFlen(UnspecifiedLength)
 		tp.SetDecimal(UnspecifiedLength)
+		// Also set the `charset` and `collation` for it, because some function (e.g. `json_object`) will return error
+		// if the argument collation is `binary`.
+		tp.SetCharset(mysql.DefaultCharset)
+		tp.SetCollate(mysql.DefaultCollationName)
 	default:
 		DefaultTypeForValue(value, tp, mysql.DefaultCharset, mysql.DefaultCollationName)
 		if hasVariantFieldLength(tp) {

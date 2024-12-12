@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -48,12 +49,30 @@ func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	return NewSchema(cols...)
 }
 
+func TestSchemaClone(t *testing.T) {
+	s := &schemaGenerator{}
+	schema := s.generateSchema(5)
+	generateKeys4Schema(schema)
+
+	uniKeys := make([]KeyInfo, 0, len(schema.Columns)-1)
+	for i := 0; i < len(schema.Columns)-1; i++ {
+		uniKeys = append(uniKeys, []*Column{schema.Columns[i]})
+	}
+	schema.SetUniqueKeys(uniKeys)
+
+	clonedSchema := schema.Clone()
+	require.Equal(t, schema.String(), clonedSchema.String())
+
+	require.NotSame(t, unsafe.SliceData(schema.Keys), unsafe.SliceData(clonedSchema.Keys))
+	require.NotSame(t, unsafe.SliceData(schema.UniqueKeys), unsafe.SliceData(clonedSchema.UniqueKeys))
+}
+
 func TestSchemaString(t *testing.T) {
 	s := &schemaGenerator{}
 	schema := s.generateSchema(5)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: []", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [] Unique key: []", schema.String())
 	generateKeys4Schema(schema)
-	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Unique key: [[Column#1],[Column#2],[Column#3],[Column#4]]", schema.String())
+	require.Equal(t, "Column: [Column#1,Column#2,Column#3,Column#4,Column#5] Key: [[Column#1],[Column#2],[Column#3],[Column#4]] Unique key: []", schema.String())
 }
 
 func TestSchemaRetrieveColumn(t *testing.T) {

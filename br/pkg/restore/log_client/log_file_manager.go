@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -25,8 +26,12 @@ import (
 	"go.uber.org/zap"
 )
 
+var TotalEntryCount int64
+
 // MetaIter is the type of iterator of metadata files' content.
 type MetaIter = iter.TryNextor[*backuppb.Metadata]
+
+type SubCompactionIter iter.TryNextor[*backuppb.LogFileSubcompaction]
 
 type MetaName struct {
 	meta Meta
@@ -98,7 +103,8 @@ type LogFileManager struct {
 	storage storage.ExternalStorage
 	helper  streamMetadataHelper
 
-	withmigrations WithMigrations
+	withMigraionBuilder *WithMigrationsBuilder
+	withMigrations      *WithMigrations
 
 	metadataDownloadBatchSize uint
 }
@@ -109,7 +115,8 @@ type LogFileManagerInit struct {
 	RestoreTS uint64
 	Storage   storage.ExternalStorage
 
-	Migrations                WithMigrations
+	MigrationsBuilder         *WithMigrationsBuilder
+	Migrations                *WithMigrations
 	MetadataDownloadBatchSize uint
 	EncryptionManager         *encryption.Manager
 }
@@ -123,11 +130,12 @@ type DDLMetaGroup struct {
 // Generally the config cannot be changed during its lifetime.
 func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFileManager, error) {
 	fm := &LogFileManager{
-		startTS:        init.StartTS,
-		restoreTS:      init.RestoreTS,
-		storage:        init.Storage,
-		helper:         stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
-		withmigrations: init.Migrations,
+		startTS:             init.StartTS,
+		restoreTS:           init.RestoreTS,
+		storage:             init.Storage,
+		helper:              stream.NewMetadataHelper(stream.WithEncryptionManager(init.EncryptionManager)),
+		withMigraionBuilder: init.MigrationsBuilder,
+		withMigrations:      init.Migrations,
 
 		metadataDownloadBatchSize: init.MetadataDownloadBatchSize,
 	}
@@ -136,6 +144,11 @@ func CreateLogFileManager(ctx context.Context, init LogFileManagerInit) (*LogFil
 		return nil, err
 	}
 	return fm, nil
+}
+
+func (rc *LogFileManager) BuildMigrations(migs []*backuppb.Migration) {
+	w := rc.withMigraionBuilder.Build(migs)
+	rc.withMigrations = &w
 }
 
 func (rc *LogFileManager) ShiftTS() uint64 {
@@ -171,9 +184,11 @@ func (rc *LogFileManager) loadShiftTS(ctx context.Context) error {
 	}
 	if !shiftTS.exists {
 		rc.shiftStartTS = rc.startTS
+		rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 		return nil
 	}
 	rc.shiftStartTS = shiftTS.value
+	rc.withMigraionBuilder.SetShiftStartTS(rc.shiftStartTS)
 	return nil
 }
 
@@ -225,7 +240,7 @@ func (rc *LogFileManager) createMetaIterOver(ctx context.Context, s storage.Exte
 }
 
 func (rc *LogFileManager) FilterDataFiles(m MetaNameIter) LogIter {
-	ms := rc.withmigrations.Metas(m)
+	ms := rc.withMigrations.Metas(m)
 	return iter.FlatMap(ms, func(m *MetaWithMigrations) LogIter {
 		gs := m.Physicals(iter.Enumerate(iter.FromSlice(m.meta.FileGroups)))
 		return iter.FlatMap(gs, func(gim *PhysicalWithMigrations) LogIter {
@@ -266,10 +281,13 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 	ctx context.Context,
 	files MetaGroupIter,
 ) ([]Log, error) {
+	start := time.Now()
+	log.Info("start to collect all ddl files")
 	fs := iter.CollectAll(ctx, files)
 	if fs.Err != nil {
 		return nil, errors.Annotatef(fs.Err, "failed to collect from files")
 	}
+	log.Info("finish to collect all ddl files", zap.Duration("take", time.Since(start)))
 
 	dataFileInfos := make([]*backuppb.DataFileInfo, 0)
 	for _, g := range fs.Item {
@@ -281,23 +299,11 @@ func (rc *LogFileManager) collectDDLFilesAndPrepareCache(
 }
 
 // LoadDDLFilesAndCountDMLFiles loads all DDL files needs to be restored in the restoration.
-// At the same time, if the `counter` isn't nil, counting the DML file needs to be restored into `counter`.
 // This function returns all DDL files needing directly because we need sort all of them.
-func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context, counter *int) ([]Log, error) {
+func (rc *LogFileManager) LoadDDLFilesAndCountDMLFiles(ctx context.Context) ([]Log, error) {
 	m, err := rc.streamingMeta(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if counter != nil {
-		m = iter.Tap(m, func(m *MetaName) {
-			for _, fg := range m.meta.FileGroups {
-				for _, f := range fg.DataFilesInfo {
-					if !f.IsMeta && !rc.ShouldFilterOut(f) {
-						*counter += 1
-					}
-				}
-			}
-		})
 	}
 	mg := rc.FilterMetaFiles(m)
 
@@ -324,7 +330,12 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 				if m.meta.MetaVersion > backuppb.MetaVersion_V1 {
 					d.Path = g.Path
 				}
-				return !d.IsMeta || rc.ShouldFilterOut(d)
+				if rc.ShouldFilterOut(d) {
+					return true
+				}
+				// count the progress
+				TotalEntryCount += d.NumberOfEntries
+				return !d.IsMeta
 			})
 			return DDLMetaGroup{
 				Path: g.Path,
@@ -333,6 +344,11 @@ func (rc *LogFileManager) FilterMetaFiles(ms MetaNameIter) MetaGroupIter {
 			}
 		})
 	})
+}
+
+// Fetch compactions that may contain file less than the TS.
+func (rc *LogFileManager) GetCompactionIter(ctx context.Context) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+	return rc.withMigrations.Compactions(ctx, rc.storage)
 }
 
 // the kv entry with ts, the ts is decoded from entry.
@@ -417,4 +433,19 @@ func (rc *LogFileManager) ReadAllEntries(
 	}
 
 	return kvEntries, nextKvEntries, nil
+}
+
+func Subcompactions(ctx context.Context, prefix string, s storage.ExternalStorage) SubCompactionIter {
+	return iter.FlatMap(storage.UnmarshalDir(
+		ctx,
+		&storage.WalkOption{SubDir: prefix},
+		s,
+		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
+	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
+		return iter.FromSlice(subcs.Subcompactions)
+	})
+}
+
+func LoadMigrations(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.Migration] {
+	return storage.UnmarshalDir(ctx, &storage.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

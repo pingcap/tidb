@@ -62,7 +62,7 @@ explain format='brief' select c_custkey, count(o_orderkey) as c_count from custo
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__integration.customer.c_custkey, Column#7
 └─HashAgg	8000.00	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
-  └─HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__integration.customer.c_custkey, planner__core__integration.orders.o_custkey)]
+  └─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.customer.c_custkey, planner__core__integration.orders.o_custkey)]
     ├─HashAgg(Build)	8000.00	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	8000.00	root		data:HashAgg
     │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
@@ -76,7 +76,7 @@ explain format='brief' select c_custkey, count(o_orderkey) as c_count from order
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__integration.customer.c_custkey, Column#7
 └─HashAgg	8000.00	root		group by:planner__core__integration.customer.c_custkey, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__integration.customer.c_custkey)->planner__core__integration.customer.c_custkey
-  └─HashJoin	10000.00	root		right outer join, equal:[eq(planner__core__integration.orders.o_custkey, planner__core__integration.customer.c_custkey)]
+  └─HashJoin	10000.00	root		right outer join, left side:HashAgg, equal:[eq(planner__core__integration.orders.o_custkey, planner__core__integration.customer.c_custkey)]
     ├─HashAgg(Build)	8000.00	root		group by:planner__core__integration.orders.o_custkey, funcs:count(Column#9)->Column#8, funcs:firstrow(planner__core__integration.orders.o_custkey)->planner__core__integration.orders.o_custkey
     │ └─TableReader	8000.00	root		data:HashAgg
     │   └─HashAgg	8000.00	cop[tikv]		group by:planner__core__integration.orders.o_custkey, funcs:count(planner__core__integration.orders.o_orderkey)->Column#9
@@ -2288,7 +2288,7 @@ TableDual	0.00	root		rows:0
 drop table t;
 explain select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 id	estRows	task	access object	operator info
-HashJoin_8	1.00	root		CARTESIAN left outer join
+HashJoin_8	1.00	root		CARTESIAN left outer join, left side:Projection_10
 ├─Projection_12(Build)	1.00	root		2->Column#2
 │ └─TableDual_13	1.00	root		rows:1
 └─Projection_10(Probe)	1.00	root		1->Column#1
@@ -2902,7 +2902,7 @@ create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
 insert into t2 values (null, 1);
 explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 id	estRows	task	access object	operator info
-IndexJoin_12	8000.00	root		anti semi join, inner:IndexLookUp_11, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
+IndexJoin_12	8000.00	root		anti semi join, inner:IndexLookUp_11, left side:TableReader_22, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
 ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
 │ └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp_11(Probe)	12500.00	root		
@@ -3466,7 +3466,7 @@ INSERT INTO t2 VALUES (1,2), (2,2);
 explain format=brief SELECT * FROM t1 LEFT JOIN t2 ON t1.a=t2.a WHERE not(0+(t1.a=30 and t2.b=1));
 id	estRows	task	access object	operator info
 Selection	8000.00	root		not(plus(0, and(eq(planner__core__integration.t1.a, 30), eq(planner__core__integration.t2.b, 1))))
-└─MergeJoin	10000.00	root		left outer join, left key:planner__core__integration.t1.a, right key:planner__core__integration.t2.a
+└─MergeJoin	10000.00	root		left outer join, left side:TableReader, left key:planner__core__integration.t1.a, right key:planner__core__integration.t2.a
   ├─TableReader(Build)	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		not(istrue_with_null(plus(0, and(eq(planner__core__integration.t2.a, 30), eq(planner__core__integration.t2.b, 1)))))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -3572,7 +3572,7 @@ create table t2(id int primary key, col1 int);
 explain format='brief' SELECT /*+ merge_join(t1, t2)*/ * FROM (t1 LEFT JOIN t2 ON t1.col1=t2.id) order by t2.id;
 id	estRows	task	access object	operator info
 Sort	12500.00	root		planner__core__integration.t2.id
-└─MergeJoin	12500.00	root		left outer join, left key:planner__core__integration.t1.col1, right key:planner__core__integration.t2.id
+└─MergeJoin	12500.00	root		left outer join, left side:Sort, left key:planner__core__integration.t1.col1, right key:planner__core__integration.t2.id
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
   └─Sort(Probe)	10000.00	root		planner__core__integration.t1.col1
@@ -3588,7 +3588,7 @@ explain select one.a from t1 one order by (select two.d from t2 two where two.c 
 id	estRows	task	access object	operator info
 Projection_16	10000.00	root		planner__core__integration.t1.a
 └─Sort_17	10000.00	root		planner__core__integration.t2.d
-  └─Apply_20	10000.00	root		CARTESIAN left outer join
+  └─Apply_20	10000.00	root		CARTESIAN left outer join, left side:TableReader_22
     ├─TableReader_22(Build)	10000.00	root		data:TableFullScan_21
     │ └─TableFullScan_21	10000.00	cop[tikv]	table:one	keep order:false, stats:pseudo
     └─MaxOneRow_23(Probe)	10000.00	root		
@@ -3619,7 +3619,7 @@ a
 explain format = 'brief' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
 id	estRows	task	access object	operator info
 Selection	8000.00	root		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY))
-└─HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
+└─HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
   ├─TableReader(Build)	8000.00	root		data:Selection
   │ └─Selection	8000.00	cop[tikv]		not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -3919,19 +3919,19 @@ create table t(a int primary key, b varchar(20));
 insert into t values (1,1);
 explain analyze select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get_1	1.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
+Point_Get_1	1.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	handle:<num>	N/A	N/A
 explain analyze select * from t where a in (1,2,3);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Batch_Point_Get_1	3.00	1	root	table:t	time:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
+Batch_Point_Get_1	3.00	1	root	table:t	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, BatchGet:{num_rpc:<num>, total_time:<num>}	handle:[1 2 3], keep order:false, desc:false	N/A	N/A
 drop table if exists t;
 create table t (a int, b int, unique index (a));
 insert into t values (1,1);
 explain analyze select * from t where a=1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Point_Get_1	1.00	1	root	table:t, index:a(a)	time:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
+Point_Get_1	1.00	1	root	table:t, index:a(a)	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Get:{num_rpc:<num>, total_time:<num>}	NULL	N/A	N/A
 explain analyze insert ignore into t values (1,1),(2,2),(3,3),(4,4);
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Insert_1	N/A	0	root	NULL	time:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
+Insert_1	N/A	0	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, prepare:<num>, check_insert: {total_time:<num>, mem_insert_time:<num>, prefetch:<num>, fk_check:<num>, rpc:{BatchGet:{num_rpc:<num>, total_time:<num>}}}, RU:<num>	N/A	<num> Bytes	N/A
 drop table if exists t;
 create table t (a int, b int);
 insert into t values (1, 2);

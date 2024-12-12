@@ -560,19 +560,17 @@ func (c *Constant) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (c *Constant) Equals(other any) bool {
-	if other == nil {
+	c2, ok := other.(*Constant)
+	if !ok {
 		return false
 	}
-	var c2 *Constant
-	switch x := other.(type) {
-	case *Constant:
-		c2 = x
-	case Constant:
-		c2 = &x
-	default:
+	if c == nil {
+		return c2 == nil
+	}
+	if c2 == nil {
 		return false
 	}
-	ok := c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
+	ok = c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
 	ok = ok && c.collationInfo.Equals(c2.collationInfo)
 	ok = ok && (c.DeferredExpr == nil && c2.DeferredExpr == nil || c.DeferredExpr != nil && c2.DeferredExpr != nil && c.DeferredExpr.Equals(c2.DeferredExpr))
 	ok = ok && (c.ParamMarker == nil && c2.ParamMarker == nil || c.ParamMarker != nil && c2.ParamMarker != nil && c.ParamMarker.order == c2.ParamMarker.order)

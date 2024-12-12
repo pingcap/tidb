@@ -511,7 +511,10 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // error is ErrWarnNullToNotnull.
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
+func (c *Column) HandleBadNull(
+	ec errctx.Context,
+	d *types.Datum,
+	rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
 		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
@@ -554,7 +557,7 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx expression.BuildContext, c
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
-		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupBadNull) != errctx.LevelError
+		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupNoDefault) != errctx.LevelError
 		if !ignoreErr {
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}

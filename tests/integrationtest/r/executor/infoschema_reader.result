@@ -172,7 +172,7 @@ db_name	table_name	job_type
 test_ddl_jobs	tt	alter table multi-schema change
 test_ddl_jobs	tt	add column /* subjob */
 test_ddl_jobs	tt	add column /* subjob */
-test_ddl_jobs	tt	add index /* subjob */ /* txn */
+test_ddl_jobs	tt	add index /* subjob */
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
 set global tidb_ddl_enable_fast_reorg = default;

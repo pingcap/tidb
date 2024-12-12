@@ -4,6 +4,7 @@ go_library(
     name = "join",
     srcs = [
         "base_join_probe.go",
+        "base_semi_join.go",
         "concurrent_map.go",
         "hash_join_base.go",
         "hash_join_spill.go",
@@ -24,6 +25,7 @@ go_library(
         "merge_join.go",
         "outer_join_probe.go",
         "row_table_builder.go",
+        "semi_join_probe.go",
         "tagged_ptr.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/join",
@@ -93,6 +95,7 @@ go_test(
         "outer_join_spill_test.go",
         "right_outer_join_probe_test.go",
         "row_table_builder_test.go",
+        "semi_join_probe_test.go",
         "tagged_ptr_test.go",
     ],
     embed = [":join"],

@@ -700,19 +700,17 @@ func (sf *ScalarFunction) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1th> interface.
 func (sf *ScalarFunction) Equals(other any) bool {
-	if other == nil {
+	sf2, ok := other.(*ScalarFunction)
+	if !ok {
 		return false
 	}
-	var sf2 *ScalarFunction
-	switch x := other.(type) {
-	case *ScalarFunction:
-		sf2 = x
-	case ScalarFunction:
-		sf2 = &x
-	default:
+	if sf == nil {
+		return sf2 == nil
+	}
+	if sf2 == nil {
 		return false
 	}
-	ok := sf.FuncName.L == sf2.FuncName.L
+	ok = sf.FuncName.L == sf2.FuncName.L
 	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
 	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
 		return false

@@ -384,7 +384,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
@@ -2226,14 +2226,12 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	tk.MustExec("insert into t values (100000000, 1);")
 	tk.MustExec("delete from t where a = 100000000;")
 	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-		"auto_inc_force t a 1 _TIDB_ROWID",
 		"auto_inc_force t a 100000001 AUTO_INCREMENT",
 	))
 	// Cannot set next global ID to 0.
 	tk.MustGetErrCode("alter table t /*T![force_inc] force */ auto_increment = 0;", errno.ErrAutoincReadFailed)
 	tk.MustExec("alter table t /*T![force_inc] force */ auto_increment = 2;")
 	tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-		"auto_inc_force t a 1 _TIDB_ROWID",
 		"auto_inc_force t a 2 AUTO_INCREMENT",
 	))
 
@@ -2265,7 +2263,6 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 		fmt.Println("execute alter table force increment to ==", b)
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-			"auto_inc_force t a 1 _TIDB_ROWID",
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
 	}
@@ -2277,7 +2274,6 @@ func TestAutoIncrementForceAutoIDCache(t *testing.T) {
 	for _, b := range bases {
 		tk.MustExec(fmt.Sprintf("alter table t force auto_increment = %d;", b))
 		tk.MustQuery("show table t next_row_id").Check(testkit.Rows(
-			"auto_inc_force t a 1 _TIDB_ROWID",
 			fmt.Sprintf("auto_inc_force t a %d AUTO_INCREMENT", b),
 		))
 		tk.MustExec("insert into t values ();")
@@ -3093,7 +3089,6 @@ func TestIssue52680(t *testing.T) {
 	}
 
 	tk.MustQuery("show table issue52680 next_row_id").Check(testkit.Rows(
-		"test issue52680 id 1 _TIDB_ROWID",
 		"test issue52680 id 3 AUTO_INCREMENT",
 	))
 
@@ -3113,7 +3108,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}

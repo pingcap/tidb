@@ -602,6 +602,8 @@ type Request struct {
 	StoreBusyThreshold time.Duration
 	// TiKVClientReadTimeout is the timeout of kv read request
 	TiKVClientReadTimeout uint64
+	// MaxExecutionTime is the timeout of the whole query execution
+	MaxExecutionTime uint64
 
 	RunawayChecker resourcegroup.RunawayChecker
 

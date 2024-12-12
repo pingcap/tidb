@@ -871,3 +871,30 @@ ADMIN ALTER DDL JOBS 10 THREAD = 3, BATCH_SIZE = 100, MAX_WRITE_SPEED = '10MiB';
 
 disconnect without_super;
 connection default;
+
+# TestIssue53490
+create table privilege__privileges.tt1 (id bigint,pid bigint,name varchar(20),fullname varchar(20));
+insert into privilege__privileges.tt1 values (1,null,'a',''),(2,1,'b',''),(3,2,'c','');
+
+CREATE USER u53490;
+GRANT USAGE ON *.* TO 'u53490';
+GRANT SELECT,INSERT,UPDATE,DELETE,CREATE,DROP,CREATE ROUTINE,ALTER ROUTINE,ALTER,EXECUTE,INDEX,CREATE VIEW,SHOW VIEW ON privilege__privileges.* TO 'u53490';
+
+connect (u53490,localhost,u53490,,);
+connection u53490;
+
+with t_f as (
+         select id,pid,name,'AAA' fullname from privilege__privileges.tt1 )
+         update privilege__privileges.tt1 inner join t_f
+         set tt1.fullname=t_f.fullname
+         where tt1.id=t_f.id;
+
+-- error 1288
+with t_f as (
+         select id,pid,name,'AAA' fullname from privilege__privileges.tt1 )
+         update privilege__privileges.tt1 inner join t_f
+         set t_f.fullname=t_f.fullname
+         where tt1.id=t_f.id;
+
+disconnect u53490;
+connection default;

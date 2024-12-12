@@ -426,7 +426,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table test.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -442,7 +442,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()
@@ -507,7 +507,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	session.MustExec(t, seV, "create table mysql.upgrade_tbl(a int)")
 	ch := make(chan struct{})
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			se := session.CreateSessionAndSetID(t, store)
 			session.MustExec(t, se, fmt.Sprintf("admin pause ddl jobs %d", job.ID))
@@ -532,7 +532,7 @@ func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Make sure upgrade is successful.
 	startUpgrade(store)
 	dom.Close()
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	domLatestV, err := session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer domLatestV.Close()

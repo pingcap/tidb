@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -72,8 +73,14 @@ func (w *mockScanWorker) checkPollResult(exist bool, err string) {
 		require.Same(w.t, curTask, r.task)
 		if err == "" {
 			require.NoError(w.t, r.err)
+			require.Equal(w.t, ReasonTaskFinished, r.reason)
 		} else {
 			require.EqualError(w.t, r.err, err)
+			if w.ctx.Err() != nil {
+				require.Equal(w.t, ReasonWorkerStop, r.reason)
+			} else {
+				require.Equal(w.t, ReasonError, r.reason)
+			}
 		}
 	}
 }
@@ -123,6 +130,14 @@ func (w *mockScanWorker) clearInfoSchema() {
 func (w *mockScanWorker) stopWithWait() {
 	w.Stop()
 	require.NoError(w.t, w.WaitStopped(context.TODO(), 10*time.Second))
+}
+
+func (w *mockScanWorker) SetInfoSchema(is infoschema.InfoSchema) {
+	w.sessPoll.se.sessionInfoSchema = is
+}
+
+func (w *mockScanWorker) SetExecuteSQL(fn func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)) {
+	w.sessPoll.se.executeSQL = fn
 }
 
 func TestScanWorkerSchedule(t *testing.T) {
@@ -209,6 +224,43 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	w.checkWorkerStatus(workerStatusRunning, true, nil)
 }
 
+func TestScanResultWhenWorkerStop(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
+	executeCh := make(chan struct{})
+	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
+	w.sessPoll.se.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		close(executeCh)
+		select {
+		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "wait scan worker stop timeout")
+		}
+		return nil, nil
+	}
+
+	w.Start()
+	task := &ttlScanTask{
+		ctx:        context.Background(),
+		tbl:        tbl,
+		TTLTask:    &cache.TTLTask{},
+		statistics: &ttlStatistics{},
+	}
+	require.NoError(t, w.Schedule(task))
+	select {
+	case <-executeCh:
+	case <-time.After(time.Second):
+		require.FailNow(t, "wait executeSQL timeout")
+	}
+	w.stopWithWait()
+	w.checkWorkerStatus(workerStatusStopped, false, task)
+	msg := w.waitNotifyScanTaskEnd()
+	require.Equal(t, ReasonWorkerStop, msg.result.reason)
+	w.checkPollResult(true, msg.result.err.Error())
+	w.checkWorkerStatus(workerStatusStopped, false, nil)
+}
+
 type mockScanTask struct {
 	*ttlScanTask
 	t        *testing.T
@@ -278,8 +330,10 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
 		require.NoError(t.t, r.err)
+		require.Equal(t.t, ReasonTaskFinished, r.reason)
 	} else {
 		require.EqualError(t.t, r.err, errString)
+		require.Equal(t.t, ReasonError, r.reason)
 	}
 
 	previousIdx := delTaskCnt

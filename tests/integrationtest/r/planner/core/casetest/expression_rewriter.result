@@ -22,7 +22,7 @@ a	b
 1	1
 explain format = 'brief' select * from t1 where (t1.a, t1.b) not in (select a, b from t2);
 id	estRows	task	access object	operator info
-HashJoin	3.20	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(planner__core__casetest__expression_rewriter.t1.b, planner__core__casetest__expression_rewriter.t2.b)]
+HashJoin	3.20	root		Null-aware anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(planner__core__casetest__expression_rewriter.t1.b, planner__core__casetest__expression_rewriter.t2.b)]
 ├─TableReader(Build)	4.00	root		data:TableFullScan
 │ └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	4.00	root		data:TableFullScan
@@ -46,7 +46,7 @@ a
 1
 explain format = 'brief' select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
 id	estRows	task	access object	operator info
-HashJoin	2.40	root		Null-aware anti semi join, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column#7, planner__core__casetest__expression_rewriter.t2.b)]
+HashJoin	2.40	root		Null-aware anti semi join, left side:HashAgg, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column#7, planner__core__casetest__expression_rewriter.t2.b)]
 ├─TableReader(Build)	4.00	root		data:TableFullScan
 │ └─TableFullScan	4.00	cop[tikv]	table:t2	keep order:false
 └─HashAgg(Probe)	3.00	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column#7, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
