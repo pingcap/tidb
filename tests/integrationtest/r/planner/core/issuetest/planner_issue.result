@@ -548,8 +548,6 @@ r0
 1
 1
 1
-<<<<<<< HEAD
-=======
 set autocommit=ON;
 use test;
 drop table if exists t1;
@@ -631,4 +629,3 @@ CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
 SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 c0	c0
->>>>>>> 0eccf7957b4 (planner: merge FullSchema and FullNames of subplans when rewriting "in (subquery)" to inner join (#54334))
