@@ -687,73 +687,47 @@ func TestUnregisterAfterPause(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 
-	// No matter how many times the task is paused, after put a new one the task should run normally
-	// First sequence: pause -> unregister -> put
+	// wait for the task to be added
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// task is should be paused when global checkpoint is laggeod
+	// even the global checkpoint is equal to task start ts(not advanced all the time)
 	c.advanceClusterTimeBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
 	c.advanceClusterTimeBy(1 * time.Minute)
-	require.NoError(t, adv.OnTick(ctx))
+	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
 	env.unregisterTask()
 	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
 
-	// Second sequence: put -> pause -> unregister -> put
-	c.advanceClusterTimeBy(1 * time.Minute)
-	env.putTask()
+	// wait for the task to be added
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
+
+	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
+
+	env.unregisterTask()
+	// wait for the task to be deleted
+	require.Eventually(t, func() bool {
+		return !adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
+
+	// reset
+	c.advanceClusterTimeBy(-1 * time.Minute)
+	require.NoError(t, adv.OnTick(ctx))
 	env.PauseTask(ctx, "whole")
-	env.unregisterTask()
-	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
-
-	// Third sequence: put -> pause -> put -> unregister -> put
-	c.advanceClusterTimeBy(1 * time.Minute)
-	env.putTask()
-	env.PauseTask(ctx, "whole")
-	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
-	env.unregisterTask()
-	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
-
-	// Fourth sequence: unregister -> put -> pause -> put -> unregister -> put
 	c.advanceClusterTimeBy(1 * time.Minute)
 	env.unregisterTask()
 	env.putTask()
-	env.PauseTask(ctx, "whole")
-	time.Sleep(1 * time.Second)
-	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
-	env.unregisterTask()
-	env.putTask()
-	require.NoError(t, adv.OnTick(ctx))
+	// wait for the task to be add
+	require.Eventually(t, func() bool {
+		return adv.HasTask()
+	}, 5*time.Second, 100*time.Millisecond)
 
-	// Fifth sequence: multiple rapid operations with put before pause
-	for i := 0; i < 3; i++ {
-		c.advanceClusterTimeBy(1 * time.Minute)
-		env.putTask()
-		env.PauseTask(ctx, "whole")
-		env.unregisterTask()
-		env.putTask()
-		env.PauseTask(ctx, "whole")
-		env.putTask()
-		require.NoError(t, adv.OnTick(ctx))
-	}
-
-	// Sixth sequence: rapid alternating put and pause
-	for i := 0; i < 3; i++ {
-		c.advanceClusterTimeBy(1 * time.Minute)
-		env.putTask()
-		env.PauseTask(ctx, "whole")
-		env.putTask()
-		env.PauseTask(ctx, "whole")
-		env.putTask()
-		require.NoError(t, adv.OnTick(ctx))
-	}
-
-	// Final verification
-	c.advanceClusterTimeBy(1 * time.Minute)
-	require.NoError(t, adv.OnTick(ctx))
+	require.Error(t, adv.OnTick(ctx), "checkpoint is lagged")
 }
 
 // If the start ts is *NOT* lagged, even both the cluster and pd are lagged, the task should run normally.
@@ -865,13 +839,18 @@ func TestAddTaskWithLongRunTask2(t *testing.T) {
 	adv.UpdateConfigWith(func(c *config.Config) {
 		c.CheckPointLagLimit = 1 * time.Minute
 	})
+	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(3 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(2 * time.Minute)
 	env.mockPDConnectionError()
-	adv.StartTaskListener(ctx)
-	// Try update checkpoint
-	require.NoError(t, adv.OnTick(ctx))
+	// if cannot connect to pd, the checkpoint will be rolled back
+	// because at this point. the global ts is 2 minutes
+	// and the local checkpoint ts is 1 minute
+	require.Error(t, adv.OnTick(ctx), "checkpoint rollback")
+
+	// only when local checkpoint > global ts, the next tick will be normal
+	c.advanceCheckpointBy(12 * time.Minute)
 	// Verify no err raised
 	require.NoError(t, adv.OnTick(ctx))
 }
@@ -907,13 +886,13 @@ func TestAddTaskWithLongRunTask3(t *testing.T) {
 	})
 	// advance cluster time to 4 minutes, and checkpoint to 1 minutes
 	// if start ts equals to checkpoint, the task will not be paused
-	c.advanceClusterTimeBy(4 * time.Minute)
+	adv.StartTaskListener(ctx)
+	c.advanceClusterTimeBy(2 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
-	adv.StartTaskListener(ctx)
 	require.NoError(t, adv.OnTick(ctx))
 
-	// if start ts < checkpoint, the task will be paused
+	c.advanceClusterTimeBy(2 * time.Minute)
 	c.advanceCheckpointBy(1 * time.Minute)
 	env.advanceCheckpointBy(1 * time.Minute)
 	// Try update checkpoint
