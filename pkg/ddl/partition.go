@@ -3207,25 +3207,55 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// If so, then we must skip it.
 		if len(w.oldKeys) > 0 {
+			// We need to use pessimistic, since we have no other unique key than the _tidb_rowid,
+			// which we are changing, so we need to check if we can write the old one without collision.
+			//txn.SetOption(kv.Pessimistic, true)
+
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 			// The good thing is that we can then also skip the index generation for that row and we don't need to
 			// check if duplicate index entries was already copied either!
-			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
+			// If we skip checking, then we will overwrite those double written rows.
+			// TODO: Would it be OK to overwrite them?
+			// They will always be double writing during this state, but can change between fetchRowColVals
+			// and writing here, which should be caught by the SetAssertNotExists below.
 			found, err = txn.BatchGet(ctx, w.oldKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.BgLogger().Info("BackfillData BatchGet", zap.Int("Found keys", len(found)))
+			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
 		}
 
+		failpoint.Call("github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", w.rowRecords)
 		for i, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
+			logutil.BgLogger().Info("BackfillData row", zap.String("key", key.String()))
 			if len(w.oldKeys) > 0 {
 				if _, ok := found[string(w.oldKeys[i])]; ok {
 					// Already filled, i.e. double written by concurrent DML.
 					logutil.BgLogger().Info("BackfillData already filled key", zap.String("key", w.oldKeys[i].String()))
 					continue
+				}
+
+				// Check if we can write the old key,
+				// since there can still be a concurrent update/insert happening that would
+				// cause a duplicate.
+				err = txn.Set(w.oldKeys[i], prr.vals)
+				if err != nil {
+					logutil.BgLogger().Info("BackfillData failed to Set key", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
+					return errors.Trace(err)
+				}
+				err = txn.SetAssertion(w.oldKeys[i], kv.SetAssertNotExist)
+				if err != nil {
+					logutil.BgLogger().Info("BackfillData failed to SetOption", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
+					return errors.Trace(err)
+				}
+				err = txn.Delete(w.oldKeys[i])
+				if err != nil {
+					logutil.BgLogger().Info("BackfillData failed to Delete", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
+					return errors.Trace(err)
 				}
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
 				// Generate new _tidb_rowid.
@@ -3246,6 +3276,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
 			}
+			logutil.BgLogger().Info("BackfillData set", zap.String("key", key.String()))
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
@@ -3254,13 +3285,15 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		}
 		return nil
 	})
+	logutil.BgLogger().Info("BackfillData err", zap.Error(errInTxn))
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 
 	return
 }
 
+// RowVal is exported here to be able to have a failpoint callback for triggering testing concurrent DMLs.
 type RowVal struct {
-	key  []byte
+	key  kv.Key
 	vals []byte
 }
 
