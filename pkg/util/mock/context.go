@@ -421,15 +421,13 @@ func (t *fakeTxn) StartTS() uint64 {
 	return t.startTS
 }
 
-// SetDiskFullOpt implements the interface.
 func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
-// SetOption implements the interface.
 func (*fakeTxn) SetOption(_ int, _ any) {}
 
-// Get implements the interface.
 func (*fakeTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
-	return nil, errors.New("unable to get from fakeTxn")
+	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
+	return nil, nil
 }
 
 func (t *fakeTxn) Valid() bool { return true }
