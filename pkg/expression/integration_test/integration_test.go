@@ -849,6 +849,204 @@ func TestVectorMiscFunctions(t *testing.T) {
 	tk.MustQuery(`SELECT * FROM a;`).Check(testkit.Rows("1 [2,10,14] 3"))
 }
 
+func testVectorSearchInternal(tk *testkit.TestKit) {
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(3),
+			a int,
+			b int,
+			c vector(3),
+			d vector,
+			VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
+		)
+	`)
+	tk.MustExec(`
+	insert into t1 values
+		(1, '[1,1,1]', 11, 111, '[1,1,1]', '[1,1,1]'),
+		(2, '[2,2,2]', 22, 222, '[2,2,2]', '[2,2,2]'),
+		(3, '[3,3,3]', 33, 333, '[3,3,3]', '[3,3,3]');
+	`)
+	tk.MustExec("analyze table t1")
+
+	tk.MustQuery("select id from t1 order by id").Check(testkit.Rows(
+		"1",
+		"2",
+		"3",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 1").Check(testkit.Rows(
+		"3",
+	))
+	tk.MustQuery("select id from t1 order by vec_l2_distance(vec, '[3,3,3]')").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select * from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 [3,3,3] [3,3,3]",
+		"2 [2,2,2] 22 222 [2,2,2] [2,2,2]",
+		"1 [1,1,1] 11 111 [1,1,1] [1,1,1]",
+	))
+	tk.MustQuery("select id, a, b from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 33 333",
+		"2 22 222",
+		"1 11 111",
+	))
+	tk.MustQuery("select a, id, b from t1 order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"33 3 333",
+		"22 2 222",
+		"11 1 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 [3,3,3] [3,3,3] 0",
+		"2 [2,2,2] 22 222 [2,2,2] [2,2,2] 1.7320508075688772",
+		"1 [1,1,1] 11 111 [1,1,1] [1,1,1] 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from t1 order by d limit 10").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, a, b, vec_l2_distance(vec, '[3,3,3]') as d from t1 order by d limit 10").Check(testkit.Rows(
+		"3 33 333 0",
+		"2 22 222 1.7320508075688772",
+		"1 11 111 3.4641016151377544",
+	))
+
+	tk.MustExec(`
+		create table tp (
+			id int,
+			vec vector(3) comment 'hnsw(distance=cosine)',
+			a int, b int,
+			store_id int
+		) PARTITION BY RANGE COLUMNS(store_id) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (200),
+			PARTITION p2 VALUES LESS THAN (MAXVALUE)
+		);
+	`)
+	tk.MustExec(`
+		insert into tp values
+			(1, '[1,1,1]', 11, 111, 50),
+			(2, '[2,2,2]', 22, 222, 150),
+			(3, '[3,3,3]', 33, 333, 250);
+	`)
+	tk.MustExec("analyze table tp")
+
+	tk.MustQuery("select id from tp order by id").Check(testkit.Rows(
+		"1",
+		"2",
+		"3",
+	))
+	tk.MustQuery("select id from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select id from tp order by vec_l2_distance(vec, '[3,3,3]')").Check(testkit.Rows(
+		"3",
+		"2",
+		"1",
+	))
+	tk.MustQuery("select * from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 250",
+		"2 [2,2,2] 22 222 150",
+		"1 [1,1,1] 11 111 50",
+	))
+	tk.MustQuery("select id, a, b from tp order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"3 33 333",
+		"2 22 222",
+		"1 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from tp order by d limit 10").Check(testkit.Rows(
+		"3 0",
+		"2 1.7320508075688772",
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from tp order by d limit 10").Check(testkit.Rows(
+		"3 [3,3,3] 33 333 250 0",
+		"2 [2,2,2] 22 222 150 1.7320508075688772",
+		"1 [1,1,1] 11 111 50 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp order by d limit 10").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp order by d").Check(testkit.Rows(
+		"3 0 33 333",
+		"2 1.7320508075688772 22 222",
+		"1 3.4641016151377544 11 111",
+	))
+
+	tk.MustQuery("select id from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1",
+	))
+	tk.MustQuery("select * from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1 [1,1,1] 11 111 50",
+	))
+	tk.MustQuery("select id, a, b from tp partition (p0) order by vec_l2_distance(vec, '[3,3,3]') limit 10").Check(testkit.Rows(
+		"1 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 3.4641016151377544",
+	))
+	tk.MustQuery("select *, vec_l2_distance(vec, '[3,3,3]') as d from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 [1,1,1] 11 111 50 3.4641016151377544",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp partition (p0) order by d limit 10").Check(testkit.Rows(
+		"1 3.4641016151377544 11 111",
+	))
+	tk.MustQuery("select id, vec_l2_distance(vec, '[3,3,3]') as d, a, b from tp partition (p0) order by d").Check(testkit.Rows(
+		"1 3.4641016151377544 11 111",
+	))
+}
+
+func TestVectorSearchExtractProj(t *testing.T) {
+	{
+		store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test;")
+		testVectorSearchInternal(tk)
+	}
+	{
+		store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("USE test;")
+		tk.MustExec("SET SESSION tidb_opt_fix_control = '56318:OFF';")
+		testVectorSearchInternal(tk)
+	}
+}
+
+func TestVectorSearchPreparedStatement(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test;")
+	tk.MustExec("CREATE TABLE t1 (pk INT PRIMARY KEY, vec vector(3) comment 'hnsw(distance=cosine)');")
+	tk.MustExec("INSERT INTO t1 VALUES (1, '[1,2,3]'), (2, '[4,5,6]'), (3, '[7,8,9]');")
+	tk.MustExec("ANALYZE TABLE t1;")
+
+	tk.MustExec("PREPARE stmt FROM 'SELECT pk FROM t1 ORDER BY vec_cosine_distance(vec, ?) LIMIT ?';")
+	tk.MustExec("SET @pvec = '[7,8,9]';")
+	tk.MustExec("SET @plimit = 10;")
+	tk.MustQuery("EXECUTE stmt USING @pvec, @plimit;").Check(testkit.Rows("3", "2", "1"))
+}
+
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
