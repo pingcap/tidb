@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -146,6 +147,14 @@ func NewHandle(
 		handle.StatsReadWriter,
 		handle,
 	)
+	if ddlNotifier != nil {
+		// In test environments, we use a channel-based approach to handle DDL events.
+		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+		// In production, DDL events are handled by the notifier system instead.
+		if !intest.InTest {
+			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.DDL.HandleDDLEvent)
+		}
+	}
 	return handle, nil
 }
 

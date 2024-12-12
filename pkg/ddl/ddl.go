@@ -588,10 +588,9 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	// In test environments, we use a channel-based approach to handle DDL events since the
-	// DDL notifier system is not active by default in tests. This maintains compatibility
-	// with existing test cases that expect events to be delivered through channels. In
-	// production, DDL events are handled by the notifier system instead.
+	// In test environments, we use a channel-based approach to handle DDL events.
+	// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+	// In production, DDL events are handled by the notifier system instead.
 	if intest.InTest {
 		ch := jobCtx.oldDDLCtx.ddlEventCh
 		if ch != nil {

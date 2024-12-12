@@ -2424,6 +2424,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
 	if do.statsLease >= 0 {
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
+		// Note: The DDL event handler must be registered before starting the stats owner campaign
+		// to prevent potential data races in event processing.
+		do.ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, do.StatsHandle().HandleDDLEvent)
 	}
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
@@ -2449,7 +2452,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
-	do.ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, do.StatsHandle().HandleDDLEvent)
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
