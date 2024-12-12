@@ -660,7 +660,7 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		"+---+---------------------+-------------+---------------------------------+\n"
 	require.Equal(t, expected, output)
 
-	em.schema = "long_long_long_long_long_long_long_long_dbname"
+	em.schemaEscaped = "`long_long_long_long_long_long_long_long_dbname`"
 	output = em.Output()
 	expected = "\n" +
 		"Import Data Error Summary: \n" +
