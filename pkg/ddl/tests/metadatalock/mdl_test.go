@@ -15,7 +15,6 @@
 package metadatalocktest
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -24,8 +23,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -1015,51 +1015,31 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
-	conn3 := server.CreateMockConn(t, sv)
-	tk3 := testkit.NewTestKitWithSession(t, store, conn3.Context().Session)
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int primary key, b int);")
 	tk.MustExec("create table t2(a int);")
 	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4);")
 
-	tk.MustExec(`begin`)
-	tk.MustExec(`prepare delete_stmt from 'delete from t where a = ?'`)
 	tk.MustExec(`prepare insert_stmt from 'insert into t values (?, ?)'`)
-	tk.MustExec(`commit`)
-
-	tk.MustExec(`begin`)
-	tk.MustExec(`set @a = 4, @b= 4;`)
-	tk.MustExec(`execute delete_stmt using @a;`)
-	tk.MustExec(`execute insert_stmt using @a, @b;`)
-	tk.MustExec(`commit`)
-
-	tk.MustExec("begin")
+	tk.MustExec(`set @a=4, @b=4;`)
 
 	ch := make(chan struct{})
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	callback := &callback.TestDDLCallback{Do: dom}
+	onJobUpdatedExported := func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateWriteReorganization:
-			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
+			tbl, _ := dom.InfoSchema().TableByID(job.TableID)
 			idx := tbl.Meta().FindIndexByName("idx")
 			switch idx.BackfillState {
 			case model.BackfillStateRunning:
 				if first {
+					// generate plan, cache it, and make some row change to make
+					// sure backfill state 'merging' is not skipped.
 					tk.MustExec(`begin`)
-					tk.MustExec(`set @a=9;`)
-					tk.MustExec(`execute delete_stmt using @a;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-					tk.MustExec(`set @a=6, @b=4;`)
-					tk.MustExec(`execute insert_stmt using @a, @b;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-					tk.MustExec(`commit`)
-					tk.MustExec(`begin`)
-					tk.MustExec(`set @a=4;`)
-					tk.MustExec(`execute delete_stmt using @a;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-					tk.MustExec(`set @a=4, @b=4;`)
+					tk.MustExec(`delete from t where a = 4;`)
 					tk.MustExec(`execute insert_stmt using @a, @b;`)
 					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 					tk.MustExec(`commit`)
@@ -1068,17 +1048,20 @@ func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
 					// Activate txn.
 					tk.MustExec("select * from t2")
 					first = false
-					tk3.MustExec("insert into test.t values(10000, 1000)")
 					return
 				}
 			}
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExported)
+	dom.DDL().SetHook(callback)
 
 	ddl.MockDMLExecutionMerging = func() {
-		tk.MustExec(`execute delete_stmt using @a;`)
-		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		tk.MustExec(`delete from t where a = 4;`)
+		// we must generate a new plan here, because the schema has changed since
+		// the last plan was generated.
 		tk.MustExec(`execute insert_stmt using @a, @b;`)
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustExec("commit")
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
