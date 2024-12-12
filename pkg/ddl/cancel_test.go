@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
@@ -349,4 +350,19 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 0, len(tbl.Meta().Indices))
+}
+
+func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+
+	var ddlErr error
+	err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterDDLCloseCancel", func() {
+		ddlErr = tk.ExecToErr("create database test2;")
+	})
+	require.NoError(t, err)
+	err = dom.DDL().Stop()
+	require.NoError(t, err)
+	require.Error(t, ddlErr)
+	require.Equal(t, "context canceled", ddlErr.Error())
 }
