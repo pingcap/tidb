@@ -746,21 +746,23 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		// infoschema v2 requires network, so it cannot be tested this way.
-		t.Skip()
-	}
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_schema_cache_size = default;")
+	})
 
 	tk.MustExec("CREATE TABLE added (`id` int(11), `name` text, `some_date` timestamp);")
 	tk.MustExec("CREATE TABLE incremental (`id` int(11), `name`text, `some_date` timestamp);")
 	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
 	// Show columns should not send coprocessor request to the storage.
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	testfailpoint.Enable(t, "tikvclient/tikvStoreSendReqResult", `return("timeout")`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/planner/core/BuildDataSourceFailed", "panic")
+
 	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
 		"id int(11) YES  <nil> ",
 		"name text YES  <nil> ",
 		"some_date timestamp YES  <nil> "))
-	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	tk.MustQuery("select COLUMN_NAME from information_schema.columns where table_name = 'temp_view';").Check(testkit.Rows("id", "name", "some_date"))
 }
 
 // Code below are helper utilities for the test cases.
