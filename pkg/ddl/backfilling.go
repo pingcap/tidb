@@ -463,6 +463,7 @@ func splitTableRanges(
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]", startKey.String(), endKey.String())
 		return nil, errors.Trace(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg))
 	}
+	failpoint.InjectCall("afterLoadTableRanges", len(ranges))
 	return ranges, nil
 }
 
@@ -715,6 +716,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 							zap.Int64("job ID", reorgInfo.ID),
 							zap.Error(err2))
 					}
+					failpoint.InjectCall("afterUpdateReorgMeta")
 				}
 			}
 		}
