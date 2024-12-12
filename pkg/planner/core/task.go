@@ -878,7 +878,7 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
 	var newGlobalTopN *PhysicalTopN
 
-	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
+	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix58217, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
 	if fixValue && ContainHeavyFunction(p.ByItems[0].Expr) {
@@ -906,6 +906,19 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := util.DeriveLimitStats(childProfile, float64(newCount))
 
+	// Add a extra physicalProjection to save the distance column, a example like :
+	// select id from t order by vec_distance(vec, '[1,2,3]') limit x
+	// The Plan will be modified like:
+	//
+	// Original: DataSource(id, vec) -> TopN(by vec->dis) -> Projection(id)
+	//                                  └─Byitem: vec_distance(vec, '[1,2,3]')
+	//                                  └─Schema: id, vec
+	//
+	// New:      DataSource(id, vec) -> Projection(id, vec->dis) -> TopN(by dis) -> Projection(id)
+	//                                  └─Byitem: dis
+	//                                  └─Schema: id, dis
+	//
+	// Note that for plan now, TopN has its own schema and does not use the schema of children.
 	if newGlobalTopN != nil {
 		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
 		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))

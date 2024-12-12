@@ -1037,7 +1037,7 @@ func TestVectorSearchPreparedStatement(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
-	tk.MustExec("CREATE TABLE t1 (pk INT PRIMARY KEY, vec vector(3) comment 'hnsw(distance=cosine)');")
+	tk.MustExec("CREATE TABLE t1 (pk INT PRIMARY KEY, vec vector(3), VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec))) );")
 	tk.MustExec("INSERT INTO t1 VALUES (1, '[1,2,3]'), (2, '[4,5,6]'), (3, '[7,8,9]');")
 	tk.MustExec("ANALYZE TABLE t1;")
 

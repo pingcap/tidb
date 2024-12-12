@@ -206,9 +206,9 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	require.Equal(t, []string{
 		" Projection              root test.t.vec",
 		" └─TopN                  root ?",
-		"   └─Projection          root test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"     └─TableReader       root ",
-		"       └─TopN            cop  vec_cosine_distance(test.t.vec, ?)",
+		"   └─TableReader         root ",
+		"     └─TopN              cop  ?",
+		"       └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
 		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p2)
 	tbl.Meta().TiFlashReplica.Available = true
@@ -313,6 +313,7 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	require.Equal(t, types.KindMinNotNull, tableScan.Ranges[0].LowVal[0].Kind())
 	require.Equal(t, types.KindMaxValue, tableScan.Ranges[0].HighVal[0].Kind())
 }
+
 func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -348,7 +349,6 @@ func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
 	tk.MustExec("create table doc(id INT, doc LONGTEXT)")
 
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
-	testkit.SetTiFlashReplica(t, dom, "test", "tp")
 
 	return tk
 }
@@ -385,9 +385,6 @@ func TestVectorSearchWithPKAuto(t *testing.T) {
 func TestVectorSearchWithPKForceTiKV(t *testing.T) {
 	tk := prepareVectorSearchWithPK(t)
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
-	// enable the tikv AllowProjectionPushDown to use vector search optimization.
-	// https://github.com/tidbcloud/tidb-cse/pull/1426
-	tk.Session().GetSessionVars().AllowProjectionPushDown = true
 
 	var input []string
 	var output []struct {
