@@ -245,6 +245,8 @@ type StatementContext struct {
 	PrevLastInsertID uint64
 	// LastInsertID is the auto-generated ID in the current statement.
 	LastInsertID uint64
+	// LastInsertIDSet is true if the LastInsertId was set
+	LastInsertIDSet bool
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
