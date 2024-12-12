@@ -1628,7 +1628,6 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 	}
 	batchedNum := len(tasks)
 	busyThresholdFallback := false
-	batchResps := resp.GetBatchResponses()
 	defer func() {
 		if err != nil {
 			return
@@ -1652,6 +1651,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			Addr: rpcCtx.Addr,
 		}
 	}
+	batchResps := resp.GetBatchResponses()
 	batchRespList = make([]*copResponse, 0, len(batchResps))
 	for _, batchResp := range batchResps {
 		taskID := batchResp.GetTaskId()
