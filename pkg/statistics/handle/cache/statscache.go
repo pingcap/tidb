@@ -259,6 +259,11 @@ func (s *StatsCacheImpl) Put(id int64, t *statistics.Table) {
 	s.Load().put(id, t)
 }
 
+// TriggerEvict triggers the cache to evict some items.
+func (s *StatsCacheImpl) TriggerEvict() {
+	s.Load().TriggerEvict()
+}
+
 // MaxTableStatsVersion returns the version of the current cache, which is defined as
 // the max table stats version the cache has in its lifecycle.
 func (s *StatsCacheImpl) MaxTableStatsVersion() uint64 {

@@ -1010,7 +1010,9 @@ func (d *ddl) close() {
 	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.
 	// hope we can unify it after refactor to let some components only start once.
-	d.ownerManager.BreakCampaignLoop()
+	if d.ownerManager != nil {
+		d.ownerManager.BreakCampaignLoop()
+	}
 	d.schemaVerSyncer.Close()
 
 	// d.delRangeMgr using sessions from d.sessPool.

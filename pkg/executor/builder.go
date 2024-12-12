@@ -210,6 +210,8 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildUnlockStats(v)
 	case *plannercore.PlanReplayer:
 		return b.buildPlanReplayer(v)
+	case *plannercore.Traffic:
+		return b.buildTraffic(v)
 	case *plannercore.PhysicalLimit:
 		return b.buildLimit(v)
 	case *plannercore.Prepare:
@@ -1142,6 +1144,63 @@ func (b *executorBuilder) buildPlanReplayer(v *plannercore.PlanReplayer) exec.Ex
 		e.BaseExecutor = exec.NewBaseExecutor(b.ctx, nil, v.ID())
 	}
 	return e
+}
+
+func (b *executorBuilder) buildTraffic(traffic *plannercore.Traffic) exec.Executor {
+	switch traffic.OpType {
+	case ast.TrafficOpCapture:
+		exec := &TrafficCaptureExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			Args: map[string]string{
+				"output": traffic.Dir,
+			},
+		}
+		for _, option := range traffic.Options {
+			switch option.OptionType {
+			case ast.TrafficOptionDuration:
+				exec.Args["duration"] = option.StrValue
+			case ast.TrafficOptionEncryptionMethod:
+				exec.Args["encrypt-method"] = option.StrValue
+			case ast.TrafficOptionCompress:
+				exec.Args["compress"] = strconv.FormatBool(option.BoolValue)
+			}
+		}
+		return exec
+	case ast.TrafficOpReplay:
+		exec := &TrafficReplayExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			Args: map[string]string{
+				"input": traffic.Dir,
+			},
+		}
+		for _, option := range traffic.Options {
+			switch option.OptionType {
+			case ast.TrafficOptionUsername:
+				exec.Args["username"] = option.StrValue
+			case ast.TrafficOptionPassword:
+				exec.Args["password"] = option.StrValue
+			case ast.TrafficOptionSpeed:
+				if v := option.FloatValue.GetValue(); v != nil {
+					if dec, ok := v.(*types.MyDecimal); ok {
+						exec.Args["speed"] = dec.String()
+					}
+				}
+			case ast.TrafficOptionReadOnly:
+				exec.Args["readonly"] = strconv.FormatBool(option.BoolValue)
+			}
+		}
+		return exec
+	case ast.TrafficOpCancel:
+		return &TrafficCancelExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+		}
+	case ast.TrafficOpShow:
+		return &TrafficShowExec{
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+		}
+	}
+	// impossible here
+	return nil
 }
 
 func (*executorBuilder) buildReplace(vals *InsertValues) exec.Executor {

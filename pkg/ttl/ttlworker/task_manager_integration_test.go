@@ -41,7 +41,7 @@ import (
 )
 
 func TestParallelLockNewTask(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
@@ -49,7 +49,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	testTable, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
 
 	now := se.Now()
@@ -120,7 +120,7 @@ func TestParallelSchedule(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
 	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -178,7 +178,7 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
@@ -226,7 +226,7 @@ func TestTaskMetrics(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	// create table and scan task
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
@@ -261,7 +261,7 @@ func TestRescheduleWithError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_ttl_running_tasks = 1000")
 
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 	// insert a wrong scan task with random table id
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", 613, 1)
 	tk.MustExec(sql)
@@ -296,7 +296,7 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 	tk.MustExec("create table test.t(id int, created_at datetime) ttl=created_at + interval 1 day")
@@ -368,7 +368,7 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	defer pool.AssertNoSessionInUse(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 
@@ -548,7 +548,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	pool := wrapPoolForTest(dom.SysSessionPool())
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 128")
@@ -650,7 +650,7 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 	defer pool.AssertNoSessionInUse(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 
@@ -692,11 +692,12 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 
 	now = now.Add(time.Hour)
 	m.UpdateHeartBeat(context.Background(), se, now)
+	tkTZ := tk.Session().GetSessionVars().Location()
 	tk.MustQuery("select count(1) from mysql.tidb_ttl_task where status = 'running' and owner_id = 'task-manager-1'").Check(testkit.Rows("3"))
 	tk.MustQuery("select scan_id, owner_hb_time from mysql.tidb_ttl_task").Sort().Check(testkit.Rows(
-		fmt.Sprintf("0 %s", now.Add(-2*time.Hour).Format(time.DateTime)),
-		fmt.Sprintf("1 %s", now.Format(time.DateTime)),
-		fmt.Sprintf("2 %s", now.Format(time.DateTime)),
-		fmt.Sprintf("3 %s", now.Format(time.DateTime)),
+		fmt.Sprintf("0 %s", now.Add(-2*time.Hour).In(tkTZ).Format(time.DateTime)),
+		fmt.Sprintf("1 %s", now.In(tkTZ).Format(time.DateTime)),
+		fmt.Sprintf("2 %s", now.In(tkTZ).Format(time.DateTime)),
+		fmt.Sprintf("3 %s", now.In(tkTZ).Format(time.DateTime)),
 	))
 }

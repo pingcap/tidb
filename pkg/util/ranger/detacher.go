@@ -362,6 +362,30 @@ func unionColumnValues(lhs, rhs []*valueInfo) []*valueInfo {
 	return lhs
 }
 
+// Check which detach result is more selective. This function is called to choose between point ranges and the best CNF ranges.
+// This is needed because sometimes the best CNF has full intersection and is more selective,
+// and other times it is not when the intersection is not applied.
+func chooseBetweenRangeAndPoint(sctx *rangerctx.RangerContext, r1 *DetachRangeResult, r2 *cnfItemRangeResult) {
+	if fixcontrol.GetBoolWithDefault(sctx.OptimizerFixControl, fixcontrol.Fix54337, false) {
+		if r1 != nil && len(r1.Ranges) > 0 && r2 != nil && r2.rangeResult != nil {
+			r1Minusr2 := removeConditions(sctx.ExprCtx.GetEvalCtx(), r1.AccessConds, r2.rangeResult.AccessConds)
+			r2Minusr1 := removeConditions(sctx.ExprCtx.GetEvalCtx(), r2.rangeResult.AccessConds, r1.AccessConds)
+			// r2 is considered more selective (and more useful) than r1 if its AccessConds are a superset of r1's AccessConds.
+			// This means that r1.AccessConds minus r2.AccessConds should result in an empty set.
+			// The function `removeConditions` is used to perform this subtraction.
+			// For example, if A = {t1.a1 IN (44, 70, 76)} and B = {t1.a1 IN (44, 70, 76), (t1.a1 > 70 OR (t1.a1 = 70 AND t1.b1 > 41))},
+			// then A-B is empty and therefore B is a superset of A.
+			// Avoid the case when both r1 and r2 have the same AccessConds (r2Minusr1 is not empty).
+			if len(r1Minusr2) == 0 && len(r2Minusr1) > 0 {
+				// Update final result and just update: Ranges, AccessConds and RemainedConds
+				r1.RemainedConds = removeConditions(sctx.ExprCtx.GetEvalCtx(), r1.RemainedConds, r2.rangeResult.AccessConds)
+				r1.Ranges = r2.rangeResult.Ranges
+				r1.AccessConds = r2.rangeResult.AccessConds
+			}
+		}
+	}
+}
+
 // detachCNFCondAndBuildRangeForIndex will detach the index filters from table filters. These conditions are connected with `and`
 // It will first find the point query column and then extract the range query column.
 // considerDNF is true means it will try to extract access conditions from the DNF expressions.
@@ -510,6 +534,10 @@ func (d *rangeDetacher) detachCNFCondAndBuildRangeForIndex(conditions []expressi
 				return res, nil
 			}
 			res.RemainedConds = append(res.RemainedConds, tailRes.RemainedConds...)
+			// Check if `bestCNFItemRes` is more selective than the ranges derived from the IN list.
+			// This can occur if `bestCNFItemRes` represents the intersection of the IN list values
+			// and additional conditions, resulting in a more restrictive filter.
+			chooseBetweenRangeAndPoint(d.sctx, res, bestCNFItemRes)
 			return res, nil
 		}
 		// `eqOrInCount` must be 0 when coming here.

@@ -193,14 +193,14 @@ outer:
 	if panicked.Load() {
 		return errors.Errorf("panic occurred during import, please check log")
 	}
-	return nil
+	return s.onFinished(ctx, subtask)
 }
 
 func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -357,10 +357,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
 		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
 	)
-	return err
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(subtask)
 }
 
-func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -436,14 +439,18 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
-	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.onFinished(ctx, subtask)
 }
 
 func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)

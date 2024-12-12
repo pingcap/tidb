@@ -518,10 +518,6 @@ func TestSubTaskTable(t *testing.T) {
 	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStatePending])
 
-	ok, err := sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.True(t, ok)
-
 	ts := time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.StartSubtask(ctx, 1, "tidb1"))
@@ -555,14 +551,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cntByStates[proto.SubtaskStatePending])
 
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
-	require.NoError(t, err)
-	require.False(t, ok)
 	require.NoError(t, testutil.DeleteSubtasksByTaskID(ctx, sm, 1))
-
-	ok, err = sm.HasSubtasksInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending, proto.SubtaskStateRunning)
-	require.NoError(t, err)
-	require.False(t, ok)
 
 	testutil.CreateSubTask(t, sm, 2, proto.StepOne, "tidb1", []byte("test"), proto.TaskTypeExample, 11)
 

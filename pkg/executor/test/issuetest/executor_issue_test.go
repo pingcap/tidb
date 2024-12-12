@@ -321,12 +321,14 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1")
 	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
 	insertStr = "insert into t2 values(1, 1, 1)"
 	for i := 1; i < 32768; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t2")
 	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}

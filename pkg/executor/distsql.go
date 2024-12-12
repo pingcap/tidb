@@ -1131,7 +1131,6 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 	if len(handleOffset) == 0 {
 		handleOffset = []int{numColsWithoutPid - 1}
 	}
-	handles = make([]kv.Handle, 0, w.batchSize)
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)
 	for len(handles) < w.batchSize {
@@ -1156,6 +1155,9 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		}
 		if chk.NumRows() == 0 {
 			return handles, retChk, nil
+		}
+		if handles == nil {
+			handles = make([]kv.Handle, 0, chk.NumRows())
 		}
 		for i := 0; i < chk.NumRows(); i++ {
 			w.scannedKeys++

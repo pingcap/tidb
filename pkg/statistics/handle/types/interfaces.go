@@ -260,6 +260,9 @@ type StatsCache interface {
 
 	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 	UpdateStatsHealthyMetrics()
+
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }
 
 // StatsLockTable is the table info of which will be locked.

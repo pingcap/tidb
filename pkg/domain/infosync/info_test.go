@@ -71,7 +71,7 @@ func TestTopology(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false)
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
 
 	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
@@ -156,7 +156,7 @@ func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
 }
 
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -220,7 +220,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 

@@ -563,13 +563,13 @@ func (w *worker) transitOneJobStep(
 		})
 		return 0, w.handleJobDone(jobCtx, job)
 	}
-	failpoint.InjectCall("onJobRunBefore", job)
+	failpoint.InjectCall("beforeRunOneJobStep", job)
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
 
-	failpoint.InjectCall("onJobRunAfter", job)
+	failpoint.InjectCall("afterRunOneJobStep", job)
 
 	if job.IsCancelled() {
 		defer jobCtx.unlockSchemaVersion(job.ID)
