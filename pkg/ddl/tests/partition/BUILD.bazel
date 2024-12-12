@@ -25,7 +25,6 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
-        "//pkg/store/gcworker",
         "//pkg/store/mockstore",
         "//pkg/table",
         "//pkg/table/tables",

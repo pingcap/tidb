@@ -332,36 +332,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				return errors.Trace(err)
 			}
 		}
-<<<<<<< HEAD
-=======
-		// always delete the table range, even when it's a partitioned table where
-		// it may contain global index regions.
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, []int64{tableID}, ea, "truncate table: table ID"))
-	case model.ActionDropTablePartition:
-		args, err := model.GetFinishedTablePartitionArgs(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "drop partition: physical table ID(s)"))
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		// Delete dropped partitions, as well as replaced global indexes.
-		args, err := model.GetFinishedTablePartitionArgs(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		for _, idx := range args.OldGlobalIndexes {
-			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, idx.TableID, []int64{idx.IndexID}, ea, "reorganize partition, replaced global indexes"); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "reorganize partition: physical table ID(s)"))
-	case model.ActionTruncateTablePartition:
-		args, err := model.GetTruncateTableArgs(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPartitionIDs, ea, "truncate partition: physical table ID(s)"))
->>>>>>> b6025b97877 (*: Reorg partition fix delete ranges and handling non-clustered tables with concurrent DML (#57114))
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		allIndexIDs := make([]int64, 1)

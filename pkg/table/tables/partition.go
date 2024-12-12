@@ -1518,9 +1518,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	if pi.NewTableID != 0 {
-		tblInfo.ID = pi.NewTableID
-	}
+	tblInfo.ID = pi.NewTableID
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
@@ -1628,17 +1626,8 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-<<<<<<< HEAD
 		tbl = t.GetPartition(pid)
 		recordID, err = tbl.AddRecord(ctx, r, opts...)
-=======
-		tbl = t.getPartition(pid)
-		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
-			// Preserve the _tidb_rowid also in the new partition!
-			r = append(r, types.NewIntDatum(recordID.IntValue()))
-		}
-		recordID, err = tbl.addRecord(ctx, txn, r, opt)
->>>>>>> b6025b97877 (*: Reorg partition fix delete ranges and handling non-clustered tables with concurrent DML (#57114))
 		if err != nil {
 			return
 		}

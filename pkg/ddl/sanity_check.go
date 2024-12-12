@@ -48,7 +48,7 @@ func (d *ddl) checkDeleteRangeCnt(job *model.Job) {
 		panic(err)
 	}
 	if actualCnt != expectedCnt {
-		panic(fmt.Sprintf("expect delete range count %d, actual count %d for job type '%s'", expectedCnt, actualCnt, job.Type.String()))
+		panic(fmt.Sprintf("expect delete range count %d, actual count %d", expectedCnt, actualCnt))
 	}
 }
 
@@ -106,21 +106,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err := job.DecodeArgs(&physicalTableIDs); err != nil {
 			return 0, errors.Trace(err)
 		}
-<<<<<<< HEAD
 		return len(physicalTableIDs), nil
-=======
-		if job.Type == model.ActionTruncateTable {
-			return len(args.OldPartitionIDs) + 1, nil
-		}
-		return len(args.OldPartitionIDs), nil
-	case model.ActionDropTablePartition, model.ActionReorganizePartition,
-		model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		args, err := model.GetFinishedTablePartitionArgs(job)
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		return len(args.OldPhysicalTblIDs) + len(args.OldGlobalIndexes), nil
->>>>>>> b6025b97877 (*: Reorg partition fix delete ranges and handling non-clustered tables with concurrent DML (#57114))
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		indexID := make([]int64, 1)
 		ifExists := make([]bool, 1)
