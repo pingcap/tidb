@@ -111,7 +111,10 @@ func (a *ApplyRuleTask) Execute() error {
 			return err
 		}
 		for _, ne := range newExprs {
-			newGroupExpr := a.ctx.GetMemo().CopyIn(a.gE.GetGroup(), ne)
+			newGroupExpr, err := a.ctx.GetMemo().CopyIn(a.gE.GetGroup(), ne)
+			if err != nil {
+				return err
+			}
 			// YAMS only care about logical plan now.
 			a.Push(NewOptGroupExpressionTask(a.ctx, newGroupExpr))
 		}
