@@ -17,14 +17,10 @@ package logclient
 import (
 	"context"
 
-	"github.com/google/uuid"
-	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"go.uber.org/zap"
 )
 
 type logicalSkipMap map[uint64]struct{}
@@ -252,86 +248,12 @@ func (wm *WithMigrations) Compactions(ctx context.Context, s storage.ExternalSto
 }
 
 func (wm *WithMigrations) ExtraFullBackups(ctx context.Context, s storage.ExternalStorage) iter.TryNextor[*backuppb.ExtraFullBackup] {
-	fullBackupDirIter := iter.FromSlice(wm.fullBackups)
-	backups := iter.TryMap(fullBackupDirIter, func(name string) (*backuppb.ExtraFullBackup, error) {
-		// name is the absolute path in external storage.
-		bkup, err := readExtraFullBackup(ctx, name, s)
-		if err != nil {
-			return nil, errors.Annotatef(err, "failed to read backup at %s", name)
-		}
-		return bkup, nil
+	filteredOut := iter.FilterOut(stream.LoadExtraFullBackups(ctx, s, wm.fullBackups), func(ebk stream.ExtraFullBackups) bool {
+		return !ebk.GroupFinished() || ebk.GroupTS() > wm.restoredTS
 	})
-	coll := extBackupCollector{
-		inner:     backups,
-		restoreTS: wm.restoredTS,
-
-		collected: make(map[uuid.UUID][]*backuppb.ExtraFullBackup),
-		finished:  make(map[uuid.UUID]struct{}),
-	}
-	return iter.FlatMap(&coll, iter.FromSlice)
-}
-
-type extBackupCollector struct {
-	inner     iter.TryNextor[*backuppb.ExtraFullBackup]
-	restoreTS uint64
-
-	collected map[uuid.UUID][]*backuppb.ExtraFullBackup
-	finished  map[uuid.UUID]struct{}
-}
-
-// Implement iter.TryNextor for extBackupCollector
-
-func (c *extBackupCollector) TryNext(ctx context.Context) iter.IterResult[[]*backuppb.ExtraFullBackup] {
-	for {
-		res := c.inner.TryNext(ctx)
-		if res.FinishedOrError() {
-			for id, fbks := range c.collected {
-				for _, fbk := range fbks {
-					log.Warn("Dropping unfinished extra full backup.", zap.Stringer("UUID", id), zap.String("path", fbk.FilesPrefixHint))
-				}
-			}
-			return iter.DoneBy[[]*backuppb.ExtraFullBackup](res)
-		}
-
-		fbk := res.Item
-		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
-			return iter.Throw[[]*backuppb.ExtraFullBackup](
-				errors.Annotatef(berrors.ErrInvalidArgument, "the full backup UUID has bad length(%d)", len(fbk.BackupUuid)),
-			)
-		}
-		uid := uuid.UUID(fbk.BackupUuid)
-		log.Info("Collecting extra full backup", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
-
-		if _, ok := c.finished[uid]; ok {
-			log.Warn("Encountered a finished full backup.", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint))
-			return iter.Emit([]*backuppb.ExtraFullBackup{fbk})
-		}
-
-		c.collected[uid] = append(c.collected[uid], fbk)
-		if fbk.Finished {
-			c.finished[uid] = struct{}{}
-			items := c.collected[uid]
-			delete(c.collected, uid)
-
-			if fbk.AsIfTs > c.restoreTS {
-				log.Info("Filter out out-of-ts-range extra full backup.",
-					zap.Uint64("restoreTS", c.restoreTS), zap.Uint64("asIfTs", fbk.AsIfTs), zap.String("path", fbk.FilesPrefixHint))
-				continue
-			}
-			return iter.Emit(items)
-		}
-	}
-}
-
-func readExtraFullBackup(ctx context.Context, name string, s storage.ExternalStorage) (*backuppb.ExtraFullBackup, error) {
-	reader, err := s.ReadFile(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-
-	var backup backuppb.ExtraFullBackup
-	if err := backup.Unmarshal(reader); err != nil {
-		return nil, err
-	}
-	return &backup, nil
+	return iter.FlatMap(filteredOut, func(ebk stream.ExtraFullBackups) iter.TryNextor[*backuppb.ExtraFullBackup] {
+		return iter.Map(iter.FromSlice(ebk), func(p stream.PathedExtraFullBackup) *backuppb.ExtraFullBackup {
+			return p.ExtraFullBackup
+		})
+	})
 }

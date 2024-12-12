@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc64"
+	"maps"
 	"math"
 	"path"
 	"slices"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -556,10 +558,14 @@ type MergeAndMigratedTo struct {
 // The term "migrate to" means, try to performance all possible operations
 // from a migration to the storage.
 type MigratedTo struct {
-	// Errors happen during executing the migration.
+	// Non-fatal errors happen during executing the migration.
 	Warnings []error
 	// The new BASE migration after the operation.
 	NewBase *pb.Migration
+}
+
+func (m *MigratedTo) Warn(err error) {
+	m.Warnings = append(m.Warnings, err)
 }
 
 // Migrations represents living migrations from the storage.
@@ -883,14 +889,12 @@ func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...
 		NewBase: NewMigration(),
 	}
 	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
-	// Fills: TruncatedTo, Compactions, DesctructPrefix.
+	m.processMetaEdits(ctx, mig, &result)
+	m.processCompactions(ctx, mig, &result)
+	m.processDestroyPrefixes(ctx, mig, &result)
+	m.processExtFullBackup(ctx, mig, &result)
 	if !opt.skipTruncateLog {
-		m.doTruncating(ctx, mig, &result)
-	} else {
-		// Fast path: `truncate_to` wasn't updated, just copy the compactions and truncated to.
-		result.NewBase.Compactions = mig.Compactions
-		result.NewBase.TruncatedTo = mig.TruncatedTo
+		m.processTruncatedTo(ctx, mig, &result)
 	}
 
 	return result
@@ -908,8 +912,8 @@ func (m MigrationExt) writeBase(ctx context.Context, mig *pb.Migration) error {
 	return m.s.Rename(ctx, path.Join(m.prefix, baseTmp), path.Join(m.prefix, baseMigrationName))
 }
 
-// doMetaEdits applies the modification to the meta files in the storage.
-func (m MigrationExt) doMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
+// processMetaEdits applies the modification to the meta files in the storage.
+func (m MigrationExt) processMetaEdits(ctx context.Context, mig *pb.Migration, out *MigratedTo) {
 	m.Hooks.StartHandlingMetaEdits(mig.EditMeta)
 
 	handleAMetaEdit := func(medit *pb.MetaEdit) {
@@ -1076,27 +1080,9 @@ func (m MigrationExt) tryRemovePrefix(ctx context.Context, pfx string, out *Migr
 	}
 }
 
-// doTruncating tries to remove outdated compaction, filling the not-yet removed compactions to the new migration.
-func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
-	// NOTE: Execution of truncation wasn't implemented here.
-	// If we are going to truncate some files, for now we still need to use `br log truncate`.
-	for _, compaction := range mig.Compactions {
-		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
-		if compaction.CompactionUntilTs > mig.TruncatedTo {
-			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
-		} else {
-			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
-			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
-		}
-	}
-	for _, pfx := range mig.DestructPrefix {
-		m.tryRemovePrefix(ctx, pfx, result)
-	}
-
-	// TODO: Clean up the extra full backup SSTs.
-
+// processTruncatedTo tries to remove outdated compaction, filling the not-yet removed compactions to the new migration.
+func (m MigrationExt) processTruncatedTo(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
 	result.NewBase.TruncatedTo = mig.TruncatedTo
-
 	m.Hooks.StartLoadingMetaForTruncating()
 	mdSet := new(StreamMetadataSet)
 	mdSet.MetadataDownloadBatchSize = 128
@@ -1108,6 +1094,152 @@ func (m MigrationExt) doTruncating(ctx context.Context, mig *pb.Migration, resul
 	m.Hooks.EndLoadingMetaForTruncating()
 
 	m.doTruncateLogs(ctx, mdSet, shiftTS, result)
+}
+
+func (m MigrationExt) processDestroyPrefixes(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	for _, pfx := range mig.DestructPrefix {
+		m.tryRemovePrefix(ctx, pfx, result)
+	}
+}
+
+func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	for _, compaction := range mig.Compactions {
+		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
+		if compaction.CompactionUntilTs > mig.TruncatedTo {
+			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
+		} else {
+			m.tryRemovePrefix(ctx, compaction.Artifacts, result)
+			m.tryRemovePrefix(ctx, compaction.GeneratedFiles, result)
+		}
+	}
+}
+
+func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migration, result *MigratedTo) {
+	groups := LoadExtraFullBackups(ctx, m.s, mig.ExtraFullBackupPaths)
+	processGroup := func(outErr error, e ExtraFullBackups) (copyToNewMig bool, err error) {
+		if outErr != nil {
+			return true, outErr
+		}
+
+		if !e.GroupFinished() {
+			return true, nil
+		}
+
+		if e.GroupTS() >= mig.TruncatedTo {
+			return true, nil
+		}
+
+		for _, b := range e {
+			m.tryRemovePrefix(ctx, b.FilesPrefixHint, result)
+		}
+		return false, nil
+	}
+	for err, item := range iter.ToSeq(ctx, groups) {
+		copyToNewMig, err := processGroup(err, item)
+		if err != nil {
+			result.Warn(err)
+		}
+		if copyToNewMig {
+			for _, exb := range item {
+				result.NewBase.ExtraFullBackupPaths = append(result.NewBase.ExtraFullBackupPaths, exb.path)
+			}
+		}
+	}
+}
+
+type PathedExtraFullBackup struct {
+	*pb.ExtraFullBackup
+	path string
+}
+
+type ExtraFullBackups []PathedExtraFullBackup
+
+func (ebs ExtraFullBackups) GroupFinished() bool {
+	for _, b := range ebs {
+		if b.Finished {
+			return true
+		}
+	}
+	return false
+}
+
+func (ebs ExtraFullBackups) GroupTS() uint64 {
+	for _, b := range ebs {
+		if b.Finished {
+			return b.AsIfTs
+		}
+	}
+	return math.MaxUint64
+}
+
+func LoadExtraFullBackups(ctx context.Context, s storage.ExternalStorage, paths []string) iter.TryNextor[ExtraFullBackups] {
+
+	fullBackupDirIter := iter.FromSlice(paths)
+	backups := iter.TryMap(fullBackupDirIter, func(name string) (PathedExtraFullBackup, error) {
+		// name is the absolute path in external storage.
+		bkup, err := readExtraFullBackup(ctx, name, s)
+		if err != nil {
+			return PathedExtraFullBackup{}, errors.Annotatef(err, "failed to read backup at %s", name)
+		}
+		return PathedExtraFullBackup{ExtraFullBackup: bkup, path: name}, nil
+	})
+	extBackups, err := groupExtraBackups(ctx, backups)
+	if err != nil {
+		return iter.Fail[ExtraFullBackups](err)
+	}
+	return iter.FromSlice(extBackups)
+}
+
+func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedExtraFullBackup]) ([]ExtraFullBackups, error) {
+	var (
+		collected = map[uuid.UUID]ExtraFullBackups{}
+		finished  = map[uuid.UUID]struct{}{}
+	)
+
+	for {
+		res := i.TryNext(ctx)
+		if res.FinishedOrError() {
+			res := make([]ExtraFullBackups, 0, len(collected))
+			for v := range maps.Values(collected) {
+				res = append(res, v)
+			}
+			return res, nil
+		}
+
+		fbk := res.Item
+		if len(fbk.BackupUuid) != len(uuid.UUID{}) {
+			return nil, errors.Annotatef(berrors.ErrInvalidArgument, "the full backup UUID has bad length(%d)", len(fbk.BackupUuid))
+		}
+		uid := uuid.UUID(fbk.BackupUuid)
+		log.Info("Collecting extra full backup", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint), zap.Bool("finished", fbk.Finished))
+
+		if _, ok := finished[uid]; ok {
+			log.Warn("Encountered a finished full backup.", zap.Stringer("UUID", uid), zap.String("path", fbk.FilesPrefixHint))
+			return nil, errors.Annotatef(
+				berrors.ErrInvalidArgument,
+				"the extra full backup group %s at %s encounters an extra full backup meta after a finished one",
+				uid, fbk.FilesPrefixHint,
+			)
+		}
+
+		collected[uid] = append(collected[uid], fbk)
+		if fbk.Finished {
+			finished[uid] = struct{}{}
+		}
+	}
+}
+
+func readExtraFullBackup(ctx context.Context, name string, s storage.ExternalStorage) (*pb.ExtraFullBackup, error) {
+	reader, err := s.ReadFile(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+
+	var backup pb.ExtraFullBackup
+	if err := backup.Unmarshal(reader); err != nil {
+		return nil, err
+	}
+	return &backup, nil
 }
 
 func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {

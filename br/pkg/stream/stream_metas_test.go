@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -573,6 +575,53 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
+func pef(t *testing.T, fb *backuppb.ExtraFullBackup, sn int, s storage.ExternalStorage) string {
+	path := fmt.Sprintf("extbackupmeta_%08d", sn)
+	bs, err := fb.Marshal()
+	if err != nil {
+		require.NoError(t, err)
+	}
+
+	err = s.WriteFile(context.Background(), path, bs)
+	require.NoError(t, err)
+	return path
+}
+
+type efOP func(*backuppb.ExtraFullBackup)
+
+func extFullBkup(ops ...efOP) *backuppb.ExtraFullBackup {
+	ef := &backuppb.ExtraFullBackup{}
+	for _, op := range ops {
+		op(ef)
+	}
+	return ef
+}
+
+func finished() efOP {
+	return func(ef *backuppb.ExtraFullBackup) {
+		ef.Finished = true
+	}
+}
+
+func makeID() efOP {
+	id := uuid.New()
+	return func(ef *backuppb.ExtraFullBackup) {
+		ef.BackupUuid = id[:]
+	}
+}
+
+func prefix(pfx string) efOP {
+	return func(ef *backuppb.ExtraFullBackup) {
+		ef.FilesPrefixHint = pfx
+	}
+}
+
+func asIfTS(ts uint64) efOP {
+	return func(ef *backuppb.ExtraFullBackup) {
+		ef.AsIfTs = ts
+	}
+}
+
 func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 	return &backuppb.Metadata{
 		StoreId:     storeId,
@@ -583,6 +632,12 @@ func m(storeId int64, minTS, maxTS uint64) *backuppb.Metadata {
 }
 
 type migOP func(*backuppb.Migration)
+
+func mExtFullBackup(path ...string) migOP {
+	return func(m *backuppb.Migration) {
+		m.ExtraFullBackupPaths = append(m.ExtraFullBackupPaths, path...)
+	}
+}
 
 func mDstrPfx(path ...string) migOP {
 	return func(m *backuppb.Migration) {
@@ -749,7 +804,7 @@ func tmp(t *testing.T) *storage.LocalStorage {
 }
 
 func mig(ops ...migOP) *backuppb.Migration {
-	mig := &backuppb.Migration{}
+	mig := NewMigration()
 	for _, op := range ops {
 		op(mig)
 	}
@@ -2853,4 +2908,130 @@ func TestCreator(t *testing.T) {
 	mig := NewMigration()
 	require.Contains(t, mig.Creator, "br")
 	require.Equal(t, mig.Version, SupportedMigVersion)
+}
+
+func TestGroupedExtFullBackup(t *testing.T) {
+	ctx := context.Background()
+	s := tmp(t)
+	placeholder := func(pfx string) string {
+		path := path.Join(pfx, "monolith")
+		require.NoError(t, s.WriteFile(ctx, path, []byte("🪨")))
+		return path
+	}
+	idx := 0
+	somewhere := func() string {
+		idx += 1
+		return placeholder(fmt.Sprintf("%06d", idx))
+	}
+
+	type Case struct {
+		InputGroups []*backuppb.ExtraFullBackup
+		TruncatedTo uint64
+
+		RequireRem []int
+	}
+
+	cases := []Case{
+		{
+			InputGroups: []*backuppb.ExtraFullBackup{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 11,
+			RequireRem:  []int{1},
+		},
+		{
+			InputGroups: []*backuppb.ExtraFullBackup{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 13,
+			RequireRem:  []int{},
+		},
+		{
+			InputGroups: []*backuppb.ExtraFullBackup{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+			},
+			TruncatedTo: 10,
+			RequireRem:  []int{0, 1},
+		},
+		{
+			InputGroups: func() []*backuppb.ExtraFullBackup {
+				id := makeID()
+				return []*backuppb.ExtraFullBackup{
+					extFullBkup(prefix(somewhere()), id),
+					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{2},
+		},
+		{
+			InputGroups: func() []*backuppb.ExtraFullBackup {
+				id := makeID()
+				return []*backuppb.ExtraFullBackup{
+					extFullBkup(prefix(somewhere()), id),
+					extFullBkup(prefix(somewhere()), asIfTS(12), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(10), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{0, 1},
+		},
+		{
+			InputGroups: func() []*backuppb.ExtraFullBackup {
+				id := makeID()
+				return []*backuppb.ExtraFullBackup{
+					extFullBkup(prefix(somewhere()), asIfTS(999), id),
+					extFullBkup(prefix(somewhere()), asIfTS(10), id, finished()),
+					extFullBkup(prefix(somewhere()), asIfTS(12), makeID(), finished()),
+				}
+			}(),
+			TruncatedTo: 11,
+			RequireRem:  []int{2},
+		},
+		{
+			InputGroups: []*backuppb.ExtraFullBackup{
+				extFullBkup(prefix(somewhere()), asIfTS(10), makeID()),
+				extFullBkup(prefix(somewhere()), asIfTS(12), makeID()),
+				extFullBkup(prefix(somewhere()), asIfTS(14), makeID()),
+			},
+			TruncatedTo: 11,
+			RequireRem:  []int{0, 1, 2},
+		},
+	}
+
+	for i, c := range cases {
+		t.Run(fmt.Sprintf("#%d", i), func(t *testing.T) {
+			m := mig()
+			paths := []PathedExtraFullBackup{}
+			for i, input := range c.InputGroups {
+				p := pef(t, input, i, s)
+				paths = append(paths, PathedExtraFullBackup{
+					path:            p,
+					ExtraFullBackup: input,
+				})
+				mExtFullBackup(p)(m)
+				require.FileExists(t, path.Join(s.Base(), input.FilesPrefixHint))
+			}
+			mTruncatedTo(c.TruncatedTo)(m)
+			est := MigrationExtension(s)
+			res := est.migrateTo(ctx, m)
+			require.NoError(t, multierr.Combine(res.Warnings...))
+			chosen := []string{}
+			nonChosen := []PathedExtraFullBackup{}
+			forgottenIdx := 0
+			for _, i := range c.RequireRem {
+				chosen = append(chosen, paths[i].path)
+				nonChosen = append(nonChosen, paths[forgottenIdx:i]...)
+				forgottenIdx = i + 1
+			}
+			require.ElementsMatch(t, chosen, res.NewBase.ExtraFullBackupPaths)
+			for _, p := range nonChosen {
+				require.NoFileExists(t, path.Join(s.Base(), p.FilesPrefixHint, "monolith"))
+			}
+		})
+	}
 }
