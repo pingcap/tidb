@@ -283,16 +283,13 @@ func decodeBackupMetaCommand() *cobra.Command {
 
 			fieldName, _ := cmd.Flags().GetString("field")
 			if fieldName == "" {
-				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.FileIndex); err != nil {
+				if err := utils.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.FileIndex); err != nil {
 					return errors.Trace(err)
 				}
-				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.RawRangeIndex); err != nil {
+				if err := utils.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.RawRangeIndex); err != nil {
 					return errors.Trace(err)
 				}
-				if err := metautil.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.SchemaIndex); err != nil {
-					return errors.Trace(err)
-				}
-				if err := metautil.DecodeStatsFile(ctx, s, &cfg.CipherInfo, backupMeta.Schemas); err != nil {
+				if err := utils.DecodeMetaFile(ctx, s, &cfg.CipherInfo, backupMeta.SchemaIndex); err != nil {
 					return errors.Trace(err)
 				}
 

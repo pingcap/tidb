@@ -28,9 +28,6 @@ func UnmarshalBackupMeta(data []byte) (*backuppb.BackupMeta, error) {
 	return fromJSONBackupMeta(jMeta)
 }
 
-<<<<<<< HEAD
-type jsonValue interface{}
-=======
 func MarshalMetaFile(meta *backuppb.MetaFile) ([]byte, error) {
 	result, err := makeJSONMetaFile(meta)
 	if err != nil {
@@ -47,24 +44,7 @@ func UnmarshalMetaFile(data []byte) (*backuppb.MetaFile, error) {
 	return fromJSONMetaFile(jMeta)
 }
 
-func MarshalStatsFile(meta *backuppb.StatsFile) ([]byte, error) {
-	result, err := makeJSONStatsFile(meta)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return json.Marshal(result)
-}
-
-func UnmarshalStatsFile(data []byte) (*backuppb.StatsFile, error) {
-	jMeta := &jsonStatsFile{}
-	if err := json.Unmarshal(data, jMeta); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return fromJSONStatsFile(jMeta)
-}
-
-type jsonValue any
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
+type jsonValue interface{}
 
 type jsonFile struct {
 	SHA256   string `json:"sha256,omitempty"`
@@ -131,7 +111,6 @@ func fromJSONRawRange(rng *jsonRawRange) (*backuppb.RawRange, error) {
 type jsonSchema struct {
 	Table jsonValue `json:"table,omitempty"`
 	DB    jsonValue `json:"db,omitempty"`
-	Stats jsonValue `json:"stats,omitempty"`
 	*backuppb.Schema
 }
 
@@ -143,12 +122,6 @@ func makeJSONSchema(schema *backuppb.Schema) (*jsonSchema, error) {
 
 	if schema.Table != nil {
 		if err := json.Unmarshal(schema.Table, &result.Table); err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	if schema.Stats != nil {
-		if err := json.Unmarshal(schema.Stats, &result.Stats); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -168,12 +141,6 @@ func fromJSONSchema(jSchema *jsonSchema) (*backuppb.Schema, error) {
 	}
 	if jSchema.Table != nil {
 		schema.Table, err = json.Marshal(jSchema.Table)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if jSchema.Stats != nil {
-		schema.Stats, err = json.Marshal(jSchema.Stats)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -314,62 +281,6 @@ func fromJSONMetaFile(jMeta *jsonMetaFile) (*backuppb.MetaFile, error) {
 			return nil, errors.Trace(err)
 		}
 		meta.Ddls = append(meta.Ddls, d)
-	}
-	return meta, nil
-}
-
-type jsonStatsBlock struct {
-	JSONTable jsonValue `json:"json_table,omitempty"`
-
-	*backuppb.StatsBlock
-}
-
-func makeJSONStatsBlock(statsBlock *backuppb.StatsBlock) (*jsonStatsBlock, error) {
-	result := &jsonStatsBlock{
-		StatsBlock: statsBlock,
-	}
-	if err := json.Unmarshal(statsBlock.JsonTable, &result.JSONTable); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, nil
-}
-
-func fromJSONStatsBlock(jMeta *jsonStatsBlock) (*backuppb.StatsBlock, error) {
-	meta := jMeta.StatsBlock
-
-	var err error
-	meta.JsonTable, err = json.Marshal(jMeta.JSONTable)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return meta, nil
-}
-
-type jsonStatsFile struct {
-	Blocks []*jsonStatsBlock `json:"blocks,omitempty"`
-}
-
-func makeJSONStatsFile(statsFile *backuppb.StatsFile) (*jsonStatsFile, error) {
-	result := &jsonStatsFile{}
-	for _, block := range statsFile.Blocks {
-		b, err := makeJSONStatsBlock(block)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		result.Blocks = append(result.Blocks, b)
-	}
-	return result, nil
-}
-
-func fromJSONStatsFile(jMeta *jsonStatsFile) (*backuppb.StatsFile, error) {
-	meta := &backuppb.StatsFile{}
-
-	for _, schema := range jMeta.Blocks {
-		b, err := fromJSONStatsBlock(schema)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		meta.Blocks = append(meta.Blocks, b)
 	}
 	return meta, nil
 }

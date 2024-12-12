@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metautil
+package utils
 
 import (
 	"bytes"
@@ -24,9 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -34,47 +33,6 @@ const (
 	// JSONFileFormat represents json file name format
 	JSONFileFormat = "jsons/%s.json"
 )
-
-// DecodeStatsFile decodes the stats file to json format, it is called by br debug
-func DecodeStatsFile(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	cipher *backuppb.CipherInfo,
-	schemas []*backuppb.Schema,
-) error {
-	for _, schema := range schemas {
-		for _, statsIndex := range schema.StatsIndex {
-			if len(statsIndex.Name) == 0 {
-				continue
-			}
-			content, err := s.ReadFile(ctx, statsIndex.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			decryptContent, err := utils.Decrypt(content, cipher, statsIndex.CipherIv)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			checksum := sha256.Sum256(decryptContent)
-			if !bytes.Equal(statsIndex.Sha256, checksum[:]) {
-				return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
-					"checksum mismatch expect %x, got %x", statsIndex.Sha256, checksum[:]))
-			}
-			statsFileBlocks := &backuppb.StatsFile{}
-			if err := proto.Unmarshal(decryptContent, statsFileBlocks); err != nil {
-				return errors.Trace(err)
-			}
-			jsonContent, err := utils.MarshalStatsFile(statsFileBlocks)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if err := s.WriteFile(ctx, fmt.Sprintf(JSONFileFormat, statsIndex.Name), jsonContent); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	return nil
-}
 
 // DecodeMetaFile decodes the meta file to json format, it is called by br debug
 func DecodeMetaFile(
@@ -87,7 +45,7 @@ func DecodeMetaFile(
 		return nil
 	}
 	eg, ectx := errgroup.WithContext(ctx)
-	workers := tidbutil.NewWorkerPool(8, "download files workers")
+	workers := NewWorkerPool(8, "download files workers")
 	for _, node := range metaIndex.MetaFiles {
 		workers.ApplyOnErrorGroup(eg, func() error {
 			content, err := s.ReadFile(ectx, node.Name)
@@ -95,7 +53,7 @@ func DecodeMetaFile(
 				return errors.Trace(err)
 			}
 
-			decryptContent, err := utils.Decrypt(content, cipher, node.CipherIv)
+			decryptContent, err := metautil.Decrypt(content, cipher, node.CipherIv)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -117,7 +75,7 @@ func DecodeMetaFile(
 				return errors.Errorf("the metafile has unexpected level: %v", child)
 			}
 
-			jsonContent, err := utils.MarshalMetaFile(child)
+			jsonContent, err := MarshalMetaFile(child)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -126,7 +84,6 @@ func DecodeMetaFile(
 				return errors.Trace(err)
 			}
 
-			err = DecodeStatsFile(ctx, s, cipher, child.Schemas)
 			return errors.Trace(err)
 		})
 	}

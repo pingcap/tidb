@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package metautil_test
+package utils_test
 
 import (
 	"context"
@@ -135,7 +135,7 @@ func TestDecodeMetaFile(t *testing.T) {
 	file2 := flushMetaFile(ctx, t, "schema", metaFile2, s, cipher)
 
 	{
-		err = metautil.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file1}})
+		err = utils.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file1}})
 		require.NoError(t, err)
 		content, err := s.ReadFile(ctx, "jsons/data.json")
 		require.NoError(t, err)
@@ -155,7 +155,7 @@ func TestDecodeMetaFile(t *testing.T) {
 	}
 
 	{
-		err = metautil.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file2}})
+		err = utils.DecodeMetaFile(ctx, s, cipher, &backuppb.MetaFile{MetaFiles: []*backuppb.File{file2}})
 		require.NoError(t, err)
 		{
 			content, err := s.ReadFile(ctx, "jsons/schema.json")
@@ -178,17 +178,6 @@ func TestDecodeMetaFile(t *testing.T) {
 			require.Equal(t, stats.SizeOri, statsIndex[0].SizeOri)
 			require.Equal(t, stats.CipherIv, statsIndex[0].CipherIv)
 			require.Equal(t, stats.InlineData, statsIndex[0].InlineData)
-		}
-		{
-			content, err := s.ReadFile(ctx, "jsons/stats.json")
-			require.NoError(t, err)
-			statsFileBlocks, err := utils.UnmarshalStatsFile(content)
-			require.NoError(t, err)
-			require.Equal(t, 2, len(statsFileBlocks.Blocks))
-			require.Equal(t, int64(1), statsFileBlocks.Blocks[0].PhysicalId)
-			require.Equal(t, []byte("1"), statsFileBlocks.Blocks[0].JsonTable)
-			require.Equal(t, int64(2), statsFileBlocks.Blocks[1].PhysicalId)
-			require.Equal(t, []byte("2"), statsFileBlocks.Blocks[1].JsonTable)
 		}
 	}
 }

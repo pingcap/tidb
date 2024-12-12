@@ -2,16 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "metautil",
-<<<<<<< HEAD
     srcs = ["metafile.go"],
-=======
-    srcs = [
-        "debug.go",
-        "load.go",
-        "metafile.go",
-        "statsfile.go",
-    ],
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
     importpath = "github.com/pingcap/tidb/br/pkg/metautil",
     visibility = ["//visibility:public"],
     deps = [
@@ -38,30 +29,15 @@ go_test(
     name = "metautil_test",
     timeout = "short",
     srcs = [
-<<<<<<< HEAD
-=======
-        "debug_test.go",
-        "load_test.go",
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
         "main_test.go",
         "metafile_test.go",
     ],
     embed = [":metautil"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 6,
-=======
-    shard_count = 10,
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
     deps = [
         "//br/pkg/mock/storage",
         "//pkg/testkit/testsetup",
-<<<<<<< HEAD
-=======
-        "//pkg/util",
-        "@com_github_gogo_protobuf//proto",
-        "@com_github_golang_protobuf//proto",
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_stretchr_testify//require",

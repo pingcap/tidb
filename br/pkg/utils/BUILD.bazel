@@ -6,6 +6,7 @@ go_library(
         "backoff.go",
         "cdc.go",
         "db.go",
+        "debug.go",
         "dyn_pprof_other.go",
         "dyn_pprof_unix.go",
         "env.go",
@@ -31,6 +32,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/storage",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -43,6 +45,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -76,6 +79,7 @@ go_test(
         "backoff_test.go",
         "cdc_test.go",
         "db_test.go",
+        "debug_test.go",
         "env_test.go",
         "json_test.go",
         "key_test.go",
@@ -91,11 +95,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 37,
-=======
-    shard_count = 34,
->>>>>>> 6b72ec460d6 (br: fix debug decode backupmeta (#56627))
+    shard_count = 39,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
@@ -111,6 +111,7 @@ go_test(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
+        "@com_github_gogo_protobuf//proto",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

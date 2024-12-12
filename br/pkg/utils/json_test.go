@@ -490,17 +490,3 @@ func TestEncodeAndDecodeForMetaFile(t *testing.T) {
 		require.JSONEq(t, string(testMetaFileJSON), string(metaJSON))
 	}
 }
-
-var testStatsFileJSONs = [][]byte{
-	[]byte(`{"blocks":[{"json_table":{"a":1},"physical_id":123},{"json_table":{"a":2},"physical_id":456}]}`),
-}
-
-func TestEncodeAndDecodeForStatsFile(t *testing.T) {
-	for _, testStatsFileJSON := range testStatsFileJSONs {
-		meta, err := UnmarshalStatsFile(testStatsFileJSON)
-		require.NoError(t, err)
-		statsJSON, err := MarshalStatsFile(meta)
-		require.NoError(t, err)
-		require.JSONEq(t, string(testStatsFileJSON), string(statsJSON))
-	}
-}
