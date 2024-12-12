@@ -2725,19 +2725,22 @@ func (do *Domain) autoAnalyzeWorker() {
 	for {
 		select {
 		case <-analyzeTicker.C:
-			/* In order to prevent tidb from being blocked by the auto analyze task during shutdown,
-			a stopautoanalyze is added here for judgment.
-			The reason for checking of stopAutoAnalyze is following:
-			According to the issue#41318, if we don't check stopAutoAnalyze here, the autoAnalyzeWorker will be tricker
-			again when domain.exit is true.
-			The "case <-analyzeTicker.C" condition and "case <-do.exit" condition are satisfied at the same time
-			when the system is already executing the shutdown task.
-			At this time, the Go language will randomly select a case that meets the conditions to execute,
-			and there is a probability that a new autoanalyze task will be started again when the system has already executed the shutdown.
-			Because the time interval of statsLease is much smaller than the execution speed of auto analyze.
-			Therefore, when the current auto analyze is completed, the probability of this happening is very high that the ticker condition and exist condition will be met at the same time.
-			This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
-			*/
+			// In order to prevent tidb from being blocked by the auto analyze task during shutdown,
+			// a stopautoanalyze is added here for judgment.
+			//
+			// The reason for checking of stopAutoAnalyze is following:
+			// According to the issue#41318, if we don't check stopAutoAnalyze here, the autoAnalyzeWorker will be tricker
+			// again when domain.exit is true.
+			// The "case <-analyzeTicker.C" condition and "case <-do.exit" condition are satisfied at the same time
+			// when the system is already executing the shutdown task.
+			// At this time, the Go language will randomly select a case that meets the conditions to execute,
+			// and there is a probability that a new autoanalyze task will be started again
+			// when the system has already executed the shutdown.
+			// Because the time interval of statsLease is much smaller than the execution speed of auto analyze.
+			// Therefore, when the current auto analyze is completed,
+			// the probability of this happening is very high that the ticker condition and exist condition will be met
+			// at the same time.
+			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
