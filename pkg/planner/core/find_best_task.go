@@ -761,7 +761,7 @@ func compareCandidates(sctx base.PlanContext, prop *property.PhysicalProperty, l
 }
 
 func isMatchProp(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) bool {
-	if prop.VectorProp.VectorHelper != nil && path.Index != nil && path.Index.VectorInfo != nil {
+	if prop.VectorProp.VSInfo != nil && path.Index != nil && path.Index.VectorInfo != nil {
 		if path.Index == nil || path.Index.VectorInfo == nil {
 			return false
 		}
@@ -2911,7 +2911,7 @@ func getOriginalPhysicalTableScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(ts.physicalTableID) != nil {
 		ts.usedStatsInfo = usedStats.GetUsedInfo(ts.physicalTableID)
 	}
-	if isMatchProp && prop.VectorProp.VectorHelper == nil {
+	if isMatchProp && prop.VectorProp.VSInfo == nil {
 		ts.Desc = prop.SortItems[0].Desc
 		ts.KeepOrder = true
 	}

@@ -2189,7 +2189,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		if len(lt.ByItems) != 1 {
 			return ret
 		}
-		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
+		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
 		if vs == nil {
 			return ret
 		}
@@ -2211,7 +2211,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			ExpectedCnt:       math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
-		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.VSInfo = vs
 		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,
