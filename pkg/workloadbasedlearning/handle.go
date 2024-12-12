@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package workloadbasedlearning
+// Package workloadbasedlearning implements the Workload-Based Learning Optimizer.
 // The Workload-Based Learning Optimizer introduces a new module in TiDB that leverages captured workload history to
 // enhance the database query optimizer.
 // By learning from historical data, this module helps the optimizer make smarter decisions, such as identify hot and cold tables,
