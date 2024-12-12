@@ -24,14 +24,20 @@ type OwnerDaemon struct {
 
 	// When not `nil`, implies the daemon is running.
 	cancel context.CancelFunc
+
+	// leader retire internal, used for chaos testing, suggest not to enable in prod
+	// default to 0 to disable
+	retireInterval time.Duration
+	ownerStartTime time.Time
 }
 
 // New creates a new owner daemon.
-func New(daemon Interface, manager owner.Manager, tickInterval time.Duration) *OwnerDaemon {
+func New(daemon Interface, manager owner.Manager, tickInterval time.Duration, retireInternal time.Duration) *OwnerDaemon {
 	return &OwnerDaemon{
-		daemon:       daemon,
-		manager:      manager,
-		tickInterval: tickInterval,
+		daemon:         daemon,
+		manager:        manager,
+		tickInterval:   tickInterval,
+		retireInterval: retireInternal,
 	}
 }
 
@@ -56,11 +62,15 @@ func (od *OwnerDaemon) ownerTick(ctx context.Context) {
 		log.Info("daemon became owner", zap.String("id", od.manager.ID()), zap.String("daemon-id", od.daemon.Name()))
 		// Note: maybe save the context so we can cancel the tick when we are not owner?
 		od.daemon.OnBecomeOwner(cx)
+		od.ownerStartTime = time.Now()
 	}
 
 	// Tick anyway.
 	if err := od.daemon.OnTick(ctx); err != nil {
 		log.Warn("failed on tick", logutil.ShortError(err))
+	}
+	if od.retireInterval != 0 && time.Now().Sub(od.ownerStartTime) > od.retireInterval {
+		od.manager.RetireOwner()
 	}
 }
 

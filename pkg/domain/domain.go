@@ -1557,7 +1557,7 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	}
 	adv := streamhelper.NewCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration, adv.Config().AdvancerOwnerRetireInterval)
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err

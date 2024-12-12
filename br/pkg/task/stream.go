@@ -936,7 +936,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	defer func() {
 		ownerMgr.Close()
 	}()
-	advancerd := daemon.New(advancer, ownerMgr, cfg.AdvancerCfg.TickDuration)
+	advancerd := daemon.New(advancer, ownerMgr, cfg.AdvancerCfg.TickDuration, cfg.AdvancerCfg.AdvancerOwnerRetireInterval)
 	loop, err := advancerd.Begin(ctx)
 	if err != nil {
 		return err
