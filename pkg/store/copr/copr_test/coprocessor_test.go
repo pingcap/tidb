@@ -295,16 +295,30 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
 	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
 	}
-
+	tk.MustExec("create table t2 (id bigint unsigned key, b int, index idx_b (b));")
+	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	tk.MustQueryWithContext(ctx, "select sum(c) from t1 use index (idx_b) where b < 10;")
-	cancel()
+	tk.MustExec("set @@tidb_executor_concurrency=15")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
+	start := time.Now()
+	tk.MustQuery("select sum(c) from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*250)
+	// Test for index reader with partition table
+	start = time.Now()
+	tk.MustQuery("select id, b from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// Test for table reader with partition table.
+	start = time.Now()
+	tk.MustQuery("select * from t1 where c < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// 	// Test for table reader with 2 parts ranges.
+	start = time.Now()
+	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
 }
