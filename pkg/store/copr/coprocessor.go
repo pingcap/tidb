@@ -1168,7 +1168,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 
 	worker := w.worker
 	if len(w.batchCopRespList) > 0 {
-		resp := w.batchCopRespList[0]
+		resp = w.batchCopRespList[0]
 		w.batchCopRespList = w.batchCopRespList[1:]
 		return resp
 	}
@@ -1194,7 +1194,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 				return result.resp
 			}
 			if len(result.batchRespList) > 0 {
-				resp := result.batchRespList[0]
+				resp = result.batchRespList[0]
 				w.batchCopRespList = result.batchRespList[1:]
 				return resp
 			}
@@ -1486,12 +1486,15 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 
 func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
 	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
-	if err != nil || (result != nil && len(result.remains) != 0) {
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if result != nil && len(result.remains) > 0 {
 		// If there is region error or lock error, keep the paging size and retry.
 		for _, remainedTask := range result.remains {
 			remainedTask.pagingSize = task.pagingSize
 		}
-		return result, errors.Trace(err)
+		return result, nil
 	}
 	pagingRange := resp.pbResp.Range
 	// only paging requests need to calculate the next ranges
