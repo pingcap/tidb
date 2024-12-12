@@ -1134,7 +1134,7 @@ func (m MigrationExt) processExtFullBackup(ctx context.Context, mig *pb.Migratio
 		}
 		return false, nil
 	}
-	for err, item := range iter.ToSeq(ctx, groups) {
+	for err, item := range iter.AsSeq(ctx, groups) {
 		copyToNewMig, err := processGroup(err, item)
 		if err != nil {
 			result.Warn(err)

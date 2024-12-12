@@ -373,6 +373,18 @@ func (rc *LogFileManager) GetExtraFullBackupSSTs(ctx context.Context) iter.TryNe
 	})
 }
 
+func (rc *LogFileManager) CountExtraSSTs(ctx context.Context) (int, error) {
+	count := 0
+	ssts := iter.ConcatAll(rc.GetCompactionIter(ctx), rc.GetExtraFullBackupSSTs(ctx))
+	for err, sst := range iter.AsSeq(ctx, ssts) {
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		count += len(sst.GetSSTs())
+	}
+	return count
+}
+
 // the kv entry with ts, the ts is decoded from entry.
 type KvEntryWithTS struct {
 	E  kv.Entry

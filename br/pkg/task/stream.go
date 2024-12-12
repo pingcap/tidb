@@ -1128,9 +1128,9 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	return nil
 }
 
-// checkTaskExists checks whether there is a log backup task running.
+// checkConflictingLogBackup checks whether there is a log backup task running.
 // If so, return an error.
-func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
+func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.Client) error {
 	if err := checkConfigForStatus(cfg.PD); err != nil {
 		return err
 	}
@@ -1141,7 +1141,8 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	if err != nil {
 		return err
 	}
-	if len(tasks) > 0 {
+	exempted := cfg.UserFiltered() && !cfg.LocalEncryptionEnabled()
+	if len(tasks) > 0 && !exempted {
 		return errors.Errorf("log backup task is running: %s, "+
 			"please stop the task before restore, and after PITR operation finished, "+
 			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
@@ -1457,9 +1458,11 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	addedSSTsIter := client.LogFileManager.GetExtraFullBackupSSTs(ctx)
-	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
-	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
+	count, err := client.LogFileManager.CountExtraSSTs(ctx)
+	if err != nil {
+		return err
+	}
+	logclient.TotalEntryCount += int64(count)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1468,6 +1471,10 @@ func restoreStream(
 	execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("[Log Restore] get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
+
+	addedSSTsIter := client.LogFileManager.GetExtraFullBackupSSTs(ctx)
+	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
+	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
 	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", logclient.TotalEntryCount, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {

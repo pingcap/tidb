@@ -123,8 +123,8 @@ func Tap[T any](i TryNextor[T], with func(T)) TryNextor[T] {
 	}
 }
 
-// ToSeq wraps an `TryNextor` to a Seq2.
-func ToSeq[T any](ctx context.Context, i TryNextor[T]) goiter.Seq2[error, T] {
+// AsSeq wraps an `TryNextor` to a Seq2.
+func AsSeq[T any](ctx context.Context, i TryNextor[T]) goiter.Seq2[error, T] {
 	return func(yield func(error, T) bool) {
 		for {
 			res := i.TryNext(ctx)

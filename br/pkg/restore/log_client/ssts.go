@@ -5,10 +5,12 @@ package logclient
 import (
 	"encoding/hex"
 	"fmt"
+	"log"
 	"sync/atomic"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"go.uber.org/zap"
 )
 
 var (
@@ -36,6 +38,9 @@ type SSTs interface {
 	TableID() int64
 	// GetSSTs returns a slice of pointers to backuppb.File, representing the SST files.
 	GetSSTs() []*backuppb.File
+	// SetSSTs allows the user to override the internal SSTs to be restored.
+	// The input SST set should already be a subset of `GetSSTs.`
+	SetSSTs([]*backuppb.File)
 }
 
 type CompactedSSTs struct {
@@ -48,6 +53,10 @@ func (s *CompactedSSTs) TableID() int64 {
 
 func (s *CompactedSSTs) GetSSTs() []*backuppb.File {
 	return s.SstOutputs
+}
+
+func (s *CompactedSSTs) SetSSTs(files []*backuppb.File) {
+	s.SstOutputs = files
 }
 
 type AddedSSTs struct {
@@ -79,7 +88,20 @@ func (s *AddedSSTs) TableID() int64 {
 }
 
 func (s *AddedSSTs) GetSSTs() []*backuppb.File {
+	if s.File == nil {
+		return nil
+	}
 	return []*backuppb.File{s.File}
+}
+
+func (s *AddedSSTs) SetSSTs(fs []*backuppb.File) {
+	if len(fs) == 0 {
+		s.File = nil
+	}
+	if len(fs) == 1 {
+		s.File = fs[0]
+	}
+	log.Panic("Too many files passed to AddedSSTs.SetSSTs.", zap.Any("input", fs))
 }
 
 func (s *AddedSSTs) RewrittenTo() int64 {

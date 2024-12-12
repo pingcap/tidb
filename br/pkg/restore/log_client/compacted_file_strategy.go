@@ -116,11 +116,13 @@ func (cs *CompactedFileSplitStrategy) ShouldSkip(ssts SSTs) bool {
 		log.Info("all files in sub compaction skipped")
 		return true
 	}
-	// TODO: Add a method for removing it.
-	// if len(sstOutputs) != len(subCompaction.SstOutputs) {
-	// 	log.Info("partial files in sub compaction skipped due to checkpoint")
-	// 	subCompaction.SstOutputs = sstOutputs
-	// 	return false
-	// }
+	if len(sstOutputs) != len(ssts.GetSSTs()) {
+		log.Info(
+			"partial files in sub compaction skipped due to checkpoint",
+			zap.Int("origin", len(ssts.GetSSTs())), zap.Int("output", len(sstOutputs)),
+		)
+		ssts.SetSSTs(sstOutputs)
+		return false
+	}
 	return false
 }

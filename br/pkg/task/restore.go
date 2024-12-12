@@ -16,6 +16,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	pconfig "github.com/pingcap/tidb/br/pkg/config"
@@ -275,6 +276,10 @@ type RestoreConfig struct {
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
+}
+
+func (r *RestoreConfig) LocalEncryptionEnabled() bool {
+	return r.MasterKeyConfig.EncryptionType != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -677,10 +682,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			log.Error("failed to close the etcd client", zap.Error(err))
 		}
 	}()
-	if !cfg.UserFiltered() {
-		if err := checkTaskExists(c, cfg, etcdCLI); err != nil {
-			return errors.Annotate(err, "failed to check task exists")
-		}
+	if err := checkConflictingLogBackup(c, cfg, etcdCLI); err != nil {
+		return errors.Annotate(err, "failed to check task exists")
 	}
 	closeF, err := registerTaskToPD(c, etcdCLI)
 	if err != nil {
