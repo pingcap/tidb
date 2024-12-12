@@ -1039,7 +1039,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
 		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
 		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
-	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
@@ -1061,6 +1061,8 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
 		l, r := rand.Intn(400), rand.Intn(400)
