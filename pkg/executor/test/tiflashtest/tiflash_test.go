@@ -1494,8 +1494,6 @@ func TestDisaggregatedTiFlashQuery(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-	// unistore does not support later materialization
-	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
 	tk.MustExec("explain select max( tbl_1.col_1 ) as r0 , sum( tbl_1.col_1 ) as r1 , sum( tbl_1.col_8 ) as r2 from tbl_1 where tbl_1.col_8 != 68 or tbl_1.col_3 between null and 939 order by r0,r1,r2;")
 
