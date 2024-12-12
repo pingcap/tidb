@@ -22,10 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/ddl"
->>>>>>> 6b17068d75f (planner: fix incorrectly using the schema for plan cache (#57964))
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
