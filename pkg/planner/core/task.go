@@ -878,7 +878,7 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
 	var newGlobalTopN *PhysicalTopN
 
-	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix58217, true)
+	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
 	if fixValue && ContainHeavyFunction(p.ByItems[0].Expr) {

@@ -71,9 +71,8 @@ const (
 	Fix52869 uint64 = 52869
 	// Fix54337 controls whether to apply or not range intersection for index access.
 	Fix54337 uint64 = 54337
-	// Fix58217 controls whether to do HeavyFunctionOptimize. Currently this only applies to Vector data types and
-	// their functions. The HeavyFunctionOptimize eliminate the usage of the function in TopN operators
-	Fix58217 uint64 = 58217
+	// Fix56318 controls whether to do HeavyFunctionOptimize. The HeavyFunctionOptimize eliminate the usage of the function in TopN operators
+	Fix56318 uint64 = 56318
 )
 
 // GetStr fetches the given key from the fix control map as a string type.
