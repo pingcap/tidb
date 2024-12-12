@@ -426,6 +426,8 @@ func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 func (*fakeTxn) SetOption(_ int, _ any) {}
 
 func (*fakeTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	// Check your implementation if you meet this error. It's dangerous if some calculation relies on the data but the
+	// read result is faked.
 	logutil.Logger(ctx).Warn("mock.Context: No store is specified but trying to access data from a transaction.")
 	return nil, nil
 }
