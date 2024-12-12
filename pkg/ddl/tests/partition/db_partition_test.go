@@ -1339,7 +1339,7 @@ func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (2, 2, 2), (11, 11, 11), (12, 12, 12)")
 
 	doneMap := make(map[model.SchemaState]struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if _, ok := doneMap[job.SchemaState]; ok {
 			return
@@ -1387,7 +1387,7 @@ func TestGlobalIndexUpdateInDropPartition(t *testing.T) {
 	tk.MustExec("alter table test_global add unique index idx_b (b) global")
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk2 := testkit.NewTestKit(t, store)
@@ -1513,7 +1513,7 @@ func TestGlobalIndexUpdateInTruncatePartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1541,7 +1541,7 @@ func TestGlobalIndexUpdateInTruncatePartition4Hash(t *testing.T) {
 	tk.MustExec("analyze table test_global")
 
 	var err error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1569,7 +1569,7 @@ func TestGlobalIndexReaderAndIndexLookUpInTruncatePartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 	tk.MustExec("analyze table test_global")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1603,7 +1603,7 @@ func TestGlobalIndexInsertInTruncatePartition(t *testing.T) {
 	tk.MustExec("analyze table test_global")
 
 	var err error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionTruncateTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1631,7 +1631,7 @@ func TestGlobalIndexReaderInDropPartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexScanResult *testkit.Result
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -1661,7 +1661,7 @@ func TestGlobalIndexLookUpInDropPartition(t *testing.T) {
 	tk.MustExec("insert into test_global values (1, 1, 1), (8, 8, 8), (11, 11, 11), (12, 12, 12);")
 
 	var indexLookupResult *testkit.Result
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		assert.Equal(t, model.ActionDropTablePartition, job.Type)
 		if job.SchemaState == model.StateDeleteOnly {
 			tk1 := testkit.NewTestKit(t, store)
@@ -2056,7 +2056,7 @@ func TestExchangePartitionHook(t *testing.T) {
 	tk.MustExec(`insert into pt values (0), (4), (7)`)
 	tk.MustExec("insert into nt values (1)")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.Type == model.ActionExchangeTablePartition && job.SchemaState != model.StateNone {
 			tkCancel.MustExec("use test")
 			tkCancel.MustGetErrCode("insert into nt values (5)", errno.ErrRowDoesNotMatchGivenPartitionSet)
@@ -2704,14 +2704,14 @@ func TestTruncatePartitionMultipleTimes(t *testing.T) {
 		partition p0 values less than (10),
 		partition p1 values less than (maxvalue));`)
 	injected := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.SnapshotVer == 0 && !injected {
 			injected = true
 			time.Sleep(30 * time.Millisecond)
 		}
 	})
 	var errCount atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.Type == model.ActionTruncateTablePartition && job.Error != nil {
 			errCount.Add(1)
 		}
@@ -2902,7 +2902,7 @@ func TestIssue40135Ver2(t *testing.T) {
 	var checkErr error
 	var wg sync.WaitGroup
 	wg.Add(1)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			tk3.MustExec("delete from t40135 where a = 1")
 		}

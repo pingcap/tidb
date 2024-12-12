@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -259,6 +260,9 @@ type StatsCache interface {
 
 	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 	UpdateStatsHealthyMetrics()
+
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -523,16 +527,16 @@ type DDL interface {
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Pool is used to get a session or a goroutine to execute stats updating.
-	statsutil.Pool
+	handleutil.Pool
 
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	statsutil.AutoAnalyzeProcIDGenerator
+	handleutil.AutoAnalyzeProcIDGenerator
 
 	// LeaseGetter is used to get stats lease.
-	statsutil.LeaseGetter
+	handleutil.LeaseGetter
 
 	// TableInfoGetter is used to get table meta info.
-	statsutil.TableInfoGetter
+	handleutil.TableInfoGetter
 
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table

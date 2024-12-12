@@ -463,7 +463,11 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	case logicalop.LeftOuterSemiJoin:
 		expectedChunks := genLeftOuterSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
-			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.SemiJoin:
+		expectedChunks := genSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:
 		require.NoError(t, errors.New("not supported join type"))

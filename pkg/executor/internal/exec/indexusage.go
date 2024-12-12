@@ -89,30 +89,24 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 
 // ReportPointGetIndexUsageForHandle wraps around `ReportPointGetIndexUsage` to get the `indexID` automatically
 // from the `table.Table` if the table has a clustered index or integer primary key.
-func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, planID int, kvRequestTotal int64) {
+func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, kvRequestTotal, rows int64) {
 	idxID, ok := getClusterIndexID(tblInfo)
 	if !ok {
 		return
 	}
 
-	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, planID, kvRequestTotal)
+	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, kvRequestTotal, rows)
 }
 
 // ReportPointGetIndexUsage reports the index usage of a point get or batch point get
-func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int, kvRequestTotal int64) {
+func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		// skip if the table is empty or the stats is not valid
 		return
 	}
 
-	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID, false)
-	if basic == nil {
-		return
-	}
-	accessRows := basic.GetActRows()
-
-	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(accessRows), uint64(tableRowCount))
+	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
 	e.reporter.Update(tableID, indexID, sample)
 }
 

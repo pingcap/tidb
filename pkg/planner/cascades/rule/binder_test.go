@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
@@ -28,13 +29,17 @@ import (
 )
 
 func TestBinderSuccess(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -62,13 +67,17 @@ func TestBinderSuccess(t *testing.T) {
 }
 
 func TestBinderFail(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -107,7 +116,7 @@ func TestBinderFail(t *testing.T) {
 	require.Equal(t, b.String(), "")
 
 	// renew memo
-	mm = memo.NewMemo(ctx)
+	mm = memo.NewMemo()
 	mm.Init(p1)
 	rootGE = mm.GetRootGroup().GetLogicalExpressions().Back().Value.(*memo.GroupExpression)
 	binder = NewBinder(pa, rootGE)
@@ -117,17 +126,21 @@ func TestBinderFail(t *testing.T) {
 	holder = binder.Next()
 	require.Nil(t, holder)
 	buf.Flush()
-	require.Equal(t, b.String(), "GE:Limit_4{inputs:1}\n")
+	require.Equal(t, b.String(), "GE:Limit_4{GID:1}\n")
 }
 
 func TestBinderTopNode(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join.SetChildren(t1, t2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 3, mm.GetGroups().Len())
 	require.Equal(t, 3, len(mm.GetGroupID2Group()))
@@ -141,10 +154,14 @@ func TestBinderTopNode(t *testing.T) {
 }
 
 func TestBinderOneNode(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	join := logicalop.LogicalJoin{}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join)
 	require.Equal(t, 1, mm.GetGroups().Len())
 	require.Equal(t, 1, len(mm.GetGroupID2Group()))
@@ -157,6 +174,10 @@ func TestBinderOneNode(t *testing.T) {
 }
 
 func TestBinderSubTreeMatch(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	t1 := logicalop.DataSource{}.Init(ctx, 0)
 	t2 := logicalop.DataSource{}.Init(ctx, 0)
@@ -171,7 +192,7 @@ func TestBinderSubTreeMatch(t *testing.T) {
 	join3 := logicalop.LogicalJoin{}.Init(ctx, 0)
 	join3.SetChildren(join1, join2)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	mm.Init(join3)
 	require.Equal(t, 7, mm.GetGroups().Len())
 	require.Equal(t, 7, len(mm.GetGroupID2Group()))
@@ -200,6 +221,10 @@ func TestBinderSubTreeMatch(t *testing.T) {
 }
 
 func TestBinderMultiNext(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
@@ -213,7 +238,7 @@ func TestBinderMultiNext(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.
@@ -297,6 +322,10 @@ func TestBinderMultiNext(t *testing.T) {
 }
 
 func TestBinderAny(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
@@ -310,7 +339,7 @@ func TestBinderAny(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.
@@ -380,6 +409,10 @@ func TestBinderAny(t *testing.T) {
 }
 
 func TestBinderMultiAny(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
 	ctx := mock.NewContext()
 	asT1 := pmodel.NewCIStr("t1")
 	asT2 := pmodel.NewCIStr("t2")
@@ -393,7 +426,7 @@ func TestBinderMultiAny(t *testing.T) {
 	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
-	mm := memo.NewMemo(ctx)
+	mm := memo.NewMemo()
 	gE := mm.Init(join1)
 
 	// which means t1 and t3 are equivalent class.

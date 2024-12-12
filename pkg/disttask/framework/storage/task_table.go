@@ -567,22 +567,6 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	return subTaskErrors, nil
 }
 
-// HasSubtasksInStates checks if there are subtasks in the states.
-func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error) {
-	args := []any{tidbID, taskID, step}
-	for _, state := range states {
-		args = append(args, state)
-	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
-		where exec_id = %? and task_key = %? and step = %?
-			and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
-	if err != nil {
-		return false, err
-	}
-
-	return len(rs) > 0, nil
-}
-
 // UpdateSubtasksExecIDs update subtasks' execID.
 func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.SubtaskBase) error {
 	// skip the update process.

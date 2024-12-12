@@ -77,7 +77,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID || checkErr != nil || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
@@ -197,7 +197,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -212,7 +212,7 @@ func TestModifyColumnNullToNotNull(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -249,7 +249,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 	tk1.MustExec("delete from t1")
 	once := sync.Once{}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}
@@ -264,7 +264,7 @@ func TestModifyColumnNullToNotNullWithChangingVal(t *testing.T) {
 
 	// Check insert error when column has PreventNullInsertFlag.
 	tk1.MustExec("delete from t1")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if tbl.Meta().ID != job.TableID {
 			return
 		}

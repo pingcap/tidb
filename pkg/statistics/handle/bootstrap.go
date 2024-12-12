@@ -134,7 +134,7 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		id := row.GetInt64(2)
 		ndv := row.GetInt64(3)
 		nullCount := row.GetInt64(5)
-		statsVer := row.GetInt64(7)
+		statsVer := row.GetInt64(8)
 		// All the objects in the table share the same stats version.
 		if statsVer != statistics.Version0 {
 			table.StatsVer = int(statsVer)

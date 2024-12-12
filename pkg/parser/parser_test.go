@@ -7373,6 +7373,59 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, v.Analyze)
 }
 
+func TestTrafficStmt(t *testing.T) {
+	table := []testCase{
+		{"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' encryption_method='aes' duration='1s'", true, "TRAFFIC CAPTURE TO '/tmp' ENCRYPTION_METHOD = 'aes' DURATION = '1s'"},
+		{"traffic capture to '/tmp' duration='1m'", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1m'"},
+		{"traffic capture to '/tmp' duration='1'", false, ""},
+		{"traffic capture to '/tmp' duration=1s", false, ""},
+		{"traffic capture to '/tmp' compress='true'", false, ""},
+		{"traffic capture duration='1m'", false, ""},
+		{"traffic capture", false, ""},
+		{"traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' user 'root' password '123456' speed 1.0 read_only true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' speed 1.0 user='root'", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1.0 USER = 'root'"},
+		{"traffic replay from '/tmp' speed=1", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1"},
+		{"traffic replay from '/tmp' speed=0.5", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 0.5"},
+		{"traffic replay from '/tmp' speed=-1", false, ""},
+		{"traffic replay speed=1", false, ""},
+		{"traffic replay", false, ""},
+		{"show traffic jobs", true, "SHOW TRAFFIC JOBS"},
+		{"show traffic jobs duration='1m'", false, ""},
+		{"show traffic", false, ""},
+		{"cancel traffic jobs", true, "CANCEL TRAFFIC JOBS"},
+		{"cancel traffic jobs duration='1m'", false, ""},
+		{"cancel traffic", false, ""},
+		{"traffic test", false, ""},
+		{"traffic", false, ""},
+	}
+
+	p := parser.New()
+	var sb strings.Builder
+	for _, tbl := range table {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err, tbl.src)
+			continue
+		}
+		require.NoError(t, err, tbl.src)
+		require.Len(t, stmts, 1)
+		v, ok := stmts[0].(*ast.TrafficStmt)
+		require.True(t, ok)
+		switch v.OpType {
+		case ast.TrafficOpCapture, ast.TrafficOpReplay:
+			require.Equal(t, "/tmp", v.Dir)
+		}
+		sb.Reset()
+		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
+		err = v.Restore(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tbl.restore, sb.String())
+	}
+}
+
 func TestGBKEncoding(t *testing.T) {
 	p := parser.New()
 	gbkEncoding, _ := charset.Lookup("gbk")
