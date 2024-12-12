@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -84,7 +84,7 @@ type BaseTaskExecutor struct {
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
 func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
-	logger := log.L().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}

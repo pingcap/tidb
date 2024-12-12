@@ -28,11 +28,11 @@ go_library(
         "//pkg/util/cpu",
         "//pkg/util/gctuner",
         "//pkg/util/intest",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
 )
