@@ -87,7 +87,7 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20241120022153-92b0414aeed8
-	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20241105053214-f91fdb81a69e
@@ -327,5 +327,3 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
-
-replace github.com/pingcap/log => github.com/D3Hunter/log v0.0.0-20241211123152-f282ef72675e
