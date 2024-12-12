@@ -3358,6 +3358,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
 func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
+	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
 	defer func() {
