@@ -17,11 +17,7 @@ package core
 import (
 	"bytes"
 	"context"
-<<<<<<< HEAD
-=======
 	"math"
-	"time"
->>>>>>> 6b17068d75f (planner: fix incorrectly using the schema for plan cache (#57964))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -43,19 +39,12 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-=======
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
->>>>>>> 6b17068d75f (planner: fix incorrectly using the schema for plan cache (#57964))
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -130,12 +119,8 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
 			tbl = tblByName
 		}
-<<<<<<< HEAD
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx, stmt.dbName[i], stmt.tbls[i], is)
-=======
 		// newTbl is the 'should be used' table info for this execution.
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
->>>>>>> 6b17068d75f (planner: fix incorrectly using the schema for plan cache (#57964))
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(sctx, stmt.dbName[i], tbl, is)
 		if err != nil {
 			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
 			// Invalid the cache key related fields to avoid using plan cache.
