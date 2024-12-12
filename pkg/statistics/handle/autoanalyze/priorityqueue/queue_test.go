@@ -643,7 +643,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	tk.MustExec("drop table t1")
 	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
-	err = statstestutil.HandleNextDDLEventWithTxn(handle)
+	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
 	require.NoError(t, err)
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
