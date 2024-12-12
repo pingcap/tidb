@@ -1720,7 +1720,7 @@ func TestUnion2(t *testing.T) {
 	tk.MustExec("CREATE TABLE t (f1 DATE)")
 	tk.MustExec("INSERT INTO t VALUES ('1978-11-26')")
 	r = tk.MustQuery("SELECT f1+0 FROM t UNION SELECT f1+0 FROM t")
-	r.Check(testkit.Rows("19781126"))
+	r.Check(testkit.Rows("1978-11-26"))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE t (a int, b int)")

@@ -733,6 +733,7 @@ var funcs = map[string]functionClass{
 	ast.ToDate:           &toDateFunctionClass{baseFunctionClass{ast.ToDate, 2, 2}},
 	ast.SubTime:          &subTimeFunctionClass{baseFunctionClass{ast.SubTime, 2, 2}},
 	ast.Sysdate:          &sysDateFunctionClass{baseFunctionClass{ast.Sysdate, 0, 1}},
+	ast.SysTimestamp:     &nowFunctionClass{baseFunctionClass{ast.SysTimestamp, 0, 1}},
 	ast.Time:             &timeFunctionClass{baseFunctionClass{ast.Time, 1, 1}},
 	ast.TimeLiteral:      &timeLiteralFunctionClass{baseFunctionClass{ast.TimeLiteral, 1, 1}},
 	ast.TimeFormat:       &timeFormatFunctionClass{baseFunctionClass{ast.TimeFormat, 2, 2}},

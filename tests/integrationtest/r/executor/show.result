@@ -838,6 +838,7 @@ substring_index
 subtime
 sysdate
 system_user
+systimestamp
 tan
 tidb_bounded_staleness
 tidb_current_tso

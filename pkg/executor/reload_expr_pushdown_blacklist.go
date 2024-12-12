@@ -364,6 +364,7 @@ var funcName2Alias = map[string]string{
 
 	// oracle functions.
 	"to_date":        ast.ToDate,
+	"systimestamp":   ast.SysTimestamp,
 	"last_month":     ast.LastMonth,
 	"to_number":      ast.ToNumber,
 	"get_guid":       ast.GetGUID,

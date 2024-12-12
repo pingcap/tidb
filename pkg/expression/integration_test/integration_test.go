@@ -2053,6 +2053,24 @@ func TestTimestamp(t *testing.T) {
 	require.Less(t, now2.UnixNano(), now3.UnixNano())
 }
 
+func TestPlusOrMinusDatatime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// for sysdate, systimestamp
+	result := tk.MustQuery(`select sysdate = sysdate(), systimestamp = now(), systimestamp() = now()`)
+	result.Check(testkit.Rows("1 1 1"))
+
+	// for datetime +/- float
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1`).Check(testkit.Rows("1596-04-01 12:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2`).Check(testkit.Rows("1596-03-29 12:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1/24`).Check(testkit.Rows("1596-03-31 13:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2/24`).Check(testkit.Rows("1596-03-31 10:12:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) + 1/24/60`).Check(testkit.Rows("1596-03-31 12:13:12"))
+	tk.MustQuery(`select CAST('1596-03-31 12:12:12' as DATETIME) - 2/24/60`).Check(testkit.Rows("1596-03-31 12:10:12"))
+}
+
 func TestCastJSONTimeDuration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

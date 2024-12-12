@@ -122,6 +122,7 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.SessionUser:      {},
 	ast.Sleep:            {},
 	ast.Sysdate:          {},
+	ast.SysTimestamp:     {},
 	ast.SystemUser:       {},
 	ast.User:             {},
 	ast.Values:           {},

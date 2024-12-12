@@ -1757,7 +1757,6 @@ func TestBuiltin(t *testing.T) {
 		{"select current_timestamp('2')", false, ""},
 		{"select now()", true, "SELECT NOW()"},
 		{"select now(6)", true, "SELECT NOW(6)"},
-		{"select sysdate(), sysdate(6)", true, "SELECT SYSDATE(),SYSDATE(6)"},
 		{"SELECT time('01:02:03');", true, "SELECT TIME(_UTF8MB4'01:02:03')"},
 		{"SELECT time('01:02:03.1')", true, "SELECT TIME(_UTF8MB4'01:02:03.1')"},
 		{"SELECT time('20.1')", true, "SELECT TIME(_UTF8MB4'20.1')"},
@@ -1765,6 +1764,12 @@ func TestBuiltin(t *testing.T) {
 		{"SELECT TIMESTAMPDIFF(MONTH,'2003-02-01','2003-05-01');", true, "SELECT TIMESTAMPDIFF(MONTH, _UTF8MB4'2003-02-01', _UTF8MB4'2003-05-01')"},
 		{"SELECT TIMESTAMPDIFF(YEAR,'2002-05-01','2001-01-01');", true, "SELECT TIMESTAMPDIFF(YEAR, _UTF8MB4'2002-05-01', _UTF8MB4'2001-01-01')"},
 		{"SELECT TIMESTAMPDIFF(MINUTE,'2003-02-01','2003-05-01 12:05:55');", true, "SELECT TIMESTAMPDIFF(MINUTE, _UTF8MB4'2003-02-01', _UTF8MB4'2003-05-01 12:05:55')"},
+
+		// select systime, systimestamp
+		{"select sysdate(), sysdate(6)", true, "SELECT SYSDATE(),SYSDATE(6)"},
+		{"select sysdate", true, "SELECT SYSDATE()"},
+		{"select systimestamp()", true, "SELECT SYSTIMESTAMP()"},
+		{"select systimestamp", true, "SELECT SYSTIMESTAMP()"},
 
 		// select current_time
 		{"select current_time", true, "SELECT CURRENT_TIME()"},
@@ -2406,7 +2411,6 @@ func TestBuiltinFuncAsIdentifier(t *testing.T) {
 		{"SUBSTR", "_UTF8MB4'Quadratically', 5"},
 		{"SUBSTRING", "_UTF8MB4'Quadratically', 5"},
 		{"SUM", "`c1`"},
-		{"SYSDATE", ""},
 		{"TRIM", "_UTF8MB4' foo '"},
 		{"VAR_POP", "`c1`"},
 		{"VAR_SAMP", "`c1`"},

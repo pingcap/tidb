@@ -189,6 +189,40 @@ func TestArithmeticPlus(t *testing.T) {
 	require.Equal(t, int64(4), intResult)
 }
 
+func TestArithmeticPlusDatetime(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		srcDatetime string
+		n           float64
+		dstDatatime string
+	}{
+		{"2024-12-10 10:10:10", 1, "2024-12-11 10:10:10"},
+		{"2024-12-10 10:10:10", -2, "2024-12-08 10:10:10"},
+		{"2024-12-10 10:10:10", float64(1) / 24, "2024-12-10 11:10:10"},
+		{"2024-12-10 10:10:10", float64(-2) / 24, "2024-12-10 08:10:10"},
+		{"2024-12-10 10:10:10", float64(1) / 24 / 60, "2024-12-10 10:11:10"},
+		{"2024-12-10 10:10:10", float64(-2) / 24 / 60, "2024-12-10 10:08:10"},
+	}
+
+	for _, c := range cases {
+		dt, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, c.srcDatetime)
+		require.NoError(t, err)
+		args := []any{dt, c.n}
+
+		bf, err := funcs[ast.Plus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+		require.NoError(t, err)
+		require.NotNil(t, bf)
+		dtSig, ok := bf.(*builtinArithmeticPlusDateTimeSig)
+		require.True(t, ok)
+		require.NotNil(t, dtSig)
+
+		dtResult, isNull, err := dtSig.evalTime(ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, c.dstDatatime, dtResult.String(), "n=%f", c.n)
+	}
+}
+
 func TestArithmeticMinus(t *testing.T) {
 	ctx := createContext(t)
 	// case: 1
@@ -265,6 +299,40 @@ func TestArithmeticMinus(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, isNull)
 	require.Equal(t, float64(0), realResult)
+}
+
+func TestArithmeticMinusDatetime(t *testing.T) {
+	ctx := createContext(t)
+	cases := []struct {
+		srcDatetime string
+		n           float64
+		dstDatatime string
+	}{
+		{"2024-12-10 10:10:10", 1, "2024-12-09 10:10:10"},
+		{"2024-12-10 10:10:10", -2, "2024-12-12 10:10:10"},
+		{"2024-12-10 10:10:10", float64(1) / 24, "2024-12-10 09:10:10"},
+		{"2024-12-10 10:10:10", float64(-2) / 24, "2024-12-10 12:10:10"},
+		{"2024-12-10 10:10:10", float64(1) / 24 / 60, "2024-12-10 10:09:10"},
+		{"2024-12-10 10:10:10", float64(-2) / 24 / 60, "2024-12-10 10:12:10"},
+	}
+
+	for _, c := range cases {
+		dt, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, c.srcDatetime)
+		require.NoError(t, err)
+		args := []any{dt, c.n}
+
+		bf, err := funcs[ast.Minus].getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
+		require.NoError(t, err)
+		require.NotNil(t, bf)
+		dtSig, ok := bf.(*builtinArithmeticMinusDateTimeSig)
+		require.True(t, ok)
+		require.NotNil(t, dtSig)
+
+		dtResult, isNull, err := dtSig.evalTime(ctx, chunk.Row{})
+		require.NoError(t, err)
+		require.False(t, isNull)
+		require.Equal(t, c.dstDatatime, dtResult.String(), "n=%f", c.n)
+	}
 }
 
 func TestArithmeticMultiply(t *testing.T) {

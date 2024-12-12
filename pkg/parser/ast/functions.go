@@ -384,6 +384,7 @@ const (
 
 	// oracle functions.
 	ToDate        = "to_date"
+	SysTimestamp  = "systimestamp"
 	LastMonth     = "last_month"
 	ToNumber      = "to_number"
 	GetGUID       = "get_guid"

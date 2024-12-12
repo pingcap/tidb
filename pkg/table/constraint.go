@@ -109,6 +109,7 @@ var unsupportedNodeForCheckConstraint = map[string]struct{}{
 	ast.CurrentTime:      {},
 	ast.LocalTime:        {},
 	ast.LocalTimestamp:   {},
+	ast.SysTimestamp:     {},
 	ast.UnixTimestamp:    {},
 	ast.UTCDate:          {},
 	ast.UTCTimestamp:     {},

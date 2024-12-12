@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -40,9 +41,11 @@ var (
 	_ builtinFunc = &builtinArithmeticPlusRealSig{}
 	_ builtinFunc = &builtinArithmeticPlusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticPlusIntSig{}
+	_ builtinFunc = &builtinArithmeticPlusDateTimeSig{}
 	_ builtinFunc = &builtinArithmeticMinusRealSig{}
 	_ builtinFunc = &builtinArithmeticMinusDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMinusIntSig{}
+	_ builtinFunc = &builtinArithmeticMinusDateTimeSig{}
 	_ builtinFunc = &builtinArithmeticDivideRealSig{}
 	_ builtinFunc = &builtinArithmeticDivideDecimalSig{}
 	_ builtinFunc = &builtinArithmeticMultiplyRealSig{}
@@ -167,6 +170,21 @@ type arithmeticPlusFunctionClass struct {
 	baseFunctionClass
 }
 
+// arithmeticDatetimePlusOrMinusNumeric checks whether do 'Datetime' +/- 'number'.
+// It is used for oracle operation.
+func arithmeticDatetimePlusOrMinusNumeric(ctx BuildContext, args []Expression) bool {
+	if len(args) != 2 {
+		return false
+	}
+
+	tp1 := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	tp2 := args[1].GetType(ctx.GetEvalCtx()).EvalType()
+	if (tp1 == types.ETDatetime) && (tp2 == types.ETReal || tp2 == types.ETInt || tp2 == types.ETDecimal) {
+		return true
+	}
+	return false
+}
+
 func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
@@ -180,6 +198,16 @@ func (c *arithmeticPlusFunctionClass) getFunction(ctx BuildContext, args []Expre
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
+	if arithmeticDatetimePlusOrMinusNumeric(ctx, args) {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
+		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
+		sig := &builtinArithmeticPlusDateTimeSig{bf}
+		return sig, nil
+	}
+
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -294,6 +322,38 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(ctx EvalContext, row chunk
 	return c, false, nil
 }
 
+type builtinArithmeticPlusDateTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticPlusDateTimeSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticPlusDateTimeSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticPlusDateTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	dt, isNULL, err := s.args[0].EvalTime(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	n, isNULL, err := s.args[1].EvalReal(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	dur := time.Duration(float64(time.Hour) * 24 * n)
+	result, err := dt.Add(typeCtx(ctx), types.Duration{
+		Duration: dur.Round(time.Second),
+	})
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
+	return result, false, nil
+}
+
 type builtinArithmeticPlusRealSig struct {
 	baseBuiltinFunc
 }
@@ -339,6 +399,16 @@ func (c *arithmeticMinusFunctionClass) getFunction(ctx BuildContext, args []Expr
 		// sig.setPbCode(tipb.ScalarFuncSig_PlusVectorFloat32)
 		return sig, nil
 	}
+	if arithmeticDatetimePlusOrMinusNumeric(ctx, args) {
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETReal)
+		if err != nil {
+			return nil, err
+		}
+		bf.setDecimalAndFlenForDatetime(types.DefaultFsp)
+		sig := &builtinArithmeticMinusDateTimeSig{bf}
+		return sig, nil
+	}
+
 	lhsEvalTp, rhsEvalTp := numericContextResultType(ctx.GetEvalCtx(), args[0]), numericContextResultType(ctx.GetEvalCtx(), args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -461,6 +531,38 @@ func (s *builtinArithmeticMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (
 	}
 
 	return a - b, false, nil
+}
+
+type builtinArithmeticMinusDateTimeSig struct {
+	baseBuiltinFunc
+}
+
+func (s *builtinArithmeticMinusDateTimeSig) Clone() builtinFunc {
+	newSig := &builtinArithmeticMinusDateTimeSig{}
+	newSig.cloneFrom(&s.baseBuiltinFunc)
+	return newSig
+}
+
+func (s *builtinArithmeticMinusDateTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
+	dt, isNULL, err := s.args[0].EvalTime(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	n, isNULL, err := s.args[1].EvalReal(ctx, row)
+	if err != nil || isNULL {
+		return types.ZeroTime, true, err
+	}
+
+	dur := time.Duration(float64(time.Hour) * 24 * n)
+	result, err := dt.Add(typeCtx(ctx), types.Duration{
+		Duration: dur.Round(time.Second),
+	}.Neg())
+	if err != nil {
+		return types.ZeroDatetime, true, err
+	}
+
+	return result, false, nil
 }
 
 // returns true when overflowed
