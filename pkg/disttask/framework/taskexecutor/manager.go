@@ -21,7 +21,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -33,6 +32,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +77,7 @@ type Manager struct {
 
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
-	logger := log.L()
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}

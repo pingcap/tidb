@@ -34,7 +34,6 @@ go_library(
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_log//:log",
         "@com_github_prometheus_client_golang//prometheus",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
