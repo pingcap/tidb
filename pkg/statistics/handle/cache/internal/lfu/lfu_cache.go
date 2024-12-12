@@ -160,12 +160,24 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
+<<<<<<< Updated upstream
 	table.DropEvicted()
+=======
+	origin := table.MemoryUsage().TotalTrackingMemUsage()
+	for _, column := range table.Columns {
+		DropEvicted(column)
+	}
+	for _, indix := range table.Indices {
+		DropEvicted(indix)
+	}
+>>>>>>> Stashed changes
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
-	// in fact, it is after - before
-	s.addCost(after)
+	// Subtract the original value, add twice the current value,
+	// plus twice because all eliminations will subtract the compressed value
+	// https://github.com/dgraph-io/ristretto/blob/v1.0.1/cache.go#L199
+	s.addCost(0 - origin + 2*after)
 	s.triggerEvict()
 }
 
