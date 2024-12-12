@@ -389,7 +389,7 @@ func (c *Context) GetSessionPlanCache() sessionctx.SessionPlanCache {
 // newTxn Creates new transaction on the session context.
 func (c *Context) newTxn(ctx context.Context) error {
 	if c.Store == nil {
-		logutil.Logger(ctx).Warn("mock.Context: No store is specified when trying to create new transaction. A fake transaction will be created.")
+		logutil.Logger(ctx).Warn("mock.Context: No store is specified when trying to create new transaction. A fake transaction will be created. Note that this is unrecommended usage.")
 		c.fakeTxn()
 		return nil
 	}
@@ -408,7 +408,11 @@ func (c *Context) newTxn(ctx context.Context) error {
 	return nil
 }
 
+// fakeTxn is used to let some tests pass in the context without an available kv.Storage. Once usages to access
+// transactions without a kv.Storage are removed, this type should also be removed.
+// New code should never use this.
 type fakeTxn struct {
+	// The inner should always be nil.
 	kv.Transaction
 	startTS uint64
 }
@@ -417,24 +421,20 @@ func (t *fakeTxn) StartTS() uint64 {
 	return t.startTS
 }
 
+// SetDiskFullOpt implements the interface.
+func (*fakeTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
+
+// SetOption implements the interface.
+func (*fakeTxn) SetOption(_ int, _ any) {}
+
+// Get implements the interface.
+func (*fakeTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+	return nil, errors.New("unable to get from fakeTxn")
+}
+
 func (t *fakeTxn) Valid() bool { return true }
 
-//var fakeTxnTS atomic.Uint64
-
 func (c *Context) fakeTxn() {
-	//ts := oracle.ComposeTS(time.Now().UnixMilli(), 1)
-	//for {
-	//	lastTS := fakeTxnTS.Load()
-	//	if ts > lastTS {
-	//		if !fakeTxnTS.CompareAndSwap(lastTS, ts) {
-	//			continue
-	//		}
-	//	} else {
-	//		ts = fakeTxnTS.Add(1)
-	//	}
-	//	break
-	//}
-
 	c.txn.Transaction = &fakeTxn{
 		startTS: 1,
 	}
