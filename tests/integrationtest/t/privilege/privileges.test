@@ -34,7 +34,7 @@ SELECT * FROM dbnotexists.t1;
 SHOW CREATE TABLE privilege__privileges.t1;
 --error 1142
 SHOW CREATE TABLE dbnotexists.t1;
---error 1142
+--error 1143
 DELETE FROM privilege__privileges.t1 WHERE a=0;
 --error 1142
 DELETE FROM dbnotexists.t1 WHERE a=0;
@@ -224,9 +224,9 @@ create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
 
 connect (tester,localhost,tester,,);
---error ErrTableaccessDenied
+--error ErrColumnaccessDenied
 select * from privilege__privileges.t where id = 1;
---error ErrTableaccessDenied
+--error ErrColumnaccessDenied
 update privilege__privileges.t set v = 2 where id = 1;
 disconnect tester;
 DROP USER 'tester'@'localhost';

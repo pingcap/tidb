@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -78,10 +79,7 @@ func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, e
 	return newExpr.Eval(ctx.GetEvalCtx(), chunk.Row{})
 }
 
-// rewriteAstExprWithPlanCtx rewrites ast expression directly.
-// Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
-// like subquery, window function, etc.
-func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+func rewriteAstExprWithPlanCtxWithVisitInfos(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, []visitInfo, error) {
 	var is infoschema.InfoSchema
 	// in tests, it may be null
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
@@ -95,12 +93,20 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 		fakePlan.SetOutputNames(names)
 	}
 	b.curClause = expressionClause
-	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true)
+	newExpr, _, err := b.rewrite(context.TODO(), expr, fakePlan, nil, true, requireColumnPriv)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&savedBlockNames)
-	return newExpr, nil
+	return newExpr, b.visitInfo, nil
+}
+
+// rewriteAstExprWithPlanCtx rewrites ast expression directly.
+// Different with expression.BuildSimpleExpr, it uses planner context and is more powerful to build some special expressions
+// like subquery, window function, etc.
+func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema *expression.Schema, names types.NameSlice, allowCastArray bool) (expression.Expression, error) {
+	newExpr, _, err := rewriteAstExprWithPlanCtxWithVisitInfos(sctx, expr, schema, names, allowCastArray)
+	return newExpr, err
 }
 
 func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
@@ -164,7 +170,7 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 		rewriter.schema = expression.NewSchema()
 	}
 
-	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
+	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar, requireColumnPriv)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +200,7 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 	rewriter.asScalar = true
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 
-	expr, _, err := rewriteExprNode(rewriter, exprNode, true)
+	expr, _, err := rewriteExprNode(rewriter, exprNode, true, nil)
 	return expr, err
 }
 
@@ -202,8 +208,9 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 // aggMapper maps ast.AggregateFuncExpr to the columns offset in p's output schema.
 // asScalar means whether this expression must be treated as a scalar expression.
 // And this function returns a result expression, a new plan that may have apply or semi-join.
-func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
-	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil)
+func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p base.LogicalPlan, aggMapper map[*ast.AggregateFuncExpr]int,
+	asScalar bool, priv *checkedPrivilege) (expression.Expression, base.LogicalPlan, error) {
+	expr, resultPlan, err := b.rewriteWithPreprocess(ctx, exprNode, p, aggMapper, nil, asScalar, nil, priv)
 	return expr, resultPlan, err
 }
 
@@ -217,6 +224,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	windowMapper map[*ast.WindowFuncExpr]int,
 	asScalar bool,
 	preprocess func(ast.Node) ast.Node,
+	priv *checkedPrivilege,
 ) (expression.Expression, base.LogicalPlan, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -236,7 +244,7 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
 
-	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar)
+	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar, priv)
 	return expr, resultPlan, err
 }
 
@@ -251,7 +259,7 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	if len(b.rewriterPool) < b.rewriterCounter {
 		rewriter = &expressionRewriter{
 			sctx: b.ctx.GetExprCtx(), ctx: ctx,
-			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand},
+			planCtx: &exprRewriterPlanCtx{plan: p, builder: b, rollExpand: b.currentBlockExpand, columnVisited: make([]*ast.ColumnName, 0, 8)},
 		}
 		b.rewriterPool = append(b.rewriterPool, rewriter)
 		return
@@ -270,10 +278,12 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 	rewriter.planCtx.aggrMap = nil
 	rewriter.planCtx.insertPlan = nil
 	rewriter.planCtx.rollExpand = b.currentBlockExpand
+	rewriter.planCtx.columnVisited = make([]*ast.ColumnName, 0, 8)
 	return
 }
 
-func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
+// checkedPriv records the type of privilege that needs to be checked, UsagePriv means no need to check.
+func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool, priv *checkedPrivilege) (expression.Expression, base.LogicalPlan, error) {
 	planCtx := rewriter.planCtx
 	// sourceTable is only used to build simple expression with one table
 	// when planCtx is present, sourceTable should be nil.
@@ -297,6 +307,11 @@ func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScal
 			planCtx.plan.SetOutputNames(names)
 		}()
 	}
+	defer func() {
+		if rewriter.planCtx != nil {
+			rewriter.planCtx.builder.appendColumnsToVisitedInfo(rewriter.planCtx.columnVisited, priv)
+		}
+	}()
 	exprNode.Accept(rewriter)
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
@@ -332,6 +347,9 @@ type exprRewriterPlanCtx struct {
 	insertPlan *Insert
 
 	rollExpand *logicalop.LogicalExpand
+
+	// columnVisited records the visited columns, which is used for checking columns privilege
+	columnVisited []*ast.ColumnName
 }
 
 type expressionRewriter struct {
@@ -2453,6 +2471,12 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 	}
+	var columnVisited *types.FieldName
+	defer func() {
+		if columnVisited != nil && er.planCtx != nil {
+			er.appendColumnVisited(columnVisited)
+		}
+	}()
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2465,6 +2489,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
+		columnVisited = er.names[idx]
 		return
 	} else if er.planCtx == nil && er.sourceTable != nil &&
 		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
@@ -2475,6 +2500,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		}
 		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
 			&types.FieldName{ColName: v.Name})
+		// We don't need to set the columnVisited here, because the er.planCtx
 		return
 	}
 
@@ -2490,6 +2516,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		return
 	} else if col != nil {
 		er.ctxStackAppend(col, name)
+		columnVisited = name
 		return
 	}
 	for i := len(planCtx.builder.outerSchemas) - 1; i >= 0; i-- {
@@ -2498,6 +2525,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 		if idx >= 0 {
 			column := outerSchema.Columns[idx]
 			er.ctxStackAppend(&expression.CorrelatedColumn{Column: *column, Data: new(types.Datum)}, outerName[idx])
+			columnVisited = outerName[idx]
 			return
 		}
 		if err != nil {
@@ -2676,4 +2704,57 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	//}
 	er.ctxStackAppend(expr, types.EmptyName)
 	return false, nil
+}
+
+func (b *PlanBuilder) appendColumnsToVisitedInfo(columnVisited []*ast.ColumnName, priv *checkedPrivilege) {
+	if priv == nil || priv.column == mysql.UsagePriv {
+		return
+	}
+	user, host := auth.GetUserAndHostName(b.ctx.GetSessionVars().User)
+	if priv.unfoldFromWildcard {
+		for _, colName := range columnVisited {
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				priv.column,
+				colName.Schema.L,
+				colName.Table.L,
+				colName.Name.L,
+				plannererrors.ErrTableaccessDenied.FastGenByArgs(strings.ToUpper(mysql.Priv2Str[priv.column]), user, host, colName.Table.L),
+			)
+		}
+	} else {
+		for _, colName := range columnVisited {
+			b.visitInfo = appendVisitInfo(b.visitInfo,
+				priv.column,
+				colName.Schema.L,
+				colName.Table.L,
+				colName.Name.L,
+				plannererrors.ErrColumnaccessDenied.FastGenByArgs(strings.ToUpper(mysql.Priv2Str[priv.column]), user, host, colName.Name.L, colName.Table.L),
+			)
+		}
+	}
+}
+
+func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName) {
+	colName := &ast.ColumnName{
+		Name:   columnVisited.OrigColName,
+		Table:  columnVisited.OrigTblName,
+		Schema: columnVisited.DBName,
+	}
+	b := er.planCtx.builder
+	if b != nil && b.is != nil && infoschema.TableIsView(b.is, columnVisited.DBName, columnVisited.TblName) {
+		colName.Name = columnVisited.ColName
+		colName.Table = columnVisited.TblName
+	}
+
+	// When checking a derived table, its colName.Schema.L would be empty, we can just skip it.
+	// Because the column privilege is checked in the definition of derived table.
+	if len(colName.Name.L) > 0 && len(colName.Table.L) > 0 && len(colName.Schema.L) > 0 {
+		// The column privilege is checked in the definition of CTE.
+		for i := len(b.outerCTEs) - 1; i >= 0; i-- {
+			if colName.Table.L == b.outerCTEs[i].def.Name.L {
+				return
+			}
+		}
+		er.planCtx.columnVisited = append(er.planCtx.columnVisited, colName)
+	}
 }

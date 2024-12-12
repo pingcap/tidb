@@ -99,10 +99,13 @@ const (
 	TableConstraints = "TABLE_CONSTRAINTS"
 	tableTriggers    = "TRIGGERS"
 	// TableUserPrivileges is the string constant of infoschema user privilege table.
-	TableUserPrivileges   = "USER_PRIVILEGES"
-	tableSchemaPrivileges = "SCHEMA_PRIVILEGES"
-	tableTablePrivileges  = "TABLE_PRIVILEGES"
-	tableColumnPrivileges = "COLUMN_PRIVILEGES"
+	TableUserPrivileges = "USER_PRIVILEGES"
+	// TableSchemaPrivileges provides information about schema privileges
+	TableSchemaPrivileges = "SCHEMA_PRIVILEGES"
+	// TableTablePrivileges provides information about table privileges
+	TableTablePrivileges = "TABLE_PRIVILEGES"
+	// TableColumnPrivileges provides information about column privileges
+	TableColumnPrivileges = "COLUMN_PRIVILEGES"
 	// TableEngines is the string constant of infoschema table.
 	TableEngines = "ENGINES"
 	// TableViews is the string constant of infoschema table.
@@ -264,9 +267,9 @@ var tableIDMap = map[string]int64{
 	TableConstraints:                        autoid.InformationSchemaDBID + 16,
 	tableTriggers:                           autoid.InformationSchemaDBID + 17,
 	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
-	tableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
-	tableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
-	tableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
+	TableSchemaPrivileges:                   autoid.InformationSchemaDBID + 19,
+	TableTablePrivileges:                    autoid.InformationSchemaDBID + 20,
+	TableColumnPrivileges:                   autoid.InformationSchemaDBID + 21,
 	TableEngines:                            autoid.InformationSchemaDBID + 22,
 	TableViews:                              autoid.InformationSchemaDBID + 23,
 	TableRoutines:                           autoid.InformationSchemaDBID + 24,
@@ -2320,9 +2323,9 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableConstraints:                        tableConstraintsCols,
 	tableTriggers:                           tableTriggersCols,
 	TableUserPrivileges:                     tableUserPrivilegesCols,
-	tableSchemaPrivileges:                   tableSchemaPrivilegesCols,
-	tableTablePrivileges:                    tableTablePrivilegesCols,
-	tableColumnPrivileges:                   tableColumnPrivilegesCols,
+	TableSchemaPrivileges:                   tableSchemaPrivilegesCols,
+	TableTablePrivileges:                    tableTablePrivilegesCols,
+	TableColumnPrivileges:                   tableColumnPrivilegesCols,
 	TableEngines:                            tableEnginesCols,
 	TableViews:                              tableViewsCols,
 	TableRoutines:                           tableRoutinesCols,

@@ -3421,7 +3421,8 @@ func upgradeToEEVer9(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion9 {
 		return
 	}
-	// TODO
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.tables_priv SET Column_priv=''")
+	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.columns_priv SET Column_priv=''")
 }
 
 func upgradeToEEVer10(s sessiontypes.Session, ver int64) {

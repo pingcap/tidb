@@ -441,13 +441,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	if pm != nil && s.sessionVars.User != nil {
 		if !pm.RequestVerification(s.sessionVars.ActiveRoles, dbName.O, tName.O, "", mysql.AllPrivMask) {
-			user := s.sessionVars.User
-			u := user.Username
-			h := user.Hostname
-			if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-				u = user.AuthUsername
-				h = user.AuthHostname
-			}
+			u, h := auth.GetUserAndHostName(s.sessionVars.User)
 			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}

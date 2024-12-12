@@ -517,12 +517,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 		currentUser, activeRoles := p.sctx.GetSessionVars().User, p.sctx.GetSessionVars().ActiveRoles
 		if pm := privilege.GetPrivilegeManager(p.sctx); pm != nil {
 			if !pm.RequestVerification(activeRoles, sName.L, tn.Name.O, "", mysql.AllPrivMask) {
-				u := currentUser.Username
-				h := currentUser.Hostname
-				if currentUser.AuthHostname != "" {
-					u = currentUser.AuthUsername
-					h = currentUser.AuthHostname
-				}
+				u, h := auth.GetUserAndHostName(currentUser)
 				return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs(p.stmtType(), u, h, tn.Name.O)
 			}
 		}

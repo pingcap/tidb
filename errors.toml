@@ -2381,6 +2381,11 @@ error = '''
 %-.128s command denied to user '%-.48s'@'%-.255s' for table '%-.64s'
 '''
 
+["planner:1143"]
+error = '''
+%-.16s command denied to user '%-.48s'@'%-.255s' for column '%-.192s' in table '%-.192s'
+'''
+
 ["planner:1146"]
 error = '''
 Table '%-.192s.%-.192s' doesn't exist

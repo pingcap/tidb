@@ -699,9 +699,22 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 		fieldPatternsLike = e.Extractor.FieldPatternLike()
 	}
 
+	passTblPrivCheck, passColPrivCheck := false, false
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.InsertPriv|mysql.SelectPriv|mysql.UpdatePriv|mysql.ReferencesPriv) {
+	priv := mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		// check privileges in table level
+		if tb.Meta().TempTableType == model.TempTableLocal {
+			priv |= mysql.CreateTMPTablePriv
+		}
+		if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", priv) {
+			passTblPrivCheck = true
+		}
+	} else {
+		passTblPrivCheck = true
+	}
+	if !passTblPrivCheck && e.Ctx().GetSessionVars().StmtCtx.InExplainStmt {
 		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
 	}
 
@@ -716,11 +729,19 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 	if err := tryFillViewColumnType(ctx, e.Ctx(), e.is, e.DBName, tb.Meta()); err != nil {
 		return err
 	}
+	priv = mysql.InsertPriv | mysql.SelectPriv | mysql.UpdatePriv | mysql.ReferencesPriv
 	for _, col := range cols {
 		if fieldFilter != "" && col.Name.L != fieldFilter {
 			continue
 		} else if fieldPatternsLike != nil && !fieldPatternsLike.DoMatch(col.Name.L) {
 			continue
+		}
+		if !passTblPrivCheck {
+			if !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, priv) {
+				// check privileges in column level
+				continue
+			}
+			passColPrivCheck = true
 		}
 		desc := table.NewColDesc(col)
 		var columnDefault any
@@ -768,6 +789,9 @@ func (e *ShowExec) fetchShowColumns(ctx context.Context) error {
 			})
 		}
 	}
+	if !passTblPrivCheck && !passColPrivCheck {
+		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	}
 	return nil
 }
 
@@ -782,10 +806,20 @@ func (e *ShowExec) fetchShowIndex() error {
 
 	statsTbl := h.GetTableStats(tb.Meta())
 
+	// SHOW INDEX requires some privilege for any column in the table.
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
-	if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, "", mysql.AllPrivMask) {
-		return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+	if checker != nil && e.Ctx().GetSessionVars().User != nil {
+		passCheck := false
+		for _, col := range tb.VisibleCols() {
+			if checker.RequestVerification(activeRoles, e.DBName.O, tb.Meta().Name.O, col.Name.O, mysql.AllPrivMask) {
+				passCheck = true
+				break
+			}
+		}
+		if !passCheck {
+			return e.tableAccessDenied("SELECT", tb.Meta().Name.O)
+		}
 	}
 
 	if tb.Meta().PKIsHandle {
@@ -2011,12 +2045,7 @@ func (e *ShowExec) dbAccessDenied() error {
 
 func (e *ShowExec) tableAccessDenied(access string, table string) error {
 	user := e.Ctx().GetSessionVars().User
-	u := user.Username
-	h := user.Hostname
-	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
-		u = user.AuthUsername
-		h = user.AuthHostname
-	}
+	u, h := auth.GetUserAndHostName(user)
 	return exeerrors.ErrTableaccessDenied.GenWithStackByArgs(access, u, h, table)
 }
 

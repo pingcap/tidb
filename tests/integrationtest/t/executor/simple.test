@@ -167,7 +167,7 @@ drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 connect (conn1, localhost, testflush,,);
---error 1142
+--error 1143
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 connection default;
 FLUSH PRIVILEGES;
@@ -443,7 +443,7 @@ SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1
 ## but not via the mysql.user table.
 connect (conn1, localhost, testuser1,,);
 SELECT user, host, attribute FROM information_schema.user_attributes where user in ('testuser', 'testuser1', 'testuser2') ORDER BY user;
--- error 1142
+-- error 1143
 SELECT user, host, user_attributes FROM mysql.user ORDER BY user;
 
 ## https://github.com/pingcap/tidb/issues/39207

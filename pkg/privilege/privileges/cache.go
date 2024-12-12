@@ -292,8 +292,9 @@ type extended struct {
 	UserMap        map[string][]UserRecord // Accelerate User searching
 	Global         map[string][]globalPrivRecord
 	Dynamic        map[string][]dynamicPrivRecord
-	DBMap          map[string][]dbRecord         // Accelerate DB searching
-	TablesPrivMap  map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+	DBMap          map[string][]dbRecord          // Accelerate DB searching
+	TablesPrivMap  map[string][]tablesPrivRecord  // Accelerate TablesPriv searching
+	ColumnsPrivMap map[string][]columnsPrivRecord // Accelerate ColumnsPriv searching
 	RoutinePrivMap map[string][]routinePrivRecord
 }
 
@@ -526,6 +527,7 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 		return x.Host == y.Host && x.User == y.User &&
 			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
+	ret.buildColumnsPrivMap()
 
 	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
 	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
@@ -826,9 +828,21 @@ func (p *MySQLPrivilege) buildTablesPrivMap() {
 	p.TablesPrivMap = tablesPrivMap
 }
 
+func (p *MySQLPrivilege) buildColumnsPrivMap() {
+	columnsPrivMap := make(map[string][]columnsPrivRecord, len(p.columnsPriv))
+	for _, record := range p.columnsPriv {
+		columnsPrivMap[record.User] = append(columnsPrivMap[record.User], record)
+	}
+	p.ColumnsPrivMap = columnsPrivMap
+}
+
 // LoadColumnsPrivTable loads the mysql.columns_priv table from database.
 func (p *MySQLPrivilege) LoadColumnsPrivTable(ctx sqlexec.RestrictedSQLExecutor) error {
-	return p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow)
+	if err := p.loadTable(ctx, sqlLoadColumnsPrivTable, p.decodeColumnsPrivTableRow); err != nil {
+		return err
+	}
+	p.buildColumnsPrivMap()
+	return nil
 }
 
 // LoadDefaultRoles loads the mysql.columns_priv table from database.
@@ -1346,10 +1360,13 @@ func (p *MySQLPrivilege) matchTables(user, host, db, table string) *tablesPrivRe
 }
 
 func (p *MySQLPrivilege) matchColumns(user, host, db, table, column string) *columnsPrivRecord {
-	for i := 0; i < len(p.columnsPriv); i++ {
-		record := &p.columnsPriv[i]
-		if record.match(user, host, db, table, column) {
-			return record
+	records, exists := p.ColumnsPrivMap[user]
+	if exists {
+		for i := 0; i < len(records); i++ {
+			record := &records[i]
+			if record.match(user, host, db, table, column) {
+				return record
+			}
 		}
 	}
 	return nil
@@ -1437,7 +1454,7 @@ func (p *MySQLPrivilege) RequestVerification(activeRoles []*auth.RoleIdentity, u
 		if tableRecord != nil {
 			tablePriv |= tableRecord.TablePriv
 			if column != "" {
-				columnPriv |= tableRecord.ColumnPriv
+				columnPriv |= tableRecord.TablePriv
 			}
 		}
 	}

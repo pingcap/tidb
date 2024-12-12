@@ -80,6 +80,7 @@ var (
 	ErrTooBigPrecision                       = dbterror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)
 	ErrDBaccessDenied                        = dbterror.ClassOptimizer.NewStd(mysql.ErrDBaccessDenied)
 	ErrTableaccessDenied                     = dbterror.ClassOptimizer.NewStd(mysql.ErrTableaccessDenied)
+	ErrColumnaccessDenied                    = dbterror.ClassOptimizer.NewStd(mysql.ErrColumnaccessDenied)
 	ErrSpecificAccessDenied                  = dbterror.ClassOptimizer.NewStd(mysql.ErrSpecificAccessDenied)
 	ErrViewNoExplain                         = dbterror.ClassOptimizer.NewStd(mysql.ErrViewNoExplain)
 	ErrWrongValueCountOnRow                  = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongValueCountOnRow)
