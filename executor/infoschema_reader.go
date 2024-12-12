@@ -842,7 +842,11 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
+<<<<<<< HEAD:executor/infoschema_reader.go
 				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
+=======
+				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+>>>>>>> 3ccd7e6ae6f (executor: skip execution when build query for VIEW in I_S (#58203)):pkg/executor/infoschema_reader.go
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
 				return errors.Trace(err)
