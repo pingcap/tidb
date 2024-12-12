@@ -402,9 +402,32 @@ func (s *BaseScheduler) onRunning() error {
 
 // onModifying is called when task is in modifying state.
 // the first return value indicates whether the scheduler should be recreated.
-func (*BaseScheduler) onModifying() (bool, error) {
-	// TODO: implement me
-	panic("implement me")
+func (s *BaseScheduler) onModifying() (bool, error) {
+	task := s.getTaskClone()
+	s.logger.Info("on modifying state", zap.Stringer("param", &task.ModifyParam))
+	recreateScheduler := false
+	for _, m := range task.ModifyParam.Modifications {
+		if m.Type == proto.ModifyConcurrency {
+			if task.Concurrency == int(m.To) {
+				// shouldn't happen normally.
+				s.logger.Info("task concurrency not changed, skip", zap.Int("concurrency", task.Concurrency))
+				continue
+			}
+			s.logger.Info("modify task concurrency", zap.Int("from", task.Concurrency), zap.Int64("to", m.To))
+			recreateScheduler = true
+			task.Concurrency = int(m.To)
+		} else {
+			// will implement other modification types later.
+			s.logger.Warn("unsupported modification type", zap.Stringer("type", m.Type))
+		}
+	}
+	if err := s.taskMgr.ModifiedTask(s.ctx, task); err != nil {
+		return false, errors.Trace(err)
+	}
+	task.State = task.ModifyParam.PrevState
+	task.ModifyParam = proto.ModifyParam{}
+	s.task.Store(task)
+	return recreateScheduler, nil
 }
 
 func (s *BaseScheduler) onFinished() {

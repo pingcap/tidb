@@ -52,7 +52,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	require.NoError(t, err)
 
-	store, err := mockstorage.NewMockStorage(tikvStore)
+	store, err := mockstorage.NewMockStorage(tikvStore, nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())

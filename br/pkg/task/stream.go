@@ -78,6 +78,12 @@ const (
 		"You may check the metadata and continue by wait other task finish or manually delete the lock file " + truncateLockPath + " at the external storage."
 )
 
+const (
+	waitInfoSchemaReloadCheckInterval = 1 * time.Second
+	// a million tables should take a few minutes to load all DDL change, making 15 to make sure we don't exit early
+	waitInfoSchemaReloadTimeout = 15 * time.Minute
+)
+
 var (
 	StreamStart    = "log start"
 	StreamStop     = "log stop"
@@ -1526,6 +1532,21 @@ func restoreStream(
 		return errors.Annotate(err, "failed to restore kv files")
 	}
 
+	// failpoint to stop for a while after restoring kvs
+	// this is to mimic the scenario that restore takes long time and the lease in schemaInfo has expired and needs refresh
+	failpoint.Inject("post-restore-kv-pending", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep but not sure what's the better way right now
+			log.Info("sleep after restoring kv")
+			time.Sleep(2 * time.Second)
+		}
+	})
+
+	// make sure schema reload finishes before proceeding
+	if err = waitUntilSchemaReload(ctx, client); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err = client.CleanUpKVFiles(ctx); err != nil {
 		return errors.Annotate(err, "failed to clean up")
 	}
@@ -1928,4 +1949,17 @@ func checkPiTRTaskInfo(
 	}
 
 	return checkInfo, nil
+}
+
+func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) error {
+	log.Info("waiting for schema info finishes reloading")
+	reloadStart := time.Now()
+	conditionFunc := func() bool {
+		return !client.GetDomain().IsLeaseExpired()
+	}
+	if err := utils.WaitUntil(ctx, conditionFunc, waitInfoSchemaReloadCheckInterval, waitInfoSchemaReloadTimeout); err != nil {
+		return errors.Annotate(err, "failed to wait until schema reload")
+	}
+	log.Info("reloading schema finished", zap.Duration("timeTaken", time.Since(reloadStart)))
+	return nil
 }

@@ -176,7 +176,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.DropStatsStmt:
 		err = e.executeDropStats(ctx, x)
 	case *ast.SetRoleStmt:
-		err = e.executeSetRole(x)
+		err = e.executeSetRole(ctx, x)
 	case *ast.RevokeRoleStmt:
 		err = e.executeRevokeRole(ctx, x)
 	case *ast.SetDefaultRoleStmt:
@@ -274,7 +274,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		}
 		for _, role := range s.RoleList {
 			checker := privilege.GetPrivilegeManager(e.Ctx())
-			ok := checker.FindEdge(e.Ctx(), role, user)
+			ok := checker.FindEdge(ctx, role, user)
 			if !ok {
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
@@ -348,7 +348,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 	return nil
 }
 
-func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (err error) {
+func (e *SimpleExec) setDefaultRoleForCurrentUser(ctx context.Context, s *ast.SetDefaultRoleStmt) (err error) {
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user := s.UserList[0]
 	if user.Hostname == "" {
@@ -358,7 +358,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	if err != nil {
 		return err
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	defer e.ReleaseSysSession(ctx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
 
@@ -388,7 +388,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 			if i > 0 {
 				sqlescape.MustFormatSQL(sql, ",")
 			}
-			ok := checker.FindEdge(e.Ctx(), role, user)
+			ok := checker.FindEdge(ctx, role, user)
 			if !ok {
 				return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(role.String(), user.String())
 			}
@@ -427,7 +427,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	if len(s.UserList) == 1 && sessionVars.User != nil {
 		u, h := s.UserList[0].Username, s.UserList[0].Hostname
 		if u == sessionVars.User.Username && h == sessionVars.User.AuthHostname {
-			err = e.setDefaultRoleForCurrentUser(s)
+			err = e.setDefaultRoleForCurrentUser(ctx, s)
 			if err != nil {
 				return err
 			}
@@ -458,7 +458,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	return domain.GetDomain(e.Ctx()).NotifyUpdatePrivilege(users)
 }
 
-func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleRegular(ctx context.Context, s *ast.SetRoleStmt) error {
 	// Deal with SQL like `SET ROLE role1, role2;`
 	checkDup := make(map[string]*auth.RoleIdentity, len(s.RoleList))
 	// Check whether RoleNameList contain duplicate role name.
@@ -472,7 +472,7 @@ func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
 	}
 
 	checker := privilege.GetPrivilegeManager(e.Ctx())
-	ok, roleName := checker.ActiveRoles(e.Ctx(), roleList)
+	ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), roleList)
 	if !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
@@ -480,12 +480,12 @@ func (e *SimpleExec) setRoleRegular(s *ast.SetRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleAll() error {
+func (e *SimpleExec) setRoleAll(ctx context.Context) error {
 	// Deal with SQL like `SET ROLE ALL;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user, host := e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname
 	roles := checker.GetAllRoles(user, host)
-	ok, roleName := checker.ActiveRoles(e.Ctx(), roles)
+	ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), roles)
 	if !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
@@ -493,7 +493,7 @@ func (e *SimpleExec) setRoleAll() error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) setRoleAllExcept(ctx context.Context, s *ast.SetRoleStmt) error {
 	// Deal with SQL like `SET ROLE ALL EXCEPT role1, role2;`
 	for _, r := range s.RoleList {
 		if r.Hostname == "" {
@@ -524,7 +524,7 @@ func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
 	}
 
 	afterExcept := filter(roles, banned)
-	ok, roleName := checker.ActiveRoles(e.Ctx(), afterExcept)
+	ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), afterExcept)
 	if !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
@@ -532,12 +532,12 @@ func (e *SimpleExec) setRoleAllExcept(s *ast.SetRoleStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleDefault() error {
+func (e *SimpleExec) setRoleDefault(ctx context.Context) error {
 	// Deal with SQL like `SET ROLE DEFAULT;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	user, host := e.Ctx().GetSessionVars().User.AuthUsername, e.Ctx().GetSessionVars().User.AuthHostname
-	roles := checker.GetDefaultRoles(user, host)
-	ok, roleName := checker.ActiveRoles(e.Ctx(), roles)
+	roles := checker.GetDefaultRoles(ctx, user, host)
+	ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), roles)
 	if !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
@@ -545,11 +545,11 @@ func (e *SimpleExec) setRoleDefault() error {
 	return nil
 }
 
-func (e *SimpleExec) setRoleNone() error {
+func (e *SimpleExec) setRoleNone(ctx context.Context) error {
 	// Deal with SQL like `SET ROLE NONE;`
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	roles := make([]*auth.RoleIdentity, 0)
-	ok, roleName := checker.ActiveRoles(e.Ctx(), roles)
+	ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), roles)
 	if !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
@@ -557,18 +557,18 @@ func (e *SimpleExec) setRoleNone() error {
 	return nil
 }
 
-func (e *SimpleExec) executeSetRole(s *ast.SetRoleStmt) error {
+func (e *SimpleExec) executeSetRole(ctx context.Context, s *ast.SetRoleStmt) error {
 	switch s.SetRoleOpt {
 	case ast.SetRoleRegular:
-		return e.setRoleRegular(s)
+		return e.setRoleRegular(ctx, s)
 	case ast.SetRoleAll:
-		return e.setRoleAll()
+		return e.setRoleAll(ctx)
 	case ast.SetRoleAllExcept:
-		return e.setRoleAllExcept(s)
+		return e.setRoleAllExcept(ctx, s)
 	case ast.SetRoleNone:
-		return e.setRoleNone()
+		return e.setRoleNone(ctx)
 	case ast.SetRoleDefault:
-		return e.setRoleDefault()
+		return e.setRoleDefault(ctx)
 	}
 	return nil
 }
@@ -764,7 +764,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	if ok, roleName := checker.ActiveRoles(e.Ctx(), activeRoles); !ok {
+	if ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), activeRoles); !ok {
 		u := e.Ctx().GetSessionVars().User
 		return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 	}
@@ -1778,10 +1778,10 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
-			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
@@ -1795,7 +1795,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			failedUsers = append(failedUsers, user)
 			continue
 		}
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
+		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(ctx, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2311,7 +2311,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		if checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
@@ -2432,7 +2432,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 	}
 	if s.IsDropRole {
 		// apply new activeRoles
-		if ok, roleName := checker.ActiveRoles(e.Ctx(), activeRoles); !ok {
+		if ok, roleName := checker.ActiveRoles(ctx, e.Ctx(), activeRoles); !ok {
 			u := e.Ctx().GetSessionVars().User
 			return exeerrors.ErrRoleNotGranted.GenWithStackByArgs(roleName, u.String())
 		}
@@ -2522,7 +2522,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		h = s.User.Hostname
 
 		checker := privilege.GetPrivilegeManager(e.Ctx())
-		checker.MatchIdentity(u, h, false)
+		checker.MatchIdentity(ctx, u, h, false)
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := e.Ctx().GetSessionVars().User
@@ -2544,7 +2544,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(u, h)
+	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(ctx, u, h)
 	if err != nil {
 		return err
 	}

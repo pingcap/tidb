@@ -176,7 +176,7 @@ LIMIT
 240;
 id	estRows	task	access object	operator info
 Projection	41.67	root		planner__core__casetest__predicate_simplification.dt.a, planner__core__casetest__predicate_simplification.dt.pk, planner__core__casetest__predicate_simplification.dt.b, planner__core__casetest__predicate_simplification.dt.c
-└─IndexHashJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
+└─IndexHashJoin	41.67	root		left outer join, inner:TableReader, left side:Limit, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk), other cond:or(gt(planner__core__casetest__predicate_simplification.it.a, "a"), and(eq(planner__core__casetest__predicate_simplification.it.a, "a"), gt(planner__core__casetest__predicate_simplification.dt.pk, 1)))
   ├─Limit(Build)	33.33	root		offset:0, count:240
   │ └─IndexReader	33.33	root		index:Limit
   │   └─Limit	33.33	cop[tikv]		offset:0, count:240
@@ -200,7 +200,7 @@ LIMIT
 240;
 id	estRows	task	access object	operator info
 TopN	41.67	root		planner__core__casetest__predicate_simplification.dt.pk, offset:0, count:240
-└─IndexJoin	41.67	root		left outer join, inner:TableReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
+└─IndexJoin	41.67	root		left outer join, inner:TableReader, left side:IndexReader, outer key:planner__core__casetest__predicate_simplification.it.pk, inner key:planner__core__casetest__predicate_simplification.dt.pk, equal cond:eq(planner__core__casetest__predicate_simplification.it.pk, planner__core__casetest__predicate_simplification.dt.pk)
   ├─IndexReader(Build)	33.33	root		index:IndexRangeScan
   │ └─IndexRangeScan	33.33	cop[tikv]	table:it, index:f(a, pk)	range:("a" 1,"a" +inf], keep order:false, stats:pseudo
   └─TableReader(Probe)	11.11	root		data:Selection

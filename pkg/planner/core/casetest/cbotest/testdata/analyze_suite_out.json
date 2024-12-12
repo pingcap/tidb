@@ -160,7 +160,7 @@
         ],
         "Plan": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─MergeJoin 1.00 root  left outer semi join, left key:test.t.a, right key:test.t.b",
+          "└─MergeJoin 1.00 root  left outer semi join, left side:TopN, left key:test.t.a, right key:test.t.b",
           "  ├─IndexReader(Build) 25.00 root  index:IndexFullScan",
           "  │ └─IndexFullScan 25.00 cop[tikv] table:t2, index:idx_bc(b, c) keep order:true",
           "  └─TopN(Probe) 1.00 root  test.t.a, offset:0, count:1",
@@ -380,7 +380,7 @@
     "Cases": [
       [
         "Projection 10.00 root  Column#22",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, other cond:eq(test.t.c, Column#21)",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#21)",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
@@ -394,7 +394,7 @@
       ],
       [
         "Projection 10.00 root  Column#13",
-        "└─Apply 10.00 root  CARTESIAN left outer join",
+        "└─Apply 10.00 root  CARTESIAN left outer join, left side:IndexReader",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─MaxOneRow(Probe) 10.00 root  ",

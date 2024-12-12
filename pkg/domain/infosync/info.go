@@ -126,6 +126,7 @@ type InfoSyncer struct {
 	scheduleManager       ScheduleManager
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
+	infoCache             infoschemaMinTS
 }
 
 // ServerInfo is server static information.
@@ -202,6 +203,10 @@ func SetPDHttpCliForTest(cli pdhttp.Client) func() {
 	}
 }
 
+type infoschemaMinTS interface {
+	GetAndResetRecentInfoSchemaTS(now uint64) uint64
+}
+
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(
 	ctx context.Context,
@@ -211,6 +216,7 @@ func GlobalInfoSyncerInit(
 	pdCli pd.Client, pdHTTPCli pdhttp.Client,
 	codec tikv.Codec,
 	skipRegisterToDashBoard bool,
+	infoCache infoschemaMinTS,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
 		pdHTTPCli = pdHTTPCli.
@@ -224,6 +230,7 @@ func GlobalInfoSyncerInit(
 		info:              getServerInfo(id, serverIDGetter),
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		infoCache:         infoCache,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -798,6 +805,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
+		}
+	}
+
+	if is.infoCache != nil {
+		schemaTS := is.infoCache.GetAndResetRecentInfoSchemaTS(currentVer.Ver)
+		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("InfoSchema Recent StartTS", schemaTS))
+		if schemaTS > startTSLowerLimit && schemaTS < minStartTS {
+			minStartTS = schemaTS
 		}
 	}
 

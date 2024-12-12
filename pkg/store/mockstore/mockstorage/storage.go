@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
@@ -37,19 +38,22 @@ type mockStorage struct {
 	opts      sync.Map
 	memCache  kv.MemManager
 	LockWaits []*deadlockpb.WaitForEntry
+
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
+func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMeta) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
+		KVStore:      tikvStore,
+		Store:        coprStore,
+		memCache:     kv.NewCacheDB(),
+		keyspaceMeta: keyspaceMeta,
 	}, nil
 }
 
@@ -140,8 +144,18 @@ func (s *mockStorage) Close() error {
 }
 
 func (s *mockStorage) GetCodec() tikv.Codec {
+	if s.keyspaceMeta == nil {
+		pdClient := s.KVStore.GetPDClient()
+		pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+		return pdCodecCli.GetCodec()
+	}
+
+	// Get API V2 codec.
 	pdClient := s.KVStore.GetPDClient()
-	pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	pdCodecCli, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdClient, s.keyspaceMeta.Name)
+	if err != nil {
+		panic(err)
+	}
 	return pdCodecCli.GetCodec()
 }
 

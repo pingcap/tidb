@@ -347,9 +347,9 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
-func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
-	terror.Log(h.ensureActiveUser(user))
-	terror.Log(h.ensureActiveUser(role.Username))
+func findRole(ctx context.Context, h *Handle, user string, host string, role *auth.RoleIdentity) bool {
+	terror.Log(h.ensureActiveUser(ctx, user))
+	terror.Log(h.ensureActiveUser(ctx, role.Username))
 	mysqlPrivilege := h.Get()
 	return mysqlPrivilege.FindRole(user, host, role)
 }
@@ -1896,12 +1896,16 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(user string) error {
+func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
+	if p := ctx.Value("mock"); p != nil {
+		visited := p.(*bool)
+		*visited = true
+	}
+
 	_, exist := h.activeUsers.Load(user)
 	if exist {
 		return nil
 	}
-
 	var data immutable
 	userList, err := data.loadSomeUsers(h.sctx, user)
 	if err != nil {

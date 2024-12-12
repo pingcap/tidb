@@ -88,7 +88,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where b = 1", i)).CheckNotContain("pseudo")
 	}
 	for i := 1; i < 10; i++ {
-		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c = 1", i)).CheckNotContain("pseudo")
+		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c >= 1", i)).CheckNotContain("pseudo")
 	}
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))

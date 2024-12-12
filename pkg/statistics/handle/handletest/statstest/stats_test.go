@@ -31,6 +31,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStatsCacheProcess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
+	do := dom
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	require.Zero(t, statsTbl.Version)
+	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.NotZero(t, statsTbl.Version)
+	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().GetNextCheckVersionWithOffset()
+	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
+
+	// Insert more rows
+	testKit.MustExec("insert into t values(2, 3)")
+	require.NoError(t, do.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
+	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
+}
+
 func TestStatsCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -273,6 +305,9 @@ func TestInitStats(t *testing.T) {
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
 	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
+column:1 ndv:6 totColSize:0
+column:2 ndv:6 totColSize:6
+column:3 ndv:6 totColSize:6
 index:1 ndv:6
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -331,7 +366,7 @@ func TestInitStatsVer2(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = false
-	initStatsVer2(t, false)
+	initStatsVer2(t)
 }
 
 func TestInitStatsVer2Concurrency(t *testing.T) {
@@ -343,18 +378,21 @@ func TestInitStatsVer2Concurrency(t *testing.T) {
 	}()
 	config.GetGlobalConfig().Performance.LiteInitStats = false
 	config.GetGlobalConfig().Performance.ConcurrentlyInitStats = true
-	initStatsVer2(t, true)
+	initStatsVer2(t)
 }
 
-func initStatsVer2(t *testing.T, isConcurrency bool) {
+func initStatsVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	tk.MustExec("create table t(a int, b int, c int, index idx(a), index idxab(a, b))")
+	tk.MustExec("create table t(a int, b int, c int, d int, index idx(a), index idxab(a, b))")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
-	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (4, 4, 4), (4, 4, 4)")
+	tk.MustExec("insert into t values(1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4), (4, 4, 4, 4), (4, 4, 4, 4)")
 	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	tk.MustExec("alter table t add column e int default 1")
+	dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh())
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -366,16 +404,15 @@ func initStatsVer2(t *testing.T, isConcurrency bool) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	if isConcurrency {
-		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
-	} else {
-		require.Equal(t, uint8(0x33), table0.GetCol(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), table0.GetCol(2).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x33), table0.GetCol(3).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-		require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
-	}
+	require.Equal(t, 5, table0.ColNum())
+	require.True(t, table0.GetCol(1).IsAllEvicted())
+	require.True(t, table0.GetCol(2).IsAllEvicted())
+	require.True(t, table0.GetCol(3).IsAllEvicted())
+	require.True(t, !table0.GetCol(4).IsStatsInitialized())
+	require.True(t, table0.GetCol(5).IsStatsInitialized())
+	require.Equal(t, 2, table0.IdxNum())
+	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
+	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())

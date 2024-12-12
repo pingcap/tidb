@@ -275,6 +275,11 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 	return do.etcdClient
 }
 
+// UnprefixedEtcdCli export for test.
+func (do *Domain) UnprefixedEtcdCli() *clientv3.Client {
+	return do.unprefixedEtcdCli
+}
+
 // loadInfoSchema loads infoschema at startTS.
 // It returns:
 // 1. the needed infoschema
@@ -358,6 +363,16 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+
+	// add failpoint to simulate long-running schema loading scenario
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep, but not sure if there is a better way
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
+		}
+	})
+
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
@@ -800,15 +815,40 @@ func (do *Domain) Reload() error {
 		}
 	}
 
-	// lease renew, so it must be executed despite it is cache or not
-	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 	lease := do.GetSchemaLease()
 	sub := time.Since(startTime)
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
+		// If it is a full load and there are a lot of tables, this is likely to happen.
 		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
+
+		// We can optimize the case by updating the TS to a new value, as long as the schema version is the same.
+		// For example, lease is 45s, and the load process takes 2min, after the load process finish, this
+		// loaded infoschema because stale immediately.
+		// But if we re-check the schema version again and verify that it's still the newest, it is safe to use it.
+		var latestSchemaVer int64
+		var currentTS uint64
+		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+		err := kv.RunInNewTxn(ctx, do.store, false, func(_ context.Context, txn kv.Transaction) error {
+			var err error
+			m := meta.NewReader(txn)
+			latestSchemaVer, err = m.GetSchemaVersion()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			currentTS = txn.StartTS()
+			return nil
+		})
+		if err == nil && latestSchemaVer == is.SchemaMetaVersion() {
+			version = currentTS
+			logutil.BgLogger().Info("use this schema and update ts",
+				zap.Int64("schema ver", latestSchemaVer),
+				zap.Uint64("reload ts", currentTS))
+		}
 	}
+	// lease renew, so it must be executed despite it is cache or not
+	do.SchemaValidator.Update(version, oldSchemaVersion, is.SchemaMetaVersion(), changes)
 
 	return nil
 }
@@ -1270,6 +1310,11 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	return NewDomainWithEtcdClient(store, schemaLease, statsLease, dumpFileGcLease, factory, nil)
+}
+
+// NewDomainWithEtcdClient creates a new domain with etcd client. Should not create multiple domains for the same store.
+func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, etcdClient *clientv3.Client) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
@@ -1314,6 +1359,7 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
 	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	do.etcdClient = etcdClient
 	return do
 }
 
@@ -1395,7 +1441,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
 	if err != nil {
 		return err
 	}
@@ -1513,6 +1559,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
+}
+
+// IsLeaseExpired returns whether lease has expired
+func (do *Domain) IsLeaseExpired() bool {
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.
@@ -2048,7 +2099,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		return err
 	}
 
-	owner := do.newOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
+	owner := do.NewOwnerManager(bindinfo.Prompt, bindinfo.OwnerKey)
 	err = owner.CampaignOwner()
 	if err != nil {
 		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
@@ -2376,7 +2427,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	}
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
-	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
+	do.statsOwner = do.NewOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
 	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
@@ -2485,7 +2536,8 @@ func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
 }
 
-func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
+// NewOwnerManager returns the owner manager for use outside of the domain.
+func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
@@ -2666,6 +2718,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
+			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
 		}

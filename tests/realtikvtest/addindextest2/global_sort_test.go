@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/phayes/freeport"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func init() {
@@ -113,7 +115,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(sb.String())
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
 
@@ -296,7 +298,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	var tblInfo *model.TableInfo
 	var idxInfo *model.IndexInfo
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if idxInfo == nil {
 			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 			tblInfo = tbl.Meta()
@@ -320,7 +322,11 @@ func TestIngestUseGivenTS(t *testing.T) {
 	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	})
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", `return(123456789)`)
+
+	presetTS := oracle.GoTimeToTS(time.Now())
+	failpointTerm := fmt.Sprintf(`return(%d)`, presetTS)
+
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", failpointTerm)
 	require.NoError(t, err)
 
 	tk.MustExec("create table t (a int);")
@@ -336,10 +342,10 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NoError(t, err)
 	tikvStore := dom.Store().(helper.Storage)
 	newHelper := helper.NewHelper(tikvStore)
-	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, 123456789)
+	mvccResp, err := newHelper.GetMvccByEncodedKeyWithTS(idxKey, presetTS)
 	require.NoError(t, err)
 	require.NotNil(t, mvccResp)
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
-	require.Equal(t, uint64(123456789), mvccResp.Info.Writes[0].CommitTs)
+	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
