@@ -65,45 +65,41 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
-type tablesToUpdateOrDelete struct {
+// cacheOfBatchUpdate is a cache for batch update the stats cache.
+// We should not insert a item based on a item which we get from the cache long time ago.
+// It may cause the cache to be inconsistent.
+// The item should be quickly modified and inserted back to the cache.
+type cacheOfBatchUpdate struct {
+	op       func(toUpdate []*statistics.Table, toDelete []int64)
 	toUpdate []*statistics.Table
 	toDelete []int64
-	option   types.UpdateOptions
 }
 
-func (t *tablesToUpdateOrDelete) addToUpdate(statsCache *StatsCacheImpl, table *statistics.Table) {
-	if len(t.toUpdate) == 10 {
-		statsCache.UpdateStatsCache(types.CacheUpdate{
-			Updated: t.toUpdate,
-			Deleted: t.toDelete,
-			Options: t.option,
-		})
-		t.toUpdate = t.toUpdate[:0]
-		t.toDelete = t.toDelete[:0]
+const batchSizeOfUpdateBatch = 10
+
+func (t *cacheOfBatchUpdate) internalFlush() {
+	t.op(t.toUpdate, t.toDelete)
+	t.toUpdate = t.toUpdate[:0]
+	t.toDelete = t.toDelete[:0]
+}
+
+func (t *cacheOfBatchUpdate) addToUpdate(table *statistics.Table) {
+	if len(t.toUpdate) == batchSizeOfUpdateBatch {
+		t.internalFlush()
 	}
 	t.toUpdate = append(t.toUpdate, table)
 }
 
-func (t *tablesToUpdateOrDelete) addToDelete(statsCache *StatsCacheImpl, tableID int64) {
-	if len(t.toDelete) == 10 {
-		statsCache.UpdateStatsCache(types.CacheUpdate{
-			Updated: t.toUpdate,
-			Deleted: t.toDelete,
-			Options: t.option,
-		})
-		t.toUpdate = t.toUpdate[:0]
-		t.toDelete = t.toDelete[:0]
+func (t *cacheOfBatchUpdate) addToDelete(tableID int64) {
+	if len(t.toDelete) == batchSizeOfUpdateBatch {
+		t.internalFlush()
 	}
 	t.toDelete = append(t.toDelete, tableID)
 }
 
-func (t *tablesToUpdateOrDelete) flush(statsCache *StatsCacheImpl) {
+func (t *cacheOfBatchUpdate) flush() {
 	if len(t.toUpdate) > 0 || len(t.toDelete) > 0 {
-		statsCache.UpdateStatsCache(types.CacheUpdate{
-			Updated: t.toUpdate,
-			Deleted: t.toDelete,
-			Options: t.option,
-		})
+		t.internalFlush()
 	}
 }
 
@@ -142,10 +138,18 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		return errors.Trace(err)
 	}
 
-	tblToUpdateOrDelete := tablesToUpdateOrDelete{
-		toUpdate: make([]*statistics.Table, 0, min(len(rows), 10)),
-		toDelete: make([]int64, 0, min(len(rows), 10)),
-		option:   types.UpdateOptions{SkipMoveForward: skipMoveForwardStatsCache},
+	tblToUpdateOrDelete := cacheOfBatchUpdate{
+		toUpdate: make([]*statistics.Table, 0, min(len(rows), batchSizeOfUpdateBatch)),
+		toDelete: make([]int64, 0, min(len(rows), batchSizeOfUpdateBatch)),
+		op: func(toUpdate []*statistics.Table, toDelete []int64) {
+			s.UpdateStatsCache(types.CacheUpdate{
+				Updated: toUpdate,
+				Deleted: toDelete,
+				Options: types.UpdateOptions{
+					SkipMoveForward: skipMoveForwardStatsCache,
+				},
+			})
+		},
 	}
 
 	for _, row := range rows {
@@ -167,7 +171,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 				"unknown physical ID in stats meta table, maybe it has been dropped",
 				zap.Int64("ID", physicalID),
 			)
-			tblToUpdateOrDelete.addToDelete(s, physicalID)
+			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -193,7 +197,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			continue
 		}
 		if tbl == nil {
-			tblToUpdateOrDelete.addToDelete(s, physicalID)
+			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -210,10 +214,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
-		tblToUpdateOrDelete.addToUpdate(s, tbl)
+		tblToUpdateOrDelete.addToUpdate(tbl)
 	}
 
-	tblToUpdateOrDelete.flush(s)
+	tblToUpdateOrDelete.flush()
 	dur := time.Since(start)
 	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
