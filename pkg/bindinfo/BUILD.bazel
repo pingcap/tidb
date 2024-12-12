@@ -36,15 +36,8 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/table-filter",
-<<<<<<< HEAD
         "//pkg/util/timeutil",
         "@org_golang_x_exp//maps",
-=======
-        "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pkg_errors//:errors",
-        "@org_golang_x_sync//singleflight",
->>>>>>> 821563f2983 (planner: handle panic when loading bindings at startup (#58017))
         "@org_uber_go_zap//:zap",
     ],
 )
