@@ -415,8 +415,7 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 }
 
 func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
-	tk := testkit.NewTestKit(t, store)
-	return tk.Session()
+	return testkit.NewSession(t, store)
 }
 
 func TestIssue40135(t *testing.T) {
