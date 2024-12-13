@@ -3136,7 +3136,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 type reorgPartitionWorker struct {
 	*backfillCtx
 	// Static allocated to limit memory allocations
-	rowRecords        []*RowVal
+	rowRecords        []*rowRecord
 	rowDecoder        *decoder.RowDecoder
 	rowMap            map[int64]types.Datum
 	writeColOffsetMap map[int64]int
@@ -3223,19 +3223,16 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logutil.BgLogger().Info("BackfillData BatchGet", zap.Int("Found keys", len(found)))
 			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
 		}
 
-		failpoint.Call("github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", w.rowRecords)
+		failpoint.Call("github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", len(w.rowRecords) > 0)
 		for i, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
-			logutil.BgLogger().Info("BackfillData row", zap.String("key", key.String()))
 			if len(w.oldKeys) > 0 {
 				if _, ok := found[string(w.oldKeys[i])]; ok {
 					// Already filled, i.e. double written by concurrent DML.
-					logutil.BgLogger().Info("BackfillData already filled key", zap.String("key", w.oldKeys[i].String()))
 					continue
 				}
 
@@ -3244,17 +3241,14 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// cause a duplicate.
 				err = txn.Set(w.oldKeys[i], prr.vals)
 				if err != nil {
-					logutil.BgLogger().Info("BackfillData failed to Set key", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
 					return errors.Trace(err)
 				}
 				err = txn.SetAssertion(w.oldKeys[i], kv.SetAssertNotExist)
 				if err != nil {
-					logutil.BgLogger().Info("BackfillData failed to SetOption", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
 					return errors.Trace(err)
 				}
 				err = txn.Delete(w.oldKeys[i])
 				if err != nil {
-					logutil.BgLogger().Info("BackfillData failed to Delete", zap.String("key", w.oldKeys[i].String()), zap.Error(err))
 					return errors.Trace(err)
 				}
 				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
@@ -3276,7 +3270,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
 			}
-			logutil.BgLogger().Info("BackfillData set", zap.String("key", key.String()))
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
@@ -3285,16 +3278,9 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		}
 		return nil
 	})
-	logutil.BgLogger().Info("BackfillData err", zap.Error(errInTxn))
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 
 	return
-}
-
-// RowVal is exported here to be able to have a failpoint callback for triggering testing concurrent DMLs.
-type RowVal struct {
-	key  kv.Key
-	vals []byte
 }
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
@@ -3341,7 +3327,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			}
 			newKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
 			newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-			w.rowRecords = append(w.rowRecords, &RowVal{key: newKey, vals: rawRow})
+			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
 			if !isClustered {
 				oldKey := newKey[:tablecodec.TableSplitKeyLen]
 				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)

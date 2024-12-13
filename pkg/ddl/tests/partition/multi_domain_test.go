@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -193,8 +192,8 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn, postFn
 	if injectUpdate {
 		// This can be used for testing concurrent writes during backfill.
 		// It tested OK, since the backfill will fail and retry where it will get the fresh values and succeed.
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(rows []*ddl.RowVal) {
-			if len(rows) > 0 {
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(b bool) {
+			if b {
 				tkO.MustExec(`update t set c3 = "updated"`)
 			}
 		}))
