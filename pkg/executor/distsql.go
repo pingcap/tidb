@@ -506,7 +506,7 @@ type IndexLookUpExecutor struct {
 	// cancelFunc is called when close the executor
 	cancelFunc context.CancelFunc
 	workerCtx  context.Context
-	pool       *gopool
+	pool       *workerPool
 
 	// If dummy flag is set, this is not a real IndexLookUpReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -642,7 +642,7 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// indexWorker will submit lookup-table tasks (processed by tableWorker) to the pool,
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
-	e.pool = &gopool{
+	e.pool = &workerPool{
 		TolerablePendingTasks: 1,
 		MaxWorkers:            int32(max(1, e.indexLookupConcurrency)),
 	}

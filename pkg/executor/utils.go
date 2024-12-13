@@ -123,18 +123,18 @@ func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, 
 }
 
 var taskPool = sync.Pool{
-	New: func() any { return &gotask{} },
+	New: func() any { return &workerTask{} },
 }
 
-type gotask struct {
+type workerTask struct {
 	f    func()
-	next *gotask
+	next *workerTask
 }
 
-type gopool struct {
+type workerPool struct {
 	lock sync.Mutex
-	head *gotask
-	tail *gotask
+	head *workerTask
+	tail *workerTask
 
 	tasks   atomic.Int32
 	workers atomic.Int32
@@ -146,8 +146,8 @@ type gopool struct {
 	MaxWorkers int32
 }
 
-func (p *gopool) submit(f func()) {
-	task := taskPool.Get().(*gotask)
+func (p *workerPool) submit(f func()) {
+	task := taskPool.Get().(*workerTask)
 	task.f, task.next = f, nil
 	p.lock.Lock()
 	if p.head == nil {
@@ -165,9 +165,9 @@ func (p *gopool) submit(f func()) {
 	}
 }
 
-func (p *gopool) run() {
+func (p *workerPool) run() {
 	for {
-		var task *gotask
+		var task *workerTask
 
 		p.lock.Lock()
 		if p.head != nil {
