@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
