@@ -18,6 +18,7 @@ import (
 	"container/list"
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
@@ -27,7 +28,7 @@ import (
 type entry[K comparable, V any] struct {
 	key     K
 	value   V
-	visited bool
+	visited atomic.Bool
 	element *list.Element
 	size    uint64
 }
@@ -132,7 +133,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 
 	if e, ok := s.items[key]; ok {
 		e.value = value
-		e.visited = true
+		e.visited.Store(true)
 		return
 	}
 
@@ -162,7 +163,7 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 	s.mu.RUnlock()
 
 	if ok {
-		e.visited = true
+		e.visited.Store(true)
 		s.hook.onHit()
 		return e.value, true
 	}
@@ -257,8 +258,8 @@ func (s *Sieve[K, V]) evict() {
 		panic("sieve: evicting non-existent element")
 	}
 
-	for el.visited {
-		el.visited = false
+	for el.visited.Load() {
+		el.visited.Store(false)
 		o = o.Prev()
 		if o == nil {
 			o = s.ll.Back()
