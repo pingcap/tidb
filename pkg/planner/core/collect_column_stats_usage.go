@@ -16,13 +16,14 @@ package core
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intset"
-	"strings"
 )
 
 // columnStatsUsageCollector collects predicate columns and/or histogram-needed columns from logical plan.

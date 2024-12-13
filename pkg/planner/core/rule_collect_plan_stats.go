@@ -17,13 +17,13 @@ package core
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/expression"
 	"maps"
 	"strings"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
