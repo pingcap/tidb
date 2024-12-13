@@ -19,6 +19,7 @@
 #  -o pipefail: sets the exit code of a pipeline to that of the rightmost command to exit with a non-zero status,
 #       or to zero if all commands of the pipeline exit successfully.
 set -euo pipefail
+rm -rf /home/jenkins/.cache/bazel/_bazel_jenkins/install/a09dbb90c658248f08f9aa0eba11997d
 
 before_checksum=`find . -type f \( -name '*.bazel' -o -name '*.bzl' \) -exec md5sum {} \;| sort -k 2`
 make bazel_prepare
