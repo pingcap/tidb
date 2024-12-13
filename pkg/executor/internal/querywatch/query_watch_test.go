@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
