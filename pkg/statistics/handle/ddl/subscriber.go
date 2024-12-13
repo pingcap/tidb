@@ -37,8 +37,8 @@ type subscriber struct {
 	statsCache types.StatsCache
 }
 
-// NewSubscriber creates a new subscriber.
-func NewSubscriber(
+// newSubscriber creates a new subscriber.
+func newSubscriber(
 	statsCache types.StatsCache,
 ) *subscriber {
 	h := subscriber{statsCache: statsCache}
