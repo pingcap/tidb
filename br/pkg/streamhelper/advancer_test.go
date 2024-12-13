@@ -518,6 +518,85 @@ func TestEnableCheckPointLimit(t *testing.T) {
 	}
 }
 
+func TestOwnerChangeCheckPointLagged(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		fmt.Println(c)
+	}()
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	env := newTestEnv(c, t)
+	rngs := env.ranges
+	if len(rngs) == 0 {
+		rngs = []kv.KeyRange{{}}
+	}
+	env.task = streamhelper.TaskEvent{
+		Type: streamhelper.EventAdd,
+		Name: "whole",
+		Info: &backup.StreamBackupTaskInfo{
+			Name:    "whole",
+			StartTs: oracle.GoTimeToTS(oracle.GetTimeFromTS(0).Add(1 * time.Minute)),
+		},
+		Ranges: rngs,
+	}
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	adv.OnStart(ctx1)
+	adv.OnBecomeOwner(ctx1)
+	log.Info("advancer1 become owner")
+	require.NoError(t, adv.OnTick(ctx1))
+
+	// another advancer but never advance checkpoint before
+	adv2 := streamhelper.NewCheckpointAdvancer(env)
+	adv2.UpdateConfigWith(func(c *config.Config) {
+		c.CheckPointLagLimit = 1 * time.Minute
+	})
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	adv2.OnStart(ctx2)
+
+	for i := 0; i < 5; i++ {
+		c.advanceClusterTimeBy(2 * time.Minute)
+		c.advanceCheckpointBy(2 * time.Minute)
+		require.NoError(t, adv.OnTick(ctx1))
+	}
+	c.advanceClusterTimeBy(2 * time.Minute)
+	require.ErrorContains(t, adv.OnTick(ctx1), "lagged too large")
+
+	// resume task to make next tick normally
+	c.advanceCheckpointBy(2 * time.Minute)
+	env.ResumeTask(ctx)
+
+	// stop advancer1, and advancer2 should take over
+	cancel1()
+	log.Info("advancer1 owner canceled, and advancer2 become owner")
+	adv2.OnBecomeOwner(ctx2)
+	require.NoError(t, adv2.OnTick(ctx2))
+
+	// advancer2 should take over and tick normally
+	for i := 0; i < 10; i++ {
+		c.advanceClusterTimeBy(2 * time.Minute)
+		c.advanceCheckpointBy(2 * time.Minute)
+		require.NoError(t, adv2.OnTick(ctx2))
+	}
+	c.advanceClusterTimeBy(2 * time.Minute)
+	require.ErrorContains(t, adv2.OnTick(ctx2), "lagged too large")
+	// stop advancer2, and advancer1 should take over
+	c.advanceCheckpointBy(2 * time.Minute)
+	env.ResumeTask(ctx)
+	cancel2()
+	log.Info("advancer2 owner canceled, and advancer1 become owner")
+
+	adv.OnBecomeOwner(ctx)
+	// advancer1 should take over and tick normally when come back
+	require.NoError(t, adv.OnTick(ctx))
+}
+
 func TestCheckPointLagged(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
 	defer func() {
@@ -548,8 +627,10 @@ func TestCheckPointLagged(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(2 * time.Minute)
+	// if global ts is not advanced, the checkpoint will not be lagged
+	c.advanceCheckpointBy(2 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceClusterTimeBy(3 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	// after some times, the isPaused will be set and ticks are skipped
 	require.Eventually(t, func() bool {
@@ -573,8 +654,10 @@ func TestCheckPointResume(t *testing.T) {
 	})
 	adv.StartTaskListener(ctx)
 	c.advanceClusterTimeBy(1 * time.Minute)
+	// if global ts is not advanced, the checkpoint will not be lagged
+	c.advanceCheckpointBy(1 * time.Minute)
 	require.NoError(t, adv.OnTick(ctx))
-	c.advanceClusterTimeBy(1 * time.Minute)
+	c.advanceClusterTimeBy(2 * time.Minute)
 	require.ErrorContains(t, adv.OnTick(ctx), "lagged too large")
 	require.Eventually(t, func() bool {
 		return assert.NoError(t, adv.OnTick(ctx))

@@ -568,13 +568,21 @@ func (c *CheckpointAdvancer) isCheckpointLagged(ctx context.Context) (bool, erro
 	if c.cfg.CheckPointLagLimit <= 0 {
 		return false, nil
 	}
+	globalTs, err := c.env.GetGlobalCheckpointForTask(ctx, c.task.Name)
+	if err != nil {
+		return false, err
+	}
+	if globalTs <= c.task.StartTs {
+		// task is not started yet
+		return false, nil
+	}
 
 	now, err := c.env.FetchCurrentTS(ctx)
 	if err != nil {
 		return false, err
 	}
 
-	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(c.lastCheckpoint.TS))
+	lagDuration := oracle.GetTimeFromTS(now).Sub(oracle.GetTimeFromTS(globalTs))
 	if lagDuration > c.cfg.CheckPointLagLimit {
 		log.Warn("checkpoint lag is too large", zap.String("category", "log backup advancer"),
 			zap.Stringer("lag", lagDuration))
