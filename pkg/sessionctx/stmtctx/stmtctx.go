@@ -189,6 +189,8 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	InShowWarning          bool
+	InDiagnostics          bool
+	LastWarningNum         int
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
@@ -920,6 +922,9 @@ func (sc *StatementContext) TruncateWarnings(start int) []SQLWarn {
 func (sc *StatementContext) WarningCount() uint16 {
 	if sc.InShowWarning {
 		return 0
+	}
+	if sc.InDiagnostics {
+		return uint16(sc.WarnHandler.WarningCount() - sc.LastWarningNum)
 	}
 	return uint16(sc.WarnHandler.WarningCount())
 }

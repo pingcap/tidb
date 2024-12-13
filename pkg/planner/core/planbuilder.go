@@ -600,6 +600,10 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildCallProcedure(ctx, x)
 	case *ast.AlterProcedureStmt:
 		return b.buildAlterProcedure(ctx, x)
+	case *ast.Signal:
+		return b.buildSignal(ctx, x)
+	case *ast.GetDiagnosticsStmt:
+		return b.buildGetDiagnostics(ctx, x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node)
 }

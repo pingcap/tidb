@@ -335,3 +335,23 @@ func GetErrClass(e *Error) ErrClass {
 	}
 	return ErrClass(-1)
 }
+
+type TiDBError struct {
+	SQLSTATE          string
+	CLASSORIGIN       string
+	SUBCLASSORIGIN    string
+	CONSTRAINTCATALOG string
+	CONSTRAINTSCHEMA  string
+	CONSTRAINTNAME    string
+	CATALOGNAME       string
+	SCHEMANAME        string
+	TABLENAME         string
+	COLUMNNAME        string
+	CURSORNAME        string
+	MESSAGETEXT       string
+	MYSQLERRNO        int64
+}
+
+func (err *TiDBError) Error() string {
+	return err.MESSAGETEXT
+}

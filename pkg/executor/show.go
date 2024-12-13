@@ -2010,6 +2010,8 @@ func (e *ShowExec) fetchShowWarnings(errOnly bool) error {
 		case *terror.Error:
 			sqlErr := terror.ToSQLError(x)
 			e.appendRow([]any{w.Level, int64(sqlErr.Code), sqlErr.Message})
+		case *terror.TiDBError:
+			e.appendRow([]any{w.Level, x.MYSQLERRNO, x.MESSAGETEXT})
 		default:
 			var err string
 			if warn != nil {

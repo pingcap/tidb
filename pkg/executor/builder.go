@@ -334,6 +334,10 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildCallProcedure(v)
 	case *plannercore.AlterProcedure:
 		return b.buildAlterProcedure(v)
+	case *plannercore.Signal:
+		return b.buildSignalExec(v)
+	case *plannercore.GetDiagnostics:
+		return b.buildGetDiagnosticsExec(v)
 	default:
 		if mp, ok := p.(testutil.MockPhysicalPlan); ok {
 			return mp.GetExecutor()

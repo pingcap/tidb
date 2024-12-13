@@ -152,4 +152,5 @@ var (
 	ErrSpWrongName             = dbterror.ClassOptimizer.NewStd(mysql.ErrSpWrongName)
 	ErrTooLongIdent            = dbterror.ClassOptimizer.NewStd(mysql.ErrTooLongIdent)
 	ErrWrongValue              = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongValue)
+	ErrDupSignalSet            = dbterror.ClassOptimizer.NewStd(mysql.ErrDupSignalSet)
 )

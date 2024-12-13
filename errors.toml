@@ -2626,6 +2626,11 @@ error = '''
 Cannot create temporary table with partitions
 '''
 
+["planner:1641"]
+error = '''
+Duplicate condition information item '%s'
+'''
+
 ["planner:1706"]
 error = '''
 Primary key/partition key update is not allowed since the table is updated both as '%-.192s' and '%-.192s'.

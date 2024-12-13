@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -1544,4 +1545,52 @@ type CallStmt struct {
 type AlterProcedure struct {
 	baseSchemaProducer
 	Procedure *ast.AlterProcedureStmt
+}
+
+// SignalInfo record signal information item
+type SignalInfo struct {
+	Name int
+	Expr expression.Expression
+}
+
+// Signal create procedure plan
+type Signal struct {
+	baseSchemaProducer
+	SQLState   string
+	SignalCons []*SignalInfo
+}
+
+// DiagnosticsStatement records the object of reading variables
+type DiagnosticsStatement struct {
+	Name       string
+	IsVariable bool
+	Con        int
+}
+
+// UpdateVariable saves the reading record
+func (state *DiagnosticsStatement) UpdateVariable(ctx sessionctx.Context, fd *types.FieldType, d types.Datum) error {
+	if state.IsVariable {
+		ctx.GetSessionVars().SetUserVarVal(state.Name, d)
+		ctx.GetSessionVars().SetUserVarType(state.Name, fd)
+	} else {
+		err := UpdateVariableVar(state.Name, d, ctx.GetSessionVars())
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DiagnosticsCondition is condition information in get diagnostics statements
+type DiagnosticsCondition struct {
+	ConditionID expression.Expression
+	Cons        []*DiagnosticsStatement
+}
+
+// GetDiagnostics creates procedure plan
+type GetDiagnostics struct {
+	baseSchemaProducer
+	Area       int
+	Statements []*DiagnosticsStatement
+	Con        *DiagnosticsCondition
 }

@@ -127,4 +127,7 @@ var (
 	ErrCondItemTooLong                = dbterror.ClassExecutor.NewStd(mysql.ErrCondItemTooLong)
 	WarnCondItemTruncated             = dbterror.ClassExecutor.NewStd(mysql.WarnCondItemTruncated)
 	ErrWrongValueForVar               = dbterror.ClassExecutor.NewStd(mysql.ErrWrongValueForVar)
+
+	ErrGetStackedDaWithoutActiveHandler = dbterror.ClassExecutor.NewStd(mysql.ErrGetStackedDaWithoutActiveHandler)
+	ErrDaInvalidConditionNumber         = dbterror.ClassExecutor.NewStd(mysql.ErrDaInvalidConditionNumber)
 )

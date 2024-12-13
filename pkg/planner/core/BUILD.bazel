@@ -50,6 +50,7 @@ go_library(
         "procedure_plan.go",
         "procedure_sp.go",
         "property_cols_prune.go",
+        "raise_error.go",
         "recheck_cte.go",
         "resolve_indices.go",
         "rule_aggregation_elimination.go",

@@ -1155,6 +1155,13 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 				vars.SQLMode.HasAllowInvalidDatesMode()))
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(), !strictSQLMode)
+	case *ast.Signal:
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
+	case *ast.GetDiagnosticsStmt:
+		sc.InDiagnostics = true
+		sc.LastWarningNum = len(vars.StmtCtx.GetWarnings())
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!strictSQLMode))
+		sc.SetWarnings(vars.StmtCtx.GetWarnings())
 	default:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(true).
@@ -1190,6 +1197,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())
 	} else if vars.StmtCtx.InSelectStmt {
 		sc.PrevAffectedRows = -1
+	} else if _, ok := s.(*ast.GetDiagnosticsStmt); ok {
+		sc.PrevAffectedRows = vars.StmtCtx.PrevAffectedRows
 	}
 	if globalConfig.Instance.EnableCollectExecutionInfo.Load() {
 		// In ExplainFor case, RuntimeStatsColl should not be reset for reuse,

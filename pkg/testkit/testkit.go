@@ -546,10 +546,14 @@ func (tk *TestKit) MustGetErrCode(sql string, errCode int) {
 	_, err := tk.Exec(sql)
 	tk.require.Errorf(err, "sql: %s", sql)
 	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	tk.require.Truef(ok, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
-	sqlErr := terror.ToSQLError(tErr)
-	tk.require.Equalf(errCode, int(sqlErr.Code), "sql: %s, Assertion failed, origin err:\n  %v", sql, sqlErr)
+	switch v := originErr.(type) {
+	case *terror.Error:
+		tk.require.Equalf(errCode, int(v.Code()), "sql: %s, Assertion failed, origin err:\n  %v", sql, v)
+	case *terror.TiDBError:
+		tk.require.Equalf(errCode, int(v.MYSQLERRNO), "sql: %s, Assertion failed, origin err:\n  %v", sql, v)
+	default:
+		tk.require.Truef(false, "sql: %s, expect type 'terror.Error', but obtain '%T': %v", sql, originErr, originErr)
+	}
 }
 
 // MustGetErrMsg executes a sql statement and assert its error message.

@@ -100,6 +100,7 @@ import (
 	check             "CHECK"
 	collate           "COLLATE"
 	column            "COLUMN"
+	condition         "CONDITION"
 	constraint        "CONSTRAINT"
 	continueKwd       "CONTINUE"
 	convert           "CONVERT"
@@ -151,6 +152,7 @@ import (
 	from              "FROM"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
+	get               "GET"
 	grant             "GRANT"
 	group             "GROUP"
 	groups            "GROUPS"
@@ -258,6 +260,7 @@ import (
 	selectKwd         "SELECT"
 	set               "SET"
 	show              "SHOW"
+	signal            "SIGNAL"
 	smallIntType      "SMALLINT"
 	spatial           "SPATIAL"
 	sql               "SQL"
@@ -351,6 +354,7 @@ import (
 	calibrate             "CALIBRATE"
 	capture               "CAPTURE"
 	cascaded              "CASCADED"
+	catalogName           "CATALOG_NAME"
 	causal                "CAUSAL"
 	chain                 "CHAIN"
 	charsetKwd            "CHARSET"
@@ -358,6 +362,7 @@ import (
 	checksum              "CHECKSUM"
 	checksumConcurrency   "CHECKSUM_CONCURRENCY"
 	cipher                "CIPHER"
+	classOrigin           "CLASS_ORIGIN"
 	cleanup               "CLEANUP"
 	client                "CLIENT"
 	clientErrorsSummary   "CLIENT_ERRORS_SUMMARY"
@@ -368,6 +373,7 @@ import (
 	collation             "COLLATION"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
+	columnName            "COLUMN_NAME"
 	comment               "COMMENT"
 	commit                "COMMIT"
 	committed             "COMMITTED"
@@ -381,6 +387,9 @@ import (
 	connection            "CONNECTION"
 	consistency           "CONSISTENCY"
 	consistent            "CONSISTENT"
+	constraintCaraLog     "CONSTRAINT_CATALOG"
+	constraintName        "CONSTRAINT_NAME"
+	constraintSchema      "CONSTRAINT_SCHEMA"
 	context               "CONTEXT"
 	cpu                   "CPU"
 	csvBackslashEscape    "CSV_BACKSLASH_ESCAPE"
@@ -391,6 +400,7 @@ import (
 	csvSeparator          "CSV_SEPARATOR"
 	csvTrimLastSeparators "CSV_TRIM_LAST_SEPARATORS"
 	current               "CURRENT"
+	cursorName            "CURSOR_NAME"
 	cycle                 "CYCLE"
 	data                  "DATA"
 	dateType              "DATE"
@@ -400,6 +410,7 @@ import (
 	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
+	diagnostics           "DIAGNOSTICS"
 	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
@@ -496,6 +507,7 @@ import (
 	member                "MEMBER"
 	memory                "MEMORY"
 	merge                 "MERGE"
+	messageText           "MESSAGE_TEXT"
 	microsecond           "MICROSECOND"
 	minute                "MINUTE"
 	minValue              "MINVALUE"
@@ -503,6 +515,7 @@ import (
 	mode                  "MODE"
 	modify                "MODIFY"
 	month                 "MONTH"
+	mysqlErrno            "MYSQL_ERRNO"
 	names                 "NAMES"
 	national              "NATIONAL"
 	ncharType             "NCHAR"
@@ -519,6 +532,7 @@ import (
 	none                  "NONE"
 	nowait                "NOWAIT"
 	nulls                 "NULLS"
+	number                "NUMBER"
 	nvarcharType          "NVARCHAR"
 	off                   "OFF"
 	offset                "OFFSET"
@@ -581,6 +595,7 @@ import (
 	restore               "RESTORE"
 	restores              "RESTORES"
 	resume                "RESUME"
+	returned_sqlstate     "RETURNED_SQLSTATE"
 	reuse                 "REUSE"
 	reverse               "REVERSE"
 	role                  "ROLE"
@@ -592,6 +607,7 @@ import (
 	rtree                 "RTREE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
+	schemaName            "SCHEMA_NAME"
 	second                "SECOND"
 	secondary             "SECONDARY"
 	secondaryEngine       "SECONDARY_ENGINE"
@@ -629,6 +645,7 @@ import (
 	sqlTsiSecond          "SQL_TSI_SECOND"
 	sqlTsiWeek            "SQL_TSI_WEEK"
 	sqlTsiYear            "SQL_TSI_YEAR"
+	stacked               "STACKED"
 	start                 "START"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsColChoice        "STATS_COL_CHOICE"
@@ -640,6 +657,7 @@ import (
 	status                "STATUS"
 	storage               "STORAGE"
 	strictFormat          "STRICT_FORMAT"
+	subclassOrigin        "SUBCLASS_ORIGIN"
 	subject               "SUBJECT"
 	subpartition          "SUBPARTITION"
 	subpartitions         "SUBPARTITIONS"
@@ -651,6 +669,7 @@ import (
 	tables                "TABLES"
 	tablespace            "TABLESPACE"
 	tableChecksum         "TABLE_CHECKSUM"
+	tableName             "TABLE_NAME"
 	temporary             "TEMPORARY"
 	temptable             "TEMPTABLE"
 	textType              "TEXT"
@@ -954,6 +973,8 @@ import (
 	WindowFuncCall                  "WINDOW function call"
 	RepeatableOpt                   "Repeatable optional in sample clause"
 	ProcedureCall                   "Procedure call with Identifier or identifier"
+	SignalAllowedExpr               "Signal support expr"
+	ConditionNumber                 "Diagnostics number"
 
 %type	<statement>
 	AdminStmt                  "Check table statement or show ddl statement"
@@ -1090,6 +1111,8 @@ import (
 	ProcedurelabeledLoopStmt   "The loop block with label in procedure"
 	ProcedureIterate           "The iterate statement in procedure, expressed by `iterate ...`"
 	ProcedureLeave             "The leave statement in procedure, expressed by `leave ...`"
+	SignalStmt                 "The signal statment, User actively declares errors"
+	GetDiagnosticsStmt         "The get diagnostics statement, get prev SQL error information"
 
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
@@ -1537,6 +1560,18 @@ import (
 	ProcedureName                          "Procedure Name"
 	RoutineDefiner                         "Routine definer"
 	SQLStateText                           "Sqlstate text"
+	SetSignalInformationOpt                "Signal information opt"
+	SignalInformationItemList              "Signal information list"
+	SignalInformationItemName              "Signal information name"
+	SignalValue                            "Signal error status"
+	DiagnosticsArea                        "Diagnostics area"
+	DiagnosticsInformation                 "Diagnostics information"
+	StatementInformationList               "Diagnostics information Statement list"
+	StatementInformationItemName           "Diagnostics statement item name"
+	ConditionInformationList               "Diagnostics condition name list"
+	StatementInformation                   "The diagnostics statement information"
+	ConditionInformation                   "The diagnostics condition information"
+	DiagnosticsInformationItemName         "The diagnostics condition information name"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -7130,6 +7165,22 @@ UnReservedKeyword:
 |	"COMPRESSION_TYPE"
 |	"ENCRYPTION_METHOD"
 |	"ENCRYPTION_KEYFILE"
+|	"CLASS_ORIGIN"
+|	"CATALOG_NAME"
+|	"COLUMN_NAME"
+|	"CONSTRAINT_CATALOG"
+|	"CONSTRAINT_SCHEMA"
+|	"CONSTRAINT_NAME"
+|	"CURSOR_NAME"
+|	"MESSAGE_TEXT"
+|	"MYSQL_ERRNO"
+|	"SCHEMA_NAME"
+|	"SUBCLASS_ORIGIN"
+|	"TABLE_NAME"
+|	"DIAGNOSTICS"
+|	"NUMBER"
+|	"STACKED"
+|	"RETURNED_SQLSTATE"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12326,6 +12377,8 @@ Statement:
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
 |	CancelImportStmt
+|	SignalStmt
+|	GetDiagnosticsStmt
 
 TraceableStmt:
 	DeleteFromStmt
@@ -15879,6 +15932,8 @@ ProcedureStatementStmt:
 |	DeallocateStmt
 |	ExecuteStmt
 |	ShowStmt
+|	SignalStmt
+|	GetDiagnosticsStmt
 
 ProcedureCursorSelectStmt:
 	SelectStmt
@@ -16701,5 +16756,265 @@ DropQueryWatchStmt:
 		$$ = &ast.DropQueryWatchStmt{
 			IntValue: $4.(int64),
 		}
+	}
+
+/*******************************************************************
+ *
+ * signal Statement
+ *
+ *  Example:
+ *      SIGNAL condition_value
+ *  [SET signal_information_item
+ *  [, signal_information_item] ...]
+ *******************************************************************/
+SignalStmt:
+	"SIGNAL" SignalValue SetSignalInformationOpt
+	{
+		s := &ast.Signal{
+			ErrorCon: $2.(ast.ErrNode),
+		}
+		if $3 != nil {
+			s.SignalCons = $3.([]*ast.SignalInfo)
+		}
+		$$ = s
+	}
+
+SignalValue:
+	SQLStateText
+
+SetSignalInformationOpt:
+	{
+		$$ = []*ast.SignalInfo{}
+	}
+|	"SET" SignalInformationItemList
+	{
+		$$ = $2
+	}
+
+SignalInformationItemList:
+	SignalInformationItemName eq SignalAllowedExpr
+	{
+		$$ = []*ast.SignalInfo{{Name: $1.(int), Value: $3}}
+	}
+|	SignalInformationItemList ',' SignalInformationItemName eq SignalAllowedExpr
+	{
+		l := $1.([]*ast.SignalInfo)
+		l = append(l, &ast.SignalInfo{Name: $3.(int), Value: $5})
+		$$ = l
+	}
+
+SignalAllowedExpr:
+	Literal
+|	Variable
+|	SimpleIdent
+
+SignalInformationItemName:
+	"CLASS_ORIGIN"
+	{
+		$$ = ast.TICLASSORIGIN
+	}
+|	"SUBCLASS_ORIGIN"
+	{
+		$$ = ast.TISUBCLASSORIGIN
+	}
+|	"CONSTRAINT_CATALOG"
+	{
+		$$ = ast.TICONSTRAINTCATALOG
+	}
+|	"CONSTRAINT_SCHEMA"
+	{
+		$$ = ast.TICONSTRAINTSCHEMA
+	}
+|	"CONSTRAINT_NAME"
+	{
+		$$ = ast.TICONSTRAINTNAME
+	}
+|	"CATALOG_NAME"
+	{
+		$$ = ast.TICATALOGNAME
+	}
+|	"SCHEMA_NAME"
+	{
+		$$ = ast.TISCHEMANAME
+	}
+|	"TABLE_NAME"
+	{
+		$$ = ast.TITABLENAME
+	}
+|	"COLUMN_NAME"
+	{
+		$$ = ast.TICOLUMNNAME
+	}
+|	"CURSOR_NAME"
+	{
+		$$ = ast.TICURSORNAME
+	}
+|	"MESSAGE_TEXT"
+	{
+		$$ = ast.TIMESSAGETEXT
+	}
+|	"MYSQL_ERRNO"
+	{
+		$$ = ast.TIMYSQLERRNO
+	}
+
+GetDiagnosticsStmt:
+	"GET" DiagnosticsArea "DIAGNOSTICS" DiagnosticsInformation
+	{
+		$$ = &ast.GetDiagnosticsStmt{
+			Area:   $2.(int),
+			Infors: $4.([]ast.DiagnosticsInformation),
+		}
+	}
+
+DiagnosticsInformation:
+	StatementInformationList
+	{
+		$$ = $1.([]ast.DiagnosticsInformation)
+	}
+|	"CONDITION" ConditionNumber ConditionInformationList
+	{
+		$$ = []ast.DiagnosticsInformation{&ast.DiagnosticsConds{
+			Num:   $2.(ast.ExprNode),
+			Conds: $3.([]*ast.ConditionInfoItem)},
+		}
+	}
+
+StatementInformationList:
+	StatementInformation
+	{
+		$$ = []ast.DiagnosticsInformation{$1.(ast.DiagnosticsInformation)}
+	}
+|	StatementInformationList ',' StatementInformation
+	{
+		l := $1.([]ast.DiagnosticsInformation)
+		$$ = append(l, $3.(ast.DiagnosticsInformation))
+	}
+
+StatementInformation:
+	singleAtIdentifier eq StatementInformationItemName
+	{
+		$$ = &ast.StatementInfoItem{
+			Name:       strings.ToLower(strings.TrimPrefix($1, "@")),
+			IsVariable: true,
+			Condition:  $3.(int),
+		}
+	}
+|	Identifier eq StatementInformationItemName
+	{
+		$$ = &ast.StatementInfoItem{
+			Name:       strings.ToLower($1),
+			IsVariable: false,
+			Condition:  $3.(int),
+		}
+	}
+
+ConditionInformationList:
+	ConditionInformation
+	{
+		$$ = []*ast.ConditionInfoItem{$1.(*ast.ConditionInfoItem)}
+	}
+|	ConditionInformationList ',' ConditionInformation
+	{
+		l := $1.([]*ast.ConditionInfoItem)
+		$$ = append(l, $3.(*ast.ConditionInfoItem))
+	}
+
+ConditionInformation:
+	singleAtIdentifier eq DiagnosticsInformationItemName
+	{
+		$$ = &ast.ConditionInfoItem{
+			Name:       strings.ToLower(strings.TrimPrefix($1, "@")),
+			IsVariable: true,
+			Condition:  $3.(int),
+		}
+	}
+|	Identifier eq DiagnosticsInformationItemName
+	{
+		$$ = &ast.ConditionInfoItem{
+			Name:       strings.ToLower($1),
+			IsVariable: false,
+			Condition:  $3.(int),
+		}
+	}
+
+StatementInformationItemName:
+	"NUMBER"
+	{
+		$$ = ast.TINUMBER
+	}
+|	"ROW_COUNT"
+	{
+		$$ = ast.TIROWCOUNT
+	}
+
+ConditionNumber:
+	SignalAllowedExpr
+
+DiagnosticsArea:
+	{
+		$$ = ast.TICURRENT
+	}
+|	"CURRENT"
+	{
+		$$ = ast.TICURRENT
+	}
+|	"STACKED"
+	{
+		$$ = ast.TISTACKED
+	}
+
+DiagnosticsInformationItemName:
+	"CLASS_ORIGIN"
+	{
+		$$ = ast.TICLASSORIGIN
+	}
+|	"SUBCLASS_ORIGIN"
+	{
+		$$ = ast.TISUBCLASSORIGIN
+	}
+|	"CONSTRAINT_CATALOG"
+	{
+		$$ = ast.TICONSTRAINTCATALOG
+	}
+|	"CONSTRAINT_SCHEMA"
+	{
+		$$ = ast.TICONSTRAINTSCHEMA
+	}
+|	"CONSTRAINT_NAME"
+	{
+		$$ = ast.TICONSTRAINTNAME
+	}
+|	"CATALOG_NAME"
+	{
+		$$ = ast.TICATALOGNAME
+	}
+|	"SCHEMA_NAME"
+	{
+		$$ = ast.TISCHEMANAME
+	}
+|	"TABLE_NAME"
+	{
+		$$ = ast.TITABLENAME
+	}
+|	"COLUMN_NAME"
+	{
+		$$ = ast.TICOLUMNNAME
+	}
+|	"CURSOR_NAME"
+	{
+		$$ = ast.TICURSORNAME
+	}
+|	"MESSAGE_TEXT"
+	{
+		$$ = ast.TIMESSAGETEXT
+	}
+|	"MYSQL_ERRNO"
+	{
+		$$ = ast.TIMYSQLERRNO
+	}
+|	"RETURNED_SQLSTATE"
+	{
+		$$ = ast.TIRETURNEDSQLSTATE
 	}
 %%

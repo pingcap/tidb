@@ -1577,6 +1577,8 @@ func (cc *clientConn) writeError(ctx context.Context, e error) error {
 		switch y := e.(type) {
 		case *terror.Error:
 			m = terror.ToSQLError(y)
+		case *terror.TiDBError:
+			m = &mysql.SQLError{Code: uint16(y.MYSQLERRNO), Message: y.MESSAGETEXT, State: y.SQLSTATE}
 		default:
 			m = mysql.NewErrf(mysql.ErrUnknown, "%s", nil, e.Error())
 		}
