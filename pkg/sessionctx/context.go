@@ -17,13 +17,10 @@ package sessionctx
 import (
 	"context"
 	"fmt"
-	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -217,44 +214,8 @@ const (
 )
 
 // ValidateSnapshotReadTS strictly validates that readTS does not exceed the PD timestamp
-func ValidateSnapshotReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	latestTS, err := sctx.GetStore().GetOracle().GetLowResolutionTimestamp(ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
-	// If we fail to get latestTS or the readTS exceeds it, get a timestamp from PD to double check
-	if err != nil || readTS > latestTS {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		if readTS > currentVer.Ver {
-			return errors.Errorf("cannot set read timestamp to a future time")
-		}
-	}
-	return nil
-}
-
-// How far future from now ValidateStaleReadTS allows at most
-const allowedTimeFromNow = 100 * time.Millisecond
-
-// ValidateStaleReadTS validates that readTS does not exceed the current time not strictly.
-func ValidateStaleReadTS(ctx context.Context, sctx Context, readTS uint64) error {
-	currentTS, err := sctx.GetSessionVars().StmtCtx.GetStaleTSO()
-	if currentTS == 0 || err != nil {
-		currentTS, err = sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	}
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD
-	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate read timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
-	}
-	if oracle.GetTimeFromTS(readTS).After(oracle.GetTimeFromTS(currentTS).Add(allowedTimeFromNow)) {
-		return errors.Errorf("cannot set read timestamp to a future time")
-	}
-	return nil
+func ValidateSnapshotReadTS(ctx context.Context, store kv.Storage, readTS uint64) error {
+	return store.GetOracle().ValidateSnapshotReadTS(ctx, readTS, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 }
 
 // SysProcTracker is used to track background sys processes
