@@ -2133,7 +2133,7 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 		{"set password for test = 'test2'", false},
 		{"show create user test", false},
 		{"create user test1", false},
-		{"show grants", false},
+		{"show grants", true},
 		{"show grants for 'test'@'%'", true},
 	}
 
