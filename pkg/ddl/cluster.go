@@ -663,7 +663,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
+<<<<<<< HEAD
 		if err = savePDSchedule(job); err != nil {
+=======
+		if err = savePDSchedule(w.workCtx, args); err != nil {
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -695,18 +699,30 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
+<<<<<<< HEAD
 		if err = checkAndSetFlashbackClusterInfo(sess, d, t, job, flashbackTS); err != nil {
+=======
+		if err = checkAndSetFlashbackClusterInfo(w.workCtx, sess, jobCtx.store, jobCtx.metaMut, job, args.FlashbackTS); err != nil {
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
+<<<<<<< HEAD
 		startTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+=======
+		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		job.Args[startTSOffset] = startTS
 		keyRanges, err = GetFlashbackKeyRanges(sess, flashbackTS)
+=======
+		keyRanges, err := getFlashbackKeyRanges(w.workCtx, sess, args.FlashbackTS)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -721,10 +737,17 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return updateSchemaVersion(d, t, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
+<<<<<<< HEAD
 		splitRegionsByKeyRanges(d, keyRanges)
 		totalRegions.Store(0)
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
+=======
+		splitRegionsByKeyRanges(w.workCtx, jobCtx.store, args.FlashbackKeyRanges)
+		totalRegions.Store(0)
+		for _, r := range args.FlashbackKeyRanges {
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
@@ -737,7 +760,11 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.Args[totalLockedRegionsOffset] = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
+<<<<<<< HEAD
 		commitTS, err = d.store.GetOracle().GetTimestamp(d.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+=======
+		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -754,8 +781,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 			return ver, nil
 		}
 
+<<<<<<< HEAD
 		for _, r := range keyRanges {
 			if err = flashbackToVersion(d.ctx, d,
+=======
+		for _, r := range args.FlashbackKeyRanges {
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
@@ -799,27 +831,52 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	}
 	defer w.sessPool.Put(sess)
 
+<<<<<<< HEAD
 	err = kv.RunInNewTxn(w.ctx, w.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		if err = recoverPDSchedule(pdScheduleValue); err != nil {
 			return err
+=======
+	err = kv.RunInNewTxn(w.workCtx, w.store, true, func(context.Context, kv.Transaction) error {
+		if err = recoverPDSchedule(w.ctx, args.PDScheduleValue); err != nil {
+			return errors.Trace(err)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		}
 		if gcEnabled {
 			if err = gcutil.EnableGC(sess); err != nil {
 				return err
 			}
 		}
+<<<<<<< HEAD
 		if err = setTiDBSuperReadOnly(w.ctx, sess, readOnlyValue); err != nil {
 			return err
+=======
+
+		if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBSuperReadOnly, args.SuperReadOnly); err != nil {
+			return errors.Trace(err)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		}
 
 		if job.IsCancelled() {
 			// only restore `tidb_ttl_job_enable` when flashback failed
+<<<<<<< HEAD
 			if err = setTiDBTTLJobEnable(w.ctx, sess, ttlJobEnableValue); err != nil {
 				return err
 			}
 		}
 
 		return setTiDBEnableAutoAnalyze(w.ctx, sess, autoAnalyzeValue)
+=======
+			if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBTTLJobEnable, args.EnableTTLJob); err != nil {
+				return errors.Trace(err)
+			}
+		}
+
+		if err := setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBEnableAutoAnalyze, args.EnableAutoAnalyze); err != nil {
+			return errors.Trace(err)
+		}
+
+		return nil
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	})
 	if err != nil {
 		return err

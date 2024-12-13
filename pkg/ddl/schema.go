@@ -340,7 +340,11 @@ func (w *worker) onRecoverSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 				// force disable TTL job schedule for recovered table
 				recoverInfo.TableInfo.TTLInfo.Enable = false
 			}
+<<<<<<< HEAD
 			ver, err = w.recoverTable(t, job, recoverInfo)
+=======
+			ver, err = w.recoverTable(jobCtx.stepCtx, jobCtx.metaMut, job, recoverInfo)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			if err != nil {
 				return ver, errors.Trace(err)
 			}

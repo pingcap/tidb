@@ -40,7 +40,6 @@ func TestMain(m *testing.M) {
 	domain.SchemaOutOfDateRetryTimes.Store(50)
 
 	autoid.SetStep(5000)
-	ddl.ReorgWaitTimeout = 30 * time.Millisecond
 	ddl.CheckBackfillJobFinishInterval = 50 * time.Millisecond
 	ddl.RunInGoTest = true
 	ddl.SetBatchInsertDeleteRangeSize(2)

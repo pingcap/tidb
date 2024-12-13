@@ -18,7 +18,11 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
 	ddlctrl "github.com/pingcap/tidb/pkg/ddl"
+=======
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -34,9 +38,14 @@ func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.Tes
 	stmtKit := testkit.NewTestKit(t, store)
 	adminCommandKit := testkit.NewTestKit(t, store)
 
+<<<<<<< HEAD
 	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
 	stmtKit.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
 	stmtKit.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+=======
+	stmtKit.MustExec("set @@tidb_ddl_reorg_batch_size = 2")
+	stmtKit.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	stmtKit = testkit.NewTestKit(t, store)
 	stmtKit.MustExec("use test")
 

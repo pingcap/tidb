@@ -64,7 +64,12 @@ func (w *worker) onCreateForeignKey(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		job.SchemaState = model.StateWriteOnly
 		return ver, nil
 	case model.StateWriteOnly:
+<<<<<<< HEAD
 		err = checkForeignKeyConstrain(w, job.SchemaName, tblInfo.Name.L, &fkInfo, fkCheck)
+=======
+		delayForAsyncCommit()
+		err = checkForeignKeyConstrain(jobCtx.stepCtx, w, job.SchemaName, tblInfo.Name.L, fkInfo, fkCheck)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			job.State = model.JobStateRollingback
 			return ver, err
@@ -226,7 +231,11 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 		if fk.RefSchema.L == job.SchemaName && fk.RefTable.L == tbInfo.Name.L {
 			referTableInfo = tbInfo
 		} else {
+<<<<<<< HEAD
 			referTable, err := is.TableByName(fk.RefSchema, fk.RefTable)
+=======
+			referTable, err := is.TableByName(jobCtx.stepCtx, fk.RefSchema, fk.RefTable)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 			if err != nil {
 				if !fkCheck && (infoschema.ErrTableNotExists.Equal(err) || infoschema.ErrDatabaseNotExists.Equal(err)) {
 					continue
@@ -243,7 +252,11 @@ func checkTableForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, job *model.Job, t
 	}
 	referredFKInfos := is.GetTableReferredForeignKeys(job.SchemaName, tbInfo.Name.L)
 	for _, referredFK := range referredFKInfos {
+<<<<<<< HEAD
 		childTable, err := is.TableByName(referredFK.ChildSchema, referredFK.ChildTable)
+=======
+		childTable, err := is.TableByName(jobCtx.stepCtx, referredFK.ChildSchema, referredFK.ChildTable)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 		if err != nil {
 			return false, err
 		}
@@ -609,11 +622,16 @@ func checkDatabaseHasForeignKeyReferredInOwner(d *ddlCtx, t *meta.Meta, job *mod
 	if !fkCheck {
 		return nil
 	}
+<<<<<<< HEAD
 	is, err := getAndCheckLatestInfoSchema(d, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	err = checkDatabaseHasForeignKeyReferred(is, model.NewCIStr(job.SchemaName), fkCheck)
+=======
+	is := jobCtx.infoCache.GetLatest()
+	err = checkDatabaseHasForeignKeyReferred(jobCtx.stepCtx, is, pmodel.NewCIStr(job.SchemaName), fkCheck)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	if err != nil {
 		job.State = model.JobStateCancelled
 	}
@@ -669,7 +687,13 @@ func checkAddForeignKeyValidInOwner(d *ddlCtx, t *meta.Meta, schema string, tbIn
 	return nil
 }
 
-func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKInfo, fkCheck bool) error {
+func checkForeignKeyConstrain(
+	ctx context.Context,
+	w *worker,
+	schema, table string,
+	fkInfo *model.FKInfo,
+	fkCheck bool,
+) error {
 	if !fkCheck {
 		return nil
 	}
@@ -717,7 +741,16 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 	}
 	buf.WriteString(" from %n.%n ) limit 1")
 	paramsList = append(paramsList, fkInfo.RefSchema.L, fkInfo.RefTable.L)
+<<<<<<< HEAD
 	rows, _, err := sctx.(sqlexec.RestrictedSQLExecutor).ExecRestrictedSQL(w.ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, buf.String(), paramsList...)
+=======
+	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(
+		ctx,
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		buf.String(),
+		paramsList...,
+	)
+>>>>>>> 4c1979ae128 (ddl: job context will be canceled when cancel or pause job (#56404))
 	if err != nil {
 		return errors.Trace(err)
 	}
