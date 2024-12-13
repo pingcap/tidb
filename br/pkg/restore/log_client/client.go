@@ -217,8 +217,8 @@ type LogClient struct {
 	// checkpoint information for log restore
 	useCheckpoint bool
 
-	logFilesStat *logFilesStatistic
-	restoreStat  *restoreStatistic
+	logFilesStat logFilesStatistic
+	restoreStat  restoreStatistic
 }
 
 type restoreStatistic struct {
@@ -595,8 +595,8 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 	if err != nil {
 		return err
 	}
-	rc.logFilesStat = new(logFilesStatistic)
-	rc.LogFileManager.Stats = rc.logFilesStat
+	rc.logFilesStat = logFilesStatistic{}
+	rc.LogFileManager.Stats = &rc.logFilesStat
 	return nil
 }
 

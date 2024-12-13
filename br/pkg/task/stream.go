@@ -1163,7 +1163,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 	if !cfg.LocalEncryptionEnabled() {
 		return errors.Annotate(baseErr, "the data you want to restore is encrypted, they cannot be copied to the log storage")
 	}
-	if task.Info.SecurityConfig != nil {
+	if task.Info.GetSecurityConfig().GetEncryption() != nil {
 		return errors.Annotate(baseErr, "the running log backup task is encrypted, the data copied to the log storage cannot work")
 	}
 	return nil
@@ -1494,7 +1494,7 @@ func restoreStream(
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
 	totalWorkUnits := numberOfKVsInSST + int64(client.Stats.NumEntries)
-	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", totalWorkUnits, !cfg.LogProgress)
+	pd := g.StartProgress(ctx, "Restore Files(SST + Log)", totalWorkUnits, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
