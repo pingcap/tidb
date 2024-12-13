@@ -283,11 +283,12 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema,
+	colGroups [][]*expression.Column, inMemo bool) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	if p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema, inMemo)
 		return p.StatsInfo(), nil
 	}
 	p.SetStats(&property.StatsInfo{
@@ -298,7 +299,7 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema, inMemo)
 	return p.StatsInfo(), nil
 }
 
@@ -535,8 +536,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema, inMemo bool) []property.GroupNDV {
+	if (len(colGroups) == 0 && !inMemo) || len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
 	exprCol2ProjCol := make(map[int64]int64)

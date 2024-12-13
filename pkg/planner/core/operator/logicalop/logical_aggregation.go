@@ -222,7 +222,8 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema,
+	colGroups [][]*expression.Column, inMemo bool) (*property.StatsInfo, error) {
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
@@ -231,7 +232,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 	}
 	if la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
+		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols, inMemo)
 		return la.StatsInfo(), nil
 	}
 	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(gbyCols, childSchema[0], childProfile)
@@ -244,7 +245,7 @@ func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, self
 		la.StatsInfo().ColNDVs[col.UniqueID] = ndv
 	}
 	la.InputCount = childProfile.RowCount
-	la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols)
+	la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childProfile, gbyCols, inMemo)
 	return la.StatsInfo(), nil
 }
 
@@ -715,10 +716,13 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	return true
 }
 
-func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column) []property.GroupNDV {
-	if len(colGroups) == 0 {
+func (*LogicalAggregation) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, gbyCols []*expression.Column, inMemo bool) []property.GroupNDV {
+	if len(colGroups) == 0 && !inMemo {
+		// previously, if parent doesn't ask for column groups, we don't maintain the group ndv info in leaves.
 		return nil
 	}
+	// now, both the way, we do maintain the group ndv bottom up: colGroups is not 0, or we are in memo.
+	//
 	// Check if the child profile provides GroupNDV for the GROUP BY columns.
 	// Note that gbyCols may not be the exact GROUP BY columns, e.g, GROUP BY a+b,
 	// but we have no other approaches for the NDV estimation of these cases

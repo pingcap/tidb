@@ -15,12 +15,14 @@
 package core
 
 import (
+	"fmt"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"strings"
 )
 
 // columnStatsUsageCollector collects predicate columns and/or histogram-needed columns from logical plan.
@@ -45,6 +47,9 @@ type columnStatsUsageCollector struct {
 	colMap map[int64]map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
+	// previously we pass down the parent operator's colum group info down to datasource to call for group ndv maintenance bottom-up. for now
+	// we collect this kind of "signal" in the columnStatsUsageCollector as well as stats, which will make derive stats interface more clear.
+	tableID2ColGroups map[int64][][]*expression.Column
 
 	// visitedPhysTblIDs all ds.PhysicalTableID that have been visited.
 	// It's always collected, even collectHistNeededColumns is not set.
@@ -68,6 +73,7 @@ func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *col
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
 		tblID2PartitionIDs: make(map[int64][]int64),
+		tableID2ColGroups:  make(map[int64][][]*expression.Column),
 	}
 	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
@@ -126,7 +132,7 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, c.cols)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		return
@@ -145,6 +151,20 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
 	}
+	// record the asked column group specific for each datasource table, which will be checked and converted to index needed in collectSyncIndices.
+	for _, group := range askedColGroups {
+		inTable := true
+		for _, col := range group {
+			if !ds.Schema().Contains(col) {
+				inTable = false
+			}
+		}
+		if inTable {
+			// only store the right col group in this table.
+			c.tableID2ColGroups[tblID] = append(c.tableID2ColGroups[tblID], group)
+		}
+	}
+	ds.AskedColumnGroup = c.tableID2ColGroups[tblID]
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
 }
@@ -185,18 +205,24 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
+// collectFromPlan will dive into the tree to collect base column stats usage, in this process
+// we also make the use of the dive process down to passing the parent operator's column groups
+// requirement to notify the underlying datasource to maintain the possible group ndv.
+func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
+	// derive the new current op's new asked column groups accordingly.
+	curColGroups := lp.ExtractColGroups(askedColGroups)
 	for _, child := range lp.Children() {
-		c.collectFromPlan(child)
+		// passing the new asked column groups down.
+		c.collectFromPlan(curColGroups, child)
 	}
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
-		c.collectPredicateColumnsForDataSource(x)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x)
 	case *logicalop.LogicalIndexScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.
@@ -253,9 +279,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
 		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-		c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
+		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan)
 		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
+			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan)
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns
@@ -293,16 +319,21 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // First return value: predicate columns
 // Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
 // Third return value: the visited partition IDs. Used for static partition pruning.
+// Forth return value: the recorded asked column group for each datasource table, which will require collecting composite index for it's group ndv info.
 // TODO: remove the third return value when the static partition pruning is totally deprecated.
 func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
+	map[int64][][]*expression.Column,
 ) {
+	if strings.HasPrefix(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b") {
+		fmt.Println(1)
+	}
 	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(lp)
+	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.tableID2ColGroups
 }
