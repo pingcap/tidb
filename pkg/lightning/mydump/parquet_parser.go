@@ -788,15 +788,15 @@ func NewParquetParser(
 	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
 	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
-		newWrapper, err := wrapper.Open("")
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
+		// TODO(joechenrh): fix memory usage later
+		// newWrapper, err := wrapper.Open("")
+		// if err != nil {
+		// 	return nil, errors.Trace(err)
+		// }
+		// reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+		// if err != nil {
+		// 	return nil, errors.Trace(err)
+		// }
 		subreaders = append(subreaders, reader)
 	}
 
