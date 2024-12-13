@@ -1322,6 +1322,12 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
+		if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp == SelectIntoVars {
+			ctx.WritePlain(" ")
+			if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+			}
+		}
 
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
@@ -1448,7 +1454,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.SelectIntoOpt != nil {
+	if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp == SelectIntoOutfile {
 		ctx.WritePlain(" ")
 		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
@@ -1477,6 +1483,14 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*SelectStmt)
+
+	if n.SelectIntoOpt != nil {
+		node, ok := n.SelectIntoOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SelectIntoOpt = node.(*SelectIntoOption)
+	}
 
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
@@ -3629,26 +3643,48 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// VarList used for `SELECT ... INTO @var_list`.
+	VarList          []ExprNode
+	ProcedureVarList []ExprNode
 }
 
 // Restore implements Node interface.
 func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp != SelectIntoOutfile {
+	if n.Tp == SelectIntoOutfile {
+		ctx.WriteKeyWord("INTO OUTFILE ")
+		ctx.WriteString(n.FileName)
+		if n.FieldsInfo != nil {
+			if err := n.FieldsInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+			}
+		}
+		if n.LinesInfo != nil {
+			if err := n.LinesInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+			}
+		}
+	} else if n.Tp == SelectIntoVars {
+		if len(n.VarList) > 0 && len(n.ProcedureVarList) > 0 {
+			return errors.New("An error occurred while restore SelectIntoOption. " +
+				"User defined variables and procedure local variables can't be in one select into statement")
+		}
+		var intoVars []ExprNode
+		intoVars = append(intoVars, n.VarList...)
+		intoVars = append(intoVars, n.ProcedureVarList...)
+		if len(intoVars) > 0 {
+			ctx.WriteKeyWord("INTO ")
+			for i, val := range intoVars {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				if err := val.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore SelectIntoOption")
+				}
+			}
+		}
+	} else {
 		// only support SELECT/TABLE/VALUES ... INTO OUTFILE statement now
 		return errors.New("Unsupported SelectionInto type")
-	}
-
-	ctx.WriteKeyWord("INTO OUTFILE ")
-	ctx.WriteString(n.FileName)
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
-		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
-		}
 	}
 	return nil
 }
@@ -3658,6 +3694,14 @@ func (n *SelectIntoOption) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
+	}
+	n = newNode.(*SelectIntoOption)
+	for i, val := range n.VarList {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.VarList[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
 }

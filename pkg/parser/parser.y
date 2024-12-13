@@ -58,6 +58,7 @@ import (
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	intoOutfile          "INTO OUTFILE"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -1341,6 +1342,8 @@ import (
 	SelectStmtFromTable                    "SELECT statement from table"
 	SelectStmtGroup                        "SELECT statement optional GROUP BY clause"
 	SelectStmtIntoOption                   "SELECT statement into clause"
+	SelectStmtIntoVars                     "SELECT statement into variables"
+	SelectIntoProcedureVarIdentifier       "SELECT into procedure variables identifier"
 	SequenceOption                         "Create sequence option"
 	SequenceOptionList                     "Create sequence option list"
 	SetRoleOpt                             "Set role options"
@@ -9478,6 +9481,43 @@ SelectStmt:
 		}
 		$$ = st
 	}
+|	SelectStmtBasic SelectStmtIntoVars "FROM" TableRefsClause WhereClauseOptional SelectStmtGroup HavingClause WindowClauseOptional OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-8])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		}
+		if $2 != nil {
+			st.SelectIntoOpt = $2.(*ast.SelectIntoOption)
+		}
+		if $4 != nil {
+			st.From = $4.(*ast.TableRefsClause)
+		}
+		if $5 != nil {
+			st.Where = $5.(ast.ExprNode)
+		}
+		if $6 != nil {
+			st.GroupBy = $6.(*ast.GroupByClause)
+		}
+		if $7 != nil {
+			st.Having = $7.(*ast.HavingClause)
+		}
+		if $8 != nil {
+			st.WindowSpecs = ($8.([]ast.WindowSpec))
+		}
+		if $9 != nil {
+			st.OrderBy = $9.(*ast.OrderByClause)
+		}
+		if $10 != nil {
+			st.Limit = $10.(*ast.Limit)
+		}
+		if $11 != nil {
+			st.LockInfo = $11.(*ast.SelectLockInfo)
+		}
+		$$ = st
+	}
 |	"TABLE" TableName OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := &ast.SelectStmt{
@@ -10350,19 +10390,57 @@ SelectStmtIntoOption:
 	{
 		$$ = nil
 	}
-|	"INTO" "OUTFILE" stringLit Fields Lines
+|	intoOutfile stringLit Fields Lines
 	{
 		x := &ast.SelectIntoOption{
 			Tp:       ast.SelectIntoOutfile,
-			FileName: $3,
+			FileName: $2,
+		}
+		if $3 != nil {
+			x.FieldsInfo = $3.(*ast.FieldsClause)
 		}
 		if $4 != nil {
-			x.FieldsInfo = $4.(*ast.FieldsClause)
-		}
-		if $5 != nil {
-			x.LinesInfo = $5.(*ast.LinesClause)
+			x.LinesInfo = $4.(*ast.LinesClause)
 		}
 
+		$$ = x
+	}
+
+SelectIntoProcedureVarIdentifier:
+	Identifier
+	{
+		idf := &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Name: model.NewCIStr($1),
+			},
+		}
+		$$ = []ast.ExprNode{idf}
+	}
+|	SelectIntoProcedureVarIdentifier ',' Identifier
+	{
+		idf := &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Name: model.NewCIStr($3),
+			},
+		}
+		$$ = append($1.([]ast.ExprNode), idf)
+	}
+
+SelectStmtIntoVars:
+	"INTO" UserVariableList
+	{
+		x := &ast.SelectIntoOption{
+			Tp: ast.SelectIntoVars,
+		}
+		x.VarList = $2.([]ast.ExprNode)
+		$$ = x
+	}
+|   "INTO" SelectIntoProcedureVarIdentifier
+	{
+		x := &ast.SelectIntoOption{
+			Tp: ast.SelectIntoVars,
+		}
+		x.ProcedureVarList = $2.([]ast.ExprNode)
 		$$ = x
 	}
 

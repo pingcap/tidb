@@ -5557,6 +5557,9 @@ func (b *PlanBuilder) buildSelectInto(ctx context.Context, sel *ast.SelectStmt) 
 	}
 	nodeW := resolve.NewNodeWWithCtx(sel, b.resolveCtx)
 	targetPlan, _, err := OptimizeAstNode(ctx, sctx, nodeW, b.is)
+	if selectIntoInfo.Tp == ast.SelectIntoVars {
+		sel.SelectIntoOpt = selectIntoInfo
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -99,7 +99,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		*ast.AlterProcedureStmt, *ast.DropProcedureStmt, *ast.Signal, *ast.GetDiagnosticsStmt:
 		return nil, nil, 0, plannererrors.ErrUnsupportedPs
 	case *ast.SelectStmt:
-		if stmt.SelectIntoOpt != nil {
+		if stmt.SelectIntoOpt != nil && stmt.SelectIntoOpt.Tp == ast.SelectIntoOutfile {
 			return nil, nil, 0, plannererrors.ErrUnsupportedPs
 		}
 	}
