@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"testing"
@@ -218,4 +219,26 @@ func TestUpdateRowRetryAndThenDupKey(t *testing.T) {
 	// Should only a dup-key warning and the row 1 is not updated.
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2' for key 't.u'"))
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows("1 1", "2 2"))
+}
+
+func TestOptimisticUpdateLazyCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewSteppedTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int primary key, u int unique)")
+	tk.MustExec("insert into t values(1, 1)")
+
+	tk.MustExec("set session tidb_constraint_check_in_place=off")
+
+	getExplainResult := func(res *testkit.Result) string {
+		resBuff := bytes.NewBufferString("")
+		for _, row := range res.Rows() {
+			_, _ = fmt.Fprintf(resBuff, "%s\t", row)
+		}
+		return resBuff.String()
+	}
+
+	res := tk.MustQuery("explain analyze update t set id = id + 10000")
+	explainResult := getExplainResult(res)
+	require.NotRegexp(t, "Update.* Get:{num_rpc:.*, total_time:.*}.*", explainResult)
 }

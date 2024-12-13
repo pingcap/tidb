@@ -241,7 +241,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	// Though it is in an insert statement, `ON DUP KEY UPDATE` follows the dup-key check behavior of update.
 	// For example, it will ignore variable `tidb_constraint_check_in_place`, see the test case:
 	// https://github.com/pingcap/tidb/blob/3117d3fae50bbb5dabcde7b9589f92bfbbda5dc6/pkg/executor/test/writetest/write_test.go#L419-L426
-	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.ignoreErr)
+	updateDupKeyCheck := optimizeDupKeyCheckForUpdate(e.Ctx().GetSessionVars(), txn, e.ignoreErr, false)
 	// Do not use `updateDupKeyCheck` for `AddRecord` because it is not optimized for insert.
 	// It seems that we can just use `DupKeyCheckSkip` here because all constraints are checked.
 	// But we still use `optimizeDupKeyCheckForNormalInsert` to make the refactor same behavior with the original code.
