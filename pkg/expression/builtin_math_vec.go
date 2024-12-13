@@ -561,7 +561,6 @@ func (b *builtinRoundWithFracRealSig) vectorized() bool {
 	return true
 }
 
-// TODO add test
 func (b *builtinTruncateRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
