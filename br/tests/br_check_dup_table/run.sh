@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2019 PingCAP, Inc.
+# Copyright 2024 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -53,12 +53,16 @@ fi
 
 # restore db again
 echo "restore start..."
-LOG_OUTPUT=$(run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1)
+LOG_OUTPUT=$(run_br restore db --db "$DB" -s "local://$TEST_DIR/$DB" --pd "$PD_ADDR" 2>&1 || true)
 
 # Check if the log contains 'ErrTableAlreadyExisted'
-if ! echo "$LOG_OUTPUT" | grep -q "ErrTableAlreadyExisted"; then
+if ! echo "$LOG_OUTPUT" | grep -q "BR:Restore:ErrTablesAlreadyExisted"; then
     echo "Error: 'ErrTableAlreadyExisted' not found in logs."
     echo "Log output:"
     echo "$LOG_OUTPUT"
     exit 1
+else
+    echo "restore failed as expect" 
 fi
+
+run_sql "DROP DATABASE $DB;"
