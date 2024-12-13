@@ -3163,13 +3163,15 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 	writeColOffsetMap := make(map[int64]int, len(partColIDs))
 	maxOffset := 0
 	for _, id := range partColIDs {
+		var offset int
 		for _, col := range pt.Cols() {
 			if col.ID == id {
-				writeColOffsetMap[id] = col.Offset
-				maxOffset = mathutil.Max[int](maxOffset, col.Offset)
+				offset = col.Offset
 				break
 			}
 		}
+		writeColOffsetMap[id] = offset
+		maxOffset = mathutil.Max[int](maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
 		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false),
