@@ -63,13 +63,20 @@ func (c *pitrCollector) close() error {
 	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if summary.OnceSucceed() {
-		return errors.Annotate(c.commit(cx), "failed to commit pitrCollector")
+	if !summary.Succeed() {
+		log.Warn("Backup not success, put a half-finished metadata to the log backup.",
+			zap.Stringer("uuid", c.restoreUUID))
+		return errors.Annotatef(c.persistExtraBackupMeta(cx), "failed to persist the meta")
 	}
 
-	log.Warn("Backup not success, put a half-finished metadata to the log backup.",
-		zap.Stringer("uuid", c.restoreUUID))
-	return errors.Annotatef(c.persistExtraBackupMeta(cx), "failed to persist the meta")
+	commitTS, err := c.commit(cx)
+	if err != nil {
+		return errors.Annotate(err, "failed to commit pitrCollector")
+	}
+	log.Info("Log backup SSTs are committed.",
+		zap.Uint64("commitTS", commitTS), zap.String("committedTo", c.outputPath()))
+	return nil
+
 }
 
 func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) error {
@@ -226,14 +233,14 @@ func (c *pitrCollector) prepareMigIfNeeded(ctx context.Context) (err error) {
 	return
 }
 
-func (c *pitrCollector) commit(ctx context.Context) error {
+func (c *pitrCollector) commit(ctx context.Context) (uint64, error) {
 	c.extraBackupMeta.msg.Finished = true
 	ts, err := c.tso(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	c.extraBackupMeta.msg.AsIfTs = ts
-	return c.persistExtraBackupMeta(ctx)
+	return ts, c.persistExtraBackupMeta(ctx)
 }
 
 func (c *pitrCollector) resetCommitting() {

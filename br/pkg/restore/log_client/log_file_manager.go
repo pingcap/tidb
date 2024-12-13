@@ -382,7 +382,7 @@ func (rc *LogFileManager) CountExtraSSTs(ctx context.Context) (int, error) {
 		}
 		count += len(sst.GetSSTs())
 	}
-	return count
+	return count, nil
 }
 
 // the kv entry with ts, the ts is decoded from entry.

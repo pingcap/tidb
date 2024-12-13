@@ -51,8 +51,8 @@ func SetSuccessStatus(success bool) {
 	collector.SetSuccessStatus(success)
 }
 
-// OnceSucceed returns whether a `SetSuccessStatus(true)` was call.
-func OnceSucceed() bool {
+// Succeed returns whether a `SetSuccessStatus(true)` was call.
+func Succeed() bool {
 	return onceSetToSuccess.Load()
 }
 

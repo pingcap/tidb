@@ -1141,13 +1141,31 @@ func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, etcdCLI 
 	if err != nil {
 		return err
 	}
-	exempted := cfg.UserFiltered() && !cfg.LocalEncryptionEnabled()
-	if len(tasks) > 0 && !exempted {
-		return errors.Errorf("log backup task is running: %s, "+
-			"please stop the task before restore, and after PITR operation finished, "+
-			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	for _, task := range tasks {
+		if err := checkTaskCompat(cfg, task); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
+	baseErr := errors.Errorf("log backup task is running: %s, and isn't compatible with your restore."+
+		"You may check the extra information to get rid of this. If that doesn't work, you may "+
+		"stop the task before restore, and after PITR operation finished, "+
+		"create log-backup task again and create a full backup on this cluster.", task.Info.Name)
+	if !cfg.UserFiltered() {
+		return errors.Annotate(baseErr,
+			"you want to restore a whole cluster, you may use `-f` or `restore table|database` to "+
+				"specify the tables to restore to continue")
+	}
+	if !cfg.LocalEncryptionEnabled() {
+		return errors.Annotate(baseErr, "the data you want to restore is encrypted, they cannot be copied to the log storage")
+	}
+	if task.Info.SecurityConfig != nil {
+		return errors.Annotate(baseErr, "the running log backup task is encrypted, the data copied to the log storage cannot work")
+	}
 	return nil
 }
 
