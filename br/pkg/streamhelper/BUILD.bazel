@@ -69,11 +69,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 33,
-=======
-    shard_count = 35,
->>>>>>> e3248e76b56 (log backup: use global checkpoint ts as source of truth (#58135))
+    shard_count = 34,
     deps = [
         ":streamhelper",
         "//br/pkg/errors",
