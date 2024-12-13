@@ -206,6 +206,8 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+	// whether client ip is allowed to connect
+	ipAllowed bool
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -2771,6 +2773,25 @@ func (cc *clientConn) ReadPacket() ([]byte, error) {
 // Flush implements `conn.AuthConn` interface
 func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
+}
+
+// AllowIPConnection return whether the client ip is allowed to connect.
+func (cc *clientConn) AllowIPConnection() bool {
+	// always return true when disable whitelist plugin
+	if !cc.server.cfg.Security.EnableWhiteListPlugin {
+		return true
+	}
+	return cc.ipAllowed
+}
+
+// SetAllowIPConnection set whether the client ip is allowed to connect.
+func (cc *clientConn) SetAllowIPConnection(allowed bool) {
+	// always set true when disable whitelist plugin
+	if !cc.server.cfg.Security.EnableWhiteListPlugin {
+		cc.ipAllowed = true
+		return
+	}
+	cc.ipAllowed = allowed
 }
 
 type compressionStats struct{}

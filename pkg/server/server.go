@@ -700,6 +700,13 @@ func (s *Server) onConn(conn *clientConn) {
 		defer func() {
 			conn.onExtensionConnEvent(extension.ConnDisconnected, nil)
 		}()
+		// ip whitelist plugin
+		if !conn.AllowIPConnection() {
+			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				Error("Host " + conn.peerHost + "is not allowed to connect by whitelist plugin")
+			terror.Log(conn.Close())
+			return
+		}
 	}
 
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)

@@ -617,6 +617,8 @@ type Security struct {
 	AuthTokenRefreshInterval string `toml:"auth-token-refresh-interval" json:"auth-token-refresh-interval"`
 	// Disconnect directly when the password is expired
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
+	// EnableWhiteListPlugin indicate whether enable whitelist plugin
+	EnableWhiteListPlugin bool `toml:"enable-whitelist-plugin" json:"enable-whitelist-plugin"`
 	// TLCP config
 	TLCPCA      string `toml:"tlcp-ca" json:"tlcp-ca"`
 	TLCPSigCert string `toml:"tlcp-sig-cert" json:"tlcp-sig-cert"`
@@ -1061,6 +1063,7 @@ var defaultConf = Config{
 		AuthTokenJWKS:               "",
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 		DisconnectOnExpiredPassword: true,
+		EnableWhiteListPlugin:       false,
 	},
 	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,

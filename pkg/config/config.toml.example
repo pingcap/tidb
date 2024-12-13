@@ -232,6 +232,9 @@ tls-version = ""
 # The RSA Key size for automatic generated RSA keys
 rsa-key-size = 4096
 
+# IP whitelist for client access.
+enable-whitelist-plugin = false
+
 [status]
 # If enable status report HTTP service.
 report-status = true

@@ -616,7 +616,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "5010"))
+		testkit.RowsWithSep("|", "5014"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -663,7 +663,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "81"))
+		testkit.RowsWithSep("|", "82"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -866,22 +866,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"135|add index|public|128|133|t1|synced",
-		"134|create table|public|128|133|t1|synced",
-		"121|add index|public|114|119|t1|synced",
-		"120|create table|public|114|119|t1|synced",
+		"137|add index|public|130|135|t1|synced",
+		"136|create table|public|130|135|t1|synced",
+		"123|add index|public|116|121|t1|synced",
+		"122|create table|public|116|121|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"141|add index|public|128|139|t3|synced",
-		"138|add index|public|128|136|t2|synced",
-		"135|add index|public|128|133|t1|synced",
-		"132|add index|public|128|130|t0|synced",
+		"143|add index|public|130|141|t3|synced",
+		"140|add index|public|130|138|t2|synced",
+		"137|add index|public|130|135|t1|synced",
+		"134|add index|public|130|132|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"127|add index|public|114|125|t3|synced",
-		"126|create table|public|114|125|t3|synced",
+		"129|add index|public|116|127|t3|synced",
+		"128|create table|public|116|127|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -892,15 +892,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"142 add index write only 114 116 t0 running",
+				"144 add index write only 116 118 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"142 add index write only 114 116 t0 running",
+				"144 add index write only 116 118 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"142 add index write only 114 116 t0 running",
+				"144 add index write only 116 118 t0 running",
 			))
 		}
 	})
@@ -916,8 +916,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"151|create table|public|148|150|t1|synced",
-		"146|create table|public|143|145|t1|synced",
+		"153|create table|public|150|152|t1|synced",
+		"148|create table|public|145|147|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.

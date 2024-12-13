@@ -2124,6 +2124,7 @@ type ConnectionInfo struct {
 	DB                string
 	AuthMethod        string
 	Attributes        map[string]string
+	IPInWhiteList     bool
 }
 
 const (

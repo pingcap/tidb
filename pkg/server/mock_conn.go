@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"github.com/pingcap/failpoint"
 	"math/rand"
 	"testing"
 
@@ -48,11 +49,19 @@ type MockConn interface {
 	ID() uint64
 	// GetOutbound replaces the internal outbound endpoint with a empty buffer, and return it
 	GetOutput() *bytes.Buffer
+	// HandleWhiteList handles whitelist.
+	HandleWhiteList() bool
 }
 
 type mockConn struct {
 	*clientConn
 	t *testing.T
+}
+
+// HandleWhiteList implements MockConn.HandleWhiteList
+func (mc *mockConn) HandleWhiteList() bool {
+	mc.onExtensionConnEvent(extension.ConnConnected, nil)
+	return mc.AllowIPConnection()
 }
 
 // HandleQuery implements MockConn.HandleQuery
@@ -100,6 +109,9 @@ func CreateMockServer(t *testing.T, store kv.Storage) *Server {
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	cfg.Security.AutoTLS = false
+	failpoint.Inject("mock-whitelist-config-enabled", func() {
+		cfg.Security.EnableWhiteListPlugin = true
+	})
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
 	dom, err := session.GetDomain(store)
@@ -133,6 +145,10 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 	cc.server.rwlock.Unlock()
 	tc.Session.SetSessionManager(server)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
+	failpoint.Inject("mock-whitelist-connection-host", func(val failpoint.Value) {
+		host := val.(string)
+		tc.Session.GetSessionVars().ConnectionInfo.Host = host
+	})
 	err = tc.Session.Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
 	return &mockConn{

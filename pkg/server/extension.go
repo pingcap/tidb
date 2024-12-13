@@ -58,6 +58,7 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 	}
 
 	cc.extensions.OnConnectionEvent(tp, info)
+	cc.SetAllowIPConnection(info.ConnectionInfo.IPInWhiteList)
 }
 
 func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error, args ...param.BinaryParam) {
