@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -767,6 +768,8 @@ func (t *testEnv) putTask() {
 }
 
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if t.maxTs != maxVersion {
 		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
 	}
@@ -788,6 +791,8 @@ func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersio
 }
 
 func (t *testEnv) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	for _, r := range t.regions {
 		if loc != nil && loc.Region.GetID() == r.id {
 			// reset locks
