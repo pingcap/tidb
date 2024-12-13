@@ -588,18 +588,14 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	ch := jobCtx.oldDDLCtx.ddlEventCh
-	if ch != nil {
-	forLoop:
-		for i := 0; i < 10; i++ {
-			select {
-			case ch <- e:
-				break forLoop
-			default:
-				time.Sleep(time.Microsecond * 10)
-			}
+	// In test environments, we use a channel-based approach to handle DDL events.
+	// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+	// In production, DDL events are handled by the notifier system instead.
+	if intest.InTest {
+		ch := jobCtx.oldDDLCtx.ddlEventCh
+		if ch != nil {
+			ch <- e
 		}
-		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
 	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
