@@ -198,7 +198,7 @@ func TestGoPool(t *testing.T) {
 
 	t.Run("SingleWorker", func(t *testing.T) {
 		clean()
-		pool := &gopool{
+		pool := &workerPool{
 			TolerablePendingTasks: 0,
 			MaxWorkers:            1,
 		}
@@ -223,7 +223,7 @@ func TestGoPool(t *testing.T) {
 
 	t.Run("TwoWorkers", func(t *testing.T) {
 		clean()
-		pool := &gopool{
+		pool := &workerPool{
 			TolerablePendingTasks: 0,
 			MaxWorkers:            2,
 		}
@@ -248,7 +248,7 @@ func TestGoPool(t *testing.T) {
 
 	t.Run("TolerateOnePendingTask", func(t *testing.T) {
 		clean()
-		pool := &gopool{
+		pool := &workerPool{
 			TolerablePendingTasks: 1,
 			MaxWorkers:            2,
 		}
