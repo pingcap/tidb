@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -802,6 +804,12 @@ func bootstrap(s sessiontypes.Session) {
 	}
 }
 
+func getFunctionName(f func(sessiontypes.Session, int64)) string {
+	fullName := runtime.FuncForPC(reflect.ValueOf(f).Pointer()).Name()
+	parts := strings.Split(fullName, ".")
+	return parts[len(parts)-1]
+}
+
 const (
 	// varTrue is the true value in mysql.TiDB table for boolean columns.
 	varTrue = "True"
@@ -1547,7 +1555,16 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		funcName := getFunctionName(upgrade)
+		logutil.BgLogger().Info("upgrade in progress, just start executing a version",
+			zap.Int64("version", ver),
+			zap.String("version-name", funcName),
+			zap.Int64("target-bootstrap-version", currentBootstrapVersion))
 		upgrade(s, ver)
+		logutil.BgLogger().Info("upgrade in progress, just finished executing a version",
+			zap.Int64("version", ver),
+			zap.String("version-name", funcName),
+			zap.Int64("target-bootstrap-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
