@@ -48,7 +48,7 @@ func (t *entry[K, V]) Size() uint64 {
 type Sieve[K comparable, V any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	size   uint64
 	// capacity can be set to zero for disabling infoschema v2
 	capacity uint64
@@ -156,9 +156,12 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 		var v V
 		failpoint.Return(v, false)
 	})
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if e, ok := s.items[key]; ok {
+
+	s.mu.RLock()
+	e, ok := s.items[key]
+	s.mu.RUnlock()
+
+	if ok {
 		e.visited = true
 		s.hook.onHit()
 		return e.value, true

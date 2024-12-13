@@ -15,6 +15,9 @@
 package infoschema
 
 import (
+	"math/rand"
+	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -134,4 +137,44 @@ func TestPurge(t *testing.T) {
 	require.Equal(t, 0, cache.Len())
 
 	cache.Close()
+}
+
+func BenchmarkSieveGet(b *testing.B) {
+	c := newSieve[int, int](8192)
+	ent := make([]int, b.N)
+	for i := 0; i < b.N; i++ {
+		var k int
+		if i%2 == 0 {
+			k = int(rand.Int63() % 16384)
+		} else {
+			k = int(rand.Int63() % 32768)
+		}
+		c.Set(k, k)
+		ent[i] = k
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			v := int(rand.Int63() % 8192)
+			c.Set(v, v)
+			if ctx.Err() != nil {
+				return
+			}
+		}
+	}()
+
+	b.ResetTimer()
+
+	var hit, miss int64
+	for i := 0; i < b.N; i++ {
+		if _, ok := c.Get(ent[i]); ok {
+			atomic.AddInt64(&hit, 1)
+		} else {
+			atomic.AddInt64(&miss, 1)
+		}
+	}
+
+	b.Logf("%d: hit %d, miss %d, ratio %4.2f", b.N, hit, miss, float64(hit)/float64(hit+miss))
+	cancel()
 }
