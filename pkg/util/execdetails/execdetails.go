@@ -739,7 +739,7 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 	e.consume.Add(int64(*summary.TimeProcessedNs))
 	e.rows.Add(int64(*summary.NumProducedRows))
 	e.threads += int32(summary.GetConcurrency())
-	e.totalTasks += 1
+	e.totalTasks++
 	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
 	if tiflashScanContext := summary.GetTiflashScanContext(); tiflashScanContext != nil {
 		var regionsOfInstance map[string]uint64
