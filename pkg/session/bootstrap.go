@@ -1556,15 +1556,11 @@ func upgrade(s sessiontypes.Session) {
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
 		funcName := getFunctionName(upgrade)
-		logutil.BgLogger().Info("upgrade in progress, just start executing a version",
-			zap.Int64("version", ver),
-			zap.String("version-name", funcName),
-			zap.Int64("target-bootstrap-version", currentBootstrapVersion))
 		upgrade(s, ver)
-		logutil.BgLogger().Info("upgrade in progress, just finished executing a version",
-			zap.Int64("version", ver),
-			zap.String("version-name", funcName),
-			zap.Int64("target-bootstrap-version", currentBootstrapVersion))
+		logutil.BgLogger().Info("upgrade in progress, a version has just been completed or be skipped.",
+			zap.Int64("old-start-version", ver),
+			zap.String("in-progress-version", funcName),
+			zap.Int64("latest-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
