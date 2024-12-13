@@ -180,6 +180,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",

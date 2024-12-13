@@ -2449,9 +2449,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
 	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
-	do.wg.Run(func() {
-		do.handleDDLEvent()
-	}, "handleDDLEvent")
 	// Wait for the stats worker to finish the initialization.
 	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
 	do.wg.Run(
@@ -2648,24 +2645,6 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle)
 	case <-timeout.Done():
 		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
 		return
-	}
-}
-
-func (do *Domain) handleDDLEvent() {
-	logutil.BgLogger().Info("handleDDLEvent started.")
-	defer util.Recover(metrics.LabelDomain, "handleDDLEvent", nil, false)
-	statsHandle := do.StatsHandle()
-	for {
-		select {
-		case <-do.exit:
-			return
-			// This channel is sent only by ddl owner.
-		case t := <-statsHandle.DDLEventCh():
-			err := statsHandle.HandleDDLEvent(t)
-			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
-			}
-		}
 	}
 }
 
