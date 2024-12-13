@@ -15,8 +15,8 @@
 package infoschema
 
 import (
-	"math/rand"
 	"context"
+	"math/rand"
 	"sync/atomic"
 	"testing"
 
