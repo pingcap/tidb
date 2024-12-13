@@ -183,6 +183,7 @@ func NewSstRestoreManager(
 
 type LogClient struct {
 	*LogFileManager
+
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
 
@@ -216,10 +217,15 @@ type LogClient struct {
 	// checkpoint information for log restore
 	useCheckpoint bool
 
-	restoreSSTKVSize  atomic.Uint64
-	restoreSSTKVCount atomic.Uint64
-	restoreSSTPhySize atomic.Uint64
-	restoreSSTTakes   atomic.Uint64
+	logFilesStat *logFilesStatistic
+	restoreStat  *restoreStatistic
+}
+
+type restoreStatistic struct {
+	restoreSSTKVSize  uint64
+	restoreSSTKVCount uint64
+	restoreSSTPhySize uint64
+	restoreSSTTakes   uint64
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -341,24 +347,23 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {
 			log.Info("Collected file.", zap.Uint64("total_kv", f.TotalKvs), zap.Uint64("total_bytes", f.TotalBytes), zap.Uint64("size", f.Size_))
-			rc.restoreSSTKVCount.Add(f.TotalKvs)
-			rc.restoreSSTKVSize.Add(f.TotalBytes)
-			rc.restoreSSTPhySize.Add(f.Size_)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVCount, f.TotalKvs)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTKVSize, f.TotalBytes)
+			atomic.AddUint64(&rc.restoreStat.restoreSSTPhySize, f.Size_)
 		}
 	}
-	rc.restoreSSTTakes.Add(uint64(time.Since(begin)))
-
+	atomic.AddUint64(&rc.restoreStat.restoreSSTTakes, uint64(time.Since(begin)))
 	return err
 }
 
 func (rc *LogClient) RestoreSSTStatisticFields(pushTo *[]zapcore.Field) {
-	takes := time.Duration(rc.restoreSSTTakes.Load())
+	takes := time.Duration(rc.restoreStat.restoreSSTTakes)
 	fields := []zapcore.Field{
-		zap.Uint64("restore-sst-kv-count", rc.restoreSSTKVCount.Load()),
-		zap.Uint64("restore-sst-kv-size", rc.restoreSSTKVSize.Load()),
-		zap.Uint64("restore-sst-physical-size (after compression)", rc.restoreSSTPhySize.Load()),
+		zap.Uint64("restore-sst-kv-count", rc.restoreStat.restoreSSTKVCount),
+		zap.Uint64("restore-sst-kv-size", rc.restoreStat.restoreSSTKVSize),
+		zap.Uint64("restore-sst-physical-size (after compression)", rc.restoreStat.restoreSSTPhySize),
 		zap.Duration("restore-sst-total-take", takes),
-		zap.String("average-speed (sst)", units.HumanSize(float64(rc.restoreSSTKVSize.Load())/takes.Seconds())+"/s"),
+		zap.String("average-speed (sst)", units.HumanSize(float64(rc.restoreStat.restoreSSTKVSize)/takes.Seconds())+"/s"),
 	}
 	*pushTo = append(*pushTo, fields...)
 }
@@ -590,6 +595,8 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 	if err != nil {
 		return err
 	}
+	rc.logFilesStat = new(logFilesStatistic)
+	rc.LogFileManager.Stats = rc.logFilesStat
 	return nil
 }
 

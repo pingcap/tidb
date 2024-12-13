@@ -1476,11 +1476,10 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 
-	count, err := client.LogFileManager.CountExtraSSTs(ctx)
+	numberOfKVsInSST, err := client.LogFileManager.CountExtraSSTTotalKVs(ctx)
 	if err != nil {
 		return err
 	}
-	logclient.TotalEntryCount += int64(count)
 
 	se, err := g.CreateSession(mgr.GetStorage())
 	if err != nil {
@@ -1494,7 +1493,8 @@ func restoreStream(
 	compactionIter := client.LogFileManager.GetCompactionIter(ctx)
 	sstsIter := iter.ConcatAll(addedSSTsIter, compactionIter)
 
-	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", logclient.TotalEntryCount, !cfg.LogProgress)
+	totalWorkUnits := numberOfKVsInSST + int64(client.Stats.NumEntries)
+	pd := g.StartProgress(ctx, "Restore Files(SST + KV)", totalWorkUnits, !cfg.LogProgress)
 	err = withProgress(pd, func(p glue.Progress) (pErr error) {
 		updateStatsWithCheckpoint := func(kvCount, size uint64) {
 			mu.Lock()
