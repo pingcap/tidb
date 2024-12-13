@@ -49,13 +49,15 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 	return cloned
 }
 
+// SliceDeepFlattenIter ... TODO
 func SliceDeepFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
 	return func(yield func(int, E) bool) {
 		sliceDeepFlattenIterHelper(s, yield, 0)
 	}
 }
 
-func sliceDeepFlattenIterHelper[E any, Slice any](s Slice, yield func(int, E) bool, startIdx int) (nextIdx int, stop bool) {
+func sliceDeepFlattenIterHelper[E any, Slice any](s Slice, yield func(int, E) bool, startIdx int,
+) (nextIdx int, stop bool) {
 	// Case 1: Slice == []E, which means it's already the lowest level
 	if reflect.TypeOf(s) == reflect.SliceOf(reflect.TypeFor[E]()) {
 		i := startIdx
