@@ -25,7 +25,8 @@ const (
 	promptKey = "workloadrepo"
 	snapIDKey = "/tidb/workloadrepo/snap_id"
 
-	etcdOpTimeout = 5 * time.Second
+	etcdOpTimeout   = 5 * time.Second
+	snapshotRetries = 5
 
 	defSamplingInterval = 5
 	defSnapshotInterval = 3600

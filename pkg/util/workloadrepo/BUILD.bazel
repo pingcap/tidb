@@ -16,6 +16,7 @@ go_library(
     deps = [
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/executor",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",

@@ -498,6 +498,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
 		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin create workload snapshot;", true, "ADMIN CREATE WORKLOAD SNAPSHOT"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},

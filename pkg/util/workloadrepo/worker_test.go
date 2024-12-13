@@ -30,6 +30,24 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 )
 
+func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *domain.Domain, id string, testWorker bool) *worker {
+	wrk := &worker{}
+	if !testWorker {
+		wrk = &workerCtx
+	}
+	owner.ManagerSessionTTL = 3
+	initializeWorker(wrk,
+		etcdCli, func(s1, s2 string) owner.Manager {
+			return owner.NewOwnerManager(ctx, etcdCli, s1, id, s2)
+		},
+		dom.SysSessionPool(),
+	)
+	wrk.samplingInterval = 1
+	wrk.snapshotInterval = 1
+	wrk.instanceID = id
+	return wrk
+}
+
 func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.Domain, string) {
 	ctx := context.Background()
 	var cancel context.CancelFunc
@@ -79,20 +97,8 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 		_ = etcdCli.Close()
 	})
 
-	wrk := &worker{}
-	if !testWorker {
-		wrk = &workerCtx
-	}
-	owner.ManagerSessionTTL = 3
-	initializeWorker(wrk,
-		etcdCli, func(s1, s2 string) owner.Manager {
-			return owner.NewOwnerManager(ctx, etcdCli, s1, id, s2)
-		},
-		dom.SysSessionPool(),
-	)
-	wrk.samplingInterval = 1
-	wrk.snapshotInterval = 1
-	wrk.instanceID = id
+	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
+
 	t.Cleanup(func() {
 		wrk.stop()
 	})
@@ -143,4 +149,32 @@ func TestGlobalWorker(t *testing.T) {
 		res := tk.MustQuery("select instance_id, count(*) from workload_schema.hist_memory_usage group by instance_id").Rows()
 		return len(res) >= 1
 	}, time.Minute, time.Second)
+}
+
+func TestAdminWorkloadRepo(t *testing.T) {
+	ctx, store, dom, addr := setupDomainAndContext(t)
+	tk := testkit.NewTestKit(t, store)
+
+	_, ok := dom.InfoSchema().SchemaByName(model.NewCIStr("workload_schema"))
+	require.False(t, ok)
+
+	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
+	tk.MustExec("set @@global.tidb_workload_repository_snapshot_interval='5000'")
+	tk.MustExec("set @@global.tidb_workload_repository_active_sampling_interval='600'")
+	tk.MustExec("set @@global.tidb_workload_repository_dest='table'")
+
+	require.Eventually(t, func() bool {
+		return wrk.checkTablesExists(ctx)
+	}, time.Minute, time.Second)
+
+	// able to snapshot manually
+	tk.MustExec("admin create workload snapshot")
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
+		return len(res) >= 1
+	}, time.Minute, time.Second)
+
+	// disable the worker and it will fail
+	tk.MustExec("set @@global.tidb_workload_repository_dest='ble'")
+	tk.MustExecToErr("admin create workload snapshot")
 }

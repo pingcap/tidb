@@ -148,37 +148,6 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 			select {
 			case <-ctx.Done():
 				return
-			case <-w.snapshotTicker.C:
-				// coordination logic
-				if !w.owner.IsOwner() {
-					continue
-				}
-
-				for range 5 {
-					snapID, err := w.getSnapID(ctx)
-					if err != nil {
-						logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))
-						continue
-					}
-					// use upsert such that this SQL does not fail on duplicated snapID
-					//
-					// NOTE: in an almost impossible corner case, there may be two owners.
-					// maybe upsertHistSnapshot succeed and updateSnapID fail, because
-					// another owner won the etcd CAS loop.
-					// it is unwanted but acceptable. because two owners should share
-					// similar datetime, same cluster versions.
-					if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
-						logutil.BgLogger().Info("workload repository could not insert into hist_snapshots", zap.NamedError("err", err))
-						continue
-					}
-					err = w.updateSnapID(ctx, snapID, snapID+1)
-					if err != nil {
-						logutil.BgLogger().Info("workload repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
-						continue
-					}
-					logutil.BgLogger().Info("workload repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
-					break
-				}
 			case resp := <-wch:
 				if len(resp.Events) < 1 {
 					// since there is no event, we don't know the latest snapid either
@@ -218,6 +187,43 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				if err := updateHistSnapshot(ctx, sess, snapID, errs); err != nil {
 					logutil.BgLogger().Info("workload repository snapshot failed: could not update hist_snapshots", zap.NamedError("err", err))
 				}
+
+				continue
+			case <-w.snapshotChan:
+			case <-w.snapshotTicker.C:
+			}
+
+			// coordination logic
+			if !w.owner.IsOwner() {
+				continue
+			}
+
+			for range snapshotRetries {
+				snapID, err := w.getSnapID(ctx)
+				if err != nil {
+					logutil.BgLogger().Info("workload repository cannot get current snapid", zap.NamedError("err", err))
+					continue
+				}
+				// Use UPSERT to ensure this SQL doesn't fail on duplicate snapID.
+				//
+				// NOTE: In a highly unlikely corner case, there could be two owners.
+				// This might occur if upsertHistSnapshot succeeds but updateSnapID fails
+				// due to another owner winning the etcd CAS loop.
+				// While undesirable, this scenario is acceptable since both owners would
+				// likely share similar datetime values and same cluster version.
+
+				if err := upsertHistSnapshot(ctx, sess, snapID+1); err != nil {
+					logutil.BgLogger().Info("workload repository could not insert into hist_snapshots", zap.NamedError("err", err))
+					continue
+				}
+				err = w.updateSnapID(ctx, snapID, snapID+1)
+				if err != nil {
+					logutil.BgLogger().Info("workload repository cannot update current snapid", zap.Uint64("new_id", snapID), zap.NamedError("err", err))
+					continue
+				}
+
+				logutil.BgLogger().Info("workload repository fired snapshot", zap.String("owner", w.instanceID), zap.Uint64("snapID", snapID+1))
+				break
 			}
 		}
 	}
