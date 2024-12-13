@@ -84,7 +84,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	if warningMsg, err = generateIndexMerge4NormalIndex(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
-	if err := generateIndexMerge4MVIndex(ds, regularPathCount, indexMergeConds); err != nil {
+	if err := generateANDIndexMerge4MVIndex(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 	oldIndexMergeCount := len(ds.PossibleAccessPaths)
@@ -147,30 +147,12 @@ func generateNormalIndexPartialPaths4DNF(
 			needSelection = true
 		}
 	}
-	itemPaths := accessPathsForConds(ds, pushedDownCNFItems, []*util.AccessPath{candidatePath})
-	if len(itemPaths) != 1 {
+	partialPath := accessPathsForConds(ds, pushedDownCNFItems, candidatePath)
+	if partialPath == nil {
 		// for this dnf item, we couldn't generate an index merge partial path.
 		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
 		// the entire index merge is not valid anymore.
 		return nil, false
-	}
-	partialPath := itemPaths[0]
-
-	// identify whether all pushedDownCNFItems are fully used.
-	// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-	if len(partialPath.TableFilters) > 0 {
-		needSelection = true
-		partialPath.TableFilters = nil
-	}
-	// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-	if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
-		needSelection = true
-		// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-		partialPath.IndexFilters = nil
-	}
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
-		needSelection = true
 	}
 
 	return partialPath, needSelection
@@ -277,75 +259,53 @@ func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 func accessPathsForConds(
 	ds *logicalop.DataSource,
 	conditions []expression.Expression,
-	candidatePaths []*util.AccessPath,
-) []*util.AccessPath {
-	var results = make([]*util.AccessPath, 0, len(candidatePaths))
-	for _, path := range candidatePaths {
-		newPath := &util.AccessPath{}
-		if path.IsTablePath() {
-			if !isInIndexMergeHints(ds, "primary") {
-				continue
-			}
-			if ds.TableInfo.IsCommonHandle {
-				newPath.IsCommonHandlePath = true
-				newPath.Index = path.Index
-			} else {
-				newPath.IsIntHandlePath = true
-			}
-			err := deriveTablePathStats(ds, newPath, conditions, true)
-			if err != nil {
-				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
-				continue
-			}
-			var unsignedIntHandle bool
-			if newPath.IsIntHandlePath && ds.TableInfo.PKIsHandle {
-				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				}
-			}
-			// If the newPath contains a full range, ignore it.
-			if ranger.HasFullRange(newPath.Ranges, unsignedIntHandle) {
-				continue
-			}
-			// If we have point or empty range, just remove other possible paths.
-			if len(newPath.Ranges) == 0 || newPath.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()) {
-				if len(results) == 0 {
-					results = append(results, newPath)
-				} else {
-					results[0] = newPath
-					results = results[:1]
-				}
-				break
-			}
-		} else {
+	path *util.AccessPath,
+) *util.AccessPath {
+	newPath := &util.AccessPath{}
+	if path.IsTablePath() {
+		if !isInIndexMergeHints(ds, "primary") {
+			return nil
+		}
+		if ds.TableInfo.IsCommonHandle {
+			newPath.IsCommonHandlePath = true
 			newPath.Index = path.Index
-			if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
-				continue
-			}
-			err := fillIndexPath(ds, newPath, conditions)
-			if err != nil {
-				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
-				continue
-			}
-			deriveIndexPathStats(ds, newPath, conditions, true)
-			// If the newPath contains a full range, ignore it.
-			if ranger.HasFullRange(newPath.Ranges, false) {
-				continue
-			}
-			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if len(newPath.Ranges) == 0 || (newPath.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx.TypeCtx()) && newPath.Index.Unique) {
-				if len(results) == 0 {
-					results = append(results, newPath)
-				} else {
-					results[0] = newPath
-					results = results[:1]
-				}
-				break
+		} else {
+			newPath.IsIntHandlePath = true
+		}
+		err := deriveTablePathStats(ds, newPath, conditions, true)
+		if err != nil {
+			logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
+			return nil
+		}
+		var unsignedIntHandle bool
+		if newPath.IsIntHandlePath && ds.TableInfo.PKIsHandle {
+			if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
+				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 			}
 		}
-		results = append(results, newPath)
+		// If the newPath contains a full range, ignore it.
+		if ranger.HasFullRange(newPath.Ranges, unsignedIntHandle) {
+			return nil
+		}
+	} else {
+		newPath.Index = path.Index
+		if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
+			return nil
+		}
+		err := fillIndexPath(ds, newPath, conditions)
+		if err != nil {
+			logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
+			return nil
+		}
+		deriveIndexPathStats(ds, newPath, conditions, true)
+		// If the newPath contains a full range, ignore it.
+		if ranger.HasFullRange(newPath.Ranges, false) {
+			return nil
+		}
+
 	}
-	return results
+
+	return newPath
 }
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
@@ -371,23 +331,6 @@ func buildIndexMergePartialPath(indexAccessPaths [][]*util.AccessPath) []*util.A
 	})
 
 	return ret
-}
-
-// buildIndexMergeOrPath generates one possible IndexMergePath.
-func buildIndexMergeOrPath(
-	filters []expression.Expression,
-	partialAlternativePaths [][][]*util.AccessPath,
-	current int,
-	shouldKeepCurrentFilter bool,
-) *util.AccessPath {
-	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: partialAlternativePaths}
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
-	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
-	// since shouldKeepCurrentFilter may be changed in alternative paths converging, kept the filer expression anyway here.
-	indexMergePath.KeepIndexMergeORSourceFilter = shouldKeepCurrentFilter
-	// this filter will be merged into indexPath's table filters when converging.
-	indexMergePath.IndexMergeORSourceFilter = filters[current]
-	return indexMergePath
 }
 
 func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) []*util.AccessPath {
@@ -697,18 +640,13 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	var containMVPath bool
 	for i := regularPathCount; i < len(ds.PossibleAccessPaths); i++ {
 		path := ds.PossibleAccessPaths[i]
-		if len(path.PartialAlternativeIndexPaths) > 0 {
-			for _, oneORBranch := range path.PartialAlternativeIndexPaths {
-				for _, paths := range oneORBranch {
-					for _, p := range paths {
-						if isMVIndexPath(p) {
-							containMVPath = true
-							break
-						}
-					}
-				}
+		for _, p := range util.SliceDeepFlattenIter[*util.AccessPath](path.PartialAlternativeIndexPaths) {
+			if isMVIndexPath(p) {
+				containMVPath = true
+				break
 			}
 		}
+
 		if !containMVPath {
 			ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
 		}
@@ -719,8 +657,8 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	return "", nil
 }
 
-// generateIndexMerge4ComposedIndex generates index path composed of multi indexes including multivalued index from
-// (json_member_of / json_overlaps / json_contains) and single-valued index from normal indexes.
+// generateIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for (
+//json_member_of / json_overlaps / json_contains) on multiple multi-valued or normal indexes.
 /*
 CNF path
 	1. select * from t where ((1 member of (a) and c=1) and (2 member of (b) and d=2) and (other index predicates))
@@ -754,35 +692,6 @@ CNF path
 				IndexRangeScan(a, [3,3])              --- COP
 			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
 			TableRowIdScan(t)                         --- COP
-DNF path
-	Note: in DNF pattern, every dnf item should be utilized as index path with full range or prefix range. Otherwise,index merge is invalid.
-	1. select * from t where ((1 member of (a)) or (2 member of (b)) or (other index predicates))
-		analyze: find and utilize index access filter items as much as possible:
-		IndexMerge(OR-UNION)                         --- ROOT
-			IndexRangeScan(mv-index-a)(1)             --- COP  ---> simplified from member-of index merge, defer TableRowIdScan(t) to the outer index merge.
-			IndexRangeScan(mv-index-b)(2)             --- COP
-			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
-			TableRowIdScan(t)                         --- COP
-	2. select * from t where ((1 member of (a)) or (json_contains(b, '[1, 2, 3]')) or (other index predicates))
-		analyze: find and utilize index access filter items as much as possible:
-		IndexMerge(OR-UNION)                          --- ROOT
-			IndexRangeScan(mv-index-a)(1)             --- COP
-			IndexMerge(mv-index-b AND-INTERSECTION)   --- ROOT (embedded index merge) ---> can't be simplified
-				IndexRangeScan(a, [1,1])              --- COP
-				IndexRangeScan(a, [2,2])              --- COP
-				IndexRangeScan(a, [3,3])              --- COP
-			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
-			TableRowIdScan(t)                         --- COP
-	3. select * from t where ((1 member of (a) and c=1) or (json_overlap(a, '[1, 2,3]') and d=2) or (other index predicates)
-		analyze: find and utilize index access filter items as much as possible:
-		IndexMerge(OR-UNION)                          --- ROOT
-			IndexRangeScan(mv-index-a)(1)             --- COP
-			IndexMerge(mv-index-b OR-UNION)           --- ROOT (embedded index merge) ---> simplify: we can merge with outer index union merge, and defer TableRowIdScan(t).
-				IndexRangeScan(a, [1,1])              --- COP
-				IndexRangeScan(a, [2,2])              --- COP
-				IndexRangeScan(a, [3,3])              --- COP
-			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
-			TableRowIdScan(t)                         --- COP
 */
 func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression) error {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
@@ -809,8 +718,6 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 	if mvIndexPathCnt == 0 {
 		return nil
 	}
-
-	// CNF path.
 
 	// after fillIndexPath, all cnf items are filled into the suitable index paths, for these normal index paths,
 	// fetch them out as partialIndexPaths of a outerScope index merge.
@@ -881,7 +788,8 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 	return nil
 }
 
-// generateIndexMerge4MVIndex generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
+// generateANDIndexMerge4MVIndex tries to generate AND type index merge AccessPath for (
+//json_member_of / json_overlaps / json_contains) on a single multi-valued index.
 /*
 	1. select * from t where 1 member of (a)
 		IndexMerge(AND)
@@ -893,14 +801,8 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 			IndexRangeScan(a, [2,2])
 			IndexRangeScan(a, [3,3])
 			TableRowIdScan(t)
-	3. select * from t where json_overlap(a, '[1, 2, 3]')
-		IndexMerge(OR)
-			IndexRangeScan(a, [1,1])
-			IndexRangeScan(a, [2,2])
-			IndexRangeScan(a, [3,3])
-			TableRowIdScan(t)
 */
-func generateIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) error {
+func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) error {
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			continue // not a MVIndex path

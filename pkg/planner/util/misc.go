@@ -17,7 +17,9 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
+	"iter"
 	"math"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -45,6 +47,37 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 		cloned = append(cloned, item.Clone())
 	}
 	return cloned
+}
+
+func SliceDeepFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
+	return func(yield func(int, E) bool) {
+		sliceDeepFlattenIterHelper(s, yield, 0)
+	}
+}
+
+func sliceDeepFlattenIterHelper[E any, Slice any](s Slice, yield func(int, E) bool, startIdx int) (nextIdx int, stop bool) {
+	// Case 1: Slice == []E, which means it's already the lowest level
+	if reflect.TypeOf(s) == reflect.SliceOf(reflect.TypeFor[E]()) {
+		i := startIdx
+		for _, v := range any(s).([]E) {
+			if !yield(i, v) {
+				return i + 1, true
+			}
+			i++
+		}
+		return i, false
+	}
+	// Case 2: Otherwise, element of Slice is still a slice, we need to flatten it recursively.
+	idx := startIdx
+	// We have to use reflect to iterate over the slice here.
+	v := reflect.ValueOf(s)
+	for i := range v.Len() {
+		idx, stop = sliceDeepFlattenIterHelper[E](v.Index(i).Interface(), yield, idx)
+		if stop {
+			return idx, true
+		}
+	}
+	return idx, false
 }
 
 // CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.

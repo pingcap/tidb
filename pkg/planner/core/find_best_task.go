@@ -1037,29 +1037,11 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
-	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for _, path := range determinedIndexPartialPaths {
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(path.TableFilters) > 0 {
-			if !expression.CanExprsPushDown(pushDownCtx, path.TableFilters, kv.TiKV) {
-				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
-				path.TableFilters = nil
-			}
-			shouldKeepCurrentFilter = true
-		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, path.IndexFilters, kv.TiKV) {
-			shouldKeepCurrentFilter = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			path.IndexFilters = nil
-		}
 		if path.KeepIndexMergeORSourceFilter {
 			shouldKeepCurrentFilter = true
+			break
 		}
-	}
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
-		shouldKeepCurrentFilter = true
 	}
 	if shouldKeepCurrentFilter {
 		// add the cnf expression back as table filer.
