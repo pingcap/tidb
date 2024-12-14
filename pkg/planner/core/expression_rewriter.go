@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -1718,6 +1719,14 @@ func (er *expressionRewriter) rewriteUserVariable(v *ast.VariableExpr) {
 		er.err = err
 		return
 	}
+	if er.planCtx != nil {
+		sessionVars := er.planCtx.builder.ctx.GetSessionVars()
+		// Try to substitute udv as constant, just read-only type udv can be substituted
+		if sessionVars.EnableUDVSubstitute && er.substituteUserDefVar(v, f.GetType(er.sctx.GetEvalCtx()).Clone()) {
+			return
+		}
+	}
+
 	f.SetCoercibility(expression.CoercibilityImplicit)
 	er.ctxStackAppend(f, types.EmptyName)
 }
@@ -2684,7 +2693,7 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	if !sessionVar.GetCallProcedure() {
 		return true, nil
 	}
-	varType, _, notFind := sessionVar.GetProcedureVariable(name)
+	varType, d, notFind := sessionVar.GetProcedureVariable(name)
 	if notFind {
 		return true, nil
 	}
@@ -2693,15 +2702,15 @@ func (er *expressionRewriter) searchSpVariables(name string) (bool, error) {
 	var err error
 	retType := varType.Clone()
 	// check if the variable is substitute-able
-	// if sessionVar.EnableSPParamSubstitute && er.clauseSubstituteAbleForUDV() {
-	// 	expr = er.assembleConstant(d, retType)
-	// } else {
-	expr, err = er.newFunction(ast.GetProcedureVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
-	if err != nil {
-		return false, err
+	if sessionVar.EnableSPParamSubstitute && er.clauseSubstituteAbleForUDV() {
+		expr = er.assembleConstant(d, retType)
+	} else {
+		expr, err = er.newFunction(ast.GetProcedureVar, retType, expression.DatumToConstant(types.NewStringDatum(name), mysql.TypeString, 0))
+		if err != nil {
+			return false, err
+		}
+		expr.SetCoercibility(expression.CoercibilityImplicit)
 	}
-	expr.SetCoercibility(expression.CoercibilityImplicit)
-	//}
 	er.ctxStackAppend(expr, types.EmptyName)
 	return false, nil
 }
@@ -2757,4 +2766,44 @@ func (er *expressionRewriter) appendColumnVisited(columnVisited *types.FieldName
 		}
 		er.planCtx.columnVisited = append(er.planCtx.columnVisited, colName)
 	}
+}
+
+func (er *expressionRewriter) clauseSubstituteAbleForUDV() bool {
+	failpoint.Inject("clauseSubstituteAbleForUDV", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(true)
+		}
+	})
+	// Currently, we only substitute user defined variable in where clause
+	if er.planCtx.builder.curClause == whereClause {
+		return true
+	}
+	return false
+}
+
+func (er *expressionRewriter) substituteUserDefVar(v *ast.VariableExpr, retType *types.FieldType) bool {
+	name := strings.ToLower(v.Name)
+	sessionVars := er.planCtx.builder.ctx.GetSessionVars()
+	if !er.clauseSubstituteAbleForUDV() || len(sessionVars.ReplaceAbleUserDefVars) == 0 {
+		return false
+	}
+	if _, ok := sessionVars.ReplaceAbleUserDefVars[name]; !ok {
+		return false
+	}
+	if d, ok := sessionVars.GetUserVarVal(name); ok {
+		value := er.assembleConstant(d, retType)
+		er.ctxStackAppend(value, types.EmptyName)
+		return true
+	}
+	return false
+}
+
+// assembleConstant assembles a constant value for a variable expression, called by udv substitute and stored procedure.
+func (er *expressionRewriter) assembleConstant(d types.Datum, retType *types.FieldType) *expression.Constant {
+	// todo: retType need more careful check
+	datum := d.Clone()
+	datum.SetValue(datum.GetValue(), retType)
+	value := &expression.Constant{Value: *datum, RetType: retType}
+	initConstantRepertoire(er.sctx.GetEvalCtx(), value)
+	return value
 }

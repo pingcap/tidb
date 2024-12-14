@@ -987,6 +987,11 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBEnableUDVSubstitute indicates whether to enable user defined variable substitute.
+	TiDBEnableUDVSubstitute = "tidb_enable_udv_substitute"
+	// TiDBEnableSPParamSubstitute indicates whether to enable stored procedure parameter substitute.
+	TiDBEnableSPParamSubstitute = "tidb_enable_sp_param_substitute"
 )
 
 // TiDB vars that have only global scope
@@ -1576,6 +1581,8 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefStoredProgramCacheSize                         = 256
 	DefTiDBEnableProcedure                            = false
+	DefTiDBEnableUDVSubstitute                        = false
+	DefTiDBEnableSPParamSubstitute                    = false
 )
 
 // Process global variables.

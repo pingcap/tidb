@@ -1730,6 +1730,14 @@ type SessionVars struct {
 	LastProcedureErrorStr string
 	// MaxSpRecursionDepth indicates how many recursions are allowed in a stored procedure
 	MaxSpRecursionDepth int
+	// ReplaceAbleUserDefVars indicates whether to replace user defined variables in the sql.
+	ReplaceAbleUserDefVars map[string]struct{}
+	// EnableUDVSubstitute indicates whether to enable user defined variable substitute,
+	// it takes effect both in general sql and stored procedures.
+	EnableUDVSubstitute bool
+	// EnableSPParamSubstitute indicate whether to enable stored procedure parameter substitute, it is only used to control
+	// the replacement of parameters (in, out, inout) in stored procedures.
+	EnableSPParamSubstitute bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
