@@ -2936,6 +2936,11 @@ error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
 '''
 
+["server:1053"]
+error = '''
+Server shutdown in progress
+'''
+
 ["server:1148"]
 error = '''
 The used command is not allowed with this MySQL version

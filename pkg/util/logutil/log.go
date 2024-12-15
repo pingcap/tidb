@@ -59,6 +59,8 @@ const (
 	LogFieldConn = "conn"
 	// LogFieldSessionAlias is the field name for session_alias in log
 	LogFieldSessionAlias = "session_alias"
+	// jsonLogFormat is the json format of the log.
+	jsonLogFormat = "json"
 )
 
 // EmptyFileLogConfig is an empty FileLogConfig.
@@ -122,6 +124,9 @@ var SlowQueryLogger = log.L()
 // GeneralLogger is used to log general log, InitLogger will modify it according to config file.
 var GeneralLogger = log.L()
 
+// this logger will always output error verbose regardless of the log config.
+var errVerboseLogger = log.L()
+
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
@@ -130,6 +135,18 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 		return errors.Trace(err)
 	}
 	log.ReplaceGlobals(gl, props)
+	// pingcap/log doesn't support DisableErrorVerbose for json format log.
+	if cfg.Config.Format == jsonLogFormat || !cfg.Config.DisableErrorVerbose {
+		errVerboseLogger = gl
+	} else {
+		newLogCfg := cfg.Config
+		newLogCfg.DisableErrorVerbose = false
+		logger, _, err := log.InitLoggerWithWriteSyncer(&newLogCfg, props.Syncer, props.ErrSyncer, opts...)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		errVerboseLogger = logger
+	}
 
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
@@ -229,6 +246,16 @@ func Logger(ctx context.Context) *zap.Logger {
 // will print to stdout.
 func BgLogger() *zap.Logger {
 	return log.L().With()
+}
+
+// ErrVerboseLogger returns a logger that always output error verbose regardless
+// of the log config.
+// error verbose is disabled on default, but without stack it's harder to investigate
+// some issues, such as in DXF the error mostly happen in business logic, the
+// error stack is very deep, we want to log the stack to help us investigate.
+// Note: if stack is not that needed to investigate, use normal logger instead.
+func ErrVerboseLogger() *zap.Logger {
+	return errVerboseLogger
 }
 
 // LoggerWithTraceInfo attaches fields from trace info to logger

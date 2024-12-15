@@ -327,7 +327,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
-		selfSchema.Keys = childSchema[0].Clone().Keys
+		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
@@ -343,13 +343,13 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].Keys {
+			for _, key := range childSchema[0].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
 					lOk = true
 					break
 				}
 			}
-			for _, key := range childSchema[1].Keys {
+			for _, key := range childSchema[1].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
 					rOk = true
 					break
@@ -360,10 +360,10 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// another side's unique key information will all be reserved.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
 		if lOk && p.JoinType != LeftOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[1].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[1].PKOrUK...)
 		}
 		if rOk && p.JoinType != RightOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[0].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[0].PKOrUK...)
 		}
 	}
 }
