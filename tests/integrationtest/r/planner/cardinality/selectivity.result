@@ -159,27 +159,20 @@ planner__cardinality__selectivity	tstring		singular	1	1	1
 planner__cardinality__selectivity	tstring		singular	1	2	1
 show stats_buckets where db_name = 'planner__cardinality__selectivity';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Bucket_id	Count	Repeats	Lower_Bound	Upper_Bound	Ndv
-planner__cardinality__selectivity	ct1		PRIMARY	1	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		PRIMARY	1	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		PRIMARY	1	2	6	1	7	8	0
-planner__cardinality__selectivity	ct1		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct1		pk	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		pk	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		pk	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	ct2		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		c	0	2	6	1	7	8	0
+planner__cardinality__selectivity	ct1		PRIMARY	1	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		PRIMARY	1	1	6	1	6	8	0
+planner__cardinality__selectivity	ct1		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct1		pk	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		pk	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		PRIMARY	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	ct2		PRIMARY	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	ct2		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		c	0	1	6	1	6	8	0
 planner__cardinality__selectivity	tdatetime		a	0	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
 planner__cardinality__selectivity	tdatetime		a	0	1	2	1	2001-01-04 00:00:00	2001-01-04 00:00:00	0
 planner__cardinality__selectivity	tdatetime		b	0	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
@@ -190,72 +183,52 @@ planner__cardinality__selectivity	tdatetime		multi	1	0	1	1	(2001-01-03 00:00:00,
 planner__cardinality__selectivity	tdatetime		multi	1	1	2	1	(2001-01-04 00:00:00, 2001-01-04 00:00:00)	(2001-01-04 00:00:00, 2001-01-04 00:00:00)	0
 planner__cardinality__selectivity	tdatetime		singular	1	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
 planner__cardinality__selectivity	tdatetime		singular	1	1	2	1	2001-01-04 00:00:00	2001-01-04 00:00:00	0
-planner__cardinality__selectivity	tdecimal		a	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		a	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		a	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		multi	1	0	2	1	(3.00000000000000000000, 3.00000000000000000000)	(4.00000000000000000000, 4.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		multi	1	1	4	1	(5.00000000000000000000, 5.00000000000000000000)	(6.00000000000000000000, 6.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		multi	1	2	6	1	(7.00000000000000000000, 7.00000000000000000000)	(8.00000000000000000000, 8.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		singular	1	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		singular	1	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		singular	1	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdouble		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tdouble		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tdouble		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tdouble		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		singular	1	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tint		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tint		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tint		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		singular	1	2	6	1	7	8	0
+planner__cardinality__selectivity	tdecimal		a	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		a	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		b	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		b	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		c	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		c	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		multi	1	0	3	1	(3.00000000000000000000, 3.00000000000000000000)	(5.00000000000000000000, 5.00000000000000000000)	0
+planner__cardinality__selectivity	tdecimal		multi	1	1	6	1	(6.00000000000000000000, 6.00000000000000000000)	(8.00000000000000000000, 8.00000000000000000000)	0
+planner__cardinality__selectivity	tdecimal		singular	1	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		singular	1	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdouble		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tdouble		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tdouble		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		singular	1	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tint		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tint		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		singular	1	1	6	1	6	8	0
 planner__cardinality__selectivity	tprefix		a	0	0	2	1	333	444	0
 planner__cardinality__selectivity	tprefix		a	0	1	4	1	555	666	0
 planner__cardinality__selectivity	tprefix		b	0	0	2	1	333	444	0
 planner__cardinality__selectivity	tprefix		b	0	1	4	1	555	666	0
 planner__cardinality__selectivity	tprefix		prefixa	1	0	2	1	33	44	0
 planner__cardinality__selectivity	tprefix		prefixa	1	1	4	1	55	66	0
-planner__cardinality__selectivity	tstring		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tstring		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tstring		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tstring		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		singular	1	2	6	1	7	8	0
+planner__cardinality__selectivity	tstring		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tstring		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tstring		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		singular	1	1	6	1	6	8	0
 explain select * from tint where a=1;
 id	estRows	task	access object	operator info
 TableReader_7	1.00	root		data:Selection_6
@@ -498,12 +471,12 @@ TableReader_7	1.00	root		data:Selection_6
   └─TableFullScan_5	4.00	cop[tikv]	table:tdatetime	keep order:false
 explain select * from ct1 where pk>='1' and pk <='4';
 id	estRows	task	access object	operator info
-TableReader_6	4.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	4.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
+TableReader_6	5.00	root		data:TableRangeScan_5
+└─TableRangeScan_5	5.00	cop[tikv]	table:ct1	range:["1","4"], keep order:false
 explain select * from ct1 where pk>='4' and pk <='6';
 id	estRows	task	access object	operator info
-TableReader_6	3.00	root		data:TableRangeScan_5
-└─TableRangeScan_5	3.00	cop[tikv]	table:ct1	range:["4","6"], keep order:false
+TableReader_6	3.75	root		data:TableRangeScan_5
+└─TableRangeScan_5	3.75	cop[tikv]	table:ct1	range:["4","6"], keep order:false
 explain select * from ct1 where pk>='6' and pk <='8';
 id	estRows	task	access object	operator info
 TableReader_6	3.00	root		data:TableRangeScan_5
@@ -620,27 +593,20 @@ planner__cardinality__selectivity	tstring		singular	1	1	1
 planner__cardinality__selectivity	tstring		singular	1	2	1
 show stats_buckets where db_name = 'planner__cardinality__selectivity';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Bucket_id	Count	Repeats	Lower_Bound	Upper_Bound	Ndv
-planner__cardinality__selectivity	ct1		PRIMARY	1	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		PRIMARY	1	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		PRIMARY	1	2	6	1	7	8	0
-planner__cardinality__selectivity	ct1		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct1		pk	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct1		pk	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct1		pk	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	ct2		PRIMARY	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	ct2		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	ct2		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	ct2		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	ct2		c	0	2	6	1	7	8	0
+planner__cardinality__selectivity	ct1		PRIMARY	1	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		PRIMARY	1	1	6	1	6	8	0
+planner__cardinality__selectivity	ct1		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct1		pk	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct1		pk	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		PRIMARY	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	ct2		PRIMARY	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	ct2		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	ct2		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	ct2		c	0	1	6	1	6	8	0
 planner__cardinality__selectivity	tdatetime		a	0	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
 planner__cardinality__selectivity	tdatetime		a	0	1	2	1	2001-01-04 00:00:00	2001-01-04 00:00:00	0
 planner__cardinality__selectivity	tdatetime		b	0	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
@@ -651,90 +617,64 @@ planner__cardinality__selectivity	tdatetime		multi	1	0	1	1	(2001-01-03 00:00:00,
 planner__cardinality__selectivity	tdatetime		multi	1	1	2	1	(2001-01-04 00:00:00, 2001-01-04 00:00:00)	(2001-01-04 00:00:00, 2001-01-04 00:00:00)	0
 planner__cardinality__selectivity	tdatetime		singular	1	0	1	1	2001-01-03 00:00:00	2001-01-03 00:00:00	0
 planner__cardinality__selectivity	tdatetime		singular	1	1	2	1	2001-01-04 00:00:00	2001-01-04 00:00:00	0
-planner__cardinality__selectivity	tdecimal		a	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		a	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		a	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		b	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		c	0	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		multi	1	0	2	1	(3.00000000000000000000, 3.00000000000000000000)	(4.00000000000000000000, 4.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		multi	1	1	4	1	(5.00000000000000000000, 5.00000000000000000000)	(6.00000000000000000000, 6.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		multi	1	2	6	1	(7.00000000000000000000, 7.00000000000000000000)	(8.00000000000000000000, 8.00000000000000000000)	0
-planner__cardinality__selectivity	tdecimal		singular	1	0	2	1	3.00000000000000000000	4.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		singular	1	1	4	1	5.00000000000000000000	6.00000000000000000000	0
-planner__cardinality__selectivity	tdecimal		singular	1	2	6	1	7.00000000000000000000	8.00000000000000000000	0
-planner__cardinality__selectivity	tdouble		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tdouble		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tdouble		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tdouble		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tdouble		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tdouble		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tdouble		singular	1	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tint		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tint		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tint		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tint		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tint		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tint		singular	1	2	6	1	7	8	0
-planner__cardinality__selectivity	topn_after_hist		a	0	0	1	1	3	3	0
-planner__cardinality__selectivity	topn_after_hist		a	0	1	2	1	4	4	0
-planner__cardinality__selectivity	topn_after_hist		a	0	2	3	1	5	5	0
-planner__cardinality__selectivity	topn_after_hist		idx	1	0	1	1	3	3	0
-planner__cardinality__selectivity	topn_after_hist		idx	1	1	2	1	4	4	0
-planner__cardinality__selectivity	topn_after_hist		idx	1	2	3	1	5	5	0
-planner__cardinality__selectivity	topn_after_hist_no_index		a	0	0	1	1	3	3	0
-planner__cardinality__selectivity	topn_after_hist_no_index		a	0	1	2	1	4	4	0
-planner__cardinality__selectivity	topn_after_hist_no_index		a	0	2	3	1	5	5	0
-planner__cardinality__selectivity	topn_before_hist		a	0	0	1	1	4	4	0
-planner__cardinality__selectivity	topn_before_hist		a	0	1	2	1	5	5	0
-planner__cardinality__selectivity	topn_before_hist		a	0	2	3	1	6	6	0
-planner__cardinality__selectivity	topn_before_hist		idx	1	0	1	1	4	4	0
-planner__cardinality__selectivity	topn_before_hist		idx	1	1	2	1	5	5	0
-planner__cardinality__selectivity	topn_before_hist		idx	1	2	3	1	6	6	0
-planner__cardinality__selectivity	topn_before_hist_no_index		a	0	0	1	1	4	4	0
-planner__cardinality__selectivity	topn_before_hist_no_index		a	0	1	2	1	5	5	0
-planner__cardinality__selectivity	topn_before_hist_no_index		a	0	2	3	1	6	6	0
+planner__cardinality__selectivity	tdecimal		a	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		a	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		b	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		b	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		c	0	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		c	0	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		multi	1	0	3	1	(3.00000000000000000000, 3.00000000000000000000)	(5.00000000000000000000, 5.00000000000000000000)	0
+planner__cardinality__selectivity	tdecimal		multi	1	1	6	1	(6.00000000000000000000, 6.00000000000000000000)	(8.00000000000000000000, 8.00000000000000000000)	0
+planner__cardinality__selectivity	tdecimal		singular	1	0	3	1	3.00000000000000000000	5.00000000000000000000	0
+planner__cardinality__selectivity	tdecimal		singular	1	1	6	1	6.00000000000000000000	8.00000000000000000000	0
+planner__cardinality__selectivity	tdouble		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tdouble		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tdouble		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tdouble		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tdouble		singular	1	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tint		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tint		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tint		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tint		singular	1	1	6	1	6	8	0
+planner__cardinality__selectivity	topn_after_hist		a	0	0	2	1	3	4	0
+planner__cardinality__selectivity	topn_after_hist		a	0	1	3	1	5	5	0
+planner__cardinality__selectivity	topn_after_hist		idx	1	0	2	1	3	4	0
+planner__cardinality__selectivity	topn_after_hist		idx	1	1	3	1	5	5	0
+planner__cardinality__selectivity	topn_after_hist_no_index		a	0	0	2	1	3	4	0
+planner__cardinality__selectivity	topn_after_hist_no_index		a	0	1	3	1	5	5	0
+planner__cardinality__selectivity	topn_before_hist		a	0	0	2	1	4	5	0
+planner__cardinality__selectivity	topn_before_hist		a	0	1	3	1	6	6	0
+planner__cardinality__selectivity	topn_before_hist		idx	1	0	2	1	4	5	0
+planner__cardinality__selectivity	topn_before_hist		idx	1	1	3	1	6	6	0
+planner__cardinality__selectivity	topn_before_hist_no_index		a	0	0	2	1	4	5	0
+planner__cardinality__selectivity	topn_before_hist_no_index		a	0	1	3	1	6	6	0
 planner__cardinality__selectivity	tprefix		a	0	0	2	1	333	444	0
 planner__cardinality__selectivity	tprefix		a	0	1	4	1	555	666	0
 planner__cardinality__selectivity	tprefix		b	0	0	2	1	333	444	0
 planner__cardinality__selectivity	tprefix		b	0	1	4	1	555	666	0
 planner__cardinality__selectivity	tprefix		prefixa	1	0	2	1	33	44	0
 planner__cardinality__selectivity	tprefix		prefixa	1	1	4	1	55	66	0
-planner__cardinality__selectivity	tstring		a	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		a	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		a	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		b	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		b	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		b	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		c	0	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		c	0	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		c	0	2	6	1	7	8	0
-planner__cardinality__selectivity	tstring		multi	1	0	2	1	(3, 3)	(4, 4)	0
-planner__cardinality__selectivity	tstring		multi	1	1	4	1	(5, 5)	(6, 6)	0
-planner__cardinality__selectivity	tstring		multi	1	2	6	1	(7, 7)	(8, 8)	0
-planner__cardinality__selectivity	tstring		singular	1	0	2	1	3	4	0
-planner__cardinality__selectivity	tstring		singular	1	1	4	1	5	6	0
-planner__cardinality__selectivity	tstring		singular	1	2	6	1	7	8	0
+planner__cardinality__selectivity	tstring		a	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		a	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		b	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		b	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		c	0	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		c	0	1	6	1	6	8	0
+planner__cardinality__selectivity	tstring		multi	1	0	3	1	(3, 3)	(5, 5)	0
+planner__cardinality__selectivity	tstring		multi	1	1	6	1	(6, 6)	(8, 8)	0
+planner__cardinality__selectivity	tstring		singular	1	0	3	1	3	5	0
+planner__cardinality__selectivity	tstring		singular	1	1	6	1	6	8	0
 explain select * from topn_before_hist where a = 1;
 id	estRows	task	access object	operator info
 IndexReader_6	4.00	root		index:IndexRangeScan_5

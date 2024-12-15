@@ -228,8 +228,8 @@ func TestAnalyzeWithDynamicPartitionPruneMode(t *testing.T) {
 	tk.MustExec("insert into t values (3)")
 	tk.MustExec("analyze table t partition p0 index a with 1 topn, 2 buckets")
 	rows = tk.MustQuery("show stats_buckets where partition_name = 'global' and is_index=1").Rows()
-	require.Len(t, rows, 2)
-	require.Equal(t, "2", rows[0][6])
+	require.Len(t, rows, 1)
+	require.Equal(t, "6", rows[0][6])
 }
 
 func TestFMSWithAnalyzePartition(t *testing.T) {

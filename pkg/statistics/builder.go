@@ -157,9 +157,11 @@ func buildHist(
 	// ndvFactor is a ratio that represents the average number of times each distinct value (NDV) should appear in the dataset.
 	// It is calculated as the total number of rows divided by the number of distinct values.
 	ndvFactor := float64(count) / float64(ndv)
-	// skewNDVFactor represents a value that is 2 times than the original ndvFactor, or half the
-	// current lowest value stored in the topN - whichever is greater
-	skewNDVFactor := int64(max(float64(minTopN)/2, (ndvFactor * 4)))
+	// skewNDVFactor represents a value that is 4 times than the original ndvFactor, or half the
+	// current lowest value stored in the topN - whichever is greater. A repeat greater than this value
+	// is considered skewed and we should try to make it the last value of the bucket
+	initialSkew := int64(max(float64(minTopN)/2, (ndvFactor * 4)))
+	skewNDVFactor := initialSkew
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
@@ -174,7 +176,7 @@ func buildHist(
 	}
 
 	bucketIdx := 0
-	var lastCount, lastRepeat, maxSkew int64
+	var lastCount, lastRepeat int64
 	corrXYSum = float64(0)
 	// The underlying idea is that when a value is sampled,
 	// it does not necessarily mean that the actual row count of this value reaches the sample factor.
@@ -226,7 +228,6 @@ func buildHist(
 				// ...
 				hg.Buckets[bucketIdx].Repeat += int64(sampleFactor)
 			}
-			lastRepeat = hg.Buckets[bucketIdx].Repeat
 		} else {
 			skewedValue := lastRepeat > skewNDVFactor
 			if (!skewedValue && currentCount <= maxValuesPerBucket && valuesPerBucket < maxValuesPerBucket) ||
@@ -240,8 +241,8 @@ func buildHist(
 				// Refer to the comments for the first bucket for the reason why we use ndvFactor here.
 				hg.AppendBucket(&samples[i].Value, &samples[i].Value, int64(totalCount), int64(ndvFactor))
 			}
-			maxSkew = max(maxSkew, lastRepeat)
 		}
+		lastRepeat = hg.Buckets[bucketIdx].Repeat
 		// If we're running out of buckets - we need to increase the skewed value (skewNDVFactor) and
 		// valuesPerBucket to ensure that we don't create too many buckets
 		remainingCount := float64(count) - totalCount
@@ -252,10 +253,12 @@ func buildHist(
 			skewNDVFactor++
 			if minTopN > 0 {
 				skewNDVFactor = min(skewNDVFactor, int64(minTopN)-1)
-			} else if maxSkew > 0 {
-				skewNDVFactor = min(maxSkew, skewNDVFactor)
 			}
 			valuesPerBucket = math.Ceil(remainingValuesNeeded)
+		} else {
+			// Decrement skewNDVFactor because we are NOT creating too many buckets
+			skewNDVFactor--
+			skewNDVFactor = max(skewNDVFactor, initialSkew)
 		}
 	}
 	return corrXYSum, nil
