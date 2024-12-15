@@ -514,11 +514,6 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 	ret.tablesPriv = append(ret.tablesPriv, diff.tablesPriv...)
 	ret.buildTablesPrivMap()
 
-	ret.routinePriv = make([]routinePrivRecord, 0, len(p.routinePriv)+len(diff.routinePriv))
-	ret.routinePriv = append(ret.routinePriv, p.routinePriv...)
-	ret.routinePriv = append(ret.routinePriv, diff.routinePriv...)
-	ret.buildProcPrivMap()
-
 	ret.columnsPriv = make([]columnsPrivRecord, 0, len(p.columnsPriv)+len(diff.columnsPriv))
 	ret.columnsPriv = append(ret.columnsPriv, p.columnsPriv...)
 	ret.columnsPriv = append(ret.columnsPriv, diff.columnsPriv...)
@@ -528,6 +523,11 @@ func (p *MySQLPrivilege) merge(diff *immutable) *MySQLPrivilege {
 			x.DB == y.DB && x.TableName == y.TableName && x.ColumnName == y.ColumnName
 	})
 	ret.buildColumnsPrivMap()
+
+	ret.routinePriv = make([]routinePrivRecord, 0, len(p.routinePriv)+len(diff.routinePriv))
+	ret.routinePriv = append(ret.routinePriv, p.routinePriv...)
+	ret.routinePriv = append(ret.routinePriv, diff.routinePriv...)
+	ret.buildProcPrivMap()
 
 	ret.defaultRoles = make([]defaultRoleRecord, 0, len(p.defaultRoles)+len(diff.defaultRoles))
 	ret.defaultRoles = append(ret.defaultRoles, p.defaultRoles...)
@@ -654,19 +654,27 @@ func compareColumnsPrivRecord(x, y columnsPrivRecord) int {
 func compareHost(x, y string) int {
 	// The more-specific, the smaller it is.
 	// The pattern '%' means “any host” and is least specific.
-	if y == `%` {
-		if x == `%` {
+	if x == "%" || y == "%" {
+		if x == "%" && y == "%" {
 			return 0
 		}
-		return -1
+		if y == `%` {
+			return -1
+		}
+		// x == '%'
+		return 1
 	}
 
 	// The empty string '' also means “any host” but sorts after '%'.
-	if y == "" {
-		if x == "" {
+	if x == `` || y == `` {
+		if x == `` && y == `` {
 			return 0
 		}
-		return -1
+		if y == "" {
+			return -1
+		}
+		// x == ``
+		return 1
 	}
 
 	// One of them end with `%`.
@@ -689,11 +697,10 @@ func compareHost(x, y string) int {
 	}
 
 	// For other case, the order is nondeterministic.
-	switch x < y {
-	case true:
-		return -1
-	case false:
+	if x > y {
 		return 1
+	} else if x < y {
+		return -1
 	}
 	return 0
 }
@@ -1686,15 +1693,6 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	}
 	slices.Sort(gs[sortFromIdx:])
 
-	// Show procedure and function grants
-	sortFromIdx = len(gs)
-	ProcedurePrivMap, FunctionPrivMap := p.getRoutinePriv(user, host, allRoles, sqlMode)
-	gs = routinePrivToString(ProcedurePrivMap, gs, "PROCEDURE", user, host)
-	slices.Sort(gs[sortFromIdx:])
-	sortFromIdx = len(gs)
-	gs = routinePrivToString(FunctionPrivMap, gs, "FUNCTION", user, host)
-	slices.Sort(gs[sortFromIdx:])
-
 	// Show column scope grants, column and table are combined.
 	// A map of "DB.Table" => Priv(col1, col2 ...)
 	sortFromIdx = len(gs)
@@ -1712,6 +1710,15 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 		s := fmt.Sprintf(`GRANT %s ON %s TO '%s'@'%s'`, privCols, k, user, host)
 		gs = append(gs, s)
 	}
+	slices.Sort(gs[sortFromIdx:])
+
+	// Show procedure and function grants
+	sortFromIdx = len(gs)
+	ProcedurePrivMap, FunctionPrivMap := p.getRoutinePriv(user, host, allRoles, sqlMode)
+	gs = routinePrivToString(ProcedurePrivMap, gs, "PROCEDURE", user, host)
+	slices.Sort(gs[sortFromIdx:])
+	sortFromIdx = len(gs)
+	gs = routinePrivToString(FunctionPrivMap, gs, "FUNCTION", user, host)
 	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.

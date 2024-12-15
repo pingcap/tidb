@@ -2168,6 +2168,12 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
+		// rename privileges from mysql.columns_priv
+		if err = renameUserHostInSystemTable(sqlExecutor, mysql.ColumnPrivTable, "User", "Host", userToUser); err != nil {
+			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.ColumnPrivTable + " error"
+			break
+		}
+
 		// rename relationship from mysql.role_edges
 		if err = renameUserHostInSystemTable(sqlExecutor, mysql.RoleEdgeTable, "TO_USER", "TO_HOST", userToUser); err != nil {
 			failedUser = oldUser.String() + " TO " + newUser.String() + " " + mysql.RoleEdgeTable + " (to) error"
@@ -2198,7 +2204,6 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 
 		// rename relationship from mysql.global_grants
 		// TODO: add global_grants into the parser
-		// TODO: need update columns_priv once we implement columns_priv functionality.
 		// When that is added, please refactor both executeRenameUser and executeDropUser to use an array of tables
 		// to loop over, so it is easier to maintain.
 		if err = renameUserHostInSystemTable(sqlExecutor, "global_grants", "User", "Host", userToUser); err != nil {
@@ -2399,7 +2404,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 					break
 				}
 			}
-		} // TODO: need delete columns_priv once we implement columns_priv functionality.
+		}
 	}
 
 	if len(failedUsers) != 0 {
