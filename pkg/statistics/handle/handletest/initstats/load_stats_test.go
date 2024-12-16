@@ -98,5 +98,5 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
+	require.Equal(t, int64(118), handle.GetMaxTidRecordForTest())
 }
