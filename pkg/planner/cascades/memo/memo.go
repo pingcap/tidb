@@ -155,11 +155,14 @@ func (mm *Memo) NewGroup() *Group {
 }
 
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
-func (mm *Memo) Init(plan base.LogicalPlan) *GroupExpression {
+func (mm *Memo) Init(plan base.LogicalPlan) (*GroupExpression, error) {
 	intest.Assert(mm.groups.Len() == 0)
-	gE, _ := mm.CopyIn(nil, plan)
+	gE, err := mm.CopyIn(nil, plan)
+	if err != nil {
+		return nil, err
+	}
 	mm.rootGroup = gE.GetGroup()
-	return gE
+	return gE, nil
 }
 
 // ForEachGroup traverse the inside group expression with f call on them each.

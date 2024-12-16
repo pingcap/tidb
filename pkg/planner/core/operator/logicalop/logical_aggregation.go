@@ -688,7 +688,7 @@ func (la *LogicalAggregation) BuildSelfKeyInfo(selfSchema *expression.Schema) {
 			for _, i := range indices {
 				newKey = append(newKey, selfSchema.Columns[i])
 			}
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 		}
 	}
 	if len(la.GroupByItems) == 0 {
