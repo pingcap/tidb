@@ -34,7 +34,7 @@ import (
 )
 
 const (
-	batchReadRowSize = 32
+	defaultBatchSize = 128
 
 	// if a parquet if small than this threshold, parquet will load the whole file in a byte slice to
 	// optimize the read performance
@@ -45,28 +45,91 @@ const (
 	timeLayout    = "2006-01-02 15:04:05.999999"
 )
 
-// Buffers to store data read from columns.
-// Declare here to avoid frequent allocation.
-type readBuffer struct {
-	fixedLenArrayBuffer []parquet.FixedLenByteArray
-	float32Buffer       []float32
-	float64Buffer       []float64
-	byteArrayBuffer     []parquet.ByteArray
-	int32Buffer         []int32
-	int64Buffer         []int64
-	int96Buffer         []parquet.Int96
-	boolBuffer          []bool
+type Dumper struct {
+	reader         file.ColumnChunkReader
+	batchSize      int64
+	valueOffset    int
+	valuesBuffered int
+
+	levelOffset    int64
+	levelsBuffered int64
+	defLevels      []int16
+	repLevels      []int16
+
+	valueBuffer interface{}
 }
 
-func (rb *readBuffer) Init(size int) {
-	rb.fixedLenArrayBuffer = make([]parquet.FixedLenByteArray, size)
-	rb.float32Buffer = make([]float32, size)
-	rb.float64Buffer = make([]float64, size)
-	rb.byteArrayBuffer = make([]parquet.ByteArray, size)
-	rb.int32Buffer = make([]int32, size)
-	rb.int64Buffer = make([]int64, size)
-	rb.int96Buffer = make([]parquet.Int96, size)
-	rb.boolBuffer = make([]bool, size)
+func createDumper(tp parquet.Type) *Dumper {
+	batchSize := 128
+
+	var valueBuffer interface{}
+	switch tp {
+	case parquet.Types.Boolean:
+		valueBuffer = make([]bool, batchSize)
+	case parquet.Types.Int32:
+		valueBuffer = make([]int32, batchSize)
+	case parquet.Types.Int64:
+		valueBuffer = make([]int64, batchSize)
+	case parquet.Types.Float:
+		valueBuffer = make([]float32, batchSize)
+	case parquet.Types.Double:
+		valueBuffer = make([]float64, batchSize)
+	case parquet.Types.Int96:
+		valueBuffer = make([]parquet.Int96, batchSize)
+	case parquet.Types.ByteArray:
+		valueBuffer = make([]parquet.ByteArray, batchSize)
+	case parquet.Types.FixedLenByteArray:
+		valueBuffer = make([]parquet.FixedLenByteArray, batchSize)
+	}
+
+	return &Dumper{
+		batchSize:   int64(batchSize),
+		defLevels:   make([]int16, batchSize),
+		repLevels:   make([]int16, batchSize),
+		valueBuffer: valueBuffer,
+	}
+}
+
+func (dump *Dumper) Type() parquet.Type {
+	return dump.reader.Type()
+}
+
+func (dump *Dumper) SetReader(colReader file.ColumnChunkReader) {
+	dump.reader = colReader
+	dump.valueOffset = 0
+	dump.levelOffset = 0
+}
+
+func (dump *Dumper) readNextBatch() {
+	switch reader := dump.reader.(type) {
+	case *file.BooleanColumnChunkReader:
+		values := dump.valueBuffer.([]bool)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.Int32ColumnChunkReader:
+		values := dump.valueBuffer.([]int32)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.Int64ColumnChunkReader:
+		values := dump.valueBuffer.([]int64)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.Float32ColumnChunkReader:
+		values := dump.valueBuffer.([]float32)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.Float64ColumnChunkReader:
+		values := dump.valueBuffer.([]float64)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.Int96ColumnChunkReader:
+		values := dump.valueBuffer.([]parquet.Int96)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.ByteArrayColumnChunkReader:
+		values := dump.valueBuffer.([]parquet.ByteArray)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	case *file.FixedLenByteArrayColumnChunkReader:
+		values := dump.valueBuffer.([]parquet.FixedLenByteArray)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+	}
+
+	dump.valueOffset = 0
+	dump.levelOffset = 0
 }
 
 // convertedType is older representation of the logical type in parquet
@@ -234,12 +297,10 @@ type ParquetParser struct {
 	columnNames []string
 	readType    int
 
-	colReaders []file.ColumnChunkReader
-
 	// colBuffers is used to store raw data read from parquet columns.
 	// rows stores the actual data after parsing.
-	colBuffers []*readBuffer
-	rows       [][]types.Datum
+	dumpers []*Dumper
+	rows    [][]types.Datum
 
 	// curIdx and avail is the current index and total number of rows in rows buffer
 	curIdx int
@@ -258,42 +319,42 @@ type ParquetParser struct {
 }
 
 func (p *ParquetParser) setStringData(readNum, col, offset int) {
-	buf := p.colBuffers[col].byteArrayBuffer
+	buf := p.dumpers[col].valueBuffer.([]parquet.ByteArray)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetString(buf[i].String(), "utf8mb4_bin")
 	}
 }
 
 func (p *ParquetParser) setInt32Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].int32Buffer
+	buf := p.dumpers[col].valueBuffer.([]int32)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetInt64(int64(buf[i]))
 	}
 }
 
 func (p *ParquetParser) setUint32Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].int32Buffer
+	buf := p.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetUint64(uint64(buf[i]))
 	}
 }
 
 func (p *ParquetParser) setInt64Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].int64Buffer
+	buf := p.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetInt64(int64(buf[i]))
 	}
 }
 
 func (p *ParquetParser) setUint64Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].int64Buffer
+	buf := p.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetUint64(uint64(buf[i]))
 	}
 }
 
 func (p *ParquetParser) setTimeMillisData(readNum, col, offset int) {
-	buf := p.colBuffers[col].int32Buffer
+	buf := p.dumpers[col].valueBuffer.([]int32)
 	for i := 0; i < readNum; i++ {
 		timeStr := formatTime(int64(buf[i]), "MILLIS", "15:04:05.999999", "15:04:05.999999Z", true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
@@ -301,7 +362,7 @@ func (p *ParquetParser) setTimeMillisData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setTimeMicrosData(readNum, col, offset int) {
-	buf := p.colBuffers[col].int32Buffer
+	buf := p.dumpers[col].valueBuffer.([]int32)
 	for i := 0; i < readNum; i++ {
 		timeStr := formatTime(int64(buf[i]), "MICROS", "15:04:05.999999", "15:04:05.999999Z", true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
@@ -309,7 +370,7 @@ func (p *ParquetParser) setTimeMicrosData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setTimestampMillisData(readNum, col, offset int) {
-	buf := p.colBuffers[col].int64Buffer
+	buf := p.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
 		timeStr := formatTime(buf[i], "MILLIS", timeLayout, utcTimeLayout, true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
@@ -317,7 +378,7 @@ func (p *ParquetParser) setTimestampMillisData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setTimestampMicrosData(readNum, col, offset int) {
-	buf := p.colBuffers[col].int64Buffer
+	buf := p.dumpers[col].valueBuffer.([]int64)
 	for i := 0; i < readNum; i++ {
 		timeStr := formatTime(buf[i], "MICROS", timeLayout, utcTimeLayout, true)
 		p.rows[offset+i][col].SetString(timeStr, "utf8mb4_bin")
@@ -325,7 +386,7 @@ func (p *ParquetParser) setTimestampMicrosData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setDateData(readNum, col, offset int) {
-	buf := p.colBuffers[col].int32Buffer
+	buf := p.dumpers[col].valueBuffer.([]int32)
 	for i := 0; i < readNum; i++ {
 		dateStr := time.Unix(int64(buf[i])*86400, 0).Format(time.DateOnly)
 		p.rows[offset+i][col].SetString(dateStr, "utf8mb4_bin")
@@ -333,14 +394,14 @@ func (p *ParquetParser) setDateData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setDecimalData(readNum, col, offset int) error {
-	colTp := p.colReaders[col].Type()
+	colTp := p.dumpers[col].Type()
 	decimal := p.colMetas[col].decimalMeta
 
 	for i := 0; i < readNum; i++ {
 		if colTp == parquet.Types.Int64 || colTp == parquet.Types.Int32 {
-			v := p.colBuffers[col].int64Buffer[i]
+			v := p.dumpers[col].valueBuffer.([]int64)[i]
 			if colTp == parquet.Types.Int32 {
-				v = int64(p.colBuffers[col].int32Buffer[i])
+				v = int64(p.dumpers[col].valueBuffer.([]int32)[i])
 			}
 			if !decimal.IsSet || decimal.Scale == 0 {
 				p.rows[offset+i][col].SetInt64(v)
@@ -354,10 +415,10 @@ func (p *ParquetParser) setDecimalData(readNum, col, offset int) error {
 			dotIndex := len(val) - int(decimal.Scale)
 			p.rows[offset+i][col].SetString(val[:dotIndex]+"."+val[dotIndex:], "utf8mb4_bin")
 		} else if colTp == parquet.Types.FixedLenByteArray {
-			s := binaryToDecimalStr(p.colBuffers[col].fixedLenArrayBuffer[i], int(decimal.Scale))
+			s := binaryToDecimalStr(p.dumpers[col].valueBuffer.([]parquet.FixedLenByteArray)[i], int(decimal.Scale))
 			p.rows[offset+i][col].SetString(s, "utf8mb4_bin")
 		} else {
-			s := binaryToDecimalStr(p.colBuffers[col].byteArrayBuffer[i], int(decimal.Scale))
+			s := binaryToDecimalStr(p.dumpers[col].valueBuffer.([]parquet.ByteArray)[i], int(decimal.Scale))
 			p.rows[offset+i][col].SetString(s, "utf8mb4_bin")
 		}
 	}
@@ -365,7 +426,7 @@ func (p *ParquetParser) setDecimalData(readNum, col, offset int) error {
 }
 
 func (p *ParquetParser) setBoolData(readNum, col, offset int) {
-	buf := p.colBuffers[col].boolBuffer
+	buf := p.dumpers[col].valueBuffer.([]bool)
 	for i := 0; i < readNum; i++ {
 		if buf[i] {
 			p.rows[offset+i][col].SetUint64(1)
@@ -376,28 +437,28 @@ func (p *ParquetParser) setBoolData(readNum, col, offset int) {
 }
 
 func (p *ParquetParser) setFloat32Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].float32Buffer
+	buf := p.dumpers[col].valueBuffer.([]float32)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetFloat32(buf[i])
 	}
 }
 
 func (p *ParquetParser) setFloat64Data(readNum, col, offset int) {
-	buf := p.colBuffers[col].float64Buffer
+	buf := p.dumpers[col].valueBuffer.([]float64)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetFloat64(buf[i])
 	}
 }
 
 func (p *ParquetParser) setFixedByteArrayData(readNum, col, offset int) {
-	buf := p.colBuffers[col].fixedLenArrayBuffer
+	buf := p.dumpers[col].valueBuffer.([]parquet.FixedLenByteArray)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
 	}
 }
 
 func (p *ParquetParser) setByteArrayData(readNum, col, offset int) {
-	buf := p.colBuffers[col].byteArrayBuffer
+	buf := p.dumpers[col].valueBuffer.([]parquet.ByteArray)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
 	}
@@ -414,7 +475,7 @@ func (p *ParquetParser) setInt96Data(readNum, col, offset int) {
 	// NOTE: parquet date can be less than 1970-01-01 that is not supported by TiDB,
 	// where dt is a negative number but still legal in the context of Go.
 	// But it will cause errors or potential data inconsistency when importing.
-	buf := p.colBuffers[col].int96Buffer
+	buf := p.dumpers[col].valueBuffer.([]parquet.Int96)
 	for i := 0; i < readNum; i++ {
 		p.rows[offset+i][col].SetString(buf[i].ToTime().Format(utcTimeLayout), "utf8mb4_bin")
 	}
@@ -422,20 +483,21 @@ func (p *ParquetParser) setInt96Data(readNum, col, offset int) {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (p *ParquetParser) Init() error {
+	meta := p.readers[0].MetaData()
+
 	p.curRowGroup, p.totalRowGroup = -1, p.readers[0].NumRowGroups()
 
-	p.totalRows = int(p.readers[0].MetaData().NumRows)
+	p.totalRows = int(meta.NumRows)
 
-	numCols := p.readers[0].MetaData().Schema.NumColumns()
-	p.colReaders = make([]file.ColumnChunkReader, numCols)
-	p.colBuffers = make([]*readBuffer, numCols)
-	p.rows = make([][]types.Datum, batchReadRowSize)
+	numCols := meta.Schema.NumColumns()
+	p.rows = make([][]types.Datum, defaultBatchSize)
 	for i := range p.rows {
 		p.rows[i] = make([]types.Datum, numCols)
 	}
-	for i := range p.colBuffers {
-		p.colBuffers[i] = &readBuffer{}
-		p.colBuffers[i].Init(batchReadRowSize)
+
+	p.dumpers = make([]*Dumper, numCols)
+	for i := 0; i < numCols; i++ {
+		p.dumpers[i] = createDumper(meta.Schema.Column(i).PhysicalType())
 	}
 
 	return nil
@@ -453,13 +515,13 @@ func (p *ParquetParser) readRows(num int) (int, error) {
 		// Move to next row group
 		if p.curRowInGroup == p.totalRowsInGroup {
 			p.curRowGroup++
-			var err error
-			for c := 0; c < len(p.colReaders); c++ {
+			for c := 0; c < len(p.dumpers); c++ {
 				rowGroupReader := p.readers[c].RowGroup(p.curRowGroup)
-				p.colReaders[c], err = rowGroupReader.Column(c)
+				colReader, err := rowGroupReader.Column(c)
 				if err != nil {
 					return 0, errors.Trace(err)
 				}
+				p.dumpers[c].SetReader(colReader)
 			}
 			p.curRowInGroup, p.totalRowsInGroup = 0, int(p.readers[0].MetaData().RowGroups[p.curRowGroup].NumRows)
 		}
@@ -488,34 +550,10 @@ func (p *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 	)
 
 	// Read data into buffers first
-	req := int64(num)
-	for i, col := range p.colReaders {
-		buf := p.colBuffers[i]
-		physicalTp := col.Type()
-		switch physicalTp {
-		case parquet.Types.FixedLenByteArray:
-			total, _, err = col.(*file.FixedLenByteArrayColumnChunkReader).ReadBatch(req, buf.fixedLenArrayBuffer, nil, nil)
-		case parquet.Types.Float:
-			total, _, err = col.(*file.Float32ColumnChunkReader).ReadBatch(req, buf.float32Buffer, nil, nil)
-		case parquet.Types.Double:
-			total, _, err = col.(*file.Float64ColumnChunkReader).ReadBatch(req, buf.float64Buffer, nil, nil)
-		case parquet.Types.ByteArray:
-			total, _, err = col.(*file.ByteArrayColumnChunkReader).ReadBatch(req, buf.byteArrayBuffer, nil, nil)
-		case parquet.Types.Int32:
-			total, _, err = col.(*file.Int32ColumnChunkReader).ReadBatch(req, buf.int32Buffer, nil, nil)
-		case parquet.Types.Int64:
-			total, _, err = col.(*file.Int64ColumnChunkReader).ReadBatch(req, buf.int64Buffer, nil, nil)
-		case parquet.Types.Int96:
-			total, _, err = col.(*file.Int96ColumnChunkReader).ReadBatch(req, buf.int96Buffer, nil, nil)
-		case parquet.Types.Boolean:
-			total, _, err = col.(*file.BooleanColumnChunkReader).ReadBatch(req, buf.boolBuffer, nil, nil)
-		}
-
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-
+	for i, dumper := range p.dumpers {
+		dumper.readNextBatch()
 		meta := p.colMetas[i]
+		physicalTp := dumper.Type()
 
 		// If we can't get converted type, just use physical type
 		if physicalTp == parquet.Types.Boolean || physicalTp == parquet.Types.Int96 || meta.converted == schema.ConvertedTypes.None {
@@ -611,7 +649,7 @@ func (pp *ParquetParser) Close() error {
 // User should call ReadRow before calling this.
 func (p *ParquetParser) GetRow() ([]types.Datum, error) {
 	if p.curIdx >= p.avail {
-		read, err := p.readRows(batchReadRowSize)
+		read, err := p.readRows(defaultBatchSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -788,15 +826,14 @@ func NewParquetParser(
 	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
 	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
-		// TODO(joechenrh): fix memory usage later
-		// newWrapper, err := wrapper.Open("")
-		// if err != nil {
-		// 	return nil, errors.Trace(err)
-		// }
-		// reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
-		// if err != nil {
-		// 	return nil, errors.Trace(err)
-		// }
+		newWrapper, err := wrapper.Open("")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		subreaders = append(subreaders, reader)
 	}
 
