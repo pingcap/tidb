@@ -30,9 +30,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// generateIndexMergeORPaths handles all (MV and non-MV index) OR type IndexMerge path generation.
+// generateORIndexMerge handles all (MV and non-MV index) OR type IndexMerge path generation.
 // The input filters are implicitly connected by AND.
-func generateIndexMergeORPaths(ds *logicalop.DataSource, filters []expression.Expression) error {
+func generateORIndexMerge(ds *logicalop.DataSource, filters []expression.Expression) error {
 	usedIndexCount := len(ds.PossibleAccessPaths)
 	// 1. Iterate the input filters and try to find an OR list.
 	for k, cond := range filters {
@@ -167,10 +167,7 @@ func initUnfinishedPathsFromExpr(
 		ret[i].index = path.Index
 		// case 1: try to use the previous logic to handle non-mv index
 		if !isMVIndexPath(path) {
-			// generateNormalIndexPartialPaths4DNF is introduced for handle a slice of DNF items and a slice of
-			// candidate AccessPaths before, now we reuse it to handle single filter and single candidate AccessPath,
-			// so we need to wrap them in a slice here.
-			partialPath, needSelection := generateNormalIndexPartialPaths4DNF(
+			partialPath, needSelection := generateNormalIndexPartialPath(
 				ds,
 				expr,
 				path,
@@ -398,7 +395,7 @@ func buildIntoAccessPath(
 				// case 2: non-mv index
 				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
 				var path *util.AccessPath
-				path, needSelection = generateNormalIndexPartialPaths4DNF(
+				path, needSelection = generateNormalIndexPartialPath(
 					ds,
 					expression.ComposeCNFCondition(
 						ds.SCtx().GetExprCtx(),

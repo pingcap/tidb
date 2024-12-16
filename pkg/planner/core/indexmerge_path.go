@@ -81,7 +81,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 
 	regularPathCount := len(ds.PossibleAccessPaths)
 	var err error
-	if warningMsg, err = generateIndexMerge4NormalIndex(ds, regularPathCount, indexMergeConds); err != nil {
+	if warningMsg, err = generateOtherIndexMerge(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 	if err := generateANDIndexMerge4MVIndex(ds, regularPathCount, indexMergeConds); err != nil {
@@ -132,7 +132,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	return nil
 }
 
-func generateNormalIndexPartialPaths4DNF(
+func generateNormalIndexPartialPath(
 	ds *logicalop.DataSource,
 	item expression.Expression,
 	candidatePath *util.AccessPath,
@@ -207,7 +207,7 @@ func isSpecifiedInIndexMergeHints(ds *logicalop.DataSource, name string) bool {
 	return false
 }
 
-// accessPathsForConds generates all possible index paths for conditions.
+// accessPathsForConds generates an AccessPath for given candidate access path and filters.
 func accessPathsForConds(
 	ds *logicalop.DataSource,
 	conditions []expression.Expression,
@@ -259,14 +259,14 @@ func accessPathsForConds(
 }
 
 func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) []*util.AccessPath {
-	if res := generateIndexMergeAndPaths(ds, normalPathCnt, usedAccessMap); res != nil {
+	if res := generateANDIndexMerge4NormalIndex(ds, normalPathCnt, usedAccessMap); res != nil {
 		return res.PartialIndexPaths
 	}
 	return nil
 }
 
-// generateIndexMergeAndPaths generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
-func generateIndexMergeAndPaths(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) *util.AccessPath {
+// generateANDIndexMerge4NormalIndex generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
+func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) *util.AccessPath {
 	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
 	if !indexMergeHintsHasSpecifiedIdx(ds) {
 		return nil
@@ -507,7 +507,9 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 	return mvAndPartialPath, usedAccessCondsMap, nil
 }
 
-func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount int, indexMergeConds []expression.Expression) (string, error) {
+// generateOtherIndexMerge is the entry point for generateORIndexMerge() and generateANDIndexMerge4NormalIndex(), plus
+// some extra logic to keep some specific behaviors the same as before.
+func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, indexMergeConds []expression.Expression) (string, error) {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.PossibleAccessPaths) > 1 // have multiple index paths
 	if !isPossibleIdxMerge {
@@ -548,12 +550,12 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	}
 
 	// 1. Generate possible IndexMerge paths for `OR`.
-	err := generateIndexMergeORPaths(ds, indexMergeConds)
+	err := generateORIndexMerge(ds, indexMergeConds)
 	if err != nil {
 		return "", err
 	}
 	// 2. Generate possible IndexMerge paths for `AND`.
-	indexMergeAndPath := generateIndexMergeAndPaths(ds, regularPathCount, nil)
+	indexMergeAndPath := generateANDIndexMerge4NormalIndex(ds, regularPathCount, nil)
 	if indexMergeAndPath != nil {
 		ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergeAndPath)
 	}
