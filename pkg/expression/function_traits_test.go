@@ -30,7 +30,7 @@ func TestUnfoldableFuncs(t *testing.T) {
 // as list of functions that are illegal. This is basically a blocklist.
 //
 // This functions has knownGood as list of functions that should not be on this blocklist.
-// This ensures that for new functions a concious decision is made to allow or not allow
+// This ensures that for new functions a conscious decision is made to allow or not allow
 // the use in generated columns.
 //
 // Functions should only be allowed if they are:
