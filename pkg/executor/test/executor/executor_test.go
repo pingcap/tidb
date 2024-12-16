@@ -1972,6 +1972,14 @@ func TestAdapterStatement(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "select 1", stmt.OriginText())
 
+	gbkSQL := "select '\xb1\xed1'"
+	stmts, _, err := s.ParseSQL(gbkSQL, parser.CharsetClient("gbk"))
+	require.NoError(t, err)
+	stmt, err = compiler.Compile(context.TODO(), stmts[0])
+	require.NoError(t, err)
+	require.Equal(t, "select '表1'", stmt.Text())
+	require.Equal(t, gbkSQL, stmt.OriginText())
+
 	stmtNode, err = s.ParseOneStmt("create table test.t (a int)", "", "")
 	require.NoError(t, err)
 	stmt, err = compiler.Compile(context.TODO(), stmtNode)
@@ -3002,7 +3010,6 @@ func TestIssue48756(t *testing.T) {
 	))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1292 Incorrect time value: '120120519090607'",
-		"Warning 1105 ",
 	))
 }
 

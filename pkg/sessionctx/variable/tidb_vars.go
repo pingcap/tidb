@@ -1444,6 +1444,8 @@ const (
 	DefTiDBSessionPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
+	DefTiDBEnableWorkloadBasedLearning                = false
+	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
@@ -1631,6 +1633,9 @@ var (
 	EnableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	// TODO: set value by session variable
+	EnableWorkloadBasedLearning   = atomic.NewBool(DefTiDBEnableWorkloadBasedLearning)
+	WorkloadBasedLearningInterval = atomic.NewDuration(DefTiDBWorkloadBasedLearningInterval)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

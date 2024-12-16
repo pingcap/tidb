@@ -80,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
@@ -318,6 +319,7 @@ func main() {
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
@@ -921,6 +923,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
+	repository.StopRepository()
 	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()

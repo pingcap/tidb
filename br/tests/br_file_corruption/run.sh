@@ -33,11 +33,11 @@ for filename in $(find $TEST_DIR/$DB -name "*.sst"); do
     mv "$filename" "$filename_bak"
 done
 
-# need to drop db otherwise restore will fail because of cluster not fresh but not the expected issue 
+# need to drop db otherwise restore will fail because of cluster not fresh but not the expected issue
 run_sql "DROP DATABASE IF EXISTS $DB;"
 
 # file lost
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" || restore_fail=1
 export GO_FAILPOINTS=""
@@ -53,7 +53,7 @@ for filename in $(find $TEST_DIR/$DB -name "*.sst_temp"); do
     truncate -s -11 "${filename%_temp}"
 done
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-import-attempt-to-one=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/utils/set-remaining-attempts-to-one=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" || restore_fail=1
 export GO_FAILPOINTS=""

@@ -735,8 +735,10 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropForeignKey, ActionDropTablePartition, ActionTruncateTablePartition:
+		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionTruncateTablePartition:
+		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
@@ -748,6 +750,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionFlashbackCluster:
 		if job.SchemaState == StateWriteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
 			return false
 		}
 	}

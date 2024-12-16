@@ -437,7 +437,7 @@ func TestTransactionWithWriteOnlyColumn(t *testing.T) {
 	}
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -489,7 +489,7 @@ func TestAddGeneratedColumnAndInsert(t *testing.T) {
 	ctx.Store = store
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -529,7 +529,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	var checkErr error
 	assertChangingColName := "_col$_c2_0"
 	assertChangingIdxName := "_idx$_idx_0"
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			args, err := model.GetModifyColumnArgs(job)
 			if err != nil {
@@ -573,7 +573,7 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	assertChangingColName2 := "_col$__col$__col$_c1_0_1"
 	query1 := "alter table t modify column _col$_c1 tinyint"
 	query2 := "alter table t modify column _col$__col$_c1_0 tinyint"
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			args, err := model.GetModifyColumnArgs(job)
 			if err != nil {

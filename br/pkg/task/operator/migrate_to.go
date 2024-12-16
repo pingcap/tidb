@@ -5,7 +5,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
-	backup "github.com/pingcap/kvproto/pkg/brpb"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"

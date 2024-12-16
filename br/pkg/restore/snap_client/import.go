@@ -214,6 +214,9 @@ func NewSnapFileImporter(
 	kvMode KvMode,
 	options *SnapFileImporterOptions,
 ) (*SnapFileImporter, error) {
+	if options.concurrencyPerStore == 0 {
+		return nil, errors.New("concurrencyPerStore must be greater than 0")
+	}
 	fileImporter := &SnapFileImporter{
 		apiVersion: apiVersion,
 		kvMode:     kvMode,
@@ -420,7 +423,7 @@ func (importer *SnapFileImporter) Import(
 			log.Debug("ingest file done", logutil.Key("start", startKey), logutil.Key("end", endKey), zap.Stringer("take", time.Since(start)))
 		}
 		return nil
-	}, utils.NewImportSSTBackoffer())
+	}, utils.NewImportSSTBackoffStrategy())
 	if err != nil {
 		log.Error("import sst file failed after retry, stop the whole progress", restore.ZapBatchBackupFileSet(backupFileSets), zap.Error(err))
 		return errors.Trace(err)
@@ -555,7 +558,7 @@ func (importer *SnapFileImporter) download(
 		}
 
 		return nil
-	}, utils.NewDownloadSSTBackoffer())
+	}, utils.NewDownloadSSTBackoffStrategy())
 
 	return downloadMetas, errDownload
 }
@@ -665,7 +668,7 @@ func (importer *SnapFileImporter) downloadSST(
 			for fileName, req := range downloadReqsMap {
 				var err error
 				var resp *import_sstpb.DownloadResponse
-				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
 					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)

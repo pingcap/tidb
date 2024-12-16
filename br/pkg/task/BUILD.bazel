@@ -137,7 +137,7 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/util",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/types",

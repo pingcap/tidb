@@ -489,10 +489,9 @@ func TestValidateAndFillRanges(t *testing.T) {
 }
 
 func TestTuneTableScanWorkerBatchSize(t *testing.T) {
-	reorgMeta := &model.DDLReorgMeta{
-		Concurrency: 4,
-		BatchSize:   32,
-	}
+	reorgMeta := &model.DDLReorgMeta{}
+	reorgMeta.Concurrency.Store(4)
+	reorgMeta.BatchSize.Store(32)
 	copCtx := &copr.CopContextSingleIndex{
 		CopContextBase: &copr.CopContextBase{
 			FieldTypes: []*types.FieldType{},

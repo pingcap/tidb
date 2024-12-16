@@ -479,6 +479,20 @@ func (mr *MockTaskManagerMockRecorder) GetUsedSlotsOnNodes(arg0 any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUsedSlotsOnNodes", reflect.TypeOf((*MockTaskManager)(nil).GetUsedSlotsOnNodes), arg0)
 }
 
+// ModifiedTask mocks base method.
+func (m *MockTaskManager) ModifiedTask(arg0 context.Context, arg1 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ModifiedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ModifiedTask indicates an expected call of ModifiedTask.
+func (mr *MockTaskManagerMockRecorder) ModifiedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ModifiedTask", reflect.TypeOf((*MockTaskManager)(nil).ModifiedTask), arg0, arg1)
+}
+
 // PauseTask mocks base method.
 func (m *MockTaskManager) PauseTask(arg0 context.Context, arg1 string) (bool, error) {
 	m.ctrl.T.Helper()

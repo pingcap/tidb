@@ -26,7 +26,8 @@ import (
 
 // LogicalMaxOneRow checks if a query returns no more than one row.
 type LogicalMaxOneRow struct {
-	BaseLogicalPlan
+	// logical max one row, doesn't have any other attribute to distinguish, use plan id inside.
+	BaseLogicalPlan `hash64-equals:"true"`
 }
 
 // Init initializes LogicalMaxOneRow.
