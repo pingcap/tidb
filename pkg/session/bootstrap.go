@@ -3292,12 +3292,19 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+const (
+	// AddAnalyzeJobsSchemaTableStateIndex adds an index on (table_schema, table_name, state) to mysql.analyze_jobs
+	AddAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
+	// AddAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
+	AddAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
+)
+
 func upgradeToVer240(s sessiontypes.Session, ver int64) {
 	if ver >= version240 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)", dbterror.ErrDupKeyName)
-	doReentrantDDL(s, "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, AddAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, AddAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
