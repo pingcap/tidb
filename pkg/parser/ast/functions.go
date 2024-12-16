@@ -316,7 +316,7 @@ const (
 	Encrypt                  = "encrypt"
 	MD5                      = "md5"
 	OldPassword              = "old_password"
-	PasswordFunc             = "password_func"
+	PasswordFunc             = "password"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
 	SHA                      = "sha"
