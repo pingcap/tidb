@@ -29,7 +29,6 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -784,10 +783,11 @@ ChunkLoop:
 		}
 
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// TODO: use the compressed size of the chunk to conduct memory control
-			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+			pp := cr.parser.(*mydump.ParquetParser)
+			if _, err := pp.ReadRows(64); err != nil {
 				return nil, errors.Trace(err)
 			}
+			_ = pp.GetMemoryUage()
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()
@@ -1194,15 +1194,6 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
-}
-
-// TODO(joechenrh): remove this function
-func getChunkCompressedSizeForParquet(
-	ctx context.Context,
-	chunk *checkpoints.ChunkCheckpoint,
-	store storage.ExternalStorage,
-) (int64, error) {
-	return 100, nil
 }
 
 func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {

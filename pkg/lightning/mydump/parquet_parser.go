@@ -21,6 +21,7 @@ import (
 	"io"
 	"math/big"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/types"
 
+	"github.com/joechenrh/arrow-go/v18/arrow/memory"
 	"github.com/joechenrh/arrow-go/v18/parquet"
 	"github.com/joechenrh/arrow-go/v18/parquet/file"
 	"github.com/joechenrh/arrow-go/v18/parquet/schema"
@@ -44,6 +46,29 @@ const (
 	utcTimeLayout = "2006-01-02 15:04:05.999999Z"
 	timeLayout    = "2006-01-02 15:04:05.999999"
 )
+
+type allocatorWithStats struct {
+	baseAllocator memory.Allocator
+	allocated     atomic.Int64
+}
+
+func (a *allocatorWithStats) Allocate(size int) []byte {
+	b := a.baseAllocator.Allocate(size)
+	a.allocated.Add(int64(cap(b)))
+	return b
+}
+
+func (a *allocatorWithStats) Reallocate(size int, b []byte) []byte {
+	return a.baseAllocator.Reallocate(size, b)
+}
+
+func (a *allocatorWithStats) Free(b []byte) {
+	a.baseAllocator.Free(b)
+}
+
+func (a *allocatorWithStats) Allocated() int64 {
+	return a.allocated.Load()
+}
 
 type Dumper struct {
 	reader         file.ColumnChunkReader
@@ -100,36 +125,37 @@ func (dump *Dumper) SetReader(colReader file.ColumnChunkReader) {
 	dump.levelOffset = 0
 }
 
-func (dump *Dumper) readNextBatch() {
+func (dump *Dumper) readNextBatch(req int64) int {
 	switch reader := dump.reader.(type) {
 	case *file.BooleanColumnChunkReader:
 		values := dump.valueBuffer.([]bool)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.Int32ColumnChunkReader:
 		values := dump.valueBuffer.([]int32)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.Int64ColumnChunkReader:
 		values := dump.valueBuffer.([]int64)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.Float32ColumnChunkReader:
 		values := dump.valueBuffer.([]float32)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.Float64ColumnChunkReader:
 		values := dump.valueBuffer.([]float64)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.Int96ColumnChunkReader:
 		values := dump.valueBuffer.([]parquet.Int96)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.ByteArrayColumnChunkReader:
 		values := dump.valueBuffer.([]parquet.ByteArray)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	case *file.FixedLenByteArrayColumnChunkReader:
 		values := dump.valueBuffer.([]parquet.FixedLenByteArray)
-		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(dump.batchSize, values, dump.defLevels, dump.repLevels)
+		dump.levelsBuffered, dump.valuesBuffered, _ = reader.ReadBatch(req, values, dump.defLevels, dump.repLevels)
 	}
 
 	dump.valueOffset = 0
 	dump.levelOffset = 0
+	return int(dump.levelsBuffered)
 }
 
 // convertedType is older representation of the logical type in parquet
@@ -295,7 +321,8 @@ type ParquetParser struct {
 	readers     []*file.Reader
 	colMetas    []convertedType
 	columnNames []string
-	readType    int
+
+	alloc *allocatorWithStats
 
 	// colBuffers is used to store raw data read from parquet columns.
 	// rows stores the actual data after parsing.
@@ -316,6 +343,17 @@ type ParquetParser struct {
 
 	lastRow Row
 	logger  log.Logger
+}
+
+// GetMemoryUage estimate the memory usage for this file.
+func (p *ParquetParser) GetMemoryUage() int64 {
+	// The reason for multiplying by six is as follows:
+	// 1. The file reader requires a buffer to accommodate at least one data page.
+	// 2. The page reader needs two buffers: one for storing compressed data and another for uncompressed data.
+	// 3. Only the uncompressed data will be recorded in the parser.
+	// 4. When moving to the next row group, we may allocate three additional buffers.
+	// Therefore, we multiply the memory usage by six to estimate the memory usage.
+	return p.alloc.Allocated() * 6
 }
 
 func (p *ParquetParser) setStringData(readNum, col, offset int) {
@@ -503,8 +541,8 @@ func (p *ParquetParser) Init() error {
 	return nil
 }
 
-// readRows read several rows internally and store them in the row buffer.
-func (p *ParquetParser) readRows(num int) (int, error) {
+// ReadRows read several rows internally and store them in the row buffer.
+func (p *ParquetParser) ReadRows(num int) (int, error) {
 	readNum := min(num, p.totalRows-p.curRows)
 	if readNum == 0 {
 		return 0, nil
@@ -537,21 +575,22 @@ func (p *ParquetParser) readRows(num int) (int, error) {
 	}
 
 	p.curRows += readNum
+	p.curIdx, p.avail = 0, readNum
 	return readNum, nil
 }
 
 // readInGroup read severals rows in current row group.
 // storeOffset represents the starting position for storing the read rows.
-// It's a part of the readRows.
+// It's a part of the ReadRows.
 func (p *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 	var (
 		err   error
-		total int64
+		total int
 	)
 
 	// Read data into buffers first
 	for i, dumper := range p.dumpers {
-		dumper.readNextBatch()
+		total = dumper.readNextBatch(int64(num))
 		meta := p.colMetas[i]
 		physicalTp := dumper.Type()
 
@@ -604,7 +643,7 @@ func (p *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		}
 	}
 
-	return int(total), err
+	return total, err
 }
 
 // Pos returns the currently row number of the parquet file
@@ -621,8 +660,10 @@ func (p *ParquetParser) SetPos(pos int64, rowID int64) error {
 		panic("don't support seek back yet")
 	}
 
+	// Read and discard these rows
 	read := int(pos) - p.curRows
-	_, err := p.readRows(read)
+	_, err := p.ReadRows(read)
+	p.curIdx, p.avail = 0, 0
 	return errors.Trace(err)
 }
 
@@ -649,14 +690,13 @@ func (pp *ParquetParser) Close() error {
 // User should call ReadRow before calling this.
 func (p *ParquetParser) GetRow() ([]types.Datum, error) {
 	if p.curIdx >= p.avail {
-		read, err := p.readRows(defaultBatchSize)
+		read, err := p.ReadRows(defaultBatchSize)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		if read == 0 {
 			return nil, nil
 		}
-		p.curIdx, p.avail = 0, read
 	}
 
 	row := p.rows[p.curIdx]
@@ -798,7 +838,8 @@ func NewParquetParser(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
-	prop := parquet.NewReaderProperties(nil)
+	alloc := &allocatorWithStats{baseAllocator: memory.DefaultAllocator}
+	prop := parquet.NewReaderProperties(alloc)
 	prop.BufferedStreamEnabled = true
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
@@ -841,6 +882,7 @@ func NewParquetParser(
 		readers:     subreaders,
 		colMetas:    columnMetas,
 		columnNames: columnNames,
+		alloc:       alloc,
 		logger:      log.FromContext(ctx),
 	}
 	parser.Init()
