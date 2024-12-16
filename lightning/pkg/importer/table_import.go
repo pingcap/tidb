@@ -20,6 +20,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/lightning/pkg/web"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -52,12 +54,25 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+var memLimiter *membuf.Limiter
+
+func init() {
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		// Set limit to int max, which means no limiter
+		memTotal = math.MaxInt32
+	}
+	// TODO(joechenrh): set a more proper waterline
+	memLimiter = membuf.NewLimiter(int(memTotal / 5 * 4))
+}
 
 // TableImporter is a helper struct to import a table.
 type TableImporter struct {
@@ -709,6 +724,8 @@ func (tr *TableImporter) preprocessEngine(
 
 	metrics, _ := metric.FromContext(ctx)
 
+	maxMemoryUsage := 0
+
 	// Restore table data
 ChunkLoop:
 	for chunkIndex, chunk := range cp.Chunks {
@@ -782,12 +799,21 @@ ChunkLoop:
 			break
 		}
 
+		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			// To avoid OOM during file opening, we update the waterline before reading.
+			memLimiter.Acquire(maxMemoryUsage)
 			pp := cr.parser.(*mydump.ParquetParser)
 			if _, err := pp.ReadRows(64); err != nil {
 				return nil, errors.Trace(err)
 			}
-			_ = pp.GetMemoryUage()
+			memoryUsage := int(pp.GetMemoryUage())
+			memLimiter.Release(maxMemoryUsage)
+
+			memLimiter.Acquire(memoryUsage)
+			cr.memLimiter = memLimiter
+			cr.memoryUsage = memoryUsage
+			maxMemoryUsage = max(maxMemoryUsage, memoryUsage)
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -50,9 +51,11 @@ import (
 // for local backend it encodes and writes KV to local disk
 // for tidb backend it transforms data into sql and executes them.
 type chunkProcessor struct {
-	parser mydump.Parser
-	index  int
-	chunk  *checkpoints.ChunkCheckpoint
+	parser      mydump.Parser
+	index       int
+	chunk       *checkpoints.ChunkCheckpoint
+	memLimiter  *membuf.Limiter
+	memoryUsage int
 }
 
 func newChunkProcessor(
@@ -776,5 +779,8 @@ func (*chunkProcessor) maybeSaveCheckpoint(
 }
 
 func (cr *chunkProcessor) close() {
+	if cr.memLimiter != nil {
+		cr.memLimiter.Release(cr.memoryUsage)
+	}
 	_ = cr.parser.Close()
 }
