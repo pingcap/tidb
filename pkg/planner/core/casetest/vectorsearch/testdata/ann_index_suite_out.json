@@ -5,61 +5,105 @@
       {
         "SQL": "explain format = 'brief' select * from t1;",
         "Plan": [
+<<<<<<< HEAD
           "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "TableReader 48.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select * from t1 where a<1;",
         "Plan": [
+<<<<<<< HEAD
           "TableReader 3323.33 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 3323.33 mpp[tiflash]  lt(test.t1.a, 1)",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+=======
+          "TableReader 15.95 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 15.95 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 15.95 mpp[tiflash]  lt(test.t1.a, 1)",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select * from t1 where vec = '[1,1,1]'",
         "Plan": [
+<<<<<<< HEAD
           "TableReader 10.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.vec, [1,1,1]), keep order:false, stats:pseudo"
+=======
+          "TableReader 0.05 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 0.05 mpp[tiflash]  eq(test.t1.vec, [1,1,1])",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select * from t1 where vec_cosine_distance(vec, '[1,1,1]') < 0.1",
         "Plan": [
+<<<<<<< HEAD
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Selection 8000.00 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+=======
+          "TableReader 38.40 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
+          "    └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as dis from t1 having dis < 0.1",
         "Plan": [
+<<<<<<< HEAD
           "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "    └─Selection 8000.00 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+=======
+          "TableReader 38.40 root  MppVersion: 2, data:ExchangeSender",
+          "└─ExchangeSender 38.40 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 38.40 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "    └─Selection 38.40 mpp[tiflash]  lt(vec_cosine_distance(test.t1.vec, [1,1,1]), 0.1)",
+          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
         "Plan": [
+<<<<<<< HEAD
           "Projection 10000.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "└─Sort 10000.00 root  Column#7",
           "  └─Projection 10000.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "    └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
           "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "Projection 48.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─Sort 48.00 root  Column#7",
+          "  └─Projection 48.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "    └─TableReader 48.00 root  MppVersion: 2, data:ExchangeSender",
+          "      └─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -103,8 +147,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7:desc, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -118,8 +167,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7:desc, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -133,8 +187,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, plus(vec_cosine_distance(test.t1.vec, [1,1,1]), 1)->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, plus(vec_cosine_distance(test.t1.vec, [1,1,1]), 1)->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -148,8 +207,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, test.t1.vec, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -163,8 +227,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -178,8 +247,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.vec, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -193,8 +267,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.c, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.c, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -208,8 +287,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.d, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.d, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -223,8 +307,13 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.d, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.d, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -238,19 +327,32 @@
           "      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
+<<<<<<< HEAD
           "            └─Projection 10000.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.d, [1,1,1])->Column#7",
           "              └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "            └─Projection 48.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.d, [1,1,1])->Column#7",
+          "              └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
       {
         "SQL": "explain format = 'brief' select vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
         "Plan": [
+<<<<<<< HEAD
           "Sort 10000.00 root  Column#7",
           "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 10000.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+=======
+          "Sort 48.00 root  Column#7",
+          "└─TableReader 48.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─Projection 48.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       },
@@ -289,6 +391,7 @@
       {
         "SQL": "explain format = 'brief' select * from t1 where a=0 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
         "Plan": [
+<<<<<<< HEAD
           "Projection 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
           "└─TopN 1.00 root  Column#8, offset:0, count:1",
           "  └─Projection 1.00 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
@@ -298,6 +401,15 @@
           "          └─TopN 1.00 mpp[tiflash]  Column#7, offset:0, count:1",
           "            └─Projection 10.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
           "              └─TableFullScan 10.00 mpp[tiflash] table:t1 pushed down filter:eq(test.t1.a, 0), keep order:false, stats:pseudo"
+=======
+          "Projection 0.05 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d",
+          "└─TopN 0.05 root  Column#7, offset:0, count:1",
+          "  └─Projection 0.05 root  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#7",
+          "    └─TableReader 0.05 root  MppVersion: 2, data:ExchangeSender",
+          "      └─ExchangeSender 0.05 mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection 0.05 mpp[tiflash]  eq(test.t1.a, 0)",
+          "          └─TableFullScan 48.00 mpp[tiflash] table:t1 pushed down filter:empty, keep order:false, stats:pseudo"
+>>>>>>> 0dcadef6a8e (planner: stabilize the vector index test (#58254))
         ],
         "Warn": null
       }
