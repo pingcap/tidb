@@ -80,7 +80,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # check the snapshot restore has checkpoint data
-run_sql 'select count(*) from "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint.cpt_data";'
+run_sql 'select count(*) from '"__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"'.`cpt_data`;'
 check_contains "count(*): 1"
 
 # PITR with checkpoint but failed in the log restore datakv stage
