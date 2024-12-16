@@ -1067,13 +1067,13 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	}
 
 	if cfg.CleanUpCompactions {
-		est := stream.MigerationExtension(extStorage)
+		est := stream.MigrationExtension(extStorage)
 		est.Hooks = stream.NewProgressBarHooks(console)
 		newSN := math.MaxInt
 		optPrompt := stream.MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {
 			console.Println("We are going to do the following: ")
 			tbl := console.CreateTable()
-			stream.AddMigrationToTable(m, tbl)
+			est.AddMigrationToTable(ctx, m, tbl)
 			tbl.Print()
 			return console.PromptBool("Continue? ")
 		})

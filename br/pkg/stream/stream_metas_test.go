@@ -2802,7 +2802,7 @@ func TestAppendingMigs(t *testing.T) {
 			asp(fi(80, 85, WriteCF, 72), sp(34, 5)),
 		},
 	}), lN(2))
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 
 	cDir := func(n uint64) string { return fmt.Sprintf("%05d/output", n) }
 	aDir := func(n uint64) string { return fmt.Sprintf("%05d/metas", n) }
@@ -2835,7 +2835,7 @@ func TestUserAbort(t *testing.T) {
 
 	pmig(s, 0, mig(mTruncatedTo(42)))
 	pmig(s, 1, mig(mTruncatedTo(96)))
-	est := MigerationExtension(s)
+	est := MigrationExtension(s)
 	var res MergeAndMigratedTo
 	effs := est.DryRun(func(me MigrationExt) {
 		res = me.MergeAndMigrateTo(ctx, 1, MMOptInteractiveCheck(func(ctx context.Context, m *backuppb.Migration) bool {

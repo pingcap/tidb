@@ -349,7 +349,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err := rc.sstRestoreManager.restorer.WaitUntilFinish()
+	err = rc.sstRestoreManager.restorer.WaitUntilFinish()
 
 	for _, files := range backupFileSets {
 		for _, f := range files.SSTFiles {

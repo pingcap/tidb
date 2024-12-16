@@ -959,7 +959,6 @@ func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...
 	result := MigratedTo{
 		NewBase: NewMigration(),
 	}
-	m.processMetaEdits(ctx, mig, &result)
 	m.processCompactions(ctx, mig, &result)
 	m.processDestroyPrefixes(ctx, mig, &result)
 	m.processExtFullBackup(ctx, mig, &result)
@@ -969,7 +968,7 @@ func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...
 
 	// We do skip truncate log first, so metas removed by truncating can be removed in this execution.
 	// Fills: EditMeta for new Base.
-	m.doMetaEdits(ctx, mig, &result)
+	m.processMetaEdits(ctx, mig, &result)
 
 	return result
 }

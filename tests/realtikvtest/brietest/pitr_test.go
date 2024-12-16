@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +103,12 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 			require.NoError(t, err)
 		},
 	}
+}
+
+func (kit *LogBackupKit) tempFile(name string, content []byte) string {
+	path := filepath.Join(kit.t.TempDir(), name)
+	require.NoError(kit.t, os.WriteFile(path, content, 0o666))
+	return path
 }
 
 func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
@@ -313,8 +321,76 @@ func TestEncryptedFullBackup(t *testing.T) {
 	})
 
 	cleanSimpleData(kit)
-	kit.RunLogStart("something", func(sc *task.StreamConfig) {})
+	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {})
 	chk := func(err error) { require.ErrorContains(t, err, "the data you want to restore is encrypted") }
+	kit.WithChecker(chk, func() {
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {
+			rc.CipherInfo = backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+				CipherKey:  keyContent,
+			}
+		})
+	})
+}
+
+func TestEncryptedLogBackup(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	createSimpleTableWithData(kit)
+
+	keyContent, err := hex.DecodeString("0ae31c060ff933cabe842430e1716185cc9c6b5cdde8e56976afaff41b92528f")
+	require.NoError(t, err)
+	keyFile := kit.tempFile("KEY", keyContent)
+
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+
+	})
+	cleanSimpleData(kit)
+
+	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {
+		sc.MasterKeyConfig.EncryptionType = encryptionpb.EncryptionMethod_AES256_CTR
+		sc.MasterKeyConfig.MasterKeys = append(sc.MasterKeyConfig.MasterKeys, &encryptionpb.MasterKey{
+			Backend: &encryptionpb.MasterKey_File{
+				File: &encryptionpb.MasterKeyFile{
+					Path: keyFile,
+				},
+			},
+		})
+	})
+
+	chk := func(err error) { require.ErrorContains(t, err, "the running log backup task is encrypted") }
+	kit.WithChecker(chk, func() {
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+	})
+}
+
+func TestBothEncrypted(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	createSimpleTableWithData(kit)
+
+	keyContent, err := hex.DecodeString("0ae31c060ff933cabe842430e1716185cc9c6b5cdde8e56976afaff41b92528f")
+	require.NoError(t, err)
+	keyFile := kit.tempFile("KEY", keyContent)
+
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		bc.CipherInfo = backup.CipherInfo{
+			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+			CipherKey:  keyContent,
+		}
+	})
+	cleanSimpleData(kit)
+
+	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {
+		sc.MasterKeyConfig.EncryptionType = encryptionpb.EncryptionMethod_AES256_CTR
+		sc.MasterKeyConfig.MasterKeys = append(sc.MasterKeyConfig.MasterKeys, &encryptionpb.MasterKey{
+			Backend: &encryptionpb.MasterKey_File{
+				File: &encryptionpb.MasterKeyFile{
+					Path: keyFile,
+				},
+			},
+		})
+	})
+
+	chk := func(err error) { require.ErrorContains(t, err, "encrypted") }
 	kit.WithChecker(chk, func() {
 		kit.RunFullRestore(func(rc *task.RestoreConfig) {
 			rc.CipherInfo = backup.CipherInfo{
