@@ -856,6 +856,7 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	return nil
 }
 
+// IsFullCacheFunc is whether the cache is full or not. but we can only change it when to test
 var IsFullCacheFunc = isFullCache
 
 func isFullCache(cache statstypes.StatsCache, total uint64) bool {
