@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -2947,7 +2948,8 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 	tk.MustExec("create database RemovePartitioning")
 	tk.MustExec("use RemovePartitioning")
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by key (a) partitions 7`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// Fill the data with ascii strings
 	for i := 32; i <= 126; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (char(%d,%d,%d),char(%d,%d,%d,%d))`, i, i, i, i, i, i, i))
@@ -2979,7 +2981,8 @@ func TestRemoveKeyPartitioning(t *testing.T) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Statistics are updated asynchronously
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// And also cached and lazy loaded
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -2997,7 +3000,8 @@ func TestRemoveListPartitioning(t *testing.T) {
 	tk.MustExec("create database RemoveListPartitioning")
 	tk.MustExec("use RemoveListPartitioning")
 	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list (a) (partition p0 values in (0), partition p1 values in (1), partition p2 values in (2), partition p3 values in (3), partition p4 values in (4))`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// Fill the data with ascii strings
 	for i := 32; i <= 126; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d,char(%d,%d,%d,%d))`, i%5, i, i, i, i))
@@ -3025,7 +3029,8 @@ func TestRemoveListPartitioning(t *testing.T) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Statistics are updated asynchronously
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// And also cached and lazy loaded
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -3043,7 +3048,8 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 	tk.MustExec("create database RemoveListPartitioning")
 	tk.MustExec("use RemoveListPartitioning")
 	tk.MustExec(`create table t (a varchar(255), b varchar(255), key (a,b), key (b)) partition by list columns (a) (partition p0 values in ("0"), partition p1 values in ("1"), partition p2 values in ("2"), partition p3 values in ("3"), partition p4 values in ("4"))`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// Fill the data with ascii strings
 	for i := 32; i <= 126; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values ("%d",char(%d,%d,%d,%d))`, i%5, i, i, i, i))
@@ -3071,7 +3077,8 @@ func TestRemoveListColumnPartitioning(t *testing.T) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Statistics are updated asynchronously
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// And also cached and lazy loaded
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -3089,7 +3096,8 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	tk.MustExec("create database RemoveListPartitioning")
 	tk.MustExec("use RemoveListPartitioning")
 	tk.MustExec(`create table t (a int, b varchar(255), key (a,b), key (b)) partition by list columns (a,b) (partition p0 values in ((0,"0")), partition p1 values in ((1,"1")), partition p2 values in ((2,"2")), partition p3 values in ((3,"3")), partition p4 values in ((4,"4")))`)
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// Fill the data
 	for i := 32; i <= 126; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d,"%d")`, i%5, i%5))
@@ -3117,7 +3125,8 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 		"  KEY `b` (`b`)\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// Statistics are updated asynchronously
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	// And also cached and lazy loaded
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))

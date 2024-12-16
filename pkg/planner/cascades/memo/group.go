@@ -17,12 +17,12 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var _ base.HashEquals = &Group{}
@@ -127,9 +127,47 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 	return g.Operand2FirstExpr[operand]
 }
 
+// HasLogicalProperty check whether current group has the logical property.
+func (g *Group) HasLogicalProperty() bool {
+	return g.logicalProp != nil
+}
+
+// GetLogicalProperty return this group's logical property.
+func (g *Group) GetLogicalProperty() *property.LogicalProperty {
+	intest.Assert(g.logicalProp != nil)
+	return g.logicalProp
+}
+
+// SetLogicalProperty set this group's logical property.
+func (g *Group) SetLogicalProperty(prop *property.LogicalProperty) {
+	g.logicalProp = prop
+}
+
+// IsExplored returns whether this group is explored.
+func (g *Group) IsExplored() bool {
+	return g.explored
+}
+
+// SetExplored set the group as tagged as explored.
+func (g *Group) SetExplored() {
+	g.explored = true
+}
+
 // String implements fmt.Stringer interface.
 func (g *Group) String(w util.StrBufferWriter) {
-	w.WriteString(fmt.Sprintf("inputs:%s", strconv.Itoa(int(g.groupID))))
+	w.WriteString(fmt.Sprintf("GID:%d", int(g.groupID)))
+}
+
+// ForEachGE traverse the inside group expression with f call on them each.
+func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
+	var next bool
+	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpression)
+		next = f(expr)
+		if !next {
+			break
+		}
+	}
 }
 
 // NewGroup creates a new Group with given logical prop.

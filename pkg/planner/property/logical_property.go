@@ -25,4 +25,9 @@ type LogicalProperty struct {
 	MaxOneRow bool
 }
 
+// NewLogicalProp returns a new empty LogicalProperty.
+func NewLogicalProp() *LogicalProperty {
+	return &LogicalProperty{}
+}
+
 // todo: ScalarProperty: usedColumns in current scalar expr, null reject, cor-related, subq contained and so on

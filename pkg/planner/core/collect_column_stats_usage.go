@@ -99,8 +99,8 @@ func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column, n
 }
 
 func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []expression.Expression, needFullStats bool) {
-	cols := expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
-	for _, col := range cols {
+	c.cols = expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
+	for _, col := range c.cols {
 		c.addPredicateColumn(col, needFullStats)
 	}
 }
@@ -122,7 +122,8 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 }
 
 func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.Column, list []expression.Expression) {
-	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
+	c.cols = expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
+	c.updateColMap(col, c.cols)
 }
 
 func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
