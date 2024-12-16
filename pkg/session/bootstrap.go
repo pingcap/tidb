@@ -3293,7 +3293,10 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 }
 
 const (
-	// AddAnalyzeJobsSchemaTableStateIndex adds an index on (table_schema, table_name, state) to mysql.analyze_jobs
+	// AddAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
+	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
+	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
+	// simpler index directly for non-partitioned tables.
 	AddAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
 	// AddAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
 	AddAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
