@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -456,18 +457,23 @@ func buildIntoAccessPath(
 	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
 
 	var containMVPath bool
-	for _, oneORBranch := range allAlternativePaths {
-		for _, paths := range oneORBranch {
-			for _, path := range paths {
-				if path.IsTablePath() {
-					possibleIdxIDs[-1] = struct{}{}
-				} else {
-					possibleIdxIDs[path.Index.ID] = struct{}{}
-				}
-			}
+	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
+		if p.IsTablePath() {
+			possibleIdxIDs[-1] = struct{}{}
+		} else {
+			possibleIdxIDs[p.Index.ID] = struct{}{}
 		}
+		if isMVIndexPath(p) {
+			containMVPath = true
+		}
+	}
+	if !containMVPath && len(possibleIdxIDs) <= 1 {
+		return nil
+	}
 
-		pathsWithMinRowCount := buildIndexMergePartialPath(oneORBranch)
+	containMVPath = false
+	for _, oneORBranch := range allAlternativePaths {
+		pathsWithMinRowCount := chooseAlternativeWithByRowCount(oneORBranch)
 		for _, path := range pathsWithMinRowCount {
 			if isMVIndexPath(path) {
 				containMVPath = true
@@ -483,9 +489,7 @@ func buildIntoAccessPath(
 		}
 		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
 	}
-	if !containMVPath && len(possibleIdxIDs) <= 1 {
-		return nil
-	}
+
 	if containMVPath {
 		sel := cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl, pathsForEstimate, false)
 		possiblePath.CountAfterAccess = sel * ds.TableStats.RowCount
@@ -504,4 +508,28 @@ func buildIntoAccessPath(
 		possiblePath.CountAfterAccess = sel * ds.TableStats.RowCount
 	}
 	return possiblePath
+}
+
+func chooseAlternativeWithByRowCount(indexAccessPaths [][]*util.AccessPath) []*util.AccessPath {
+	if len(indexAccessPaths) == 1 {
+		return indexAccessPaths[0]
+	}
+	// If one alternative consists of multiple AccessPath, we use the maximum row count of them to compare.
+	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
+		maxRowCount := 0.0
+		for _, path := range paths {
+			rowCount := path.CountAfterAccess
+			if len(path.IndexFilters) > 0 {
+				rowCount = path.CountAfterIndex
+			}
+			maxRowCount = max(maxRowCount, rowCount)
+		}
+		return maxRowCount
+	}
+	// Choose the alternative with the minimum row count.
+	ret := slices.MinFunc(indexAccessPaths, func(a, b []*util.AccessPath) int {
+		return cmp.Compare(getMaxRowCountFromPaths(a), getMaxRowCountFromPaths(b))
+	})
+
+	return ret
 }

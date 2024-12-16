@@ -88,7 +88,7 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 		return err
 	}
 	oldIndexMergeCount := len(ds.PossibleAccessPaths)
-	if err := generateIndexMerge4ComposedIndex(ds, regularPathCount, indexMergeConds); err != nil {
+	if err := generateANDIndexMerge4ComposedIndex(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 
@@ -256,31 +256,6 @@ func accessPathsForConds(
 		}
 	}
 	return newPath
-}
-
-// buildIndexMergePartialPath chooses the best index path from all possible paths.
-// Now we choose the index with minimal estimate row count.
-func buildIndexMergePartialPath(indexAccessPaths [][]*util.AccessPath) []*util.AccessPath {
-	if len(indexAccessPaths) == 1 {
-		return indexAccessPaths[0]
-	}
-
-	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
-		maxRowCount := 0.0
-		for _, path := range paths {
-			rowCount := path.CountAfterAccess
-			if len(path.IndexFilters) > 0 {
-				rowCount = path.CountAfterIndex
-			}
-			maxRowCount = max(maxRowCount, rowCount)
-		}
-		return maxRowCount
-	}
-	ret := slices.MinFunc(indexAccessPaths, func(a, b []*util.AccessPath) int {
-		return cmp.Compare(getMaxRowCountFromPaths(a), getMaxRowCountFromPaths(b))
-	})
-
-	return ret
 }
 
 func generateNormalIndexPartialPath4And(ds *logicalop.DataSource, normalPathCnt int, usedAccessMap map[string]expression.Expression) []*util.AccessPath {
@@ -607,10 +582,9 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	return "", nil
 }
 
-// generateIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for (
+// generateANDIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for (
 //json_member_of / json_overlaps / json_contains) on multiple multi-valued or normal indexes.
 /*
-CNF path
 	1. select * from t where ((1 member of (a) and c=1) and (2 member of (b) and d=2) and (other index predicates))
 		flatten as: select * from t where 1 member of (a) and 2 member of (b) and c=1 and c=2 and other index predicates
 		analyze: find and utilize index access filter items as much as possible:
@@ -643,7 +617,7 @@ CNF path
 			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
 			TableRowIdScan(t)                         --- COP
 */
-func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression) error {
+func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression) error {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.PossibleAccessPaths) > 1 // have multiple index paths
 	if !isPossibleIdxMerge {
@@ -1088,7 +1062,7 @@ func collectFilters4MVIndex(
 // 2: `x=1 and x=2 and (1 member of a) and z=1`, remaining: `x+z>0`.
 // Note: x=1 and x=2 will derive an invalid range in ranger detach, for now because of heuristic rule above, we ignore this case here.
 //
-// just as the 3rd point as we said in generateIndexMerge4ComposedIndex
+// just as the 3rd point as we said in generateANDIndexMerge4ComposedIndex
 //
 // 3: The predicate of mv index can not converge to a linear interval range at physical phase like EQ and
 // GT in normal index. Among the predicates in mv index (member-of/contains/overlap), multi conditions
