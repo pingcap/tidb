@@ -114,7 +114,10 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		if err != nil {
 			return err
 		}
-		return executeAndClosePipeline(opCtx, pipe, nil, nil, 0)
+		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0); err != nil {
+			return errors.Trace(err)
+		}
+		return r.onFinished(ctx, subtask)
 	}
 
 	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
@@ -131,7 +134,11 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		}
 		return err
 	}
-	return r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+	err = r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return r.onFinished(ctx, subtask)
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -147,7 +154,7 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil

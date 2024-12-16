@@ -46,6 +46,9 @@ type baseSemiJoin struct {
 
 	// used in other condition to record which rows need to be processed
 	unFinishedProbeRowIdxQueue *queue.Queue[int]
+
+	// Used for right side build without other condition in semi and anti semi join
+	offsets []int
 }
 
 func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
@@ -128,4 +131,59 @@ func (b *baseSemiJoin) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlK
 
 	b.finishCurrentLookupLoop(joinedChk)
 	return nil
+}
+
+// Only used for semi and anti semi join
+func (b *baseSemiJoin) generateResultChkForRightBuildNoOtherCondition(resultChk *chunk.Chunk) {
+	if len(b.offsets) == 0 {
+		return
+	}
+
+	for index, colIndex := range b.lUsed {
+		srcCol := b.currentChunk.Column(colIndex)
+		dstCol := resultChk.Column(index)
+		chunk.CopyRows(dstCol, srcCol, b.offsets)
+	}
+
+	if len(b.lUsed) == 0 {
+		resultChk.SetNumVirtualRows(resultChk.NumRows() + len(b.offsets))
+	} else {
+		resultChk.SetNumVirtualRows(resultChk.NumRows())
+	}
+}
+
+// Only used for semi and anti semi join
+func (b *baseSemiJoin) generateResultChkForRightBuildWithOtherCondition(remainCap int, chk *chunk.Chunk, resultRows []bool, expectedResult bool) {
+	for remainCap > 0 && (b.currentProbeRow < b.chunkRows) {
+		rowNumToTryAppend := min(remainCap, b.chunkRows-b.currentProbeRow)
+		start := b.currentProbeRow
+		end := b.currentProbeRow + rowNumToTryAppend
+
+		for index, usedColIdx := range b.lUsed {
+			dstCol := chk.Column(index)
+			srcCol := b.currentChunk.Column(usedColIdx)
+			chunk.CopyExpectedRowsWithRowIDFunc(dstCol, srcCol, resultRows, expectedResult, start, end, func(i int) int {
+				return b.usedRows[i]
+			})
+		}
+
+		if len(b.lUsed) == 0 {
+			// For calculating virtual row num
+			virtualRowNum := chk.GetNumVirtualRows()
+			for i := start; i < end; i++ {
+				if resultRows[i] == expectedResult {
+					virtualRowNum++
+				}
+			}
+
+			// When `len(b.lUsed) == 0`, column number in chk is 0
+			// We need to manually calculate virtual row number.
+			chk.SetNumVirtualRows(virtualRowNum)
+		} else {
+			chk.SetNumVirtualRows(chk.NumRows())
+		}
+
+		b.currentProbeRow += rowNumToTryAppend
+		remainCap = chk.RequiredRows() - chk.NumRows()
+	}
 }

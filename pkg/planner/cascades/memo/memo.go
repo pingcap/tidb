@@ -19,17 +19,13 @@ import (
 
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // Memo is the main structure of the memo package.
 type Memo struct {
-	// ctx is the context of the memo.
-	sCtx sessionctx.Context
-
 	// groupIDGen is the incremental group id for internal usage.
-	groupIDGen GroupIDGenerator
+	groupIDGen *GroupIDGenerator
 
 	// rootGroup is the root group of the memo.
 	rootGroup *Group
@@ -48,10 +44,9 @@ type Memo struct {
 }
 
 // NewMemo creates a new memo.
-func NewMemo(ctx sessionctx.Context) *Memo {
+func NewMemo() *Memo {
 	return &Memo{
-		sCtx:          ctx,
-		groupIDGen:    GroupIDGenerator{id: 0},
+		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
 		hasher:        base2.NewHashEqualer(),
@@ -59,73 +54,122 @@ func NewMemo(ctx sessionctx.Context) *Memo {
 }
 
 // GetHasher gets a hasher from the memo that ready to use.
-func (m *Memo) GetHasher() base2.Hasher {
-	m.hasher.Reset()
-	return m.hasher
+func (mm *Memo) GetHasher() base2.Hasher {
+	mm.hasher.Reset()
+	return mm.hasher
 }
 
-// CopyIn copies a logical plan into the memo with format as GroupExpression.
-func (m *Memo) CopyIn(target *Group, lp base.LogicalPlan) *GroupExpression {
+// CopyIn copies a MemoExpression representation into the memo with format as GroupExpression inside.
+// The generic logical forest inside memo is represented as memo group expression tree, while for entering
+// and re-feeding the memo, we use the memoExpression as the currency：
+//
+// entering(init memo)
+//
+//	  lp                          ┌──────────┐
+//	 /  \                         │ memo:    │
+//	lp   lp       --copyIN->      │  G(ge)   │
+//	    /  \                      │   /  \   │
+//	  ...  ...                    │  G    G  │
+//	                              └──────────┘
+//
+// re-feeding (intake XForm output)
+//
+//	  lp                          ┌──────────┐
+//	 /  \                         │ memo:    │
+//	GE  lp        --copyIN->      │  G(ge)   │
+//	     |                        │   /  \   │
+//	    GE                        │  G    G  │
+//	                              └──────────┘
+//
+// the bare lp means the new created logical op or that whose child has changed which invalidate it's original
+// old belonged group, make it back to bare-lp for re-inserting again in copyIn.
+func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
 	for _, child := range lp.Children() {
-		// todo: child.getGroupExpression.GetGroup directly
-		groupExpr := m.CopyIn(nil, child)
-		group := groupExpr.group
-		intest.Assert(group != nil)
-		intest.Assert(group != target)
-		childGroups = append(childGroups, group)
+		var currentChildG *Group
+		if ge, ok := child.(*GroupExpression); ok {
+			// which means it's the earliest unchanged GroupExpression from rule XForm.
+			currentChildG = ge.GetGroup()
+		} else {
+			// which means it's a new/changed logical op, downward to get its input group ids to complete it.
+			ge, err := mm.CopyIn(nil, child)
+			if err != nil {
+				return nil, err
+			}
+			currentChildG = ge.GetGroup()
+		}
+		intest.Assert(currentChildG != nil)
+		intest.Assert(currentChildG != target)
+		childGroups = append(childGroups, currentChildG)
 	}
-
-	hasher := m.GetHasher()
+	hasher := mm.GetHasher()
 	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
-	m.insertGroupExpression(groupExpr, target)
-	// todo: new group need to derive the logical property.
-	return groupExpr
+	if mm.InsertGroupExpression(groupExpr, target) && target == nil {
+		// derive logical property for new group.
+		err := groupExpr.DeriveLogicalProp()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return groupExpr, nil
 }
 
 // GetGroups gets all groups in the memo.
-func (m *Memo) GetGroups() *list.List {
-	return m.groups
+func (mm *Memo) GetGroups() *list.List {
+	return mm.groups
 }
 
 // GetGroupID2Group gets the map from group id to group.
-func (m *Memo) GetGroupID2Group() map[GroupID]*list.Element {
-	return m.groupID2Group
+func (mm *Memo) GetGroupID2Group() map[GroupID]*list.Element {
+	return mm.groupID2Group
 }
 
 // GetRootGroup gets the root group of the memo.
-func (m *Memo) GetRootGroup() *Group {
-	return m.rootGroup
+func (mm *Memo) GetRootGroup() *Group {
+	return mm.rootGroup
 }
 
+// InsertGroupExpression insert ge into a target group.
 // @bool indicates whether the groupExpr is inserted to a new group.
-func (m *Memo) insertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
+func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
 	// todo: merge group
 	if target == nil {
-		target = m.NewGroup()
-		m.groups.PushBack(target)
-		m.groupID2Group[target.groupID] = m.groups.Back()
+		target = mm.NewGroup()
+		mm.groups.PushBack(target)
+		mm.groupID2Group[target.groupID] = mm.groups.Back()
 	}
 	target.Insert(groupExpr)
 	return true
 }
 
 // NewGroup creates a new group.
-func (m *Memo) NewGroup() *Group {
+func (mm *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
-	group.groupID = m.groupIDGen.NextGroupID()
+	group.groupID = mm.groupIDGen.NextGroupID()
 	return group
 }
 
 // Init initializes the memo with a logical plan, converting logical plan tree format into group tree.
-func (m *Memo) Init(plan base.LogicalPlan) *GroupExpression {
-	intest.Assert(m.groups.Len() == 0)
-	gE := m.CopyIn(nil, plan)
-	m.rootGroup = gE.GetGroup()
+func (mm *Memo) Init(plan base.LogicalPlan) *GroupExpression {
+	intest.Assert(mm.groups.Len() == 0)
+	gE, _ := mm.CopyIn(nil, plan)
+	mm.rootGroup = gE.GetGroup()
 	return gE
+}
+
+// ForEachGroup traverse the inside group expression with f call on them each.
+func (mm *Memo) ForEachGroup(f func(g *Group) bool) {
+	var next bool
+	for elem := mm.GetGroups().Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*Group)
+		next = f(expr)
+		if !next {
+			break
+		}
+	}
 }

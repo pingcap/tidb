@@ -11,13 +11,14 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/memo",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/expression",
         "//pkg/planner/cascades/base",
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/util",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
-        "//pkg/sessionctx",
         "//pkg/util/intest",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
 
@@ -36,9 +37,10 @@ go_test(
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
-        "//pkg/planner/core",
         "//pkg/planner/core/operator/logicalop",
         "//pkg/testkit/testsetup",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -511,7 +512,8 @@ partition by range (a) (
 	partition p0 values less than (10),
 	partition p1 values less than (20)
 )`)
-	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
@@ -522,7 +524,7 @@ partition by range (a) (
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
-	err := tk.ExecToErr("analyze table t") // try to build global-stats on ver1
+	err = tk.ExecToErr("analyze table t") // try to build global-stats on ver1
 	require.NoError(t, err)
 
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -585,7 +587,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
@@ -604,7 +606,8 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	// We will update the global-stats after the truncate operation.
 	globalStats = h.GetTableStats(tableInfo)
@@ -865,7 +868,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		// analyze table t
 		tk.MustExec("drop table if exists t")
 		if i != 0 {
-			require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+			err := statstestutil.HandleNextDDLEventWithTxn(h)
+			require.NoError(t, err)
 		}
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
 			"PARTITION BY RANGE (a) (" +
@@ -873,7 +877,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40))")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		<-h.DDLEventCh()
@@ -888,14 +893,16 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index idx
 		tk.MustExec("drop table if exists t")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered)" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40));")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		<-h.DDLEventCh()
@@ -907,14 +914,16 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index
 		tk.MustExec("drop table if exists t")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
 			"PARTITION p1 VALUES LESS THAN (20)," +
 			"PARTITION p2 VALUES LESS THAN (30)," +
 			"PARTITION p3 VALUES LESS THAN (40));")
-		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		require.NoError(t, err)
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b) GLOBAL")
 		<-h.DDLEventCh()
