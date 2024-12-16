@@ -134,3 +134,20 @@ func TestIssue53175(t *testing.T) {
 	tk.MustQuery(`select * from t group by null`)
 	tk.MustQuery(`select * from v`)
 }
+
+func TestIssue57390(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t0, t1")
+	tk.MustExec("CREATE TABLE t0 (c0 FLOAT, c1 VARBINARY(11))")
+	tk.MustExec("INSERT INTO t0 (c0, c1) VALUES (8.416507379856948e+37, 0xBD18FF9DA18)")
+	tk.MustExec("INSERT INTO t0 (c0, c1) VALUES (-8.039100705145107e+36, 0x751F7D92AF2)")
+	tk.MustExec("INSERT INTO t0 (c0, c1) VALUES (-3.2141114349670245e+37, 0x22693D9BBE4)")
+	tk.MustExec("INSERT INTO t0 (c0, c1) VALUES (-1.972829282794721e+35, 0x9C0F3D7E886)")
+	tk.MustExec("INSERT INTO t0 (c0, c1) VALUES (4.535289015159612e+37, 0x2BA66016016)")
+	tk.MustExec("CREATE TABLE t1 (c0 double , c1 VARBINARY(11))")
+	tk.MustExec("INSERT INTO t1 SELECT (AVG(c0)), c1 FROM t0 GROUP BY c1")
+	res := tk.MustQuery("SELECT c0, c1 FROM t1 WHERE (c1 OR c1) IN (SELECT c1 FROM t1 WHERE (c1 <= (0x991D3FA2F9C))) AND ((c0 AND 8.98447659672538e+29))")
+	require.Equal(t, 5, len(res.Rows()))
+}

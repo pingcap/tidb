@@ -1208,7 +1208,6 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		er.err = err
 		return v, true
 	}
-
 	// If the leftKey and the rightKey have different collations, don't convert the sub-query to an inner-join
 	// since when converting we will add a distinct-agg upon the right child and this distinct-agg doesn't have the right collation.
 	// To keep it simple, we forbid this converting if they have different collations.
@@ -1222,12 +1221,16 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
 	}
-
+	ifLexprReturnBool := false
+	// if lexpr is a scalar function who will return 1 or 0, don't convert the sub-query to an inner-join.
+	if lexpr, ok := lexpr.(*expression.ScalarFunction); ok && lexpr.FuncName.L == "or" {
+		ifLexprReturnBool = true
+	}
 	// If it's not the form of `not in (SUBQUERY)`,
 	// and has no correlated column from the current level plan(if the correlated column is from upper level,
 	// we can treat it as constant, because the upper LogicalApply cannot be eliminated since current node is a join node),
 	// and don't need to append a scalar value, we can rewrite it to inner join.
-	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag {
+	if planCtx.builder.ctx.GetSessionVars().GetAllowInSubqToJoinAndAgg() && !v.Not && !asScalar && len(corCols) == 0 && collFlag && !ifLexprReturnBool {
 		// We need to try to eliminate the agg and the projection produced by this operation.
 		planCtx.builder.optFlag |= rule.FlagEliminateAgg
 		planCtx.builder.optFlag |= rule.FlagEliminateProjection
