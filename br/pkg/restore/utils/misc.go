@@ -28,6 +28,8 @@ const (
 	DefaultCFName = "default"
 )
 
+// GetFileRangeKey is used to reduce the checkpoint number, because we combine the write cf/default cf into one restore file group.
+// during full restore, so we can reduce the checkpoint number with the common prefix of the file.
 func GetFileRangeKey(f string) string {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
 	// so we need to compare with out the `_{cf}.sst` suffix

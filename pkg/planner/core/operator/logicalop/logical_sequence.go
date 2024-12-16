@@ -34,7 +34,8 @@ import (
 //
 // We use this property to do complex optimizations for CTEs.
 type LogicalSequence struct {
-	BaseLogicalPlan
+	// logical sequence doesn't have any other attribute to distinguish, use plan id inside.
+	BaseLogicalPlan `hash64-equals:"true"`
 }
 
 // Init initializes LogicalSequence

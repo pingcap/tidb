@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
@@ -94,12 +95,12 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 	leftRows := t.rows
 	defer func() {
 		if len(leftRows) > 0 {
-			t.statistics.IncErrorRows(len(leftRows))
+			retryRows = append(retryRows, leftRows...)
 		}
 	}()
 
 	se := newTableSession(rawSe, t.tbl, t.expire)
-	for len(leftRows) > 0 {
+	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := variable.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
 		if int64(len(leftRows)) < maxBatch {
@@ -133,7 +134,6 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		sqlInterval := time.Since(sqlStart)
 		if err != nil {
 			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
-			needRetry = needRetry && ctx.Err() == nil
 			logutil.BgLogger().Warn(
 				"delete SQL in TTL failed",
 				zap.Error(err),
@@ -191,8 +191,14 @@ func (b *ttlDelRetryBuffer) RecordTaskResult(task *ttlDeleteTask, retryRows [][]
 }
 
 func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) time.Duration {
-	for b.list.Len() > 0 {
+	l := b.list.Len()
+	// When `retryInterval==0`, to avoid the infinite retries, limit the max loop to the buffer length.
+	// It means one item only has one chance to retry in one `DoRetry` invoking.
+	for i := 0; i < l; i++ {
 		ele := b.list.Front()
+		if ele == nil {
+			break
+		}
 		item, ok := ele.Value.(*ttlDelRetryItem)
 		if !ok {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
@@ -212,6 +218,11 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) tim
 		}
 	}
 	return b.retryInterval
+}
+
+// SetRetryInterval sets the retry interval of the buffer.
+func (b *ttlDelRetryBuffer) SetRetryInterval(interval time.Duration) {
+	b.retryInterval = interval
 }
 
 // Drain drains a retry buffer.
@@ -296,8 +307,37 @@ func (w *ttlDeleteWorker) loop() error {
 	timer := time.NewTimer(w.retryBuffer.retryInterval)
 	defer timer.Stop()
 
-	// drain retry buffer to make sure the statistics are correct
-	defer w.retryBuffer.Drain()
+	defer func() {
+		// Have a final try to delete all rows in retry buffer while the worker stops
+		// to avoid leaving any TTL rows undeleted when shrinking the delete worker.
+		if w.retryBuffer.Len() > 0 {
+			start := time.Now()
+			log.Info(
+				"try to delete TTL rows in del worker buffer immediately because the worker is going to stop",
+				zap.Int("bufferLen", w.retryBuffer.Len()),
+			)
+			retryCtx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+			defer cancel()
+			w.retryBuffer.SetRetryInterval(0)
+			w.retryBuffer.DoRetry(func(task *ttlDeleteTask) [][]types.Datum {
+				return task.doDelete(retryCtx, se)
+			})
+			log.Info(
+				"delete TTL rows in del worker buffer finished",
+				zap.Duration("duration", time.Since(start)),
+			)
+		}
+
+		// drain retry buffer to make sure the statistics are correct
+		if w.retryBuffer.Len() > 0 {
+			log.Warn(
+				"some TTL rows are still in the buffer while the worker is going to stop, mark them as error",
+				zap.Int("bufferLen", w.retryBuffer.Len()),
+			)
+			w.retryBuffer.Drain()
+		}
+	}()
+
 	for w.Status() == workerStatusRunning {
 		tracer.EnterPhase(metrics.PhaseIdle)
 		select {

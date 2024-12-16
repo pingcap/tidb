@@ -25,6 +25,7 @@ go_library(
         "//pkg/util/intest",
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
     ],
 )
 

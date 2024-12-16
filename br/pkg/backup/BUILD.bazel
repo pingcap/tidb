@@ -32,7 +32,7 @@ go_library(
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/util",
+        "//pkg/statistics/util",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/table-filter",

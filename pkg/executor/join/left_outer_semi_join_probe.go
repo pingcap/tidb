@@ -17,33 +17,21 @@ package join
 import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/queue"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
 type leftOuterSemiJoinProbe struct {
-	baseJoinProbe
+	baseSemiJoin
 
-	// isMatchedRows marks whether the left side row is matched
-	isMatchedRows []bool
 	// isNullRows marks whether the left side row matched result is null
 	isNullRows []bool
-
-	// buffer isNull for other condition evaluation
-	isNulls []bool
-
-	// used in other condition to record which rows need to be processed
-	unFinishedProbeRowIdxQueue *queue.Queue[int]
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 
 func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
-		baseJoinProbe: base,
-	}
-	if base.ctx.hasOtherCondition() {
-		probe.unFinishedProbeRowIdxQueue = queue.NewQueue[int](32)
+		baseSemiJoin: *newBaseSemiJoin(base, false),
 	}
 	return probe
 }
@@ -67,22 +55,11 @@ func (j *leftOuterSemiJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) (e
 }
 
 func (j *leftOuterSemiJoinProbe) resetProbeState() {
-	j.isMatchedRows = j.isMatchedRows[:0]
-	for i := 0; i < j.chunkRows; i++ {
-		j.isMatchedRows = append(j.isMatchedRows, false)
-	}
 	j.isNullRows = j.isNullRows[:0]
 	for i := 0; i < j.chunkRows; i++ {
 		j.isNullRows = append(j.isNullRows, false)
 	}
-	if j.ctx.hasOtherCondition() {
-		j.unFinishedProbeRowIdxQueue.Clear()
-		for i := 0; i < j.chunkRows; i++ {
-			if j.matchedRowsHeaders[i] != 0 {
-				j.unFinishedProbeRowIdxQueue.Push(i)
-			}
-		}
-	}
+	j.baseSemiJoin.resetProbeState()
 }
 
 func (*leftOuterSemiJoinProbe) NeedScanRowTable() bool {
@@ -138,7 +115,8 @@ func (j *leftOuterSemiJoinProbe) probeWithOtherCondition(chk, joinedChk *chunk.C
 }
 
 func (j *leftOuterSemiJoinProbe) produceResult(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) (err error) {
-	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller)
+	// The third parameter is always true, as left outer semi join now only support right side as build
+	err = j.concatenateProbeAndBuildRows(joinedChk, sqlKiller, true)
 	if err != nil {
 		return err
 	}
@@ -228,51 +206,6 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 		}
 	}
 	chk.SetNumVirtualRows(chk.NumRows())
-}
-
-var maxMatchedRowNum = 4
-
-func (j *leftOuterSemiJoinProbe) matchMultiBuildRows(joinedChk *chunk.Chunk, joinedChkRemainCap *int) {
-	tagHelper := j.ctx.hashTableContext.tagHelper
-	meta := j.ctx.hashTableMeta
-	for j.matchedRowsHeaders[j.currentProbeRow] != 0 && *joinedChkRemainCap > 0 && j.matchedRowsForCurrentProbeRow < maxMatchedRowNum {
-		candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-		if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
-			j.appendBuildRowToCachedBuildRowsV1(j.currentProbeRow, candidateRow, joinedChk, 0, true)
-			j.matchedRowsForCurrentProbeRow++
-			*joinedChkRemainCap--
-		} else {
-			j.probeCollision++
-		}
-		j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
-	}
-
-	j.finishLookupCurrentProbeRow()
-}
-
-func (j *leftOuterSemiJoinProbe) concatenateProbeAndBuildRows(joinedChk *chunk.Chunk, sqlKiller *sqlkiller.SQLKiller) error {
-	joinedChkRemainCap := joinedChk.Capacity() - joinedChk.NumRows()
-
-	for joinedChkRemainCap > 0 && !j.unFinishedProbeRowIdxQueue.IsEmpty() {
-		probeRowIdx := j.unFinishedProbeRowIdxQueue.Pop()
-		if j.isMatchedRows[probeRowIdx] {
-			continue
-		}
-		j.currentProbeRow = probeRowIdx
-		j.matchMultiBuildRows(joinedChk, &joinedChkRemainCap)
-		if j.matchedRowsHeaders[probeRowIdx] == 0 {
-			continue
-		}
-		j.unFinishedProbeRowIdxQueue.Push(probeRowIdx)
-	}
-
-	err := checkSQLKiller(sqlKiller, "killedDuringProbe")
-	if err != nil {
-		return err
-	}
-
-	j.finishCurrentLookupLoop(joinedChk)
-	return nil
 }
 
 func (j *leftOuterSemiJoinProbe) IsCurrentChunkProbeDone() bool {

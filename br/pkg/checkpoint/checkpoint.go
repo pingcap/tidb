@@ -68,13 +68,7 @@ type RangeType struct {
 	Files    []*backuppb.File
 }
 
-func (r RangeType) IdentKey() []byte {
-	panic("unimplement!")
-}
-
-type ValueType interface {
-	IdentKey() []byte
-}
+type ValueType any
 
 type CheckpointMessage[K KeyType, V ValueType] struct {
 	// start-key of the origin range
@@ -262,7 +256,6 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 	// wait the range flusher exit
 	r.wg.Wait()
 	// remove the checkpoint lock
-	r.checkpointStorage.deleteLock(ctx)
 	r.checkpointStorage.close()
 }
 

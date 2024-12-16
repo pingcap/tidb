@@ -16,10 +16,8 @@ package snapclient
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -419,17 +417,6 @@ func (rc *SnapClient) SplitPoints(
 	))
 
 	return splitter.ExecuteSortedKeys(ctx, sortedSplitKeys)
-}
-
-func getFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
 }
 
 // RestoreSSTFiles tries to do something prepare work, such as set speed limit, and restore the files.

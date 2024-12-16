@@ -185,6 +185,7 @@ type Task struct {
 	// changed in below case, and framework will update the task meta in the storage.
 	// 	- task switches to next step in Scheduler.OnNextSubtasksBatch
 	// 	- on task cleanup, we might do some redaction on the meta.
+	// 	- on task 'modifying', params inside the meta can be changed.
 	Meta        []byte
 	Error       error
 	ModifyParam ModifyParam

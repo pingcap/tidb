@@ -203,7 +203,16 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 					if err != nil {
 						return errors.Trace(err)
 					}
-					// TODO handle checkpoint
+					if s.checkpointRunner != nil {
+						// The checkpoint shows this ranges of files has been restored into
+						// the table corresponding to the table-id.
+						for _, f := range set.SSTFiles {
+							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
+								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								return errors.Trace(err)
+							}
+						}
+					}
 					return nil
 				})
 		}
@@ -302,7 +311,8 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.MinPhysicalID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner,
+							checkpoint.NewCheckpointRangeKeyItem(filesGroup.MinPhysicalID, rangeKey)); err != nil {
 							return errors.Trace(err)
 						}
 					}
@@ -336,7 +346,6 @@ func (p *PipelineRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNe
 
 			// Check if the accumulated items meet the criteria for splitting.
 			if strategy.ShouldSplit() {
-				log.Info("Trying to start region split with accumulations")
 				startTime := time.Now()
 
 				// Execute the split operation on the accumulated items.

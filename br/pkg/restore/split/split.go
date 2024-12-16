@@ -324,6 +324,7 @@ func ScanRegionsWithRetry(
 	return regions, err
 }
 
+// TODO: merge with backoff.go
 type WaitRegionOnlineBackoffer struct {
 	Stat utils.RetryState
 }
@@ -358,13 +359,14 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt returns the remain attempt times
-func (b *WaitRegionOnlineBackoffer) Attempt() int {
-	return b.Stat.Attempt()
+// RemainingAttempts returns the remain attempt times
+func (b *WaitRegionOnlineBackoffer) RemainingAttempts() int {
+	return b.Stat.RemainingAttempts()
 }
 
 // BackoffMayNotCountBackoffer is a backoffer but it may not increase the retry
 // counter. It should be used with ErrBackoff or ErrBackoffAndDontCount.
+// TODO: merge with backoff.go
 type BackoffMayNotCountBackoffer struct {
 	state utils.RetryState
 }
@@ -388,7 +390,7 @@ func NewBackoffMayNotCountBackoffer() *BackoffMayNotCountBackoffer {
 	}
 }
 
-// NextBackoff implements utils.Backoffer. For BackoffMayNotCountBackoffer, only
+// NextBackoff implements utils.BackoffStrategy. For BackoffMayNotCountBackoffer, only
 // ErrBackoff and ErrBackoffAndDontCount is meaningful.
 func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	if errors.ErrorEqual(err, ErrBackoff) {
@@ -403,9 +405,9 @@ func (b *BackoffMayNotCountBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-// Attempt implements utils.Backoffer.
-func (b *BackoffMayNotCountBackoffer) Attempt() int {
-	return b.state.Attempt()
+// RemainingAttempts implements utils.BackoffStrategy.
+func (b *BackoffMayNotCountBackoffer) RemainingAttempts() int {
+	return b.state.RemainingAttempts()
 }
 
 // getSplitKeysOfRegions checks every input key is necessary to split region on

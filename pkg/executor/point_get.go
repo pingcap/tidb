@@ -198,6 +198,15 @@ func matchPartitionNames(pid int64, partitionNames []pmodel.CIStr, pi *model.Par
 	return false
 }
 
+// Recreated based on Init, change baseExecutor fields also
+func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan) {
+	e.Init(p)
+	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
+	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
+	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
+	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
+}
+
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
 func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	decoder := NewRowDecoder(e.Ctx(), p.Schema(), p.TblInfo)
@@ -218,11 +227,6 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 	e.partitionDefIdx = p.PartitionIdx
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
-
-	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
-	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
-	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
 }
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
@@ -269,10 +273,11 @@ func (e *PointGetExecutor) Close() error {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
 		}
 	}
 	e.done = false

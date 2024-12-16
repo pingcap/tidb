@@ -724,12 +724,16 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 				}
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+				}
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			} else {
-				err = checkpoint.RemoveCheckpointDataForSnapshotRestore(c, mgr.GetDomain(), se)
+				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
@@ -869,7 +873,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSnapshotRestoreCheckpoint(ctx, mgr.GetDomain())
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
@@ -1171,7 +1175,7 @@ func getMaxReplica(ctx context.Context, mgr *conn.Mgr) (cnt uint64, err error) {
 	err = utils.WithRetry(ctx, func() error {
 		resp, err = mgr.GetPDHTTPClient().GetReplicateConfig(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -1188,7 +1192,7 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	err = utils.WithRetry(ctx, func() error {
 		stores, err = mgr.GetPDHTTPClient().GetStores(ctx)
 		return err
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1294,7 +1298,7 @@ func checkDiskSpace(ctx context.Context, client *snapclient.SnapClient, mgr *con
 			}
 		}
 		return nil
-	}, utils.NewDiskCheckBackoffer())
+	}, utils.NewDiskCheckBackoffStrategy())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1317,10 +1321,6 @@ func Exhaust(ec <-chan error) []error {
 }
 
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
-	// Tasks from br clp client use other checks to validate
-	if g.GetClient() != glue.ClientSql {
-		return nil
-	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {

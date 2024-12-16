@@ -23,6 +23,7 @@ import (
 
 	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -99,6 +100,7 @@ type mockOptions struct {
 	ddlCheckerHijack bool
 	tikvOptions      []tikv.Option
 	pdAddrs          []string
+	keyspaceMeta     *keyspacepb.KeyspaceMeta
 }
 
 // MockTiKVStoreOption is used to control some behavior of mock tikv.
@@ -197,6 +199,13 @@ func WithMockTiFlash(nodes int) MockTiKVStoreOption {
 		}),
 		WithStoreType(EmbedUnistore),
 	)
+}
+
+// WithKeyspaceMeta lets user set the keyspace meta.
+func WithKeyspaceMeta(keyspaceMeta *keyspacepb.KeyspaceMeta) MockTiKVStoreOption {
+	return func(c *mockOptions) {
+		c.keyspaceMeta = keyspaceMeta
+	}
 }
 
 // DDLCheckerInjector is used to break import cycle.

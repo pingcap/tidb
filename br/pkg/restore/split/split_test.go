@@ -99,7 +99,7 @@ func (b *recordCntBackoffer) NextBackoff(error) time.Duration {
 	return 0
 }
 
-func (b *recordCntBackoffer) Attempt() int {
+func (b *recordCntBackoffer) RemainingAttempts() int {
 	return 100
 }
 
@@ -293,19 +293,19 @@ func TestWaitForScatterRegions(t *testing.T) {
 
 func TestBackoffMayNotCountBackoffer(t *testing.T) {
 	b := NewBackoffMayNotCountBackoffer()
-	initVal := b.Attempt()
+	initVal := b.RemainingAttempts()
 
 	b.NextBackoff(ErrBackoffAndDontCount)
-	require.Equal(t, initVal, b.Attempt())
+	require.Equal(t, initVal, b.RemainingAttempts())
 	// test Annotate, which is the real usage in caller
 	b.NextBackoff(errors.Annotate(ErrBackoffAndDontCount, "caller message"))
-	require.Equal(t, initVal, b.Attempt())
+	require.Equal(t, initVal, b.RemainingAttempts())
 
 	b.NextBackoff(ErrBackoff)
-	require.Equal(t, initVal-1, b.Attempt())
+	require.Equal(t, initVal-1, b.RemainingAttempts())
 
 	b.NextBackoff(goerrors.New("test"))
-	require.Equal(t, 0, b.Attempt())
+	require.Equal(t, 0, b.RemainingAttempts())
 }
 
 func TestSplitCtxCancel(t *testing.T) {
