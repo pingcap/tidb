@@ -714,13 +714,13 @@ var defaultSysVars = []*SysVar{
 		SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 			on := TiDBOptOn(val)
 			// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
-			// if on && s.StmtCtx.StmtType == "Set" {
-			// 	s.EnableSPParamSubstitute = on
-			// 	err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableSPParamSubstitute, "ON")
-			// 	if err != nil {
-			// 		return err
-			// 	}
-			// }
+			if on && s.StmtCtx.StmtType == "Set" {
+				s.EnableSPParamSubstitute = on
+				err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBEnableSPParamSubstitute, "ON")
+				if err != nil {
+					return err
+				}
+			}
 			TiDBEnableProcedureValue.Store(on)
 			return nil
 		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
@@ -3461,6 +3461,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableSPParamSubstitute, Value: BoolToOnOff(DefTiDBEnableSPParamSubstitute), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableSPParamSubstitute = TiDBOptOn(val)
 		return nil
+	}, GetSession: func(vars *SessionVars) (string, error) {
+		return BoolToOnOff(vars.EnableSPParamSubstitute), nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBIdleTransactionTimeout, Value: strconv.Itoa(DefTiDBIdleTransactionTimeout), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear,
 		SetSession: func(s *SessionVars, val string) error {

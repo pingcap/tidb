@@ -238,8 +238,8 @@ func (tk *TestKit) MultiHanldeNodeWithResult(_ context.Context, stmt ast.StmtNod
 func (tk *TestKit) InProcedure() {
 	tk.session.SetSessionExec(tk)
 	tk.MustExec("set global tidb_enable_procedure = ON")
-	//tk.MustExec("set global tidb_enable_sp_param_substitute = ON")
-	//tk.MustExec("set tidb_enable_sp_param_substitute = ON")
+	tk.MustExec("set global tidb_enable_sp_param_substitute = ON")
+	tk.MustExec("set tidb_enable_sp_param_substitute = ON")
 }
 
 // ClearProcedureRes clear procedure result
