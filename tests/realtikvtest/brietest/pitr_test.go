@@ -83,6 +83,8 @@ type LogBackupKit struct {
 	tk      *testkit.TestKit
 	metaCli *streamhelper.MetaDataClient
 	base    string
+
+	checkerF func(err error)
 }
 
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
@@ -95,11 +97,14 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 		t:       t,
 		metaCli: metaCli,
 		base:    t.TempDir(),
+		checkerF: func(err error) {
+			require.NoError(t, err)
+		},
 	}
 }
 
 func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
 		cfg.Storage = "local://" + kit.base + "/full"
 		cfg.FilterStr = []string{"test.*"}
@@ -114,7 +119,7 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 }
 
 func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
 		cfg.Storage = "local://" + kit.base + "/incr"
 		cfg.FullBackupStorage = "local://" + kit.base + "/full"
@@ -126,7 +131,7 @@ func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
 }
 
 func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultBackupConfig(task.DefaultConfig())
 		cfg.Storage = "local://" + kit.base + "/full"
 		extConfig(&cfg)
@@ -135,7 +140,7 @@ func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
 }
 
 func (kit *LogBackupKit) StopTaskIfExists(taskName string) {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultStreamConfig(task.DefineStreamCommonFlags)
 		cfg.TaskName = taskName
 		err := task.RunStreamStop(ctx, kit.Glue(), "stream stop[intest]", &cfg)
@@ -147,7 +152,7 @@ func (kit *LogBackupKit) StopTaskIfExists(taskName string) {
 }
 
 func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.StreamConfig)) {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultStreamConfig(task.DefineStreamStartFlags)
 		cfg.Storage = "local://" + kit.base + "/incr"
 		cfg.TaskName = taskName
@@ -183,25 +188,25 @@ func (kit *LogBackupKit) Glue() glue.Glue {
 	return &TestKitGlue{tk: kit.tk}
 }
 
-func (kit *LogBackupKit) shouldPanic(checker func(v any), f func()) {
+func (kit *LogBackupKit) WithChecker(checker func(v error), f func()) {
+	oldExpected := kit.checkerF
 	defer func() {
-		v := recover()
-		require.NotNil(kit.t, v, "should panic not panic")
-		checker(v)
+		kit.checkerF = oldExpected
 	}()
+	kit.checkerF = checker
 
 	f()
 }
 
-func (kit *LogBackupKit) mustExec(f func(context.Context) error) {
+func (kit *LogBackupKit) runAndCheck(f func(context.Context) error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	err := f(ctx)
 	cancel()
-	require.NoError(kit.t, err)
+	kit.checkerF(err)
 }
 
 func (kit *LogBackupKit) forceFlush() {
-	kit.mustExec(func(ctx context.Context) error {
+	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultConfig()
 		cfg.PD = append(cfg.PD, config.GetGlobalConfig().Path)
 		err := operator.RunForceFlush(ctx, &operator.ForceFlushConfig{
@@ -294,10 +299,11 @@ func TestPiTRAndBackup(t *testing.T) {
 	verifySimpleData(kit)
 }
 
-func TestEncryptedBackup(t *testing.T) {
+func TestEncryptedFullBackup(t *testing.T) {
 	kit := NewLogBackupKit(t)
 	createSimpleTableWithData(kit)
-	keyContent, _ := hex.DecodeString("9d4cf8f268514d2c38836197008eded1050a5806afa632f7ab1e313bb6697da2")
+	keyContent, err := hex.DecodeString("9d4cf8f268514d2c38836197008eded1050a5806afa632f7ab1e313bb6697da2")
+	require.NoError(t, err)
 
 	kit.RunFullBackup(func(bc *task.BackupConfig) {
 		bc.CipherInfo = backup.CipherInfo{
@@ -308,7 +314,8 @@ func TestEncryptedBackup(t *testing.T) {
 
 	cleanSimpleData(kit)
 	kit.RunLogStart("something", func(sc *task.StreamConfig) {})
-	kit.shouldPanic(func(v any) { fmt.Println(v) }, func() {
+	chk := func(err error) { require.ErrorContains(t, err, "the data you want to restore is encrypted") }
+	kit.WithChecker(chk, func() {
 		kit.RunFullRestore(func(rc *task.RestoreConfig) {
 			rc.CipherInfo = backup.CipherInfo{
 				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,

@@ -5,6 +5,7 @@ package stream
 import (
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"hash/crc64"
 	"maps"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/fatih/color"
@@ -30,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -345,48 +348,110 @@ func ReplaceMetadata(meta *pb.Metadata, filegroups []*pb.DataFileGroup) {
 	updateMetadataInternalStat(meta)
 }
 
-func AddMigrationToTable(m *pb.Migration, table *glue.Table) {
-	rd := color.New(color.FgHiRed).Sprint
-	for i, c := range m.Compactions {
-		addCompactionToTable(c, table, i)
-	}
+type marshalMigrationContext struct {
+	context.Context
+	est MigrationExt
 
-	if len(m.EditMeta) > 0 {
-		totalDeletePhyFile := 0
-		totalDeleteLgcFile := 0
-		for _, edit := range m.EditMeta {
-			totalDeletePhyFile += len(edit.DeletePhysicalFiles)
-			for _, dl := range edit.DeleteLogicalFiles {
-				totalDeleteLgcFile += len(dl.Spans)
-			}
-		}
-		table.Add(
-			"edit-meta-files",
-			fmt.Sprintf("%s meta files will be edited.", rd(len(m.EditMeta))),
-		)
-		table.Add(
-			"delete-physical-file",
-			fmt.Sprintf("%s physical files will be deleted.", rd(totalDeletePhyFile)),
-		)
-		table.Add(
-			"delete-logical-file",
-			fmt.Sprintf("%s logical segments may be deleted, if possible.", rd(totalDeleteLgcFile)),
-		)
-	}
-	for i, c := range m.DestructPrefix {
-		table.Add(fmt.Sprintf("destruct-prefix[%02d]", i), rd(c))
-	}
-	for i, c := range m.GetExtraFullBackupPaths() {
-		table.Add(fmt.Sprintf("extra_full_backups[%02d]", i), rd(c))
-	}
-	table.Add("truncate-to", rd(m.TruncatedTo))
+	output   *glue.Table
+	keyspace []string
 }
 
-func addCompactionToTable(m *pb.LogFileCompaction, table *glue.Table, idx int) {
-	withIdx := func(s string) string { return fmt.Sprintf("compactions[%d].%s", idx, s) }
-	table.Add(withIdx("name"), m.Name)
-	table.Add(withIdx("time"), fmt.Sprintf("%d ~ %d", m.CompactionFromTs, m.CompactionUntilTs))
-	table.Add(withIdx("file"), fmt.Sprintf("[%q, %q]", m.Artifacts, m.GeneratedFiles))
+func (m *marshalMigrationContext) emit(key, value string) {
+	bold := color.New(color.Bold).Sprintf
+	ks := new(strings.Builder)
+	for _, k := range m.keyspace {
+		ks.WriteString(k)
+		ks.WriteString("/")
+	}
+	ks.WriteString(key)
+
+	finalValue := bold(value)
+	m.output.Add(ks.String(), finalValue)
+}
+
+func (m *marshalMigrationContext) keyspaced(key []string, f func()) {
+	m.keyspace = append(m.keyspace, key...)
+	defer func() {
+		m.keyspace = m.keyspace[:len(m.keyspace)-len(key)]
+	}()
+
+	f()
+}
+
+func (m *marshalMigrationContext) addCompaction(c *pb.LogFileCompaction) {
+	m.emit("name", c.Name)
+	m.emit("time", fmt.Sprintf("%d ~ %d", c.CompactionFromTs, c.CompactionUntilTs))
+	m.emit("file", fmt.Sprintf("[%q, %q]", c.Artifacts, c.GeneratedFiles))
+}
+
+func (m *marshalMigrationContext) addMetaEdits(em []*pb.MetaEdit) {
+	totalDeletePhyFile := 0
+	totalDeleteLgcFile := 0
+	for _, edit := range em {
+		totalDeletePhyFile += len(edit.DeletePhysicalFiles)
+		for _, dl := range edit.DeleteLogicalFiles {
+			totalDeleteLgcFile += len(dl.Spans)
+		}
+	}
+	m.emit("edit_meta_files", strconv.Itoa(len(em)))
+	m.emit("delete_physical_file", strconv.Itoa(totalDeletePhyFile))
+	m.emit("delete_logical_file", strconv.Itoa(totalDeleteLgcFile))
+}
+
+func (m *marshalMigrationContext) addTruncatedTo(tso uint64) {
+	if tso == 0 {
+		m.emit("truncated_to", "N/A")
+		return
+	}
+	m.emit("truncated_to", strconv.FormatUint(tso, 10))
+	t := oracle.GetTimeFromTS(tso)
+	m.emit("truncated_to_in_rfc3339", t.Format(time.RFC3339))
+}
+
+func (m *marshalMigrationContext) addMigration(mig *pb.Migration) {
+	m.addTruncatedTo(mig.TruncatedTo)
+	for i, c := range mig.Compactions {
+		m.keyspaced([]string{"compactions", strconv.Itoa(i)}, func() {
+			m.addCompaction(c)
+		})
+	}
+	m.keyspaced([]string{"meta_edit"}, func() {
+		m.addMetaEdits(mig.EditMeta)
+	})
+	for i, d := range mig.DestructPrefix {
+		m.keyspaced([]string{"destruct_prefix", strconv.Itoa(i)}, func() {
+			m.emit("value", d)
+		})
+	}
+	for i, p := range mig.ExtraFullBackupPaths {
+		m.keyspaced([]string{"extra_full_backup", strconv.Itoa(i)}, func() {
+			m.addExtraFullBackups(p)
+		})
+	}
+}
+
+func (m *marshalMigrationContext) addExtraFullBackups(path string) {
+	fullbk, err := readExtraFullBackup(m.Context, path, m.est.s)
+	if err != nil {
+		m.emit("err_during_reading", err.Error())
+		m.emit("meta_path", path)
+		return
+	}
+
+	m.emit("as_if_ts", strconv.FormatUint(fullbk.AsIfTs, 10))
+	m.emit("backup_uuid", hex.EncodeToString(fullbk.GetBackupUuid()))
+	m.emit("files_count", strconv.Itoa(len(fullbk.Files)))
+	m.emit("files_position", fullbk.FilesPrefixHint)
+}
+
+func (m MigrationExt) AddMigrationToTable(ctx context.Context, mig *pb.Migration, table *glue.Table) {
+	cx := marshalMigrationContext{
+		Context: ctx,
+		est:     m,
+		output:  table,
+	}
+
+	cx.addMigration(mig)
 }
 
 // MigrationExt is an extension to the `ExternalStorage` type.
