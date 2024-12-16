@@ -258,6 +258,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"tidb_mvcc_info",
 		"tidb_parse_tso",
 		"tidb_parse_tso_logical",
+		"tidb_shard",
 		"time",
 		"time_format",
 		"time_to_sec",
