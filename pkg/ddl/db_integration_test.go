@@ -523,11 +523,10 @@ func TestChangingTableCharset(t *testing.T) {
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		ctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), ctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 
