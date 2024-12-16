@@ -1044,6 +1044,14 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: MaxUserConnections, Value: strconv.FormatUint(DefMaxUserConnections, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: 100000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			MaxUserConnectionsCount.Store(uint32(TidbOptInt64(val, DefMaxUserConnections)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(uint64(MaxUserConnectionsCount.Load()), 10), nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -3507,6 +3515,29 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: TiDBTSOClientRPCMode, Value: DefTiDBTSOClientRPCMode, Type: TypeEnum, PossibleValues: []string{TSOClientRPCModeDefault, TSOClientRPCModeParallel, TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBEnableLoginHistory, Value: BoolToOnOff(DefTiDBEnableLoginHistory), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableLoginHistory.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableLoginHistory.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBLoginHistoryRetainDuration, Value: DefTiDBLoginHistoryRetainDuration.String(),
+		Type: TypeDuration, MinValue: int64(time.Second), MaxValue: math.MaxUint64,
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return LoginHistoryRetainDuration.Load().String(), nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			LoginHistoryRetainDuration.Store(d)
+			return nil
 		},
 	},
 }

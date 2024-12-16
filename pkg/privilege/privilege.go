@@ -127,6 +127,9 @@ type Manager interface {
 
 	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
 	GetAuthPlugin(user, host string) (string, error)
+
+	//GetUserResources gets the max user connections for the account identified by the user and host
+	GetUserResources(user, host string) (int64, error)
 }
 
 const key keyType = 0

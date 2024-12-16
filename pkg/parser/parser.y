@@ -13889,8 +13889,6 @@ ConnectionOptions:
 |	"WITH" ConnectionOptionList
 	{
 		$$ = $2
-		yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
 	}
 
 ConnectionOptionList:

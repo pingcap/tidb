@@ -336,6 +336,29 @@ func TestUser(t *testing.T) {
 	tk.MustExec(dropUserSQL)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Note|3162|User test2@localhost does not exist."))
 
+	// Test alter user WITH MAX_USER_CONNECTIONS
+	createUserSQL = `CREATE USER 'test1'@'localhost';`
+	tk.MustExec(createUserSQL)
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 4;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 4"))
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 2;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 2"))
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS -2;`
+	_, err = tk.Exec(alterUserSQL)
+	require.Error(t, err)
+	require.Equal(t, err.Error(), "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 58 near \"-2;\" ")
+
+	alterUserSQL = `ALTER USER 'test1'@'localhost' WITH MAX_USER_CONNECTIONS 0;`
+	tk.MustExec(alterUserSQL)
+	result = tk.MustQuery(`select user, max_user_connections from mysql.user WHERE User="test1"`)
+	result.Check(testkit.Rows("test1 0"))
+	dropUserSQL = `DROP USER IF EXISTS 'test1'@'localhost';`
+	tk.MustExec(dropUserSQL)
+
 	// Test negative cases without IF EXISTS.
 	createUserSQL = `CREATE USER 'test1'@'localhost', 'test3'@'localhost';`
 	tk.MustExec(createUserSQL)

@@ -69,7 +69,7 @@ const (
 	References_priv,Alter_priv,Execute_priv,Index_priv,Create_view_priv,Show_view_priv,
 	Create_role_priv,Drop_role_priv,Create_tmp_table_priv,Lock_tables_priv,Create_routine_priv,
 	Alter_routine_priv,Event_priv,Shutdown_priv,Reload_priv,File_priv,Config_priv,Repl_client_priv,Repl_slave_priv,
-	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime FROM mysql.user`
+	Account_locked,Plugin,Token_issuer,User_attributes,password_expired,password_last_changed,password_lifetime,max_user_connections FROM mysql.user`
 	sqlLoadGlobalGrantsTable = `SELECT HIGH_PRIORITY Host,User,Priv,With_Grant_Option FROM mysql.global_grants`
 	sqlLoadProcsPriv         = `SELECT HIGH_PRIORITY Host,User,Db,Routine_name,Routine_type,Grantor,Proc_priv from mysql.procs_priv`
 )
@@ -120,6 +120,7 @@ type UserRecord struct {
 	PasswordExpired      bool
 	PasswordLastChanged  time.Time
 	PasswordLifeTime     int64
+	MaxUserConnections   int64
 	ResourceGroup        string
 }
 
@@ -1005,6 +1006,8 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 				continue
 			}
 			value.PasswordLifeTime = row.GetInt64(i)
+		case f.ColumnAsName.L == "max_user_connections":
+			value.MaxUserConnections = row.GetInt64(i)
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue

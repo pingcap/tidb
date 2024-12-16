@@ -3161,6 +3161,11 @@ error = '''
 Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
 '''
 
+["server:1203"]
+error = '''
+User %-.64s already has more than 'maxUserConnections' active connections
+'''
+
 ["server:1251"]
 error = '''
 Client does not support authentication protocol requested by server; consider upgrading MySQL client

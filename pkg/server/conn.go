@@ -210,6 +210,14 @@ type clientConn struct {
 	ipAllowed bool
 }
 
+type userResourceLimits struct {
+	resetUtime  uint64
+	connections int
+	connPerHour int32
+	updates     int32
+	questions   int32
+}
+
 func (cc *clientConn) getCtx() *TiDBContext {
 	cc.ctx.RLock()
 	defer cc.ctx.RUnlock()
@@ -828,6 +836,11 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	host, port, err := cc.PeerHost(hasPassword, false)
+	if err != nil {
+		return err
+	}
+
+	err = cc.server.checkUserConnectionCount(cc, host)
 	if err != nil {
 		return err
 	}

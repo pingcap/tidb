@@ -199,6 +199,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForMemoryUsageOpsHistory()
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
+		case infoschema.TableUserLoginHistory:
+			err = e.setDataForUserLoginHistory(ctx, sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
 		case infoschema.TableRunawayWatches:
@@ -2911,6 +2913,46 @@ func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionct
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserLoginHistory(ctx context.Context, sctx sessionctx.Context) error {
+	loginUser := sctx.GetSessionVars().User
+	if loginUser == nil {
+		return nil
+	}
+
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT * FROM mysql.login_history WHERE user = %? AND user_host = %?`, loginUser.AuthUsername, loginUser.AuthHostname)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		time := chunkRow.GetTime(0)
+		serverHost := chunkRow.GetString(1)
+		user := chunkRow.GetString(2)
+		if user != loginUser.AuthUsername {
+			continue
+		}
+
+		userHost := chunkRow.GetString(3)
+		database := chunkRow.GetString(4)
+		connectionID := chunkRow.GetUint64(5)
+		result := chunkRow.GetString(6)
+		clientHost := chunkRow.GetString(7)
+		detail := chunkRow.GetString(8)
+
+		row := types.MakeDatums(time, serverHost, user, userHost, database, connectionID, result, clientHost, detail)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }

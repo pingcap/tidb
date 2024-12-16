@@ -1223,6 +1223,10 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBEnableLoginHistory indicates whether tidb need enable the login-history.
+	TiDBEnableLoginHistory = "tidb_enable_login_history"
+	// TiDBLoginHistoryRetainDuration indicates the duration of retaining the record in mysql.log_history.
+	TiDBLoginHistoryRetainDuration = "tidb_login_history_retain_duration"
 	// TiDBEnableProcedure if enable store procedure
 	TiDBEnableProcedure = "tidb_enable_procedure"
 	// TiDBEnableProcedureAstCache indicates whether tidb need enable or disable ast cache.
@@ -1521,6 +1525,7 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1579,6 +1584,8 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBEnableLoginHistory                         = false
+	DefTiDBLoginHistoryRetainDuration                 = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize                         = 256
 	DefTiDBEnableProcedure                            = false
 	DefTiDBEnableUDVSubstitute                        = false
@@ -1686,6 +1693,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsCount         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
@@ -1703,12 +1711,14 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
-	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
-	StoredProgramCacheSize    = atomic.NewInt64(DefStoredProgramCacheSize)
-	TiDBEnableSPAstReuse      = atomic.NewBool(true)
-	TiDBEnableProcedureValue  = atomic.NewBool(DefTiDBEnableProcedure)
-	AutomaticSPPrivileges     = atomic.NewBool(true)
+	SchemaCacheSize            = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText  = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
+	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
+	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)
+	TiDBEnableSPAstReuse       = atomic.NewBool(true)
+	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
+	AutomaticSPPrivileges      = atomic.NewBool(true)
 )
 
 var (

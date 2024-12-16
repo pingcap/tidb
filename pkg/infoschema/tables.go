@@ -211,6 +211,8 @@ const (
 	TableMemoryUsage = "MEMORY_USAGE"
 	// TableMemoryUsageOpsHistory is the memory control operators history.
 	TableMemoryUsageOpsHistory = "MEMORY_USAGE_OPS_HISTORY"
+	// TableUserLoginHistory is the history of user login.
+	TableUserLoginHistory = "User_LOGIN_HISTORY"
 	// TableResourceGroups is the metadata of resource groups.
 	TableResourceGroups = "RESOURCE_GROUPS"
 	// TableRunawayWatches is the query list of runaway watch.
@@ -345,6 +347,7 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TableUserLoginHistory:                autoid.InformationSchemaDBID + 96,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1680,6 +1683,18 @@ var tableMemoryUsageOpsHistoryCols = []columnInfo{
 	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
+var tableUserLoginHistoryCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeDatetime, size: 64},
+	{name: "SERVER_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "USER", tp: mysql.TypeVarchar, size: 32},
+	{name: "USER_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONNECTION_ID", tp: mysql.TypeLonglong, size: 21},
+	{name: "RESULT", tp: mysql.TypeVarchar, size: 16},
+	{name: "CLIENT_HOST", tp: mysql.TypeVarchar, size: 64},
+	{name: "DETAIL", tp: mysql.TypeVarchar, size: 1024},
+}
+
 var tableResourceGroupsCols = []columnInfo{
 	{name: "NAME", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag},
 	{name: "RU_PER_SEC", tp: mysql.TypeVarchar, size: 21},
@@ -2388,6 +2403,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableUserLoginHistory:                   tableUserLoginHistoryCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

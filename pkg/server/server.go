@@ -128,6 +128,9 @@ type Server struct {
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
 
+	userResLock  sync.RWMutex // userResLock used to protect userResource
+	userResource map[string]*userResourceLimits
+
 	capability uint32
 	dom        *domain.Domain
 
@@ -249,6 +252,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		driver:            driver,
 		concurrentLimiter: util.NewTokenLimiter(cfg.TokenLimit),
 		clients:           make(map[uint64]*clientConn),
+		userResource:      make(map[string]*userResourceLimits),
 		internalSessions:  make(map[any]struct{}, 100),
 		health:            uatomic.NewBool(false),
 		inShutdownMode:    uatomic.NewBool(false),
@@ -712,6 +716,17 @@ func (s *Server) onConn(conn *clientConn) {
 	ctx := logutil.WithConnID(context.Background(), conn.connectionID)
 
 	if err := conn.handshake(ctx); err != nil {
+		if checkHost, _, err1 := conn.PeerHost("NO", false); err1 == nil {
+			if tidbContext := conn.getCtx(); tidbContext != nil {
+				if authUser, err1 := tidbContext.MatchIdentity(conn.user, checkHost); err1 == nil {
+					if insertErr := insertLoginHistoryTable(ctx, conn, authUser, err); insertErr != nil {
+						terror.Log(conn.Close())
+						return
+					}
+				}
+			}
+		}
+
 		conn.onExtensionConnEvent(extension.ConnHandshakeRejected, err)
 		if plugin.IsEnable(plugin.Audit) && conn.getCtx() != nil {
 			conn.getCtx().GetSessionVars().ConnectionInfo = conn.connectInfo()
@@ -749,9 +764,12 @@ func (s *Server) onConn(conn *clientConn) {
 	logutil.Logger(ctx).Debug("new connection", zap.String("remoteAddr", conn.bufReadConn.RemoteAddr().String()))
 
 	defer func() {
+		conn.decrementUserConnectionsCounter()
 		terror.Log(conn.Close())
 		logutil.Logger(ctx).Debug("connection closed")
 	}()
+
+	conn.incrementUserConnectionsCounter()
 
 	if !s.registerConn(conn) {
 		return
@@ -760,6 +778,12 @@ func (s *Server) onConn(conn *clientConn) {
 	sessionVars := conn.ctx.GetSessionVars()
 	sessionVars.ConnectionInfo = conn.connectInfo()
 	conn.onExtensionConnEvent(extension.ConnHandshakeAccepted, nil)
+
+	if err := insertLoginHistoryTable(ctx, conn, sessionVars.User, nil); err != nil {
+		logutil.Logger(ctx).Warn("faild to insert login record", zap.Error(err))
+		return
+	}
+
 	err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent != nil {
@@ -835,9 +859,7 @@ func (s *Server) checkConnectionCount() error {
 		return nil
 	}
 
-	s.rwlock.RLock()
-	conns := len(s.clients)
-	s.rwlock.RUnlock()
+	conns := s.ConnectionCount()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
 		logutil.BgLogger().Error("too many connections",
