@@ -224,18 +224,12 @@ NEXTFILE:
 				if _, exists := rewriteRules[tableMeta.PhysicalId]; !exists {
 					continue
 				}
-				rangeSize += tableMeta.TotalBytes
-				rangeCount += tableMeta.TotalKvs
 				clonedTableMetas = append(clonedTableMetas, tableMeta)
 			}
 			clonedFile.TableMetas = clonedTableMetas
 			kvs, bytes := metautil.CalculateKvStatsOnFile(&clonedFile)
-			totalKvs += kvs
-			totalBytes += bytes
-			if len(clonedFile.TableMetas) == 0 {
-				rangeSize += file.TotalBytes
-				rangeCount += file.TotalKvs
-			}
+			rangeCount += kvs
+			rangeSize += bytes
 			clonedFiles = append(clonedFiles, &clonedFile)
 			// check the table metas physical ids are the same as the first file's
 			if len(clonedTableMetas) != len(clonedFiles[0].TableMetas) {
@@ -261,6 +255,8 @@ NEXTFILE:
 			return nil, nil, errors.Annotatef(berrors.ErrInvalidRange,
 				"duplicate range %s files %+v", out, files)
 		}
+		totalKvs += rangeCount
+		totalBytes += rangeSize
 	}
 
 	sortedRanges := rangeTree.MergedRanges(splitSizeBytes, splitKeyCount)

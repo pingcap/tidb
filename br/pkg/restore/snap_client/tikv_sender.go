@@ -64,11 +64,7 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 }
 
 func iterSortedPhysicalTables(preallocedFrom int64, sortedPhysicalTables []*PhysicalTable, sortedTableIDSpans []metautil.TableIDSpan, iterFn func([]*PhysicalTable) error) error {
-	var (
-		currentSpanIndex     = 0
-		unpreallocedIndexEnd = -1
-		inSpan               = false
-	)
+	unpreallocedIndexEnd := -1
 	for i := range sortedPhysicalTables {
 		table := sortedPhysicalTables[i]
 		if table.NewPhysicalID >= preallocedFrom {
@@ -79,8 +75,13 @@ func iterSortedPhysicalTables(preallocedFrom int64, sortedPhysicalTables []*Phys
 		iterFn(sortedPhysicalTables[i : i+1])
 		unpreallocedIndexEnd = i
 	}
-	startPhysicalTable := unpreallocedIndexEnd
-	preallocedIndexStart := unpreallocedIndexEnd + 1
+	var (
+		currentSpanIndex     = 0
+		startPhysicalTable   = unpreallocedIndexEnd
+		preallocedIndexStart = unpreallocedIndexEnd + 1
+		lastOldPhysicalID    = int64(0)
+		inSpan               = false
+	)
 	// Notice that some table ID may be filtered, so we need to handle these situations:
 	// There are 6 tables with ID 1, 3, 5, 7, 9, and 11, and there is a span [5 7 9].
 	// And the ID 5 is filtered.
@@ -99,6 +100,18 @@ func iterSortedPhysicalTables(preallocedFrom int64, sortedPhysicalTables []*Phys
 NEXTTABLE:
 	for end := preallocedIndexStart; end < len(sortedPhysicalTables); end += 1 {
 		table := sortedPhysicalTables[end]
+		if lastOldPhysicalID > table.OldPhysicalID {
+			if inSpan {
+				// move to next span
+				if err := iterFn(sortedPhysicalTables[startPhysicalTable:end]); err != nil {
+					return errors.Trace(err)
+				}
+				startPhysicalTable = end
+				inSpan = false
+			}
+			currentSpanIndex = 0
+		}
+		lastOldPhysicalID = table.OldPhysicalID
 		for {
 			if currentSpanIndex >= len(sortedTableIDSpans) || table.OldPhysicalID < sortedTableIDSpans[currentSpanIndex].StartTableID {
 				if startPhysicalTable >= preallocedIndexStart && startPhysicalTable < end {

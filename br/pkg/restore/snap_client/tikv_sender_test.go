@@ -654,6 +654,34 @@ func generatePhysicalTables(ids []int64) []*snapclient.PhysicalTable {
 	return tables
 }
 
+func generatePhysicalTables2(ids1, ids2 []int64) []*snapclient.PhysicalTable {
+	tables := make([]*snapclient.PhysicalTable, 0, len(ids1))
+	for _, id := range ids1 {
+		tables = append(tables, &snapclient.PhysicalTable{
+			OldPhysicalID: id,
+			NewPhysicalID: id,
+		})
+	}
+	for _, id := range ids2 {
+		tables = append(tables, &snapclient.PhysicalTable{
+			OldPhysicalID: id,
+			NewPhysicalID: id + 10000,
+		})
+	}
+	return tables
+}
+
+func generatePhysicalTables3(idspairs [][2]int64) []*snapclient.PhysicalTable {
+	tables := make([]*snapclient.PhysicalTable, 0)
+	for _, idpair := range idspairs {
+		tables = append(tables, &snapclient.PhysicalTable{
+			OldPhysicalID: idpair[0],
+			NewPhysicalID: idpair[1],
+		})
+	}
+	return tables
+}
+
 func generateTableIDSpans(idspans [][2]int64) []metautil.TableIDSpan {
 	spans := make([]metautil.TableIDSpan, 0, len(idspans))
 	for _, span := range idspans {
@@ -923,6 +951,529 @@ func TestIterSortedPhysicalTables(t *testing.T) {
 				func(pt []*snapclient.PhysicalTable) error {
 					expectRange := cs.expectRanges[i]
 					require.Equal(t, len(expectRange), len(pt))
+					for j, id := range expectRange {
+						require.Equal(t, id, pt[j].OldPhysicalID)
+					}
+					i += 1
+					return nil
+				},
+			)
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestIterSortedPhysicalTables2(t *testing.T) {
+	// | [10 30] [50 70 90] 110 130
+	// | [10 30] [50 70 90] [110 130]
+	// | 10 30 [50 70 90] [110 130]
+	// | 10 [30 50] 70 [90 110] 130
+	preallocedFrom := int64(130)
+	caseGroups := []struct {
+		idSpans [][2]int64
+		cases   []struct {
+			originTableIDs []int64
+			tableIDs       []int64
+			expectRanges   [][]int64
+		}
+	}{
+		// 10 30 [50 70 90] 110 130
+		{
+			idSpans: [][2]int64{{50, 90}},
+			cases: []struct {
+				originTableIDs []int64
+				tableIDs       []int64
+				expectRanges   [][]int64
+			}{
+				{
+					originTableIDs: []int64{60, 80},
+					tableIDs:       []int64{10, 30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{60}, {80}, {10}, {30}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{20, 60},
+					tableIDs:       []int64{10, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{20}, {60}, {10}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{10, 20},
+					tableIDs:       []int64{70, 90, 110, 130},
+					expectRanges:   [][]int64{{10}, {20}, {70, 90}, {110}, {130}},
+				},
+				{
+					tableIDs:     []int64{10, 70, 90, 110, 130},
+					expectRanges: [][]int64{{10}, {70, 90}, {110}, {130}},
+				},
+				{
+					tableIDs:     []int64{10, 50, 70, 90, 110, 130},
+					expectRanges: [][]int64{{10}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					tableIDs:     []int64{10, 50, 70, 110, 130},
+					expectRanges: [][]int64{{10}, {50, 70}, {110}, {130}},
+				},
+				{
+					tableIDs:     []int64{10, 50, 70},
+					expectRanges: [][]int64{{10}, {50, 70}},
+				},
+				{
+					tableIDs:     []int64{50, 70},
+					expectRanges: [][]int64{{50, 70}},
+				},
+				{
+					tableIDs:     []int64{90},
+					expectRanges: [][]int64{{90}},
+				},
+				{
+					tableIDs:     []int64{70},
+					expectRanges: [][]int64{{70}},
+				},
+			},
+		},
+		// [10 30] [50 70 90] 110 130
+		{
+			idSpans: [][2]int64{{10, 30}, {50, 90}},
+			cases: []struct {
+				originTableIDs []int64
+				tableIDs       []int64
+				expectRanges   [][]int64
+			}{
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {30}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 50, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {50, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {70, 90}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {50, 70}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 70, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {70}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 30, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10, 30}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{30, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {30}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{10, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {10}, {70, 90}, {110}, {130}},
+				},
+			},
+		},
+		// 0 [10 30] [50 70 90] 110 130
+		{
+			idSpans: [][2]int64{{10, 30}, {50, 90}, {110, 130}},
+			cases: []struct {
+				originTableIDs []int64
+				tableIDs       []int64
+				expectRanges   [][]int64
+			}{
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {50, 70, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10}, {50, 70, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {50, 70, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {30}, {50, 70, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 50, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {50, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {70, 90}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 50, 70, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {50, 70}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 70, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {70}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 30, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10, 30}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 30, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {30}, {110, 130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 60, 120},
+					tableIDs:       []int64{0, 10, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {60}, {120}, {0}, {10}, {70, 90}, {110, 130}},
+				},
+			},
+		},
+		// 10 [30 50] 70 [90 110] 130
+		{
+			idSpans: [][2]int64{{30, 50}, {90, 110}},
+			cases: []struct {
+				originTableIDs []int64
+				tableIDs       []int64
+				expectRanges   [][]int64
+			}{
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {50}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{30, 50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {30, 50}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{50, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {50}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{30, 70, 90, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {30}, {70}, {90, 110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 110, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {70}, {110}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 90, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {70}, {90}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 130},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {70}, {130}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}},
+				},
+				{
+					originTableIDs: []int64{5, 20, 40, 60, 100, 120},
+					tableIDs:       []int64{10, 30, 50, 70, 90},
+					expectRanges:   [][]int64{{5}, {20}, {40}, {60}, {100}, {120}, {10}, {30, 50}, {70}, {90}},
+				},
+			},
+		},
+	}
+
+	for _, csGroup := range caseGroups {
+		idSpans := csGroup.idSpans
+		for _, cs := range csGroup.cases {
+			i := 0
+			err := snapclient.IterSortedPhysicalTables(
+				preallocedFrom,
+				generatePhysicalTables2(cs.originTableIDs, cs.tableIDs),
+				generateTableIDSpans(idSpans),
+				func(pt []*snapclient.PhysicalTable) error {
+					expectRange := cs.expectRanges[i]
+					require.Equal(t, len(expectRange), len(pt))
+					for j, id := range expectRange {
+						require.Equal(t, id, pt[j].OldPhysicalID)
+					}
+					i += 1
+					return nil
+				},
+			)
+			require.NoError(t, err)
+		}
+	}
+}
+
+func TestIterSortedPhysicalTables3(t *testing.T) {
+	// | [10 30] [50 70 90] 110 130
+	// | [10 30] [50 70 90] [110 130]
+	// | 10 30 [50 70 90] [110 130]
+	// | 10 [30 50] 70 [90 110] 130
+	preallocedFrom := int64(0)
+	caseGroups := []struct {
+		idSpans [][2]int64
+		cases   []struct {
+			tableIDs     [][2]int64
+			expectRanges [][]int64
+		}
+	}{
+		// 10 30 [50 70 90] 110 130
+		{
+			idSpans: [][2]int64{{50, 90}},
+			cases: []struct {
+				tableIDs     [][2]int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     [][2]int64{{10, 10}, {30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}},
+					expectRanges: [][]int64{{10}, {30}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					tableIDs:     [][2]int64{{30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 140}},
+					expectRanges: [][]int64{{30}, {50, 70, 90}, {110}, {130}, {10}},
+				},
+				{
+					tableIDs:     [][2]int64{{50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}},
+					expectRanges: [][]int64{{50, 70, 90}, {110}, {130}, {10}, {30}},
+				},
+				{
+					tableIDs:     [][2]int64{{70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}},
+					expectRanges: [][]int64{{70, 90}, {110}, {130}, {10}, {30}, {50}},
+				},
+				{
+					tableIDs:     [][2]int64{{90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}},
+					expectRanges: [][]int64{{90}, {110}, {130}, {10}, {30}, {50, 70}},
+				},
+				{
+					tableIDs:     [][2]int64{{110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}},
+					expectRanges: [][]int64{{110}, {130}, {10}, {30}, {50, 70, 90}},
+				},
+				{
+					tableIDs:     [][2]int64{{130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}, {110, 110}},
+					expectRanges: [][]int64{{130}, {10}, {30}, {50, 70, 90}, {110}},
+				},
+			},
+		},
+		// [10 30] [50 70 90] 110 130
+		{
+			idSpans: [][2]int64{{10, 30}, {50, 90}},
+			cases: []struct {
+				tableIDs     [][2]int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     [][2]int64{{10, 10}, {30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}},
+					expectRanges: [][]int64{{10, 30}, {50, 70, 90}, {110}, {130}},
+				},
+				{
+					tableIDs:     [][2]int64{{30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}},
+					expectRanges: [][]int64{{30}, {50, 70, 90}, {110}, {130}, {10}},
+				},
+				{
+					tableIDs:     [][2]int64{{50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}},
+					expectRanges: [][]int64{{50, 70, 90}, {110}, {130}, {10, 30}},
+				},
+				{
+					tableIDs:     [][2]int64{{70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}},
+					expectRanges: [][]int64{{70, 90}, {110}, {130}, {10, 30}, {50}},
+				},
+				{
+					tableIDs:     [][2]int64{{90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}},
+					expectRanges: [][]int64{{90}, {110}, {130}, {10, 30}, {50, 70}},
+				},
+				{
+					tableIDs:     [][2]int64{{110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}},
+					expectRanges: [][]int64{{110}, {130}, {10, 30}, {50, 70, 90}},
+				},
+				{
+					tableIDs:     [][2]int64{{130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}, {110, 110}},
+					expectRanges: [][]int64{{130}, {10, 30}, {50, 70, 90}, {110}},
+				},
+			},
+		},
+		// 0 [10 30] [50 70 90] [110 130]
+		{
+			idSpans: [][2]int64{{10, 30}, {50, 90}, {110, 130}},
+			cases: []struct {
+				tableIDs     [][2]int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     [][2]int64{{0, 0}, {10, 10}, {30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}},
+					expectRanges: [][]int64{{0}, {10, 30}, {50, 70, 90}, {110, 130}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}},
+					expectRanges: [][]int64{{0}, {30}, {50, 70, 90}, {110, 130}, {10}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}},
+					expectRanges: [][]int64{{0}, {50, 70, 90}, {110, 130}, {10, 30}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}},
+					expectRanges: [][]int64{{0}, {70, 90}, {110, 130}, {10, 30}, {50}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}},
+					expectRanges: [][]int64{{0}, {90}, {110, 130}, {10, 30}, {50, 70}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}},
+					expectRanges: [][]int64{{0}, {110, 130}, {10, 30}, {50, 70, 90}},
+				},
+				{
+					tableIDs:     [][2]int64{{0, 0}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}, {110, 110}},
+					expectRanges: [][]int64{{0}, {130}, {10, 30}, {50, 70, 90}, {110}},
+				},
+			},
+		},
+		// 10 [30 50] 70 [90 110] 130
+		{
+			idSpans: [][2]int64{{30, 50}, {90, 110}},
+			cases: []struct {
+				tableIDs     [][2]int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     [][2]int64{{10, 10}, {30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}},
+					expectRanges: [][]int64{{10}, {30, 50}, {70}, {90, 110}, {130}},
+				},
+				{
+					tableIDs:     [][2]int64{{30, 30}, {50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}},
+					expectRanges: [][]int64{{30, 50}, {70}, {90, 110}, {130}, {10}},
+				},
+				{
+					tableIDs:     [][2]int64{{50, 50}, {70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}},
+					expectRanges: [][]int64{{50}, {70}, {90, 110}, {130}, {10}, {30}},
+				},
+				{
+					tableIDs:     [][2]int64{{70, 70}, {90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}},
+					expectRanges: [][]int64{{70}, {90, 110}, {130}, {10}, {30, 50}},
+				},
+				{
+					tableIDs:     [][2]int64{{90, 90}, {110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}},
+					expectRanges: [][]int64{{90, 110}, {130}, {10}, {30, 50}, {70}},
+				},
+				{
+					tableIDs:     [][2]int64{{110, 110}, {130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}},
+					expectRanges: [][]int64{{110}, {130}, {10}, {30, 50}, {70}, {90}},
+				},
+				{
+					tableIDs:     [][2]int64{{130, 130}, {10, 131}, {30, 132}, {50, 133}, {70, 134}, {90, 135}, {110, 110}},
+					expectRanges: [][]int64{{130}, {10}, {30, 50}, {70}, {90, 110}},
+				},
+			},
+		},
+		// [30 50]
+		{
+			idSpans: [][2]int64{{30, 50}},
+			cases: []struct {
+				tableIDs     [][2]int64
+				expectRanges [][]int64
+			}{
+				{
+					tableIDs:     [][2]int64{{30, 30}, {50, 50}},
+					expectRanges: [][]int64{{30, 50}},
+				},
+				{
+					tableIDs:     [][2]int64{{50, 50}, {30, 51}},
+					expectRanges: [][]int64{{50}, {30}},
+				},
+			},
+		},
+	}
+
+	for k, csGroup := range caseGroups {
+		idSpans := csGroup.idSpans
+		for _, cs := range csGroup.cases {
+			i := 0
+			err := snapclient.IterSortedPhysicalTables(
+				preallocedFrom,
+				generatePhysicalTables3(cs.tableIDs),
+				generateTableIDSpans(idSpans),
+				func(pt []*snapclient.PhysicalTable) error {
+					expectRange := cs.expectRanges[i]
+					if k == 2 {
+						t.Log(i)
+					}
+					require.Equal(t, len(expectRange), len(pt), expectRange)
 					for j, id := range expectRange {
 						require.Equal(t, id, pt[j].OldPhysicalID)
 					}
