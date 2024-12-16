@@ -577,6 +577,10 @@ func (d *Datum) TruncatedStringify() string {
 	case KindVectorFloat32:
 		// Vector supports native efficient truncation.
 		return d.GetVectorFloat32().TruncatedString()
+	case KindInt64:
+		return strconv.FormatInt(d.GetInt64(), 10)
+	case KindUint64:
+		return strconv.FormatUint(d.GetUint64(), 10)
 	default:
 		// For other types, no truncation is needed.
 		return fmt.Sprintf("%v", d.GetValue())

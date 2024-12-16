@@ -133,7 +133,7 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // StringWithCtx implements Expression interface.
 func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+4))
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+2+8*len(sf.GetArgs())))
 	buffer.WriteString(sf.FuncName.L)
 	buffer.WriteByte('(')
 	switch sf.FuncName.L {
