@@ -15,6 +15,7 @@
 package types
 
 import (
+	"bytes"
 	"cmp"
 	gjson "encoding/json"
 	"fmt"
@@ -556,24 +557,11 @@ func (d *Datum) GetValue() any {
 // but truncated (for example, for strings, only first 64 bytes is printed).
 // This function is useful in contexts like EXPLAIN.
 func (d *Datum) TruncatedStringify() string {
-	const maxLen = 64
-
 	switch d.k {
 	case KindString, KindBytes:
-		str := d.GetString()
-		if len(str) > maxLen {
-			// This efficiently returns the truncated string without
-			// less possible allocations.
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetString())
 	case KindMysqlJSON:
-		// For now we can only stringify then truncate.
-		str := d.GetMysqlJSON().String()
-		if len(str) > maxLen {
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetMysqlJSON().String())
 	case KindVectorFloat32:
 		// Vector supports native efficient truncation.
 		return d.GetVectorFloat32().TruncatedString()
@@ -585,6 +573,21 @@ func (d *Datum) TruncatedStringify() string {
 		// For other types, no truncation is needed.
 		return fmt.Sprintf("%v", d.GetValue())
 	}
+}
+
+func truncateStringIfNeeded(str string) string {
+	const maxLen = 64
+	if len(str) > maxLen {
+		const suffix = "...(len:"
+		lenStr := strconv.Itoa(len(str))
+		buf := bytes.NewBuffer(make([]byte, 0, maxLen+len(suffix)+len(lenStr)+1))
+		buf.WriteString(str[:maxLen])
+		buf.WriteString(suffix)
+		buf.WriteString(lenStr)
+		buf.WriteByte(')')
+		return buf.String()
+	}
+	return str
 }
 
 // SetValueWithDefaultCollation sets any kind of value.
