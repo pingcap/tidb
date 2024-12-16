@@ -564,14 +564,14 @@ func (d *Datum) TruncatedStringify() string {
 		if len(str) > maxLen {
 			// This efficiently returns the truncated string without
 			// less possible allocations.
-			return str[:maxLen] + "...(len:" + strconv.Itoa(len(str)) + ")"
+			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
 		}
 		return str
 	case KindMysqlJSON:
 		// For now we can only stringify then truncate.
 		str := d.GetMysqlJSON().String()
 		if len(str) > maxLen {
-			return str[:maxLen] + "...(len:" + strconv.Itoa(len(str)) + ")"
+			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
 		}
 		return str
 	case KindVectorFloat32:
