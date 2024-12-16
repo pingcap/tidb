@@ -41,22 +41,26 @@ const (
 	delRetryInterval   = time.Second * 5
 )
 
+type delRateLimiter interface {
+	WaitDelToken(ctx context.Context) error
+}
+
 var globalDelRateLimiter = newDelRateLimiter()
 
-type delRateLimiter struct {
+type defaultDelRateLimiter struct {
 	sync.Mutex
 	limiter *rate.Limiter
 	limit   atomic.Int64
 }
 
-func newDelRateLimiter() *delRateLimiter {
-	limiter := &delRateLimiter{}
+func newDelRateLimiter() delRateLimiter {
+	limiter := &defaultDelRateLimiter{}
 	limiter.limiter = rate.NewLimiter(0, 1)
 	limiter.limit.Store(0)
 	return limiter
 }
 
-func (l *delRateLimiter) Wait(ctx context.Context) error {
+func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 	limit := l.limit.Load()
 	if variable.TTLDeleteRateLimit.Load() != limit {
 		limit = l.reset()
@@ -69,7 +73,7 @@ func (l *delRateLimiter) Wait(ctx context.Context) error {
 	return l.limiter.Wait(ctx)
 }
 
-func (l *delRateLimiter) reset() (newLimit int64) {
+func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 	l.Lock()
 	defer l.Unlock()
 	newLimit = variable.TTLDeleteRateLimit.Load()
@@ -123,9 +127,15 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 
 		tracer.EnterPhase(metrics.PhaseWaitToken)
-		if err = globalDelRateLimiter.Wait(ctx); err != nil {
-			t.statistics.IncErrorRows(len(delBatch))
-			return
+		if err = globalDelRateLimiter.WaitDelToken(ctx); err != nil {
+			tracer.EnterPhase(metrics.PhaseOther)
+			logutil.BgLogger().Info(
+				"wait TTL delete rate limiter interrupted",
+				zap.Error(err),
+				zap.Int("waitDelRowCnt", len(delBatch)),
+			)
+			retryRows = append(retryRows, delBatch...)
+			continue
 		}
 		tracer.EnterPhase(metrics.PhaseOther)
 
