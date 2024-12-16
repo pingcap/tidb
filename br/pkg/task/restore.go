@@ -279,7 +279,7 @@ type RestoreConfig struct {
 }
 
 func (r *RestoreConfig) LocalEncryptionEnabled() bool {
-	return r.MasterKeyConfig.EncryptionType != encryptionpb.EncryptionMethod_PLAINTEXT
+	return r.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.

@@ -1160,7 +1160,7 @@ func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 			"you want to restore a whole cluster, you may use `-f` or `restore table|database` to "+
 				"specify the tables to restore to continue")
 	}
-	if !cfg.LocalEncryptionEnabled() {
+	if cfg.LocalEncryptionEnabled() {
 		return errors.Annotate(baseErr, "the data you want to restore is encrypted, they cannot be copied to the log storage")
 	}
 	if task.Info.GetSecurityConfig().GetEncryption() != nil {
