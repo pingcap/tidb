@@ -98,6 +98,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/workloadbasedlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -2715,6 +2716,22 @@ func (do *Domain) autoAnalyzeWorker() {
 	for {
 		select {
 		case <-analyzeTicker.C:
+			// In order to prevent tidb from being blocked by the auto analyze task during shutdown,
+			// a stopautoanalyze is added here for judgment.
+			//
+			// The reason for checking of stopAutoAnalyze is following:
+			// According to the issue#41318, if we don't check stopAutoAnalyze here, the autoAnalyzeWorker will be tricker
+			// again when domain.exit is true.
+			// The "case <-analyzeTicker.C" condition and "case <-do.exit" condition are satisfied at the same time
+			// when the system is already executing the shutdown task.
+			// At this time, the Go language will randomly select a case that meets the conditions to execute,
+			// and there is a probability that a new autoanalyze task will be started again
+			// when the system has already executed the shutdown.
+			// Because the time interval of statsLease is much smaller than the execution speed of auto analyze.
+			// Therefore, when the current auto analyze is completed,
+			// the probability of this happening is very high that the ticker condition and exist condition will be met
+			// at the same time.
+			// This causes the auto analyze task to be triggered all the time and block the shutdown of tidb.
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
 			}
@@ -3313,6 +3330,40 @@ func (do *Domain) planCacheEvictTrigger() {
 					zap.String("detail", detailInfo),
 					zap.Int64("num_evicted", int64(numEvicted)),
 					zap.Duration("time_spent", time.Since(begin)))
+			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+// SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
+func (do *Domain) SetupWorkloadBasedLearningWorker() {
+	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle()
+	// Start the workload based learning worker to analyze the read workload by statement_summary.
+	do.wg.Run(
+		func() {
+			do.readTableCostWorker(wbLearningHandle)
+		},
+		"readTableCostWorker",
+	)
+	// TODO: Add more workers for other workload based learning tasks.
+}
+
+// readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
+	// Recover the panic and log the error when worker exit.
+	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
+	readTableCostTicker := time.NewTicker(variable.WorkloadBasedLearningInterval.Load())
+	defer func() {
+		readTableCostTicker.Stop()
+		logutil.BgLogger().Info("readTableCostWorker exited.")
+	}()
+	for {
+		select {
+		case <-readTableCostTicker.C:
+			if variable.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
+				wbLearningHandle.HandleReadTableCost()
 			}
 		case <-do.exit:
 			return
