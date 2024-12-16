@@ -780,3 +780,11 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkDatumTruncatedStringify(b *testing.B) {
+	d := NewStringDatum(strings.Repeat("1", 128))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = d.TruncatedStringify()
+	}
+}
