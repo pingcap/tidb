@@ -208,7 +208,7 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 						// the table corresponding to the table-id.
 						for _, f := range set.SSTFiles {
 							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
-								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								checkpoint.NewCheckpointFileItem(set.MinPhysicalID, f.GetName())); err != nil {
 								return errors.Trace(err)
 							}
 						}

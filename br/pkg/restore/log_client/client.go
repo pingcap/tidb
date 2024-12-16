@@ -453,8 +453,9 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
 		// we need to load the checkpoint data for the following restore
 		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
-		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) error {
 			sstCheckpointSets[v.Name] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)

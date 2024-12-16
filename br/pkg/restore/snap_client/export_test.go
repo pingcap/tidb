@@ -38,7 +38,6 @@ var (
 
 	GetSSTMetaFromFile       = getSSTMetaFromFile
 	GetKeyRangeByMode        = getKeyRangeByMode
-	GetFileRangeKey          = getFileRangeKey
 	GetSortedPhysicalTables  = getSortedPhysicalTables
 	IterSortedPhysicalTables = iterSortedPhysicalTables
 )

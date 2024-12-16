@@ -672,12 +672,13 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[resp.Name]
 		require.True(t, ok)
 		require.Equal(t, d.Name, resp.Name)
 		respCount++
+		return nil
 	}
 
 	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
