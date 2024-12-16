@@ -158,54 +158,6 @@ func generateNormalIndexPartialPaths4DNF(
 	return partialPath, needSelection
 }
 
-// getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-// For index merge union case, the order property from its partial
-// path can be kept and multi-way merged and output. So we don't
-// generate a concrete index merge path out, but an un-determined
-// alternatives set index merge path instead.
-//
-//	    `create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c))`
-//		`explain format='verbose' select * from t where a=1 or b=1 order by c`
-//
-// like the case here:
-// normal index merge OR path should be:
-// for a=1, it has two partial alternative paths: [a, ac]
-// for b=1, it has two partial alternative paths: [b, bc]
-// and the index merge path:
-//
-//	indexMergePath: {
-//	    PartialIndexPaths: empty                          // 1D array here, currently is not decided yet.
-//	    PartialAlternativeIndexPaths: [[a, ac], [b, bc]]  // 2D array here, each for one DNF item choices.
-//	}
-func generateIndexMergeOrPaths(ds *logicalop.DataSource, filters []expression.Expression) error {
-	usedIndexCount := len(ds.PossibleAccessPaths)
-	for k, cond := range filters {
-		sf, ok := cond.(*expression.ScalarFunction)
-		if !ok || sf.FuncName.L != ast.LogicOr {
-			continue
-		}
-
-		dnfFilters := expression.SplitDNFItems(sf)
-
-		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
-			ds,
-			dnfFilters,
-			ds.PossibleAccessPaths[:usedIndexCount],
-		)
-		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
-			ds,
-			filters,
-			k,
-			ds.PossibleAccessPaths[:usedIndexCount],
-			unfinishedIndexMergePath,
-		)
-		if finishedIndexMergePath != nil {
-			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, finishedIndexMergePath)
-		}
-	}
-	return nil
-}
-
 // isInIndexMergeHints returns true if the input index name is not excluded by the IndexMerge hints, which means either
 // (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
 // name is specified in the IndexMerge hints.
@@ -302,9 +254,7 @@ func accessPathsForConds(
 		if ranger.HasFullRange(newPath.Ranges, false) {
 			return nil
 		}
-
 	}
-
 	return newPath
 }
 
@@ -623,7 +573,7 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	}
 
 	// 1. Generate possible IndexMerge paths for `OR`.
-	err := generateIndexMergeOrPaths(ds, indexMergeConds)
+	err := generateIndexMergeORPaths(ds, indexMergeConds)
 	if err != nil {
 		return "", err
 	}
@@ -640,7 +590,7 @@ func generateIndexMerge4NormalIndex(ds *logicalop.DataSource, regularPathCount i
 	var containMVPath bool
 	for i := regularPathCount; i < len(ds.PossibleAccessPaths); i++ {
 		path := ds.PossibleAccessPaths[i]
-		for _, p := range util.SliceDeepFlattenIter[*util.AccessPath](path.PartialAlternativeIndexPaths) {
+		for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](path.PartialAlternativeIndexPaths) {
 			if isMVIndexPath(p) {
 				containMVPath = true
 				break

@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -28,15 +29,39 @@ import (
 	"go.uber.org/zap"
 )
 
-// Note that at this moment, the implementation related to unfinishedAccessPath only aims to handle OR list nested in
-// AND list, which is like ... AND (... OR ... OR ...) AND ..., and build an MV IndexMerge access path. So some struct
-// definition and code logic are specially designed for this case or only consider this case.
-// This may be changed in the future.
+// generateIndexMergeORPaths handles all (MV and non-MV index) OR type IndexMerge path generation.
+// The input filters are implicitly connected by AND.
+func generateIndexMergeORPaths(ds *logicalop.DataSource, filters []expression.Expression) error {
+	usedIndexCount := len(ds.PossibleAccessPaths)
+	// 1. Iterate the input filters and try to find an OR list.
+	for k, cond := range filters {
+		sf, ok := cond.(*expression.ScalarFunction)
+		if !ok || sf.FuncName.L != ast.LogicOr {
+			continue
+		}
 
-// unfinishedAccessPath collects access filters in preparation for building an access path.
+		dnfFilters := expression.SplitDNFItems(sf)
+		candidatesAccessPaths := ds.PossibleAccessPaths[:usedIndexCount]
+
+		// 2. Try to collect usable filters for each candidate access path using the OR list.
+		unfinishedIndexMergePath := genUnfinishedPathFromORList(ds, dnfFilters, candidatesAccessPaths)
+		// 3. Try to collect more usable filters from the top level AND list and build it into a valid AccessPath.
+		indexMergePath := handleTopLevelANDList(ds, filters, k, candidatesAccessPaths, unfinishedIndexMergePath)
+		if indexMergePath != nil {
+			ds.PossibleAccessPaths = append(ds.PossibleAccessPaths, indexMergePath)
+		}
+	}
+	return nil
+}
+
+// unfinishedAccessPath collects usable filters in preparation for building an OR type IndexMerge access path.
 // It maintains the information during iterating all filters. Importantly, it maintains incomplete access filters, which
 // means they may not be able to build a valid range, but could build a valid range after collecting more access filters.
 // After iterating all filters, we can check and build it into a valid util.AccessPath.
+// Similar to AccessPath, unfinishedAccessPath has 2 meanings:
+// 1. When orBranches is nil, it collects usable filters for a single candidate access path.
+// 2. When orBranches is not nil, it's a container of partial paths, and each element in the slice corresponds to one
+// OR branch in the input expression.
 type unfinishedAccessPath struct {
 	index *model.IndexInfo
 
@@ -46,16 +71,15 @@ type unfinishedAccessPath struct {
 	// methods:
 	//
 	// 1. Use the same functions as the previous implementation to collect access filters. They are able to handle some
-	// complicated expressions, but the expressions must be able to build into a valid range at once (that's also what
-	// "finished" implies).
-	// In this case, idxColHasUsableFilter will be nil and initedAsFinished will be true.
+	// complicated expressions, but the expressions must be able to build into a valid range at once.
+	// In this case, idxColHasUsableFilter will be nil and initedWithValidRange will be true.
 	//
 	// 2. Use the new logic, which is to collect access filters for each column respectively, gradually collect more
 	// access filters during iterating all filters and try to form a valid range at last.
-	// In this case, initedAsFinished will be false, and idxColHasUsableFilter will record if we have already collected
-	// a valid access filter for each column of the index.
+	// In this case, initedWithValidRange will be false, and idxColHasUsableFilter will record if we have collected
+	// usable filters for each column of the index.
 	idxColHasUsableFilter []bool
-	initedAsFinished      bool
+	initedWithValidRange  bool
 
 	// needKeepFilter means the OR list need to become a filter in the final Selection.
 	needKeepFilter bool
@@ -65,13 +89,11 @@ type unfinishedAccessPath struct {
 	orBranches []unfinishedAccessPathList
 }
 
-// unfinishedAccessPathList collects access filters in preparation for building a slice of candidate access paths.
-// This type is useful because usually we have several candidate index/table paths. When we are iterating the
-// expressions, we want to match them against all index/table paths and try to find access filter for every path. After
-// iterating all expressions, we check if any of them can form a valid range so that we can build a valid AccessPath.
+// unfinishedAccessPathList collects usable filters for a slice of candidate access paths in preparation for building an
+// OR type IndexMerge access path.
 type unfinishedAccessPathList []*unfinishedAccessPath
 
-// generateUnfinishedIndexMergePathFromORList handles a list of filters connected by OR, collects access filters for
+// genUnfinishedPathFromORList handles a list of filters connected by OR, collects access filters for
 // each candidate access path, and returns an unfinishedAccessPath, which must be an index merge OR unfinished path,
 // each partial path of which corresponds to one filter in the input orList.
 /*
@@ -82,14 +104,14 @@ Example:
  Output:
    unfinishedAccessPath{
      orBranches: [
-       // Collect access filters for (1 member of j->'$.a') using two candidates respectively.
-       [unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil]
-       // Collect access filters for (2 member of j->'$.b') using two candidates respectively.
-       [nil, unfinishedAccessPath{idx2,2 member of j->'$.b'}]
+       // Collect usable filters for (1 member of j->'$.a') using two candidates respectively.
+       [ unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil (no usable filters for idx2)                ]
+       // Collect usable filters for (2 member of j->'$.b') using two candidates respectively.
+       [ nil (no usable filters for idx1)               , unfinishedAccessPath{idx2,2 member of j->'$.b'} ]
      ]
   }
 */
-func generateUnfinishedIndexMergePathFromORList(
+func genUnfinishedPathFromORList(
 	ds *logicalop.DataSource,
 	orList []expression.Expression,
 	candidateAccessPaths []*util.AccessPath,
@@ -116,7 +138,7 @@ func generateUnfinishedIndexMergePathFromORList(
 // will be nil.
 // If we failed to collect access filters for all candidate access paths, this function will return nil.
 /*
-Example1 (consistent with the one in generateUnfinishedIndexMergePathFromORList()):
+Example1 (consistent with the one in genUnfinishedPathFromORList()):
   Input:
     expr: 1 member of j->'$.a'
     candidateAccessPaths: [idx1(a, j->'$.a' unsigned array), idx2(j->'$.b' unsigned array, a)]
@@ -153,7 +175,7 @@ func initUnfinishedPathsFromExpr(
 				path,
 			)
 			if partialPath != nil {
-				ret[i].initedAsFinished = true
+				ret[i].initedWithValidRange = true
 				ret[i].needKeepFilter = needSelection
 				ret[i].usableFilters = []expression.Expression{expr}
 				continue
@@ -178,7 +200,7 @@ func initUnfinishedPathsFromExpr(
 		if isMVIndexPath(path) {
 			accessFilters, remainingFilters, tp := collectFilters4MVIndex(ds.SCtx(), cnfItems, idxCols)
 			if len(accessFilters) > 0 && (tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
-				ret[i].initedAsFinished = true
+				ret[i].initedWithValidRange = true
 				ret[i].usableFilters = accessFilters
 				ret[i].needKeepFilter = len(remainingFilters) > 0
 				continue
@@ -208,7 +230,7 @@ func initUnfinishedPathsFromExpr(
 	validCnt := 0
 	// remove useless paths
 	for i, path := range ret {
-		if !path.initedAsFinished &&
+		if !path.initedWithValidRange &&
 			!slices.Contains(path.idxColHasUsableFilter, true) {
 			ret[i] = nil
 		} else {
@@ -221,14 +243,14 @@ func initUnfinishedPathsFromExpr(
 	return ret
 }
 
-// handleTopLevelANDListAndGenFinishedPath is expected to be used together with
-// generateUnfinishedIndexMergePathFromORList() to handle the expression like ... AND (... OR ... OR ...) AND ...
+// handleTopLevelANDList is expected to be used together with
+// genUnfinishedPathFromORList() to handle the expression like ... AND (... OR ... OR ...) AND ...
 // for mv index.
 // It will try to collect possible access filters from other items in the top level AND list and try to merge them into
-// the unfinishedAccessPath from generateUnfinishedIndexMergePathFromORList(), and try to build it into a valid
+// the unfinishedAccessPath from genUnfinishedPathFromORList(), and try to build it into a valid
 // util.AccessPath.
-// The input candidateAccessPaths argument should be the same with generateUnfinishedIndexMergePathFromORList().
-func handleTopLevelANDListAndGenFinishedPath(
+// The input candidateAccessPaths argument should be the same with genUnfinishedPathFromORList().
+func handleTopLevelANDList(
 	ds *logicalop.DataSource,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
@@ -258,21 +280,21 @@ func handleTopLevelANDListAndGenFinishedPath(
 }
 
 /*
-Example (consistent with the one in generateUnfinishedIndexMergePathFromORList()):
+Example (consistent with the one in genUnfinishedPathFromORList()):
 
 	idx1: (a, j->'$.a' unsigned array)  idx2: (j->'$.b' unsigned array, a)
 	Input:
 	  indexMergePath:
 	    unfinishedAccessPath{ orBranches:[
-	      [unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil]
-	      [nil, unfinishedAccessPath{idx2,2 member of j->'$.b'}]
+	      [ unfinishedAccessPath{idx1,1 member of j->'$.a'}, nil                                             ]
+	      [ nil                                            , unfinishedAccessPath{idx2,2 member of j->'$.b'} ]
 	    ]}
 	  pathListFromANDItem:
 	    [unfinishedAccessPath{idx1,a=3}, unfinishedAccessPath{idx2,a=3}]
 	Output:
 	  unfinishedAccessPath{ orBranches:[
-	    [unfinishedAccessPath{idx1,1 member of j->'$.a', a=3}, nil]
-	    [nil, unfinishedAccessPath{idx2,2 member of j->'$.b', a=3}]
+	    [ unfinishedAccessPath{idx1,1 member of j->'$.a', a=3}, nil                                                  ]
+	    [ nil                                                 , unfinishedAccessPath{idx2,2 member of j->'$.b', a=3} ]
 	  ]}
 */
 func mergeANDItemIntoUnfinishedIndexMergePath(
@@ -301,7 +323,7 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 			// access filters from the AND item.
 			// We just collect as many possibly useful access filters as possible, buildIntoAccessPath() should handle
 			// them correctly.
-			if pathListFromANDItem[i].initedAsFinished ||
+			if pathListFromANDItem[i].initedWithValidRange ||
 				slices.Contains(pathListFromANDItem[i].idxColHasUsableFilter, true) {
 				path.usableFilters = append(path.usableFilters, pathListFromANDItem[i].usableFilters...)
 			}
@@ -324,20 +346,20 @@ func buildIntoAccessPath(
 	// 1. Generate one or more partial access path for each partial unfinished path (access filter on mv index may
 	// produce several partial paths).
 
-	allAllPaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
+	allAlternativePaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
 
-	// for each partial path
-	for _, unfinishedPathList := range indexMergePath.orBranches {
+	// for each OR branch
+	for _, orBranch := range indexMergePath.orBranches {
 		var (
-			allPathsForORBranch [][]*util.AccessPath
+			alternativesForORBranch [][]*util.AccessPath
 		)
 
-		// for each possible access path of this partial path
-		for i, unfinishedPath := range unfinishedPathList {
+		// for each alternative of this OR branch
+		for i, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
-			var paths []*util.AccessPath
+			var oneAlternative []*util.AccessPath
 			var needSelection bool
 			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
 				// case 1: mv index
@@ -360,14 +382,14 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				paths, isIntersection, ok, err = buildPartialPaths4MVIndex(
+				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndex(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
 					unfinishedPath.index,
 					ds.TableStats.HistColl,
 				)
-				if err != nil || !ok || (isIntersection && len(paths) > 1) {
+				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
 					continue
 				}
 				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.idxColHasUsableFilter) > 0
@@ -386,22 +408,23 @@ func buildIntoAccessPath(
 				if path == nil {
 					continue
 				}
-				paths = append(paths, path)
+				oneAlternative = []*util.AccessPath{path}
 			}
 			needSelection = needSelection || unfinishedPath.needKeepFilter
 			if needSelection {
-				paths[0].KeepIndexMergeORSourceFilter = true
+				// only need to set one of the paths to true
+				oneAlternative[0].KeepIndexMergeORSourceFilter = true
 			}
-			allPathsForORBranch = append(allPathsForORBranch, paths)
+			alternativesForORBranch = append(alternativesForORBranch, oneAlternative)
 		}
-		if len(allPathsForORBranch) == 0 {
+		if len(alternativesForORBranch) == 0 {
 			return nil
 		}
-		allAllPaths = append(allAllPaths, allPathsForORBranch)
+		allAlternativePaths = append(allAlternativePaths, alternativesForORBranch)
 	}
 
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
-	for _, p := range util.SliceDeepFlattenIter[*util.AccessPath](allAllPaths) {
+	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(p.TableFilters) > 0 {
 			p.KeepIndexMergeORSourceFilter = true
@@ -414,27 +437,26 @@ func buildIntoAccessPath(
 			p.IndexFilters = nil
 		}
 	}
-	needKeepORSourceFilter := false
+
 	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
-		[]expression.Expression{allConds[orListIdxInAllConds]}) {
-		needKeepORSourceFilter = true
-	}
+	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
+		[]expression.Expression{allConds[orListIdxInAllConds]},
+	)
 
 	// 3. Build the final access path
 	possiblePath := &util.AccessPath{
-		PartialAlternativeIndexPaths: allAllPaths,
+		PartialAlternativeIndexPaths: allAlternativePaths,
 		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
 		IndexMergeORSourceFilter:     allConds[orListIdxInAllConds],
 		KeepIndexMergeORSourceFilter: needKeepORSourceFilter,
 	}
 	// 3.1 need to set CountAfterAccess
-	accessConds := make([]expression.Expression, 0, len(allAllPaths))
-	pathsForEstimate := make([]*util.AccessPath, 0, len(allAllPaths))
-	possibleIdxIDs := make(map[int64]struct{}, len(allAllPaths))
+	accessConds := make([]expression.Expression, 0, len(allAlternativePaths))
+	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
+	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
 
 	var containMVPath bool
-	for _, oneORBranch := range allAllPaths {
+	for _, oneORBranch := range allAlternativePaths {
 		for _, paths := range oneORBranch {
 			for _, path := range paths {
 				if path.IsTablePath() {
