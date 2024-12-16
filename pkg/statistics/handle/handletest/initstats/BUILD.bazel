@@ -9,7 +9,6 @@ go_test(
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/types",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
     ],
