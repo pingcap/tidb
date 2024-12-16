@@ -226,10 +226,7 @@ func (m *JobManager) jobLoop() error {
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
 			updateHeartBeatCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			err = m.updateHeartBeat(updateHeartBeatCtx, se, now)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to update job heart beat", zap.Error(err))
-			}
+			m.updateHeartBeat(updateHeartBeatCtx, se, now)
 			cancel()
 		case <-jobCheckTicker:
 			m.checkFinishedJob(se)
@@ -272,10 +269,7 @@ func (m *JobManager) jobLoop() error {
 			m.taskManager.resizeWorkersWithSysVar()
 		case <-updateTaskHeartBeatTicker:
 			updateHeartBeatCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			err = m.taskManager.updateHeartBeat(updateHeartBeatCtx, se, now)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to update task heart beat", zap.Error(err))
-			}
+			m.taskManager.updateHeartBeat(updateHeartBeatCtx, se, now)
 			cancel()
 		case <-checkScanTaskFinishedTicker:
 			if m.taskManager.handleScanFinishedTask() {
@@ -370,13 +364,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		responseErr(err)
-		return
-	}
-
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now().In(tz)) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -579,13 +567,6 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
@@ -905,29 +886,42 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 }
 
 // updateHeartBeat updates the heartbeat for all task with current instance as owner
-func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
+func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
 	for _, job := range m.localJobs() {
-		if job.createTime.Add(ttlJobTimeout).Before(now) {
-			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
-			summary, err := summarizeErr(errors.New("job is timeout"))
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
-			}
-			err = job.finish(se, now, summary)
-			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
-				continue
-			}
-			m.removeJob(job)
-		}
-
-		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
-		sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
-		_, err := se.ExecuteSQL(ctx, sql, args...)
+		err := m.updateHeartBeatForJob(ctx, se, now, job)
 		if err != nil {
-			return errors.Wrapf(err, "execute sql: %s", sql)
+			logutil.Logger(m.ctx).Warn("fail to update heartbeat for job", zap.Error(err), zap.String("jobID", job.id))
 		}
 	}
+}
+
+func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
+	if job.createTime.Add(ttlJobTimeout).Before(now) {
+		logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
+		summary, err := summarizeErr(errors.New("job is timeout"))
+		if err != nil {
+			return errors.Wrapf(err, "fail to summarize job")
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			return errors.Wrapf(err, "fail to finish job")
+		}
+		m.removeJob(job)
+		return nil
+	}
+
+	intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
+	sql, args := updateHeartBeatSQL(job.tbl.ID, now, m.id)
+	_, err := se.ExecuteSQL(ctx, sql, args...)
+	if err != nil {
+		return errors.Wrapf(err, "execute sql: %s", sql)
+	}
+
+	if se.GetSessionVars().StmtCtx.AffectedRows() != 1 {
+		return errors.Errorf("fail to update job heartbeat, maybe the owner is not myself (%s), affected rows: %d",
+			m.id, se.GetSessionVars().StmtCtx.AffectedRows())
+	}
+
 	return nil
 }
 

@@ -1320,11 +1320,12 @@ func (s WindowRepeatType) String() string {
 	}
 }
 
-// DefaultJobInterval sets the default interval between TTL jobs
-const DefaultJobInterval = time.Hour
+// DefaultTTLJobInterval is the default interval of TTL jobs.
+const DefaultTTLJobInterval = "24h"
 
-// DefaultJobIntervalStr is the string representation of DefaultJobInterval
-const DefaultJobIntervalStr = "1h"
+// OldDefaultTTLJobInterval is the default interval of TTL jobs in v8.5 and the previous versions.
+// It is used by some codes to keep compatible with the previous versions.
+const OldDefaultTTLJobInterval = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
@@ -1351,7 +1352,10 @@ func (t *TTLInfo) Clone() *TTLInfo {
 // and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
 func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	if len(t.JobInterval) == 0 {
-		return DefaultJobInterval, nil
+		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+		// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+		return duration.ParseDuration(OldDefaultTTLJobInterval)
 	}
 
 	return duration.ParseDuration(t.JobInterval)

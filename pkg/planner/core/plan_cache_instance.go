@@ -88,7 +88,7 @@ func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool
 
 func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
+		if checkTypesCompatibility4PC(node.value.ParamTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			if !pc.inEvict.Load() {
 				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			}

@@ -87,9 +87,9 @@ const (
 	// TaskStatusWaiting means the task hasn't started
 	TaskStatusWaiting TaskStatus = "waiting"
 	// TaskStatusRunning means this task is running
-	TaskStatusRunning = "running"
+	TaskStatusRunning TaskStatus = "running"
 	// TaskStatusFinished means this task has finished
-	TaskStatusFinished = "finished"
+	TaskStatusFinished TaskStatus = "finished"
 )
 
 // TTLTask is a row recorded in mysql.tidb_ttl_task
@@ -116,6 +116,9 @@ type TTLTaskState struct {
 	ErrorRows   uint64 `json:"error_rows"`
 
 	ScanTaskErr string `json:"scan_task_err"`
+
+	// When PreviousOwner != "", it means this task is resigned from another owner
+	PreviousOwner string `json:"prev_owner,omitempty"`
 }
 
 // RowToTTLTask converts a row into TTL task

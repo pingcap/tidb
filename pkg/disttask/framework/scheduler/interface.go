@@ -49,10 +49,14 @@ type TaskManager interface {
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
-	// PausedTask updated task state to paused.
+	// PausedTask updated task state to 'paused'.
 	PausedTask(ctx context.Context, taskID int64) error
 	// ResumedTask updated task state from resuming to running.
 	ResumedTask(ctx context.Context, taskID int64) error
+	// ModifiedTask tries to update task concurrency and meta, and update state
+	// back to prev-state, if success, it will also update concurrency of all
+	// active subtasks.
+	ModifiedTask(ctx context.Context, task *proto.Task) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one

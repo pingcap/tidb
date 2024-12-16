@@ -493,7 +493,11 @@ func convertReorgPartitionJob2RollbackJob(jobCtx *jobContext, job *model.Job, ot
 		pi.DDLState = job.SchemaState
 	}
 
-	args := jobCtx.jobArgs.(*model.TablePartitionArgs)
+	args, err := model.GetTablePartitionArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 	args.PartNames = partNames
 	job.FillArgs(args)
 	ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)

@@ -326,6 +326,10 @@ type AzureBlobStorage struct {
 	cpkInfo  *blob.CPKInfo
 }
 
+func (*AzureBlobStorage) MarkStrongConsistency() {
+	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
+}
+
 func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *ExternalStorageOptions) (*AzureBlobStorage, error) {
 	clientBuilder, err := getAzureServiceClientBuilder(options, opts)
 	if err != nil {

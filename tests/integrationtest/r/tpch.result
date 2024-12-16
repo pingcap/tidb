@@ -292,7 +292,7 @@ id	estRows	task	access object	operator info
 Sort	1.00	root		tpch50.orders.o_orderpriority
 └─Projection	1.00	root		tpch50.orders.o_orderpriority, Column#27
   └─HashAgg	1.00	root		group by:tpch50.orders.o_orderpriority, funcs:count(1)->Column#27, funcs:firstrow(tpch50.orders.o_orderpriority)->tpch50.orders.o_orderpriority
-    └─IndexHashJoin	2255437.92	root		semi join, inner:IndexLookUp, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
+    └─IndexHashJoin	2255437.92	root		semi join, inner:IndexLookUp, left side:TableReader, outer key:tpch50.orders.o_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.orders.o_orderkey, tpch50.lineitem.l_orderkey)
       ├─TableReader(Build)	2819297.40	root		data:Selection
       │ └─Selection	2819297.40	cop[tikv]		ge(tpch50.orders.o_orderdate, 1995-01-01 00:00:00.000000), lt(tpch50.orders.o_orderdate, 1995-04-01 00:00:00.000000)
       │   └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
@@ -809,7 +809,7 @@ Sort	7500000.00	root		Column#19:desc, Column#18:desc
 └─Projection	7500000.00	root		Column#18, Column#19
   └─HashAgg	7500000.00	root		group by:Column#18, funcs:count(1)->Column#19, funcs:firstrow(Column#18)->Column#18
     └─HashAgg	7500000.00	root		group by:tpch50.customer.c_custkey, funcs:count(tpch50.orders.o_orderkey)->Column#18
-      └─HashJoin	60000000.00	root		left outer join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
+      └─HashJoin	60000000.00	root		left outer join, left side:TableReader, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         ├─TableReader(Build)	7500000.00	root		data:TableFullScan
         │ └─TableFullScan	7500000.00	cop[tikv]	table:customer	keep order:false
         └─TableReader(Probe)	60000000.00	root		data:Selection
@@ -929,7 +929,7 @@ id	estRows	task	access object	operator info
 Sort	14.46	root		Column#23:desc, tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size
 └─Projection	14.46	root		tpch50.part.p_brand, tpch50.part.p_type, tpch50.part.p_size, Column#23
   └─HashAgg	14.46	root		group by:tpch50.part.p_brand, tpch50.part.p_size, tpch50.part.p_type, funcs:count(distinct tpch50.partsupp.ps_suppkey)->Column#23, funcs:firstrow(tpch50.part.p_brand)->tpch50.part.p_brand, funcs:firstrow(tpch50.part.p_type)->tpch50.part.p_type, funcs:firstrow(tpch50.part.p_size)->tpch50.part.p_size
-    └─HashJoin	3870097.51	root		anti semi join, equal:[eq(tpch50.partsupp.ps_suppkey, tpch50.supplier.s_suppkey)]
+    └─HashJoin	3870097.51	root		anti semi join, left side:Projection, equal:[eq(tpch50.partsupp.ps_suppkey, tpch50.supplier.s_suppkey)]
       ├─TableReader(Build)	400000.00	root		data:Selection
       │ └─Selection	400000.00	cop[tikv]		like(tpch50.supplier.s_comment, "%Customer%Complaints%", 92)
       │   └─TableFullScan	500000.00	cop[tikv]	table:supplier	keep order:false
@@ -1150,7 +1150,7 @@ Sort	19999.44	root		tpch50.supplier.s_name
   ├─HashAgg(Build)	125724.99	root		group by:tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey
   │ └─Selection	125724.99	root		gt(cast(tpch50.partsupp.ps_availqty, decimal(10,0) BINARY), mul(0.5, Column#44))
   │   └─HashAgg	157156.24	root		group by:tpch50.partsupp.ps_partkey, tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_suppkey)->tpch50.partsupp.ps_suppkey, funcs:firstrow(tpch50.partsupp.ps_availqty)->tpch50.partsupp.ps_availqty, funcs:sum(tpch50.lineitem.l_quantity)->Column#44
-  │     └─HashJoin	4731068.54	root		left outer join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.lineitem.l_partkey) eq(tpch50.partsupp.ps_suppkey, tpch50.lineitem.l_suppkey)]
+  │     └─HashJoin	4731068.54	root		left outer join, left side:IndexHashJoin, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.lineitem.l_partkey) eq(tpch50.partsupp.ps_suppkey, tpch50.lineitem.l_suppkey)]
   │       ├─IndexHashJoin(Build)	157156.24	root		inner join, inner:IndexLookUp, outer key:tpch50.part.p_partkey, inner key:tpch50.partsupp.ps_partkey, equal cond:eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey)
   │       │ ├─TableReader(Build)	39153.78	root		data:Selection
   │       │ │ └─Selection	39153.78	cop[tikv]		like(tpch50.part.p_name, "green%", 92)
@@ -1219,8 +1219,8 @@ id	estRows	task	access object	operator info
 Projection	100.00	root		tpch50.supplier.s_name, Column#72
 └─TopN	100.00	root		Column#72:desc, tpch50.supplier.s_name, offset:0, count:100
   └─HashAgg	12799.64	root		group by:tpch50.supplier.s_name, funcs:count(1)->Column#72, funcs:firstrow(tpch50.supplier.s_name)->tpch50.supplier.s_name
-    └─IndexHashJoin	7814888.66	root		anti semi join, inner:IndexLookUp, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
-      ├─IndexHashJoin(Build)	9768610.82	root		semi join, inner:IndexLookUp, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey), ne(tpch50.lineitem.l_suppkey, tpch50.supplier.s_suppkey)
+    └─IndexHashJoin	7814888.66	root		anti semi join, inner:IndexLookUp, left side:IndexHashJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey)
+      ├─IndexHashJoin(Build)	9768610.82	root		semi join, inner:IndexLookUp, left side:IndexJoin, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.lineitem.l_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.lineitem.l_orderkey), other cond:ne(tpch50.lineitem.l_suppkey, tpch50.lineitem.l_suppkey), ne(tpch50.lineitem.l_suppkey, tpch50.supplier.s_suppkey)
       │ ├─IndexJoin(Build)	12210763.53	root		inner join, inner:TableReader, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.orders.o_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)
       │ │ ├─HashJoin(Build)	12033011.28	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
       │ │ │ ├─HashJoin(Build)	19999.44	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
@@ -1293,7 +1293,7 @@ Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
   └─HashAgg	1.00	root		group by:Column#36, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
     └─Projection	0.64	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
-      └─HashJoin	0.64	root		anti semi join, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
+      └─HashJoin	0.64	root		anti semi join, left side:TableReader, equal:[eq(tpch50.customer.c_custkey, tpch50.orders.o_custkey)]
         ├─TableReader(Build)	75000000.00	root		data:TableFullScan
         │ └─TableFullScan	75000000.00	cop[tikv]	table:orders	keep order:false
         └─TableReader(Probe)	0.80	root		data:Selection

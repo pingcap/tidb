@@ -881,6 +881,28 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 	}
 }
 
+func TestTraffic(t *testing.T) {
+	sqls := []string{
+		"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+		"traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+		"show traffic jobs",
+		"cancel traffic jobs",
+	}
+
+	parser := parser.New()
+	sctx := MockContext()
+	ctx := context.TODO()
+	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+	for _, sql := range sqls {
+		stmt, err := parser.ParseOneStmt(sql, "", "")
+		require.NoError(t, err)
+		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+		require.NoError(t, err)
+		_, ok := p.(*Traffic)
+		require.True(t, ok)
+	}
+}
+
 func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
 	parser := parser.New()
 	sctx := MockContext()

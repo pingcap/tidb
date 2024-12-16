@@ -68,10 +68,10 @@ insert into t2 values (2, 22), (3, 33), (5, 55), (233, 2), (333, 3), (3434, 5);
 analyze table t1, t2 all columns;
 explain analyze select t1.a, t1.b, sum(t1.c) from t1 join t2 on t1.a = t2.b where t1.a > 1;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-Projection_9	1.00	1	root	NULL	time:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
-└─StreamAgg_11	1.00	1	root	NULL	time:<num>, loops:<num>	funcs:sum(Column#16)->Column#8, funcs:firstrow(Column#17)->planner__core__cbo.t1.a, funcs:firstrow(Column#18)->planner__core__cbo.t1.b	<num>	N/A
-  └─Projection_53	4.00	3	root	NULL	time:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#16, planner__core__cbo.t1.a->Column#17, planner__core__cbo.t1.b->Column#18	<num>	N/A
-    └─HashJoin_51	4.00	3	root	NULL	time:<num>, loops:<num>, build_hash_table:{total:<num>, fetch:<num>, build:<num>}, probe:{concurrency:<num>, total:<num>, max:<num>, probe:<num>, fetch and wait:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
+Projection_9	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, RU:<num>, Concurrency:OFF	planner__core__cbo.t1.a, planner__core__cbo.t1.b, Column#8	<num>	N/A
+└─StreamAgg_11	1.00	1	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>	funcs:sum(Column#16)->Column#8, funcs:firstrow(Column#17)->planner__core__cbo.t1.a, funcs:firstrow(Column#18)->planner__core__cbo.t1.b	<num>	N/A
+  └─Projection_53	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, Concurrency:OFF	cast(planner__core__cbo.t1.c, decimal(10,0) BINARY)->Column#16, planner__core__cbo.t1.a->Column#17, planner__core__cbo.t1.b->Column#18	<num>	N/A
+    └─HashJoin_51	4.00	3	root	NULL	time:<num>, open:<num>, close:<num>, loops:<num>, build_hash_table:{total:<num>, fetch:<num>, build:<num>}, probe:{concurrency:<num>, total:<num>, max:<num>, probe:<num>, fetch and wait:<num>}	inner join, equal:[eq(planner__core__cbo.t1.a, planner__core__cbo.t2.b)]	<num>	<num>
       ├─TableReader_30(Build)	6.00	6	root	NULL	time.*loops.*cop_task.*	data:Selection_29	<num>	N/A
       │ └─Selection_29	6.00	6	cop[tikv]	NULL	tikv_task:{time:<num>, loops:<num>}	gt(planner__core__cbo.t2.b, 1), not(isnull(planner__core__cbo.t2.b))	N/A	N/A
       │   └─TableFullScan_28	6.00	6	cop[tikv]	table:t2	tikv_task:{time:<num>, loops:<num>}	keep order:false	N/A	N/A

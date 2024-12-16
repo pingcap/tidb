@@ -1400,7 +1400,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 			times++
 		}
 	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", onJobUpdatedExportedFunc)
 
 	tk.MustGetErrMsg(addIdxSQL, "[ddl:8214]Cancelled DDL job")
 	require.NoError(t, checkErr)
@@ -1408,7 +1408,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case3: test get error message from tiflash
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
 	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)

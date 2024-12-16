@@ -52,13 +52,13 @@ func TestGroupExpressionHashEquals(t *testing.T) {
 	a := GroupExpression{
 		group:       &Group{groupID: 3},
 		Inputs:      []*Group{child1, child2},
-		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
+		LogicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	b := GroupExpression{
 		// root group should change the hash.
 		group:       &Group{groupID: 4},
 		Inputs:      []*Group{child1, child2},
-		logicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
+		LogicalPlan: &logicalop.LogicalProjection{Exprs: []expression.Expression{expression.NewOne()}},
 	}
 	a.Hash64(hasher1)
 	b.Hash64(hasher2)

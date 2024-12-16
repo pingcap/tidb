@@ -54,7 +54,7 @@ drop table if exists t;
 create table t(a int not null, b datetime default null);
 explain format = 'brief' select * from t t1 left join t t2 on t1.a = t2.a where cast(t1.b as date) >= '2019-01-01';
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
+HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─TableReader(Build)	8000.00	root		data:Selection
 │ └─Selection	8000.00	cop[tikv]		ge(cast(planner__core__casetest__integration.t.b, date BINARY), 2019-01-01 00:00:00.000000)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -170,7 +170,7 @@ create table t(a int, b int);
 desc format = 'brief' select t1.b from t t1 where t1.b in (select t2.a from t t2 order by t1.a+t2.a limit 1);
 id	estRows	task	access object	operator info
 Projection	9990.00	root		planner__core__casetest__integration.t.b
-└─Apply	9990.00	root		semi join, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.a)]
+└─Apply	9990.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -187,7 +187,7 @@ Projection	1.00	root		planner__core__casetest__integration.t.a
 └─Projection	1.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11
   └─TopN	1.00	root		Column#13, offset:0, count:1
     └─Projection	10000.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11, and(eq(planner__core__casetest__integration.t.b, 1), Column#11)->Column#13
-      └─HashJoin	10000.00	root		left outer semi join, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)]
+      └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)]
         ├─TableReader(Build)	10000.00	root		data:TableFullScan
         │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
         └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -373,7 +373,7 @@ create table t(a int, b int);
 insert into t values(1, 2), (3, 4);
 explain format = 'brief' select (2) in (select b from t) from (select t.a < (select t.a from t t1 limit 1) from t) t;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(2, planner__core__casetest__integration.t.b)
+HashJoin	10000.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(2, planner__core__casetest__integration.t.b)
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -456,7 +456,7 @@ drop table if exists t;
 create table t(a int not null, b int not null);
 explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 where t1.a = t2.a and t1.a = t.a);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		semi join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashJoin(Build)	12500.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 │ ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -466,7 +466,7 @@ HashJoin	8000.00	root		semi join, equal:[eq(planner__core__casetest__integration
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where exists (select 1 from t t1 join t t2 on t1.a = t2.a and t1.a = t.a);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		semi join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 ├─HashJoin(Build)	12500.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.a)]
 │ ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -526,7 +526,7 @@ insert t values(10), (8), (7), (9), (11);
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1);
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#7
-└─HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
+└─HashJoin	7992.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.test.id))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -536,7 +536,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id);
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#7
-└─HashJoin	7992.00	root		semi join, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
+└─HashJoin	7992.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.test.id, planner__core__casetest__integration.test.id)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.test.id))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -546,7 +546,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
 explain format = 'brief' select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1,2);
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:count(1)->Column#7
-└─Apply	10000.00	root		CARTESIAN semi join
+└─Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Limit(Probe)	20000.00	root		offset:1, count:2
@@ -556,7 +556,7 @@ HashAgg	1.00	root		funcs:count(1)->Column#7
           └─TableFullScan	30000000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where 9 in (select c from t s where s.c < t.c limit 3);
 id	estRows	task	access object	operator info
-Apply	10000.00	root		CARTESIAN semi join
+Apply	10000.00	root		CARTESIAN semi join, left side:TableReader
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─Selection(Probe)	24000.00	root		eq(9, planner__core__casetest__integration.t.c)
@@ -1043,7 +1043,7 @@ create table t1(a int);
 create table t2(a int, b int, c int, primary key(a,b) nonclustered);
 explain format = 'brief' select (select c from t2 where t2.a = t1.a and t2.b = 1) from t1;
 id	estRows	task	access object	operator info
-HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2.a)]
+HashJoin	10000.00	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2.a)]
 ├─TableReader(Build)	10.00	root		data:Selection
 │ └─Selection	10.00	cop[tikv]		eq(planner__core__casetest__integration.t2.b, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -1052,7 +1052,7 @@ HashJoin	10000.00	root		left outer join, equal:[eq(planner__core__casetest__inte
 explain format = 'brief' select (select c from t2 where t2.a = t1.a and (t2.b = 1 or t2.b = 2)) from t1;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		planner__core__casetest__integration.t2.c
-└─Apply	10000.00	root		CARTESIAN left outer join
+└─Apply	10000.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	10000.00	root		
@@ -1423,7 +1423,7 @@ set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-HashJoin_19	2658.67	root		anti semi join, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
+HashJoin_19	2658.67	root		anti semi join, left side:TableReader_22, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
 ├─PartitionUnion_23(Build)	13293.33	root		
 │ ├─TableReader_31	3323.33	root		data:Projection_25
 │ │ └─Projection_25	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
@@ -1450,7 +1450,7 @@ Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) *
 set @@tidb_opt_fix_control = "44262:ON";
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
+IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, left side:TableReader_18, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
 ├─TableReader_18(Build)	3323.33	root		data:Selection_17
 │ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -1462,7 +1462,7 @@ set @@tidb_opt_fix_control = "";
 set @@tidb_skip_missing_partition_stats = on;
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
+IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, left side:TableReader_18, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
 ├─TableReader_18(Build)	3323.33	root		data:Selection_17
 │ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

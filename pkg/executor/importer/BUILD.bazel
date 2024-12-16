@@ -135,6 +135,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",

@@ -188,10 +188,13 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 			}
 		}
 	}
+
+	txnLeastID := 1 // used to let update/delete id keep increasing in a txn to avoid deadlock.
 	genUpdate := func() *testStmt {
 		switch rand.Intn(2) {
 		case 0: // update sbtest set k=k+1 where id=?
-			id := rand.Intn(maxID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			txnLeastID = id
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set k=k+1 where id=%v", id),
 				prepStmt:   "prepare st from 'update prepared.sbtest set k=k+1 where id=?'",
@@ -199,7 +202,8 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 				execStmt:   "execute st using @id",
 			}
 		default: // update sbtest set c=? where id=?
-			id := rand.Intn(maxID)
+			id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+			txnLeastID = id
 			c := fmt.Sprintf("%v", rand.Intn(10000))
 			return &testStmt{
 				normalStmt: fmt.Sprintf("update normal.sbtest set c='%v' where id=%v", c, id),
@@ -222,7 +226,8 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 	genDelete := func() *testStmt {
-		id := rand.Intn(maxID)
+		id := txnLeastID + rand.Intn(maxID-txnLeastID+1)
+		txnLeastID = id
 		return &testStmt{
 			normalStmt: fmt.Sprintf("delete from normal.sbtest where id=%v", id),
 			prepStmt:   "prepare st from 'delete from prepared.sbtest where id=?'",
@@ -239,6 +244,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		if rand.Intn(15) == 0 { // start a new txn
 			stmts = append(stmts, &testStmt{normalStmt: "commit"})
 			stmts = append(stmts, &testStmt{normalStmt: "begin"})
+			txnLeastID = 1
 			continue
 		}
 		if len(stmts) < nInitialRecords {
