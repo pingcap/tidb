@@ -143,7 +143,7 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 	}
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and modify_count = 0 where table_id = %? ", startTS, statsID); err != nil {
 			return err
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
