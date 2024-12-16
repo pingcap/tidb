@@ -653,6 +653,7 @@ func (t *Table) ShallowCopy() *Table {
 	return nt
 }
 
+// EmptyCopy creates a copy that only contains the basic information of the table.
 func (t *Table) EmptyCopy() *Table {
 	histColl := NewHistColl(t.PhysicalID, t.HavePhysicalID, t.RealtimeCount, t.ModifyCount, len(t.columns), len(t.indices))
 	nt := &Table{
