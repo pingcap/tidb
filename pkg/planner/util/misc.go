@@ -49,7 +49,16 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 	return cloned
 }
 
-// SliceRecursiveFlattenIter ... TODO
+// SliceRecursiveFlattenIter returns an iterator that recursively iterates over all elements of a any-dimensional slice
+// of any type.
+// Performance note: for all non-leaf slices, this function uses reflection to check the type and iterate over them.
+/*
+Example:
+	3DPaths := [][][]*AccessPath{...}
+	for idx, path := range SliceRecursiveFlattenIter[*AccessPath](3DPaths) {
+		// path is a *AccessPath here
+	}
+*/
 func SliceRecursiveFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
 	return func(yield func(int, E) bool) {
 		sliceRecursiveFlattenIterHelper(s, yield, 0)
