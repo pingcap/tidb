@@ -2642,6 +2642,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
+			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
 		}
