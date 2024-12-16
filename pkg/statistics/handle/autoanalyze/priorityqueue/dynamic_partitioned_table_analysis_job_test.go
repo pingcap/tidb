@@ -218,7 +218,7 @@ func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 
 	rows, _, err := util.ExecRows(sctx, "explain format='brief' "+priorityqueue.LastFailedDurationQueryForPartition, tableSchema, tableName, partitionNames)
 	require.NoError(t, err)
-	var planRows []string
+	planRows := make([]string, 0, len(rows))
 	for _, row := range rows {
 		planRows = append(planRows, row.GetString(0))
 	}
