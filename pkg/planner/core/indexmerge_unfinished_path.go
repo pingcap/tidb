@@ -439,23 +439,7 @@ func buildIntoAccessPath(
 		}
 	}
 
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
-		[]expression.Expression{allConds[orListIdxInAllConds]},
-	)
-
-	// 3. Build the final access path
-	possiblePath := &util.AccessPath{
-		PartialAlternativeIndexPaths: allAlternativePaths,
-		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
-		IndexMergeORSourceFilter:     allConds[orListIdxInAllConds],
-		KeepIndexMergeORSourceFilter: needKeepORSourceFilter,
-	}
-	// 3.1 need to set CountAfterAccess
-	accessConds := make([]expression.Expression, 0, len(allAlternativePaths))
-	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
 	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
-
 	var containMVPath bool
 	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
 		if p.IsTablePath() {
@@ -471,49 +455,30 @@ func buildIntoAccessPath(
 		return nil
 	}
 
-	containMVPath = false
-	for _, oneORBranch := range allAlternativePaths {
-		pathsWithMinRowCount := chooseAlternativeWithByRowCount(oneORBranch)
-		for _, path := range pathsWithMinRowCount {
-			if isMVIndexPath(path) {
-				containMVPath = true
-			}
-			indexCondsForP := path.AccessConds[:]
-			indexCondsForP = append(indexCondsForP, path.IndexFilters...)
-			if len(indexCondsForP) > 0 {
-				accessConds = append(
-					accessConds,
-					expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...),
-				)
-			}
-		}
-		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	needKeepORSourceFilter := expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(),
+		[]expression.Expression{allConds[orListIdxInAllConds]},
+	)
+
+	// 3. Build the final access path
+	possiblePath := &util.AccessPath{
+		PartialAlternativeIndexPaths: allAlternativePaths,
+		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
+		IndexMergeORSourceFilter:     allConds[orListIdxInAllConds],
+		KeepIndexMergeORSourceFilter: needKeepORSourceFilter,
 	}
 
-	if containMVPath {
-		sel := cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl, pathsForEstimate, false)
-		possiblePath.CountAfterAccess = sel * ds.TableStats.RowCount
-	} else {
-		accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-		sel, _, err := cardinality.Selectivity(
-			ds.SCtx(),
-			ds.TableStats.HistColl,
-			[]expression.Expression{accessDNF},
-			nil,
-		)
-		if err != nil {
-			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-			sel = cost.SelectionFactor
-		}
-		possiblePath.CountAfterAccess = sel * ds.TableStats.RowCount
+	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
+	for _, oneORBranch := range allAlternativePaths {
+		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternativesByRowCount)
+		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
 	}
+	possiblePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, pathsForEstimate)
+
 	return possiblePath
 }
 
-func chooseAlternativeWithByRowCount(indexAccessPaths [][]*util.AccessPath) []*util.AccessPath {
-	if len(indexAccessPaths) == 1 {
-		return indexAccessPaths[0]
-	}
+func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
 	// If one alternative consists of multiple AccessPath, we use the maximum row count of them to compare.
 	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
 		maxRowCount := 0.0
@@ -526,10 +491,43 @@ func chooseAlternativeWithByRowCount(indexAccessPaths [][]*util.AccessPath) []*u
 		}
 		return maxRowCount
 	}
-	// Choose the alternative with the minimum row count.
-	ret := slices.MinFunc(indexAccessPaths, func(a, b []*util.AccessPath) int {
-		return cmp.Compare(getMaxRowCountFromPaths(a), getMaxRowCountFromPaths(b))
-	})
+	lhsRowCount := getMaxRowCountFromPaths(a)
+	rhsRowCount := getMaxRowCountFromPaths(b)
+	return cmp.Compare(lhsRowCount, rhsRowCount)
+}
 
-	return ret
+func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*util.AccessPath) float64 {
+	accessConds := make([]expression.Expression, 0, len(decidedPartialPaths))
+	containMVPath := false
+	for _, p := range decidedPartialPaths {
+		if isMVIndexPath(p) {
+			containMVPath = true
+		}
+		indexCondsForP := p.AccessConds[:]
+		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+		if len(indexCondsForP) > 0 {
+			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+		}
+	}
+	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
+	var sel float64
+	if containMVPath {
+		sel = cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl,
+			decidedPartialPaths,
+			false,
+		)
+	} else {
+		var err error
+		sel, _, err = cardinality.Selectivity(
+			ds.SCtx(),
+			ds.TableStats.HistColl,
+			[]expression.Expression{accessDNF},
+			nil,
+		)
+		if err != nil {
+			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+			sel = cost.SelectionFactor
+		}
+	}
+	return sel * ds.TableStats.RowCount
 }
