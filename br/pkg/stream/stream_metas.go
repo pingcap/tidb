@@ -385,6 +385,10 @@ func (m *marshalMigrationContext) addCompaction(c *pb.LogFileCompaction) {
 }
 
 func (m *marshalMigrationContext) addMetaEdits(em []*pb.MetaEdit) {
+	if len(em) == 0 {
+		return
+	}
+
 	totalDeletePhyFile := 0
 	totalDeleteLgcFile := 0
 	for _, edit := range em {
@@ -400,7 +404,6 @@ func (m *marshalMigrationContext) addMetaEdits(em []*pb.MetaEdit) {
 
 func (m *marshalMigrationContext) addTruncatedTo(tso uint64) {
 	if tso == 0 {
-		m.emit("truncated_to", "N/A")
 		return
 	}
 	m.emit("truncated_to", strconv.FormatUint(tso, 10))
@@ -704,6 +707,9 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	collected := iter.CollectAll(ctx, items)
 	if collected.Err != nil {
 		return Migrations{}, collected.Err
+	}
+	if len(collected.Item) == 0 {
+		return Migrations{}, errors.Annotatef(berrors.ErrMigrationNotFound, "in the storage %s", m.s.URI())
 	}
 	sort.Slice(collected.Item, func(i, j int) bool {
 		return collected.Item[i].SeqNum < collected.Item[j].SeqNum
@@ -1604,4 +1610,12 @@ func hashMetaEdit(metaEdit *pb.MetaEdit) uint64 {
 
 func nameOf(mig *pb.Migration, sn int) string {
 	return fmt.Sprintf("%08d_%016X.mgrt", sn, hashMigration(mig))
+}
+
+func isEmptyMigration(mig *pb.Migration) bool {
+	return len(mig.Compactions) == 0 &&
+		len(mig.EditMeta) == 0 &&
+		len(mig.ExtraFullBackupPaths) == 0 &&
+		len(mig.DestructPrefix) == 0 &&
+		mig.TruncatedTo == 0
 }
