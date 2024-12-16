@@ -782,9 +782,11 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 }
 
 func BenchmarkDatumTruncatedStringify(b *testing.B) {
-	d := NewStringDatum(strings.Repeat("1", 128))
+	d1 := NewStringDatum(strings.Repeat("1", 128))
+	d2 := NewIntDatum(2)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = d.TruncatedStringify()
+		_ = d1.TruncatedStringify()
+		_ = d2.TruncatedStringify()
 	}
 }
