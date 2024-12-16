@@ -70,9 +70,10 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 // It may cause the cache to be inconsistent.
 // The item should be quickly modified and inserted back to the cache.
 type cacheOfBatchUpdate struct {
-	op       func(toUpdate []*statistics.Table, toDelete []int64)
-	toUpdate []*statistics.Table
-	toDelete []int64
+	op        func(toUpdate []*statistics.Table, toDelete []int64)
+	toUpdate  []*statistics.Table
+	toDelete  []int64
+	batchSize int
 }
 
 const batchSizeOfUpdateBatch = 10
@@ -84,14 +85,14 @@ func (t *cacheOfBatchUpdate) internalFlush() {
 }
 
 func (t *cacheOfBatchUpdate) addToUpdate(table *statistics.Table) {
-	if len(t.toUpdate) == batchSizeOfUpdateBatch {
+	if len(t.toUpdate) == t.batchSize {
 		t.internalFlush()
 	}
 	t.toUpdate = append(t.toUpdate, table)
 }
 
 func (t *cacheOfBatchUpdate) addToDelete(tableID int64) {
-	if len(t.toDelete) == batchSizeOfUpdateBatch {
+	if len(t.toDelete) == t.batchSize {
 		t.internalFlush()
 	}
 	t.toDelete = append(t.toDelete, tableID)
@@ -100,6 +101,15 @@ func (t *cacheOfBatchUpdate) addToDelete(tableID int64) {
 func (t *cacheOfBatchUpdate) flush() {
 	if len(t.toUpdate) > 0 || len(t.toDelete) > 0 {
 		t.internalFlush()
+	}
+}
+
+func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, toDelete []int64)) cacheOfBatchUpdate {
+	return cacheOfBatchUpdate{
+		op:        op,
+		toUpdate:  make([]*statistics.Table, 0, batchSize),
+		toDelete:  make([]int64, 0, batchSize),
+		batchSize: batchSize,
 	}
 }
 
@@ -138,19 +148,15 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		return errors.Trace(err)
 	}
 
-	tblToUpdateOrDelete := cacheOfBatchUpdate{
-		toUpdate: make([]*statistics.Table, 0, min(len(rows), batchSizeOfUpdateBatch)),
-		toDelete: make([]int64, 0, min(len(rows), batchSizeOfUpdateBatch)),
-		op: func(toUpdate []*statistics.Table, toDelete []int64) {
-			s.UpdateStatsCache(types.CacheUpdate{
-				Updated: toUpdate,
-				Deleted: toDelete,
-				Options: types.UpdateOptions{
-					SkipMoveForward: skipMoveForwardStatsCache,
-				},
-			})
-		},
-	}
+	tblToUpdateOrDelete := newCacheOfBatchUpdate(batchSizeOfUpdateBatch, func(toUpdate []*statistics.Table, toDelete []int64) {
+		s.UpdateStatsCache(types.CacheUpdate{
+			Updated: toUpdate,
+			Deleted: toDelete,
+			Options: types.UpdateOptions{
+				SkipMoveForward: skipMoveForwardStatsCache,
+			},
+		})
+	})
 
 	for _, row := range rows {
 		version := row.GetUint64(0)
