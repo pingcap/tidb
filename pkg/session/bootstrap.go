@@ -458,7 +458,9 @@ const (
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
-		KEY (update_time)
+		KEY (update_time),
+		INDEX idx_schema_table_state (table_schema, table_name, state),
+		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
 	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
