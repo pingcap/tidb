@@ -998,8 +998,8 @@ func (rc *LogClient) BuildTableMappingManager(
 		}
 	}
 
-	needToBuildFromFullBackup := len(dbMaps) <= 0
-	if needToBuildFromFullBackup {
+	foundSavedIdMap := len(dbMaps) > 0
+	if !foundSavedIdMap {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
@@ -1029,7 +1029,7 @@ func (rc *LogClient) BuildTableMappingManager(
 	tableMappingManager := stream.NewTableMappingManager(dbReplaces, rc.GenGlobalID)
 
 	// not loaded from storage, need to iter meta kv and build and save the map
-	if needToBuildFromFullBackup {
+	if !foundSavedIdMap {
 		if err = rc.IterMetaKVToBuildAndSaveIdMap(ctx, tableMappingManager, cfg.Files); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1115,6 +1115,8 @@ func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 	files []*backuppb.DataFileInfo,
 ) error {
 	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
+	// need to look at write cf for "short value", which inlines the actual values without redirecting to default cf
+	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
 	for _, f := range files {
 		if f.Type == backuppb.FileType_Delete {
@@ -1123,11 +1125,17 @@ func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 			log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
 			continue
 		}
+		if f.Cf == stream.WriteCF {
+			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
 		if f.Cf == stream.DefaultCF {
 			filesInDefaultCF = append(filesInDefaultCF, f)
 		}
 	}
+
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
+	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
@@ -1135,12 +1143,14 @@ func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 
 	log.Info("start to iterate meta kv and build id map",
 		zap.Int("total files", len(files)),
-		zap.Int("default files", len(filesInDefaultCF)))
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)))
 
 	// build the map and save it into external storage.
 	if err := rc.buildAndSaveIDMap(
 		ctx,
 		filesInDefaultCF,
+		filesInWriteCF,
 		tableMappingManager,
 	); err != nil {
 		return errors.Trace(err)
@@ -1155,8 +1165,13 @@ func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 func (rc *LogClient) buildAndSaveIDMap(
 	ctx context.Context,
 	fsInDefaultCF []*backuppb.DataFileInfo,
+	fsInWriteCF []*backuppb.DataFileInfo,
 	tableMappingManager *stream.TableMappingManager,
 ) error {
+	if err := rc.iterAndBuildIDMap(ctx, fsInWriteCF, tableMappingManager); err != nil {
+		return errors.Trace(err)
+	}
+
 	if err := rc.iterAndBuildIDMap(ctx, fsInDefaultCF, tableMappingManager); err != nil {
 		return errors.Trace(err)
 	}

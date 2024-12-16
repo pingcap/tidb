@@ -72,7 +72,6 @@ go_test(
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//pkg/ddl",
-        "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",

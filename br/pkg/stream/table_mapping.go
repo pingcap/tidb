@@ -17,9 +17,11 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -59,10 +61,6 @@ func NewTableMappingManager(
 
 // ParseMetaKvAndUpdateIdMapping collect table information
 func (tc *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string) error {
-	if cf == WriteCF {
-		return nil
-	}
-
 	if !IsMetaDBKey(e.Key) {
 		return nil
 	}
@@ -72,21 +70,33 @@ func (tc *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 		return errors.Trace(err)
 	}
 
+	value, err := extractValue(e, cf)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// sanity check
+	if value == nil {
+		log.Warn("entry suggests having short value but is nil")
+		return nil
+	}
+
 	if meta.IsDBkey(rawKey.Field) {
-		return tc.parseDBEntryAndUpdateIdMapping(e)
+		return tc.parseDBValueAndUpdateIdMapping(value)
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
 	}
 
 	if meta.IsTableKey(rawKey.Field) {
-		return tc.parseTableEntryAndUpdateIdMapping(e)
+		dbID, err := ParseDBIDFromTableKey(e.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return tc.parseTableValueAndUpdateIdMapping(dbID, value)
 	}
 	return nil
 }
 
-func (tc *TableMappingManager) parseDBEntryAndUpdateIdMapping(e *kv.Entry) error {
-	value := e.Value
-
+func (tc *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
@@ -105,7 +115,7 @@ func (tc *TableMappingManager) parseDBEntryAndUpdateIdMapping(e *kv.Entry) error
 	return nil
 }
 
-func (tc *TableMappingManager) parseTableEntryAndUpdateIdMapping(e *kv.Entry) error {
+func (tc *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte) error {
 	var (
 		tableInfo    model.TableInfo
 		err          error
@@ -114,12 +124,7 @@ func (tc *TableMappingManager) parseTableEntryAndUpdateIdMapping(e *kv.Entry) er
 		tableReplace *TableReplace
 	)
 
-	dbID, err := ParseDBIDFromTableKey(e.Key)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if err := json.Unmarshal(e.Value, &tableInfo); err != nil {
+	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -231,4 +236,22 @@ func FromDBMapProto(dbMaps []*backuppb.PitrDBMap) map[UpstreamID]*DBReplace {
 	}
 
 	return dbReplaces
+}
+
+func extractValue(e *kv.Entry, cf string) ([]byte, error) {
+	switch cf {
+	case DefaultCF:
+		return e.Value, nil
+	case WriteCF:
+		rawWriteCFValue := new(RawWriteCFValue)
+		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
+			return nil, errors.Trace(err)
+		}
+		if rawWriteCFValue.HasShortValue() {
+			return rawWriteCFValue.shortValue, nil
+		}
+		return nil, nil
+	default:
+		panic(fmt.Sprintf("not support cf:%s", cf))
+	}
 }

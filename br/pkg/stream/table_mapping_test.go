@@ -18,8 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/stretchr/testify/require"
 )
 
@@ -81,16 +79,4 @@ func TestToProto(t *testing.T) {
 	// test FromDBMapProto()
 	drs2 := FromDBMapProto(dbMap)
 	require.Equal(t, drs2, drs)
-}
-
-func buildTableEntry(dbId int64, tableId int64, value []byte) *kv.Entry {
-	rawMetaKey := RawMetaKey{
-		Key:   meta.DBkey(dbId),
-		Field: meta.TableKey(tableId),
-		Ts:    0,
-	}
-	return &kv.Entry{
-		Key:   rawMetaKey.EncodeMetaKey(),
-		Value: value,
-	}
 }
