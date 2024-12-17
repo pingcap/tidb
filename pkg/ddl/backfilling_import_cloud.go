@@ -155,8 +155,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(m.job.ID)
+	m.bc.Close()
 	return nil
 }
 

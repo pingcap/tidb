@@ -29,8 +29,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// UsageTracker has the method of GetUsage.
+type UsageTracker interface {
+	GetDiskUsage() uint64
+}
+
 // DiskRoot is used to track the disk usage for the lightning backfill process.
 type DiskRoot interface {
+	Add(id int64, tracker UsageTracker)
+	Remove(id int64)
+	Count() int
+
 	UpdateUsage()
 	ShouldImport() bool
 	UsageInfo() string
@@ -46,17 +55,41 @@ type diskRootImpl struct {
 	capacity uint64
 	used     uint64
 	bcUsed   uint64
-	bcCtx    *litBackendCtxMgr
 	mu       sync.RWMutex
+	items    map[int64]UsageTracker
 	updating atomic.Bool
 }
 
 // NewDiskRootImpl creates a new DiskRoot.
-func NewDiskRootImpl(path string, bcCtx *litBackendCtxMgr) DiskRoot {
+func NewDiskRootImpl(path string) DiskRoot {
 	return &diskRootImpl{
 		path:  path,
-		bcCtx: bcCtx,
+		items: make(map[int64]UsageTracker),
 	}
+}
+
+// TrackerCountForTest is only used for test.
+var TrackerCountForTest = atomic.Int64{}
+
+func (d *diskRootImpl) Add(id int64, tracker UsageTracker) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.items[id] = tracker
+	TrackerCountForTest.Add(1)
+}
+
+func (d *diskRootImpl) Remove(id int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	delete(d.items, id)
+	TrackerCountForTest.Add(-1)
+}
+
+// Count is only used for test.
+func (d *diskRootImpl) Count() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return len(d.items)
 }
 
 // UpdateUsage implements DiskRoot interface.
@@ -64,7 +97,6 @@ func (d *diskRootImpl) UpdateUsage() {
 	if !d.updating.CompareAndSwap(false, true) {
 		return
 	}
-	bcUsed := d.bcCtx.TotalDiskUsage()
 	var capacity, used uint64
 	sz, err := lcom.GetStorageSize(d.path)
 	if err != nil {
@@ -74,7 +106,11 @@ func (d *diskRootImpl) UpdateUsage() {
 	}
 	d.updating.Store(false)
 	d.mu.Lock()
-	d.bcUsed = bcUsed
+	var totalUsage uint64
+	for _, tracker := range d.items {
+		totalUsage += tracker.GetDiskUsage()
+	}
+	d.bcUsed = totalUsage
 	d.capacity = capacity
 	d.used = used
 	d.mu.Unlock()
@@ -154,4 +190,20 @@ func (d *diskRootImpl) StartupCheck() error {
 // RiskOfDiskFull checks if the disk has less than 10% space.
 func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
+}
+
+func CheckIngestLeakageForTest(exitCode int) {
+	if exitCode == 0 {
+		leakObj := ""
+		if TrackerCountForTest.Load() != 0 {
+			leakObj = "disk usage tracker"
+		} else if BackendCounterForTest.Load() != 0 {
+			leakObj = "backend context"
+		}
+		if len(leakObj) > 0 {
+			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
+			os.Exit(1)
+		}
+	}
+	os.Exit(exitCode)
 }

@@ -19,25 +19,28 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
 // InjectMockBackendMgr mock LitBackCtxMgr.
 func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
-	tk := testkit.NewTestKit(t, store)
-	oldLitBackendMgr := ingest.LitBackCtxMgr
 	oldInitialized := ingest.LitInitialized
+	oldLitDiskRoot := ingest.LitDiskRoot
 
-	ingest.LitBackCtxMgr = ingest.NewMockBackendCtxMgr(func() sessionctx.Context {
-		tk.MustExec("rollback;")
-		tk.MustExec("begin;")
-		return tk.Session()
-	})
+	tk := testkit.NewTestKit(t, store)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockNewBackendContext",
+		func(job *model.Job, mockBackendCtx *ingest.BackendCtx) {
+			tk.MustExec("rollback;")
+			tk.MustExec("begin;")
+			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session())
+		})
 	ingest.LitInitialized = true
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
 
 	return func() {
-		ingest.LitBackCtxMgr = oldLitBackendMgr
 		ingest.LitInitialized = oldInitialized
+		ingest.LitDiskRoot = oldLitDiskRoot
 	}
 }

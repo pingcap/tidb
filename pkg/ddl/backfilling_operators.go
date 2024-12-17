@@ -159,7 +159,6 @@ func NewAddIndexIngestPipeline(
 	reorgMeta *model.DDLReorgMeta,
 	avgRowSize int,
 	concurrency int,
-	cpMgr *ingest.CheckpointManager,
 	rowCntListener RowCountListener,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
@@ -180,6 +179,8 @@ func NewAddIndexIngestPipeline(
 		rm = nil
 	}
 
+	// TODO(tangenta): remove this after the checkpoint manager is integrated into the backend context.
+	cpMgr := backendCtx.GetCheckpointManager()
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr,
 		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm)
@@ -816,24 +817,13 @@ func (w *indexIngestLocalWorker) HandleTask(ck IndexRecordChunk, send func(Index
 		return
 	}
 	w.rowCntListener.Written(rs.Added)
-	flushed, imported, err := w.backendCtx.Flush(w.ctx, ingest.FlushModeAuto)
+	err = w.backendCtx.TryFlush(w.ctx, ck.ID, rs.Added)
 	if err != nil {
 		w.ctx.onError(err)
 		return
 	}
 	if w.cpMgr != nil {
-		totalCnt, nextKey := w.cpMgr.Status()
-		rs.Total = totalCnt
-		rs.Next = nextKey
-		w.cpMgr.UpdateWrittenKeys(ck.ID, rs.Added)
-		err := w.cpMgr.AdvanceWatermark(flushed, imported)
-		if err != nil {
-			w.ctx.onError(err)
-			return
-		}
-		// for local disk case, we need to refresh TS because duplicate detection
-		// requires each ingest to have a unique TS.
-		w.backendCtx.SetIngestTS(w.cpMgr.GetTS())
+		rs.Total, rs.Next = w.cpMgr.Status()
 	}
 	send(rs)
 }
@@ -1008,23 +998,7 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
-	flushed, imported, err := s.backendCtx.Flush(s.ctx, ingest.FlushModeForceFlushAndImport)
-	if s.cpMgr != nil {
-		// Try to advance watermark even if there is an error.
-		err1 := s.cpMgr.AdvanceWatermark(flushed, imported)
-		if err1 != nil {
-			return err1
-		}
-	}
-	if err != nil {
-		msg := "flush error"
-		if flushed {
-			msg = "import error"
-		}
-		logutil.Logger(s.ctx).Error(msg, zap.String("category", "ddl"), zap.Error(err))
-		return err
-	}
-	return nil
+	return s.backendCtx.Flush(s.ctx)
 }
 
 func (s *indexWriteResultSink) Close() error {

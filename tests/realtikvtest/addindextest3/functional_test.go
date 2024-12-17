@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -84,8 +83,16 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0, 0)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	var realJob *model.Job
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+		realJob = job.Clone()
+	})
+	tk.MustExec("alter table t add index idx(a);")
+
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
@@ -105,7 +112,6 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	ingest.LitBackCtxMgr.Unregister(1)
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {

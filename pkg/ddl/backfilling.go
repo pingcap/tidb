@@ -704,34 +704,13 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
-	//nolint: forcetypeassert
-	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
-	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
-	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
+	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
+		WithCheckpointManager(sessPool, reorgInfo.PhysicalTableID).
+		Build()
 	if err != nil {
 		return errors.Trace(err)
 	}
-	defer ingest.LitBackCtxMgr.Unregister(job.ID)
-
-	cpMgr, err := ingest.NewCheckpointManager(
-		ctx,
-		sessPool,
-		reorgInfo.PhysicalTableID,
-		job.ID,
-		indexIDs,
-		ingest.LitBackCtxMgr.EncodeJobSortPath(job.ID),
-		dc.store.(kv.StorageWithPD).GetPDClient(),
-	)
-	if err != nil {
-		logutil.DDLIngestLogger().Warn("create checkpoint manager failed",
-			zap.Int64("jobID", job.ID),
-			zap.Error(err))
-	} else {
-		defer cpMgr.Close()
-		bcCtx.SetIngestTS(cpMgr.GetTS())
-	}
+	defer bcCtx.Close()
 
 	reorgCtx := dc.getReorgCtx(job.ID)
 	rowCntListener := &localRowCntListener{
@@ -756,6 +735,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
+	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -770,7 +750,6 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		job.ReorgMeta,
 		avgRowSize,
 		importConc,
-		cpMgr,
 		rowCntListener,
 	)
 	if err != nil {

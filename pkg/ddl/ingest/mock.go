@@ -27,80 +27,21 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	pd "github.com/tikv/pd/client"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
-// MockBackendCtxMgr is a mock backend context manager.
-type MockBackendCtxMgr struct {
-	sessCtxProvider func() sessionctx.Context
-	runningJobs     map[int64]*MockBackendCtx
-}
-
-var _ BackendCtxMgr = (*MockBackendCtxMgr)(nil)
-
-// NewMockBackendCtxMgr creates a new mock backend context manager.
-func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBackendCtxMgr {
-	return &MockBackendCtxMgr{
-		sessCtxProvider: sessCtxProvider,
-		runningJobs:     make(map[int64]*MockBackendCtx),
-	}
-}
-
-// CheckMoreTasksAvailable implements BackendCtxMgr.CheckMoreTaskAvailable interface.
-func (m *MockBackendCtxMgr) CheckMoreTasksAvailable() (bool, error) {
-	return len(m.runningJobs) == 0, nil
-}
-
-// Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(ctx context.Context, jobID int64, unique bool, etcdClient *clientv3.Client,
-	pdSvcDiscovery pd.ServiceDiscovery, resourceGroupName string, importConc int, maxWriteSpeed int, initTS uint64) (BackendCtx, error) {
-	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
-	if mockCtx, ok := m.runningJobs[jobID]; ok {
-		return mockCtx, nil
-	}
-	sessCtx := m.sessCtxProvider()
+// NewMockBackendCtx creates a MockBackendCtx.
+func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context) BackendCtx {
+	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
 	mockCtx := &MockBackendCtx{
 		mu:      sync.Mutex{},
 		sessCtx: sessCtx,
-		jobID:   jobID,
+		jobID:   job.ID,
 	}
-	m.runningJobs[jobID] = mockCtx
-	return mockCtx, nil
-}
-
-// Unregister implements BackendCtxMgr.Unregister interface.
-func (m *MockBackendCtxMgr) Unregister(jobID int64) {
-	if mCtx, ok := m.runningJobs[jobID]; ok {
-		mCtx.sessCtx.StmtCommit(context.Background())
-		err := mCtx.sessCtx.CommitTxn(context.Background())
-		logutil.DDLIngestLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
-		delete(m.runningJobs, jobID)
-	}
-}
-
-// EncodeJobSortPath implements BackendCtxMgr interface.
-func (m *MockBackendCtxMgr) EncodeJobSortPath(int64) string {
-	return ""
-}
-
-// Load implements BackendCtxMgr.Load interface.
-func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
-	logutil.DDLIngestLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
-	if mockCtx, ok := m.runningJobs[jobID]; ok {
-		return mockCtx, true
-	}
-	return nil, false
-}
-
-// ResetSessCtx is only used for mocking test.
-func (m *MockBackendCtxMgr) ResetSessCtx() {
-	for _, mockCtx := range m.runningJobs {
-		mockCtx.sessCtx = m.sessCtxProvider()
-	}
+	return mockCtx
 }
 
 // MockBackendCtx is a mock backend context.
@@ -133,20 +74,18 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 	return nil
 }
 
-// Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ context.Context, mode FlushMode) (flushed, imported bool, err error) {
-	switch mode {
-	case FlushModeAuto:
-		return true, false, nil
-	case FlushModeForceFlushAndImport:
-		return true, true, nil
-	default:
-		return false, false, nil
-	}
+func (*MockBackendCtx) TryFlush(_ context.Context, _, _ int) error {
+	return nil
 }
 
-// SetIngestTS sets the ingest TS that will be used by local backend import.
-func (*MockBackendCtx) SetIngestTS(_ uint64) {
+// Flush implements BackendCtx.Flush interface.
+func (*MockBackendCtx) Flush(_ context.Context) error {
+	return nil
+}
+
+// GetCheckpointManager returns the checkpoint manager.
+func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return nil
 }
 
 // GetLocalBackend returns the local backend.
@@ -154,6 +93,19 @@ func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
 	b := &local.Backend{}
 	b.LocalStoreDir = filepath.Join(os.TempDir(), "mock_backend", strconv.FormatInt(m.jobID, 10))
 	return b
+}
+
+// Close implements BackendCtx.
+func (m *MockBackendCtx) Close() {
+	m.sessCtx.StmtCommit(context.Background())
+	err := m.sessCtx.CommitTxn(context.Background())
+	logutil.DDLIngestLogger().Info("mock backend context close", zap.Int64("jobID", m.jobID), zap.Error(err))
+	BackendCounterForTest.Dec()
+}
+
+// GetDiskUsage returns current disk usage of underlying backend.
+func (bc *MockBackendCtx) GetDiskUsage() uint64 {
+	return 0
 }
 
 // MockWriteHook the hook for write in mock engine.

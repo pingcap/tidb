@@ -89,9 +89,11 @@ type taskCheckpoint struct {
 // FlushController is an interface to control the flush of data so after it
 // returns caller can save checkpoint.
 type FlushController interface {
-	// Flush checks if al engines need to be flushed and imported based on given
+	TryFlush(ctx context.Context, taskID int, count int) error
+
+	// Flush checks if all engines need to be flushed and imported based on given
 	// FlushMode. It's concurrent safe.
-	Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error)
+	Flush(ctx context.Context) (err error)
 }
 
 // NewCheckpointManager creates a new checkpoint manager.
@@ -100,21 +102,18 @@ func NewCheckpointManager(
 	sessPool *sess.Pool,
 	physicalID int64,
 	jobID int64,
-	indexIDs []int64,
 	localStoreDir string,
 	pdCli pd.Client,
 ) (*CheckpointManager, error) {
 	instanceAddr := InstanceAddr()
 	ctx2, cancel := context.WithCancel(ctx)
-	logger := logutil.DDLIngestLogger().With(
-		zap.Int64("jobID", jobID), zap.Int64s("indexIDs", indexIDs))
+	logger := logutil.DDLIngestLogger().With(zap.Int64("jobID", jobID))
 
 	cm := &CheckpointManager{
 		ctx:           ctx2,
 		cancel:        cancel,
 		sessPool:      sessPool,
 		jobID:         jobID,
-		indexIDs:      indexIDs,
 		localStoreDir: localStoreDir,
 		pdCli:         pdCli,
 		logger:        logger,
@@ -217,8 +216,8 @@ func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
 }
 
 // AdvanceWatermark advances the watermark according to flushed or imported status.
-func (s *CheckpointManager) AdvanceWatermark(flushed, imported bool) error {
-	if !flushed || s.noUpdate() {
+func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
+	if s.noUpdate() {
 		return nil
 	}
 
@@ -300,6 +299,8 @@ func (s *CheckpointManager) afterImport() error {
 }
 
 func (s *CheckpointManager) noUpdate() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
 }
 

@@ -1603,7 +1603,7 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
+// invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
@@ -1615,7 +1615,7 @@ func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uui
 func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
 	}
 	defer e.unlock()
 	if ts == 0 {

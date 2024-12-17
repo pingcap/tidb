@@ -142,8 +142,7 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	r.bc.Close()
 	return nil
 }
 
@@ -214,7 +213,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	if err != nil {
 		return nil, err
 	}
-	r.bc.SetIngestTS(sm.TS)
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))
@@ -245,7 +243,6 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
-		nil,
 		rowCntListener,
 	)
 }

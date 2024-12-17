@@ -62,17 +62,6 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
-	originMgr := ingest.LitBackCtxMgr
-	originInit := ingest.LitInitialized
-	defer func() {
-		ingest.LitBackCtxMgr = originMgr
-		ingest.LitInitialized = originInit
-	}()
-	mockMgr := ingest.NewMockBackendCtxMgr(
-		func() sessionctx.Context {
-			return nil
-		})
-	ingest.LitBackCtxMgr = mockMgr
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{

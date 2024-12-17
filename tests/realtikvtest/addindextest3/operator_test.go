@@ -204,7 +204,6 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		ddl.NewDDLReorgMeta(tk.Session()),
 		0,
 		2,
-		nil,
 		&ddl.EmptyRowCntListener{},
 	)
 	require.NoError(t, err)
@@ -299,7 +298,6 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				ddl.NewDDLReorgMeta(tk.Session()),
 				0,
 				2,
-				nil,
 				&ddl.EmptyRowCntListener{},
 			)
 			require.NoError(t, err)

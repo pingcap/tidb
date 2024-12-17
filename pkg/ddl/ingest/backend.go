@@ -17,6 +17,7 @@ package ingest
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,7 +62,7 @@ type BackendCtx interface {
 
 	FlushController
 
-	SetIngestTS(ts uint64)
+	GetCheckpointManager() *CheckpointManager
 
 	// GetLocalBackend exposes local.Backend. It's only used in global sort based
 	// ingest.
@@ -71,6 +72,9 @@ type BackendCtx interface {
 	//
 	// CollectRemoteDuplicateRows is only used in global sort based ingest.
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
+
+	GetDiskUsage() uint64
+	Close()
 }
 
 // FlushMode is used to control how to flush.
@@ -86,15 +90,14 @@ const (
 
 // litBackendCtx implements BackendCtx.
 type litBackendCtx struct {
-	engines  map[int64]*engineInfo
-	memRoot  MemRoot
-	diskRoot DiskRoot
-	jobID    int64
-	tbl      table.Table
-	backend  *local.Backend
-	ctx      context.Context
-	cfg      *local.BackendConfig
-	sysVars  map[string]string
+	engines map[int64]*engineInfo
+	memRoot MemRoot
+	jobID   int64
+	tbl     table.Table
+	backend *local.Backend
+	ctx     context.Context
+	cfg     *local.BackendConfig
+	sysVars map[string]string
 
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
@@ -102,7 +105,6 @@ type litBackendCtx struct {
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
 	initTS          uint64
-	ingestTS        atomic.Uint64
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
@@ -158,50 +160,68 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
 
-// SetIngestTS sets the ingest TS that will be used by local backend import.
-// For standalone local sort, the ingest TS is initialized from checkpoint and
-// updated when the watermark is advanced.
-// For DXF local sort, the ingest TS is initialized to a fixed value
-// from subtasks meta to guarantee it is idempotent.
-func (bc *litBackendCtx) SetIngestTS(ts uint64) {
-	bc.ingestTS.Store(ts)
-}
-
-// Flush implements FlushController.
-func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, imported bool, err error) {
-	shouldFlush, shouldImport := bc.checkFlush(mode)
+func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) error {
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.UpdateWrittenKeys(taskID, count)
+	}
+	shouldFlush, shouldImport := bc.checkFlush(FlushModeAuto)
 	if !shouldFlush {
-		return false, false, nil
+		return nil
 	}
 	if !bc.flushing.CompareAndSwap(false, true) {
-		return false, false, nil
+		return nil
 	}
 	defer bc.flushing.Store(false)
-
-	for _, ei := range bc.engines {
-		ei.flushLock.Lock()
-		//nolint: all_revive,revive
-		defer ei.flushLock.Unlock()
-
-		if err = ei.Flush(); err != nil {
-			return false, false, err
-		}
+	err := bc.flushEngines(ctx)
+	if err != nil {
+		return err
 	}
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		return true, false, nil
+		if bc.checkpointMgr != nil {
+			err := bc.checkpointMgr.AdvanceWatermark(false)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
-	if bc.etcdClient != nil {
-		key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
-		release, err := owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
+	release, err := bc.tryAcquireDistLock()
+	if err != nil {
+		return err
+	}
+	if release != nil {
+		defer release()
+	}
+
+	err = bc.unsafeImportAndResetAllEngines(ctx)
+	if err != nil {
+		return err
+	}
+	if bc.checkpointMgr != nil {
+		err := bc.checkpointMgr.AdvanceWatermark(true)
 		if err != nil {
-			return true, false, err
+			return err
 		}
-		if release != nil {
-			defer release()
-		}
+	}
+	return nil
+}
+
+// Flush implements FlushController.
+func (bc *litBackendCtx) Flush(ctx context.Context) error {
+	err := bc.flushEngines(ctx)
+	if err != nil {
+		return err
+	}
+
+	release, err := bc.tryAcquireDistLock()
+	if err != nil {
+		return err
+	}
+	if release != nil {
+		defer release()
 	}
 
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
@@ -210,8 +230,47 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 		}
 	})
 
+	err = bc.unsafeImportAndResetAllEngines(ctx)
+	if err != nil {
+		return err
+	}
+
+	if bc.checkpointMgr != nil {
+		// Try to advance watermark even if there is an error.
+		err1 := bc.checkpointMgr.AdvanceWatermark(true)
+		if err1 != nil {
+			return err1
+		}
+	}
+
+	return nil
+}
+
+func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
+	for _, ei := range bc.engines {
+		ei.flushLock.Lock()
+		//nolint: all_revive,revive
+		defer ei.flushLock.Unlock()
+
+		if err := ei.Flush(); err != nil {
+			logutil.Logger(ctx).Error("flush error", zap.Error(err))
+			return err
+		}
+	}
+	return nil
+}
+
+func (bc *litBackendCtx) tryAcquireDistLock() (func(), error) {
+	if bc.etcdClient == nil {
+		return nil, nil
+	}
+	key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
+	return owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
+}
+
+func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) error {
 	for indexID, ei := range bc.engines {
-		if err = bc.unsafeImportAndReset(ctx, ei); err != nil {
+		if err := bc.unsafeImportAndReset(ctx, ei); err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				idxInfo := model.FindIndexInfoByID(bc.tbl.Meta().Indices, indexID)
 				if idxInfo == nil {
@@ -223,10 +282,11 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 					err = TryConvertToKeyExistsErr(err, idxInfo, bc.tbl.Meta())
 				}
 			}
-			return true, false, err
+			logutil.Logger(ctx).Error("import error", zap.Error(err))
+			return err
 		}
 	}
-	return true, true, err
+	return nil
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
@@ -235,11 +295,14 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 	)
 	logger.Info(LitInfoUnsafeImport,
 		zap.Int64("index ID", ei.indexID),
-		zap.String("usage info", bc.diskRoot.UsageInfo()))
+		zap.String("usage info", LitDiskRoot.UsageInfo()))
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
-	ingestTS := bc.ingestTS.Load()
-	logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
+	var ingestTS uint64
+	if bc.checkpointMgr != nil {
+		ingestTS = bc.checkpointMgr.GetTS()
+		logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
+	}
 	err := bc.backend.SetTSBeforeImportEngine(ctx, ei.uuid, ingestTS)
 	if err != nil {
 		logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
@@ -250,7 +313,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 	regionSplitKeys := int64(lightning.SplitRegionKeys)
 	if err := closedEngine.Import(ctx, regionSplitSize, regionSplitKeys); err != nil {
 		logger.Error(LitErrIngestDataErr, zap.Int64("index ID", ei.indexID),
-			zap.String("usage info", bc.diskRoot.UsageInfo()))
+			zap.String("usage info", LitDiskRoot.UsageInfo()))
 		return err
 	}
 
@@ -283,8 +346,8 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 	if mode == FlushModeForceFlushAndImport || ForceSyncFlagForTest {
 		return true, true
 	}
-	bc.diskRoot.UpdateUsage()
-	shouldImport = bc.diskRoot.ShouldImport()
+	LitDiskRoot.UpdateUsage()
+	shouldImport = LitDiskRoot.ShouldImport()
 	interval := bc.updateInterval
 	// This failpoint will be manually set through HTTP status port.
 	failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
@@ -300,4 +363,25 @@ func (bc *litBackendCtx) checkFlush(mode FlushMode) (shouldFlush bool, shouldImp
 // GetLocalBackend returns the local backend.
 func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
 	return bc.backend
+}
+
+// GetCheckpointManager returns the checkpoint manager.
+func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
+	return bc.checkpointMgr
+}
+
+// GetDiskUsage returns current disk usage of underlying backend.
+func (bc *litBackendCtx) GetDiskUsage() uint64 {
+	_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+	return uint64(bcDiskUsed)
+}
+
+// Close closes underlying backend and remove it from disk root.
+func (bc *litBackendCtx) Close() {
+	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("jobID", bc.jobID),
+		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
+		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()))
+	bc.backend.Close()
+	LitDiskRoot.Remove(bc.jobID)
+	BackendCounterForTest.Dec()
 }

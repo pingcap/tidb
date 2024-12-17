@@ -27,9 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -142,37 +140,15 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
-	hasUnique, err := hasUniqueIndex(job)
+	// TODO(tangenta): support checkpoint manager later.
+	ctx := s.BaseTaskExecutor.Ctx()
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, s.d.store, job).
+		WithImportDistributedLock(s.d.etcdCli).
+		Build()
 	if err != nil {
 		return nil, err
 	}
-	ddlObj := s.d
-	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-
-	return ingest.LitBackCtxMgr.Register(
-		s.BaseTaskExecutor.Ctx(),
-		job.ID, hasUnique,
-		ddlObj.etcdCli,
-		discovery,
-		job.ReorgMeta.ResourceGroupName,
-		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
-		job.ReorgMeta.GetMaxWriteSpeedOrDefault(),
-		job.RealStartTS,
-	)
-}
-
-func hasUniqueIndex(job *model.Job) (bool, error) {
-	args, err := model.GetModifyIndexArgs(job)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	for _, a := range args.IndexArgs {
-		if a.Unique {
-			return true, nil
-		}
-	}
-	return false, nil
+	return bCtx, nil
 }
 
 type backfillDistExecutor struct {
