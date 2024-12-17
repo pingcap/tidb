@@ -2294,11 +2294,11 @@ func (do *Domain) loadStatsWorker() {
 			}
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2410,7 +2410,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
 			statsHandle.UpdateErrorRate(do.InfoSchema())
 		case <-loadFeedbackTicker.C:
@@ -2438,12 +2438,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
-				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
