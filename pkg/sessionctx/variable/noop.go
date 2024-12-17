@@ -527,6 +527,12 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "rewriter_enabled", Value: ""},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
+		Name:                    "updatable_views_with_limit",
+		Value:                   "YES",
+		IsHintUpdatableVerified: true,
+	},
+	{
+		Scope:                   ScopeGlobal | ScopeSession,
 		Name:                    "optimizer_prune_level",
 		Value:                   "1",
 		IsHintUpdatableVerified: true,
