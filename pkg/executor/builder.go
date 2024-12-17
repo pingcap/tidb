@@ -5320,8 +5320,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		isTxnDirty:         false,
 	}
 
+	if txn, err := e.Ctx().Txn(false); err == nil && txn != nil && !txn.IsReadOnly() {
+		e.isTxnDirty = true
+	}
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {
 		b.err = err
