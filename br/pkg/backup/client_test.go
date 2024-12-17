@@ -375,4 +375,5 @@ func TestErr(t *testing.T) {
 		errors.Annotate(berrors.ErrFailedToConnect, "oops"),
 		berrors.ErrFailedToConnect.GenWithStack("whoa")))
 	require.True(t, berrors.Is(serr, berrors.ErrFailedToConnect))
+	require.False(t, berrors.Is(serr, berrors.ErrUnknown))
 }
