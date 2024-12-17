@@ -300,10 +300,14 @@ func (handler *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 	handler.path = r.URL.Path
 	require.NoError(handler.t, r.ParseForm())
 	handler.form = r.PostForm
-	_, err := w.Write([]byte(handler.resp))
-	require.NoError(handler.t, err)
 	if handler.httpOK {
 		w.WriteHeader(http.StatusOK)
+		resp := handler.resp
+		if len(resp) == 0 && r.Method == http.MethodGet {
+			resp = "[]"
+		}
+		_, err := w.Write([]byte(resp))
+		require.NoError(handler.t, err)
 	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 	}
