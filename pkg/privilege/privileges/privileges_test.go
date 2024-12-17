@@ -2091,6 +2091,7 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 
 func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
 	pc := privilege.GetPrivilegeManager(tk.Session())
+	pc.MatchIdentity(context.Background(), "show_sql_mode", "localhost", false)
 	gs, err := pc.ShowGrants(context.Background(), tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
 	require.Len(t, gs, 2)
@@ -2127,12 +2128,12 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 		sql     string
 		visited bool
 	}{
-		// FIXME {"drop user if exists 'test1'", false},
-		// FIXME {"alter user test identified by 'test1'", false},
-		// {"set password for test = 'test2'", false},
-		// FIXME {"show create user test", false},
+		{"drop user if exists 'test1'", false},
+		{"alter user test identified by 'test1'", false},
+		{"set password for test = 'test2'", false},
+		{"show create user test", false},
 		{"create user test1", false},
-		// FIXME {"show grants", false},
+		{"show grants", true},
 		{"show grants for 'test'@'%'", true},
 	}
 
