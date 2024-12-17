@@ -745,6 +745,75 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.tiflashWaitSummary.Merge(tmp.tiflashWaitSummary)
 }
 
+// mergeExecSummary likes Merge, but it merges ExecutorExecutionSummary directly.
+func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
+	e.loop.Add(int32(*summary.NumIterations))
+	e.consume.Add(int64(*summary.TimeProcessedNs))
+	e.rows.Add(int64(*summary.NumProducedRows))
+	e.threads += int32(summary.GetConcurrency())
+	e.totalTasks++
+	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
+	if tiflashScanContext := summary.GetTiflashScanContext(); tiflashScanContext != nil {
+		var regionsOfInstance map[string]uint64
+		if len(tiflashScanContext.GetRegionsOfInstance()) > 0 {
+			regionsOfInstance = make(map[string]uint64)
+			for _, instance := range tiflashScanContext.GetRegionsOfInstance() {
+				regionsOfInstance[instance.GetInstanceId()] = instance.GetRegionNum()
+			}
+		}
+		e.tiflashScanContext.Merge(TiFlashScanContext{
+			dmfileDataScannedRows:     tiflashScanContext.GetDmfileDataScannedRows(),
+			dmfileDataSkippedRows:     tiflashScanContext.GetDmfileDataSkippedRows(),
+			dmfileMvccScannedRows:     tiflashScanContext.GetDmfileMvccScannedRows(),
+			dmfileMvccSkippedRows:     tiflashScanContext.GetDmfileMvccSkippedRows(),
+			dmfileLmFilterScannedRows: tiflashScanContext.GetDmfileLmFilterScannedRows(),
+			dmfileLmFilterSkippedRows: tiflashScanContext.GetDmfileLmFilterSkippedRows(),
+			totalDmfileRsCheckMs:      tiflashScanContext.GetTotalDmfileRsCheckMs(),
+			totalDmfileReadMs:         tiflashScanContext.GetTotalDmfileReadMs(),
+			totalBuildSnapshotMs:      tiflashScanContext.GetTotalBuildSnapshotMs(),
+			localRegions:              tiflashScanContext.GetLocalRegions(),
+			remoteRegions:             tiflashScanContext.GetRemoteRegions(),
+			totalLearnerReadMs:        tiflashScanContext.GetTotalLearnerReadMs(),
+			disaggReadCacheHitBytes:   tiflashScanContext.GetDisaggReadCacheHitBytes(),
+			disaggReadCacheMissBytes:  tiflashScanContext.GetDisaggReadCacheMissBytes(),
+			segments:                  tiflashScanContext.GetSegments(),
+			readTasks:                 tiflashScanContext.GetReadTasks(),
+			deltaRows:                 tiflashScanContext.GetDeltaRows(),
+			deltaBytes:                tiflashScanContext.GetDeltaBytes(),
+			mvccInputRows:             tiflashScanContext.GetMvccInputRows(),
+			mvccInputBytes:            tiflashScanContext.GetMvccInputBytes(),
+			mvccOutputRows:            tiflashScanContext.GetMvccOutputRows(),
+			lmSkipRows:                tiflashScanContext.GetLmSkipRows(),
+			totalBuildBitmapMs:        tiflashScanContext.GetTotalBuildBitmapMs(),
+			totalBuildInputStreamMs:   tiflashScanContext.GetTotalBuildInputstreamMs(),
+			staleReadRegions:          tiflashScanContext.GetStaleReadRegions(),
+			minLocalStreamMs:          tiflashScanContext.GetMinLocalStreamMs(),
+			maxLocalStreamMs:          tiflashScanContext.GetMaxLocalStreamMs(),
+			minRemoteStreamMs:         tiflashScanContext.GetMinRemoteStreamMs(),
+			maxRemoteStreamMs:         tiflashScanContext.GetMaxRemoteStreamMs(),
+			regionsOfInstance:         regionsOfInstance,
+
+			totalVectorIdxLoadFromS3:           tiflashScanContext.GetTotalVectorIdxLoadFromS3(),
+			totalVectorIdxLoadFromDisk:         tiflashScanContext.GetTotalVectorIdxLoadFromDisk(),
+			totalVectorIdxLoadFromCache:        tiflashScanContext.GetTotalVectorIdxLoadFromCache(),
+			totalVectorIdxLoadTimeMs:           tiflashScanContext.GetTotalVectorIdxLoadTimeMs(),
+			totalVectorIdxSearchTimeMs:         tiflashScanContext.GetTotalVectorIdxSearchTimeMs(),
+			totalVectorIdxSearchVisitedNodes:   tiflashScanContext.GetTotalVectorIdxSearchVisitedNodes(),
+			totalVectorIdxSearchDiscardedNodes: tiflashScanContext.GetTotalVectorIdxSearchDiscardedNodes(),
+			totalVectorIdxReadVecTimeMs:        tiflashScanContext.GetTotalVectorIdxReadVecTimeMs(),
+			totalVectorIdxReadOthersTimeMs:     tiflashScanContext.GetTotalVectorIdxReadOthersTimeMs(),
+		})
+	}
+	if tiflashWaitSummary := summary.GetTiflashWaitSummary(); tiflashWaitSummary != nil {
+		e.tiflashWaitSummary.Merge(TiFlashWaitSummary{
+			executionTime:           *summary.TimeProcessedNs,
+			minTSOWaitTime:          tiflashWaitSummary.GetMinTSOWaitNs(),
+			pipelineBreakerWaitTime: tiflashWaitSummary.GetPipelineBreakerWaitNs(),
+			pipelineQueueWaitTime:   tiflashWaitSummary.GetPipelineQueueWaitNs(),
+		})
+	}
+}
+
 // Tp implements the RuntimeStats interface.
 func (*basicCopRuntimeStats) Tp() int {
 	return TpBasicCopRunTimeStats
@@ -769,73 +838,12 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	crs.Lock()
 	defer crs.Unlock()
 
-	if crs.stats[address] == nil {
-		crs.stats[address] = &basicCopRuntimeStats{
-			storeType: crs.storeType,
-		}
+	stats := crs.stats[address]
+	if stats == nil {
+		stats = &basicCopRuntimeStats{storeType: crs.storeType}
+		crs.stats[address] = stats
 	}
-	data := &basicCopRuntimeStats{
-		storeType:         crs.storeType,
-		BasicRuntimeStats: BasicRuntimeStats{},
-		threads:           int32(summary.GetConcurrency()),
-		totalTasks:        1,
-		tiflashScanContext: TiFlashScanContext{
-			dmfileDataScannedRows:     summary.GetTiflashScanContext().GetDmfileDataScannedRows(),
-			dmfileDataSkippedRows:     summary.GetTiflashScanContext().GetDmfileDataSkippedRows(),
-			dmfileMvccScannedRows:     summary.GetTiflashScanContext().GetDmfileMvccScannedRows(),
-			dmfileMvccSkippedRows:     summary.GetTiflashScanContext().GetDmfileMvccSkippedRows(),
-			dmfileLmFilterScannedRows: summary.GetTiflashScanContext().GetDmfileLmFilterScannedRows(),
-			dmfileLmFilterSkippedRows: summary.GetTiflashScanContext().GetDmfileLmFilterSkippedRows(),
-			totalDmfileRsCheckMs:      summary.GetTiflashScanContext().GetTotalDmfileRsCheckMs(),
-			totalDmfileReadMs:         summary.GetTiflashScanContext().GetTotalDmfileReadMs(),
-			totalBuildSnapshotMs:      summary.GetTiflashScanContext().GetTotalBuildSnapshotMs(),
-			localRegions:              summary.GetTiflashScanContext().GetLocalRegions(),
-			remoteRegions:             summary.GetTiflashScanContext().GetRemoteRegions(),
-			totalLearnerReadMs:        summary.GetTiflashScanContext().GetTotalLearnerReadMs(),
-			disaggReadCacheHitBytes:   summary.GetTiflashScanContext().GetDisaggReadCacheHitBytes(),
-			disaggReadCacheMissBytes:  summary.GetTiflashScanContext().GetDisaggReadCacheMissBytes(),
-			segments:                  summary.GetTiflashScanContext().GetSegments(),
-			readTasks:                 summary.GetTiflashScanContext().GetReadTasks(),
-			deltaRows:                 summary.GetTiflashScanContext().GetDeltaRows(),
-			deltaBytes:                summary.GetTiflashScanContext().GetDeltaBytes(),
-			mvccInputRows:             summary.GetTiflashScanContext().GetMvccInputRows(),
-			mvccInputBytes:            summary.GetTiflashScanContext().GetMvccInputBytes(),
-			mvccOutputRows:            summary.GetTiflashScanContext().GetMvccOutputRows(),
-			lmSkipRows:                summary.GetTiflashScanContext().GetLmSkipRows(),
-			totalBuildBitmapMs:        summary.GetTiflashScanContext().GetTotalBuildBitmapMs(),
-			totalBuildInputStreamMs:   summary.GetTiflashScanContext().GetTotalBuildInputstreamMs(),
-			staleReadRegions:          summary.GetTiflashScanContext().GetStaleReadRegions(),
-			minLocalStreamMs:          summary.GetTiflashScanContext().GetMinLocalStreamMs(),
-			maxLocalStreamMs:          summary.GetTiflashScanContext().GetMaxLocalStreamMs(),
-			minRemoteStreamMs:         summary.GetTiflashScanContext().GetMinRemoteStreamMs(),
-			maxRemoteStreamMs:         summary.GetTiflashScanContext().GetMaxRemoteStreamMs(),
-			regionsOfInstance:         make(map[string]uint64),
-
-			totalVectorIdxLoadFromS3:           summary.GetTiflashScanContext().GetTotalVectorIdxLoadFromS3(),
-			totalVectorIdxLoadFromDisk:         summary.GetTiflashScanContext().GetTotalVectorIdxLoadFromDisk(),
-			totalVectorIdxLoadFromCache:        summary.GetTiflashScanContext().GetTotalVectorIdxLoadFromCache(),
-			totalVectorIdxLoadTimeMs:           summary.GetTiflashScanContext().GetTotalVectorIdxLoadTimeMs(),
-			totalVectorIdxSearchTimeMs:         summary.GetTiflashScanContext().GetTotalVectorIdxSearchTimeMs(),
-			totalVectorIdxSearchVisitedNodes:   summary.GetTiflashScanContext().GetTotalVectorIdxSearchVisitedNodes(),
-			totalVectorIdxSearchDiscardedNodes: summary.GetTiflashScanContext().GetTotalVectorIdxSearchDiscardedNodes(),
-			totalVectorIdxReadVecTimeMs:        summary.GetTiflashScanContext().GetTotalVectorIdxReadVecTimeMs(),
-			totalVectorIdxReadOthersTimeMs:     summary.GetTiflashScanContext().GetTotalVectorIdxReadOthersTimeMs(),
-		},
-		tiflashWaitSummary: TiFlashWaitSummary{
-			executionTime:           *summary.TimeProcessedNs,
-			minTSOWaitTime:          summary.GetTiflashWaitSummary().GetMinTSOWaitNs(),
-			pipelineBreakerWaitTime: summary.GetTiflashWaitSummary().GetPipelineBreakerWaitNs(),
-			pipelineQueueWaitTime:   summary.GetTiflashWaitSummary().GetPipelineQueueWaitNs(),
-		},
-	}
-
-	for _, instance := range summary.GetTiflashScanContext().GetRegionsOfInstance() {
-		data.tiflashScanContext.regionsOfInstance[instance.GetInstanceId()] = instance.GetRegionNum()
-	}
-	data.BasicRuntimeStats.loop.Store(int32(*summary.NumIterations))
-	data.BasicRuntimeStats.consume.Store(int64(*summary.TimeProcessedNs))
-	data.BasicRuntimeStats.rows.Store(int64(*summary.NumProducedRows))
-	crs.stats[address].Merge(data)
+	stats.mergeExecSummary(summary)
 }
 
 // GetActRows return total rows of CopRuntimeStats.
