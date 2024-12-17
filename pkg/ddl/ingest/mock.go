@@ -74,6 +74,7 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 	return nil
 }
 
+// TryFlush implements BackendCtx.TryFlush interface.
 func (*MockBackendCtx) TryFlush(_ context.Context, _, _ int) error {
 	return nil
 }
