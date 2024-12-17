@@ -387,7 +387,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			startKey := tidbkv.Key(kvMeta.StartKey)
 			var endKey tidbkv.Key
 			for {
-				endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+				endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
 				if err2 != nil {
 					return err2
 				}
@@ -408,6 +408,11 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 				rangeJobKeys = append(rangeJobKeys, startKey)
 				rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
 				rangeJobKeys = append(rangeJobKeys, endKey)
+
+				regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+				regionSplitKeys = append(regionSplitKeys, startKey)
+				regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+				regionSplitKeys = append(regionSplitKeys, endKey)
 				// each subtask will write and ingest one range group
 				m := &WriteIngestStepMeta{
 					KVGroup: kvGroup,
