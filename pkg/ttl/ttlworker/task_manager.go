@@ -309,6 +309,15 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
+	if len(tasks) == 0 {
+		return
+	}
+
+	err = m.infoSchemaCache.Update(se)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to update infoSchemaCache", zap.Error(err))
+		return
+	}
 loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(
