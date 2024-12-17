@@ -50,6 +50,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
@@ -75,6 +76,10 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+func MakeStoreBasedErr(storeID uint64, err error) *StoreBasedErr {
+	return &StoreBasedErr{storeID: storeID, err: err}
+}
+
 type StoreBasedErr struct {
 	storeID uint64
 	err     error
@@ -86,6 +91,22 @@ func (e *StoreBasedErr) Error() string {
 
 func (e *StoreBasedErr) Unwrap() error {
 	return e.err
+}
+
+func (e *StoreBasedErr) Cause() error {
+	return e.Unwrap()
+}
+
+// Errors implements errors.ErrorGroup.
+// For now `WalkDeep` cannot walk "subtree"s like:
+/* 1 - 2 - 5
+   |
+   + 3 - 4
+*/
+// It stops after walking `1` and then gave up.
+// This is a bug: see https://github.com/pingcap/errors/issues/72
+func (e *StoreBasedErr) Errors() []error {
+	return multierr.Errors(e.err)
 }
 
 const (
