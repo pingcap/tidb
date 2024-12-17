@@ -90,6 +90,10 @@ func (e *StoreBasedErr) Unwrap() error {
 	return e.err
 }
 
+func (e *StoreBasedErr) Cause() error {
+	return e.err
+}
+
 const (
 	// backupFineGrainedMaxBackoff is 1 hour.
 	// given it begins the fine-grained backup, there must be some problems in the cluster.
