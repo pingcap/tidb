@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -63,12 +62,6 @@ type GlobalBindingHandle interface {
 	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
 	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
 
-	// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindingCache.
-	AddInvalidGlobalBinding(invalidBinding Binding)
-
-	// DropInvalidGlobalBinding executes the drop Bindings tasks.
-	DropInvalidGlobalBinding()
-
 	// Methods for load and clear global sql bindings.
 
 	// Reset is to reset the BindHandle and clean old info.
@@ -108,10 +101,6 @@ type globalBindingHandle struct {
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
-
-	// invalidBindings indicates the invalid bindings found during querying.
-	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
-	invalidBindings *invalidBindingCache
 
 	// syncBindingSingleflight is used to synchronize the execution of `LoadFromStorageToCache` method.
 	syncBindingSingleflight singleflight.Group
@@ -159,7 +148,6 @@ func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
-	h.invalidBindings = newInvalidBindingCache()
 	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
@@ -425,62 +413,6 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 	// h.sctx already locked.
 	_, err := exec(sctx, LockBindInfoSQL)
 	return err
-}
-
-// invalidBindingCache is used to store invalid bindings temporarily.
-type invalidBindingCache struct {
-	mu sync.RWMutex
-	m  map[string]Binding // key: sqlDigest
-}
-
-func newInvalidBindingCache() *invalidBindingCache {
-	return &invalidBindingCache{
-		m: make(map[string]Binding),
-	}
-}
-
-func (c *invalidBindingCache) add(binding Binding) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.m[binding.SQLDigest] = binding
-}
-
-func (c *invalidBindingCache) getAll() Bindings {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	bindings := make(Bindings, 0, len(c.m))
-	for _, binding := range c.m {
-		bindings = append(bindings, binding)
-	}
-	return bindings
-}
-
-func (c *invalidBindingCache) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.m = make(map[string]Binding)
-}
-
-// DropInvalidGlobalBinding executes the drop Bindings tasks.
-func (h *globalBindingHandle) DropInvalidGlobalBinding() {
-	defer func() {
-		if err := h.LoadFromStorageToCache(false); err != nil {
-			logutil.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
-		}
-	}()
-
-	invalidBindings := h.invalidBindings.getAll()
-	h.invalidBindings.reset()
-	for _, invalidBinding := range invalidBindings {
-		if _, err := h.dropGlobalBinding([]string{invalidBinding.SQLDigest}); err != nil {
-			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
-		}
-	}
-}
-
-// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindings.
-func (h *globalBindingHandle) AddInvalidGlobalBinding(invalidBinding Binding) {
-	h.invalidBindings.add(invalidBinding)
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.

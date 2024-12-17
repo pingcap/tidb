@@ -2134,7 +2134,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
-				bindHandle.DropInvalidGlobalBinding()
 				// Get Global
 				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
 				if err == nil && variable.TiDBOptOn(optVal) {
