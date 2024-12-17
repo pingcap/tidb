@@ -93,20 +93,20 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.Keys = nil
+	selfSchema.PKOrUK = nil
 	for _, path := range is.Source.PossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}
 		if uniqueKey, newKey := ruleutil.CheckIndexCanBeKey(path.Index, is.Columns, selfSchema); newKey != nil {
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 		} else if uniqueKey != nil {
-			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
+			selfSchema.NullableUK = append(selfSchema.NullableUK, uniqueKey)
 		}
 	}
 	handle := is.GetPKIsHandleCol(selfSchema)
 	if handle != nil {
-		selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{handle})
+		selfSchema.PKOrUK = append(selfSchema.PKOrUK, []*expression.Column{handle})
 	}
 }
 

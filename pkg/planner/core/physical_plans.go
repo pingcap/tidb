@@ -1506,7 +1506,7 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 		return false
 	}
 	switch p.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		// null aware join is not supported yet
 		if len(p.LeftNAJoinKeys) > 0 {
 			return false

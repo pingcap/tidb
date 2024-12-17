@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "cascades_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "memo_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    flaky = True,
+    deps = [
+        "//pkg/parser",
+        "//pkg/planner/cascades/memo",
+        "//pkg/planner/cascades/util",
+        "//pkg/planner/core",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/resolve",
+        "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/hint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

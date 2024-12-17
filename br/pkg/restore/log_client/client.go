@@ -152,6 +152,7 @@ func NewSstRestoreManager(
 	storeCount uint,
 	createCheckpointSessionFn func() (glue.Session, error),
 ) (*SstRestoreManager, error) {
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	// This poolSize is similar to full restore, as both workflows are comparable.
 	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
 	poolSize := concurrencyPerStore * 32 * storeCount
@@ -166,14 +167,12 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.checkpointRunner = checkpointRunner
 	}
-	// TODO implement checkpoint
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
 	return s, nil
 }
 
@@ -182,14 +181,13 @@ type LogClient struct {
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
 
-	cipher              *backuppb.CipherInfo
-	pdClient            pd.Client
-	pdHTTPClient        pdhttp.Client
-	clusterID           uint64
-	dom                 *domain.Domain
-	tlsConf             *tls.Config
-	keepaliveConf       keepalive.ClientParameters
-	concurrencyPerStore uint
+	cipher        *backuppb.CipherInfo
+	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
+	clusterID     uint64
+	dom           *domain.Domain
+	tlsConf       *tls.Config
+	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -263,6 +261,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
 	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	start := time.Now()
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -293,6 +292,13 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		if switchErr != nil {
 			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
 		}
+	}()
+
+	log.Info("[Compacted SST Restore] Start to restore SST files",
+		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
+	start = time.Now()
+	defer func() {
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
 	}()
 
 	// To optimize performance and minimize cross-region downloads,
@@ -422,7 +428,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
@@ -442,9 +448,24 @@ func (rc *LogClient) InitClients(
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	ctx context.Context,
 ) (map[string]struct{}, error) {
-	// get sst checkpoint to skip repeated files
 	sstCheckpointSets := make(map[string]struct{})
-	// TODO initial checkpoint
+
+	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+		// we need to load the checkpoint data for the following restore
+		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+			sstCheckpointSets[v.Name] = struct{}{}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// initialize the checkpoint metadata since it is the first time to restore.
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return sstCheckpointSets, nil
 }
 

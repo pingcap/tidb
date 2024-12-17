@@ -248,7 +248,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 				apply.JoinType = logicalop.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
-				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
+				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())

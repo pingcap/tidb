@@ -25,6 +25,7 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -435,7 +436,8 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Do some DDL, one successfully handled by handleDDLEvent, the other not.
 	tk.MustExec("alter table t add column d int default 2")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
@@ -448,8 +450,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 3
+	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
@@ -463,8 +468,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("analyze table t columns a, b, c")
 	require.NoError(t, h.InitStatsLite(context.TODO()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 4
+	}, 5*time.Second, 100*time.Millisecond)
 	// a, b, d's status is not changed.
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
