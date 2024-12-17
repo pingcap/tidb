@@ -125,7 +125,6 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.SystemUser:       {},
 	ast.User:             {},
 	ast.Values:           {},
-	ast.Encrypt:          {},
 	ast.Version:          {},
 	ast.JSONMerge:        {},
 	ast.SetVar:           {},
