@@ -1387,17 +1387,17 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("7480000000000000765f728000000000000001"))
+		Check(testkit.Rows("74800000000000007a5f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("7480000000000000765f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("74800000000000007a5f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000007b5f728000000000000001"))
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000007f5f728000000000000001"))
 	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
@@ -1414,7 +1414,7 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000007b5f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("74800000000000007f5f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -3963,4 +3963,10 @@ func TestIssue55886(t *testing.T) {
 	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
 		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
 		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
+}
+
+func TestDataOperationAuditFunction(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select data_operation_audit('tidb-lightning', 'success', 'target', 'table.t1', '~/')")
 }

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/param"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -59,6 +58,28 @@ func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) 
 
 	cc.extensions.OnConnectionEvent(tp, info)
 	cc.SetAllowIPConnection(info.ConnectionInfo.IPInWhiteList)
+}
+
+func (cc *clientConn) onExtensionSecurity(info string) {
+	if !cc.extensions.HasSecurityEventListeners() {
+		return
+	}
+
+	tp := extension.SecurityEvent
+	user, host := "", ""
+	if ctx := cc.getCtx(); ctx != nil {
+		if sessVars := ctx.GetSessionVars(); sessVars != nil {
+			if u := sessVars.User; u != nil {
+				user, host = u.Username, u.Hostname
+			}
+		}
+	}
+	eventInfo := &securityEventInfo{
+		info: info,
+		user: user,
+		host: host,
+	}
+	cc.extensions.OnSecurityEvent(tp, eventInfo)
 }
 
 func (cc *clientConn) onExtensionStmtEnd(node any, stmtCtxValid bool, err error, args ...param.BinaryParam) {
@@ -183,16 +204,17 @@ func (e *stmtEventInfo) OriginalText() string {
 	return e.failedParseText
 }
 
-func (e *stmtEventInfo) SQLDigest() (normalized string, digest *parser.Digest) {
+func (e *stmtEventInfo) RedactedText() (normalized string) {
 	if sql := e.ensureStmtContextOriginalSQL(); sql != "" {
-		return e.sc.SQLDigest()
+		normalized, _ = e.sc.SQLDigest()
+		return
 	}
 
 	if e.executeStmtID != 0 {
-		return binaryExecuteStmtText(e.executeStmtID), nil
+		return binaryExecuteStmtText(e.executeStmtID)
 	}
 
-	return e.failedParseText, nil
+	return e.failedParseText
 }
 
 func (e *stmtEventInfo) User() *auth.UserIdentity {
@@ -221,6 +243,7 @@ func (e *stmtEventInfo) RelatedTables() []stmtctx.TableEntry {
 	if e.sc != nil && e.err == nil {
 		return e.sc.Tables
 	}
+	// nodeW := resolve.NewNodeWWithCtx(e.stmtNode, b.resolveCtx)
 	nodeW := resolve.NewNodeW(e.stmtNode)
 	tableNames := core.ExtractTableList(nodeW, false)
 	tableEntries := make([]stmtctx.TableEntry, 0, len(tableNames))
@@ -278,4 +301,42 @@ func (e *stmtEventInfo) ensureStmtContextOriginalSQL() string {
 
 func binaryExecuteStmtText(id uint32) string {
 	return fmt.Sprintf("BINARY EXECUTE (ID %d)", id)
+}
+
+func onExtensionSecurity(info string, extensions *extension.SessionExtensions) {
+	if !extensions.HasSecurityEventListeners() {
+		return
+	}
+
+	tp := extension.SecurityEvent
+	eventInfo := &securityEventInfo{
+		info: info,
+	}
+	extensions.OnSecurityEvent(tp, eventInfo)
+}
+
+type securityEventInfo struct {
+	info string
+	user string
+	host string
+}
+
+func (e *securityEventInfo) SecurityInfo() string {
+	return e.info
+}
+
+func (e *securityEventInfo) User() string {
+	return e.user
+}
+
+func (e *securityEventInfo) Host() string {
+	return e.host
+}
+
+func (e *securityEventInfo) OriginalText() string {
+	return ""
+}
+
+func (e *securityEventInfo) RedactedText() string {
+	return ""
 }

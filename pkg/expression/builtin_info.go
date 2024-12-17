@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
+	"github.com/pingcap/tidb/pkg/extension"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,9 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/printer"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 var (
@@ -581,6 +584,96 @@ func (b *builtinTiDBVersionSig) Clone() builtinFunc {
 // This will show git hash and build time for tidb-server.
 func (b *builtinTiDBVersionSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	return printer.GetTiDBInfo(), false, nil
+}
+
+type dataOpAuditFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *dataOpAuditFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString,
+		types.ETString, types.ETString, types.ETString, types.ETString, types.ETString)
+	if err != nil {
+		return nil, err
+	}
+	charset, collate := ctx.GetCharsetInfo()
+	bf.tp.SetCharset(charset)
+	bf.tp.SetCollate(collate)
+	bf.tp.SetFlen(100)
+	sig := &builtinDataOpAuditSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinDataOpAuditSig struct {
+	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+}
+
+func (b *builtinDataOpAuditSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+func (b *builtinDataOpAuditSig) Clone() builtinFunc {
+	newSig := &builtinDataOpAuditSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (b *builtinDataOpAuditSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	component, isNull, err := b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	result, isNull, err := b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	targetList, isNull, err := b.args[2].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	inputDir, isNull, err := b.args[3].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	outputDir, isNull, err := b.args[4].EvalString(ctx, row)
+	if isNull || err != nil {
+		return "", isNull, err
+	}
+	info := &dataOpEventInfo{
+		component:  component,
+		result:     result,
+		targetList: targetList,
+		inputDir:   inputDir,
+		outputDir:  outputDir,
+	}
+	if ctx != nil {
+		if sessVar, err := b.GetSessionVars(ctx); err == nil && sessVar != nil {
+			info.connectionInfo = sessVar.ConnectionInfo
+			if user := sessVar.User; user != nil {
+				info.user = user.Username
+				info.host = user.Hostname
+			}
+		}
+	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("expression", 0)).
+			Error("error in get extensions", zap.Error(err))
+		return "", true, err
+	}
+	if extensions := extensions.NewSessionExtensions(); extensions != nil {
+		if !extensions.HasDataOpEventListeners() {
+			return "No registered data operation events", true, nil
+		}
+		extensions.OnDataOpEvent(extension.DataOpEvent, info)
+	}
+
+	return "OK", false, nil
 }
 
 type tidbIsDDLOwnerFunctionClass struct {
@@ -1752,4 +1845,47 @@ func (b *builtinFormatNanoTimeSig) evalString(ctx EvalContext, row chunk.Row) (s
 		return "", isNull, err
 	}
 	return GetFormatNanoTime(val), false, nil
+}
+
+type dataOpEventInfo struct {
+	component      string
+	user           string
+	host           string
+	result         string
+	targetList     string
+	inputDir       string
+	outputDir      string
+	connectionInfo *variable.ConnectionInfo
+}
+
+func (info *dataOpEventInfo) User() string {
+	return info.user
+}
+
+func (info *dataOpEventInfo) Host() string {
+	return info.host
+}
+
+func (info *dataOpEventInfo) Result() string {
+	return info.result
+}
+
+func (info *dataOpEventInfo) TargetList() string {
+	return info.targetList
+}
+
+func (info *dataOpEventInfo) InputDir() string {
+	return info.inputDir
+}
+
+func (info *dataOpEventInfo) OutputDir() string {
+	return info.outputDir
+}
+
+func (info *dataOpEventInfo) Component() string {
+	return info.component
+}
+
+func (info *dataOpEventInfo) ConnectionInfo() *variable.ConnectionInfo {
+	return info.connectionInfo
 }

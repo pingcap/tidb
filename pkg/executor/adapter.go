@@ -86,6 +86,13 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// rcWaitAuditLog is the audit log template for pending due to resource control
+	rcWaitAuditLog = "[Resource group wait time:%s] [Resource group name:%s]"
+	// rcErrorAuditLog is the audit log template for resource control failure
+	rcErrorAuditLog = "[Resource group error:%s] [Resource group name:%s]"
+)
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -1395,6 +1402,31 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 	}
 }
 
+// rcAuitLog write audit log about resource group
+func (a *ExecStmt) rcAuitLog(err error) {
+	if a.Ctx.GetExtensions() == nil || err == nil {
+		return
+	}
+
+	if !a.Ctx.GetExtensions().HasSecurityEventListeners() {
+		return
+	}
+
+	errInfo := err.Error()
+	if strings.Contains(errInfo, "Query execution was interrupted, identified as runaway query") || strings.Contains(errInfo, "Quarantined and interrupted because of being in runaway watch list") {
+		sessionctx.OnExtensionSecurity(a.Ctx, fmt.Sprintf(rcErrorAuditLog, errInfo, a.Ctx.GetSessionVars().StmtCtx.ResourceGroup), a.Ctx.GetSessionVars().StmtCtx)
+		return
+	}
+
+	ruDetails := util.NewRUDetails()
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	}
+	if ruDetails.RUWaitDuration() > 0 {
+		sessionctx.OnExtensionSecurity(a.Ctx, fmt.Sprintf(rcWaitAuditLog, ruDetails.RUWaitDuration(), a.Ctx.GetSessionVars().StmtCtx.ResourceGroup), a.Ctx.GetSessionVars().StmtCtx)
+	}
+}
+
 // FinishExecuteStmt is used to record some information after `ExecStmt` execution finished:
 // 1. record slow log if needed.
 // 2. record summary statement.
@@ -1433,6 +1465,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
+	a.rcAuitLog(err)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
 	if sessVars.StmtCtx.IsTiFlash.Load() {

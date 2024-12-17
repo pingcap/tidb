@@ -3,6 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "export",
     srcs = [
+        "access.go",
+        "audit.go",
         "block_allow_list.go",
         "config.go",
         "conn.go",
@@ -74,6 +76,7 @@ go_test(
     name = "export_test",
     timeout = "short",
     srcs = [
+        "access_test.go",
         "block_allow_list_test.go",
         "config_test.go",
         "consistency_test.go",

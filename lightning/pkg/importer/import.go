@@ -581,6 +581,27 @@ outside:
 		rc.waitCheckpointFinish()
 	}
 
+	infilepwd := rc.cfg.Mydumper.SourceDir
+	var result string
+	if err != nil {
+		result = "task failed"
+	} else {
+		result = "task success"
+	}
+	var tableList string
+	for i, dbInfo := range rc.dbMetas {
+		for y, table := range dbInfo.Tables {
+			tableList = tableList + dbInfo.Name + "." + table.Name
+			if y != len(dbInfo.Tables)-1 && i != len(rc.dbMetas) {
+				tableList += ","
+			}
+		}
+	}
+	cmd := fmt.Sprintf("select data_operation_audit('LIGHTNING','%s','%s','%s','')", result, tableList, infilepwd)
+	_, err1 := rc.db.Exec(cmd)
+	if err1 != nil {
+		task.Logger.Error("audit failed:"+cmd, zap.Error(err))
+	}
 	task.End(zap.ErrorLevel, err)
 	rc.errorMgr.LogErrorDetails()
 	rc.errorSummaries.emitLog()

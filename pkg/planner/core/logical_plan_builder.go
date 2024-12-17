@@ -89,6 +89,13 @@ const (
 	ErrExprInOrderBy = "ORDER BY"
 )
 
+type tableNameWrapper struct {
+	tbName *ast.TableName
+	// AsName is the alias name of the table source.
+	AsName   pmodel.CIStr
+	hasAlias bool
+}
+
 // aggOrderByResolver is currently resolving expressions of order by clause
 // in aggregate function GROUP_CONCAT.
 type aggOrderByResolver struct {
@@ -4871,6 +4878,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 			p.QueryTimeRange = b.timeRangeForSummaryTable()
 		case infoschema.TableSlowQuery:
 			p.Extractor = &SlowQueryExtractor{}
+		case infoschema.TableAuditLog:
+			p.Extractor = &AuditLogExtractor{}
 		case infoschema.TableStorageStats:
 			p.Extractor = &TableStorageStatsExtractor{}
 		case infoschema.TableTiFlashTables, infoschema.TableTiFlashSegments, infoschema.TableTiFlashIndexes:

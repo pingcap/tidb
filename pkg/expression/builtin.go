@@ -981,6 +981,7 @@ var funcs = map[string]functionClass{
 	ast.TiDBDecodeBinaryPlan: &tidbDecodePlanFunctionClass{baseFunctionClass{ast.TiDBDecodeBinaryPlan, 1, 1}},
 	ast.TiDBDecodeSQLDigests: &tidbDecodeSQLDigestsFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBDecodeSQLDigests, 1, 2}},
 	ast.TiDBEncodeSQLDigest:  &tidbEncodeSQLDigestFunctionClass{baseFunctionClass{ast.TiDBEncodeSQLDigest, 1, 1}},
+	ast.DataOperationAudit:   &dataOpAuditFunctionClass{baseFunctionClass{ast.DataOperationAudit, 5, 5}},
 
 	// TiDB Sequence function.
 	ast.NextVal: &nextValFunctionClass{baseFunctionClass{ast.NextVal, 1, 1}},

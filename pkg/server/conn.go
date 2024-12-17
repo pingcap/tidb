@@ -1192,6 +1192,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
 		if err != nil {
+			// If the resource control error occurs, print audit logs.
+			originErr := errors.Cause(err)
+			if te, ok := originErr.(*terror.Error); ok {
+				if te.Code() == errno.ErrResourceGroupThrottled {
+					cc.onExtensionSecurity(te.Error())
+				}
+			}
 			cc.audit(plugin.Error) // tell the plugin API there was a dispatch error
 			if terror.ErrorEqual(err, io.EOF) {
 				cc.addMetrics(data[0], startTime, nil)
@@ -1200,6 +1207,10 @@ func (cc *clientConn) Run(ctx context.Context) {
 			} else if terror.ErrResultUndetermined.Equal(err) {
 				logutil.Logger(ctx).Error("result undetermined, close this connection", zap.Error(err))
 				server_metrics.DisconnectErrorUndetermined.Inc()
+				// If commit failed on 2PC-Commit , close  this connection and write audit log.
+				if te, ok := originErr.(*terror.Error); ok {
+					cc.onExtensionSecurity(te.Error())
+				}
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
@@ -1860,6 +1871,12 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 	}
 
 	if lastStmt != nil {
+		// If the transaction fails to commit and is not an indeterminate error, a rollback audit log is logged.
+		if err != nil && terror.ErrResultUndetermined.NotEqual(err) {
+			if _, ok := lastStmt.(*ast.CommitStmt); ok {
+				cc.onExtensionSecurity("The transaction failed to be committed and was rolled back ," + err.Error())
+			}
+		}
 		cc.onExtensionStmtEnd(lastStmt, sessVars.StmtCtx.TaskID != expiredStmtTaskID, err)
 	}
 

@@ -2760,6 +2760,11 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 			return err
 		}
 		if lockStatusChanged {
+			s.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+				ConnectionInfo: s.sessionVars.ConnectionInfo,
+				ActiveRoles:    s.sessionVars.ActiveRoles,
+				Info:           fmt.Sprintf("lock %s@%s for consecutive incorrect password", authUser.Username, authUser.Hostname),
+			})
 			// Notification auto unlock.
 			err = domain.GetDomain(s).NotifyUpdatePrivilege()
 			if err != nil {
@@ -2908,6 +2913,11 @@ func verifyAccountAutoLock(s *session, user, host string) (bool, error) {
 		// Generate unlock json string.
 		plJSON = privileges.BuildPasswordLockingJSON(pl.FailedLoginAttempts,
 			pl.PasswordLockTimeDays, "N", 0, time.Now().Format(time.UnixDate))
+		s.GetExtensions().OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+			ConnectionInfo: s.sessionVars.ConnectionInfo,
+			ActiveRoles:    s.sessionVars.ActiveRoles,
+			Info:           fmt.Sprintf("unlock %s@%s automatically", user, host),
+		})
 	}
 	if plJSON != "" {
 		lockStatusChanged = true

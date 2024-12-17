@@ -141,6 +141,8 @@ const (
 	TableTiDBServersInfo = "TIDB_SERVERS_INFO"
 	// TableSlowQuery is the string constant of slow query memory table.
 	TableSlowQuery = "SLOW_QUERY"
+	// TableAuditLog is the string constant of audit log memory table.
+	TableAuditLog = "AUDIT_LOG"
 	// TableClusterInfo is the string constant of cluster info memory table.
 	TableClusterInfo = "CLUSTER_INFO"
 	// TableClusterConfig is the string constant of cluster configuration memory table.
@@ -348,6 +350,8 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
 	TableUserLoginHistory:                autoid.InformationSchemaDBID + 96,
+	ClusterTableAuditLog:                 autoid.InformationSchemaDBID + 97,
+	TableAuditLog:                        autoid.InformationSchemaDBID + 98,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -404,7 +408,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 		Collate: mysql.DefaultCollationName,
 	}
 	for offset, c := range cs {
-		if tblInfo.Name.O == ClusterTableSlowLog && mysql.HasPriKeyFlag(c.flag) {
+		if (tblInfo.Name.O == ClusterTableSlowLog || tblInfo.Name.O == ClusterTableAuditLog) && mysql.HasPriKeyFlag(c.flag) {
 			switch c.tp {
 			case mysql.TypeLong, mysql.TypeLonglong,
 				mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24:
@@ -970,6 +974,39 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPrevStmt, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogQuerySQLStr, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
+}
+
+var auditLogCols = []columnInfo{
+	{name: "TIME", tp: mysql.TypeTimestamp, size: 26, decimal: 6, flag: mysql.PriKeyFlag | mysql.NotNullFlag | mysql.BinaryFlag},
+	{name: "ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "EVENT", tp: mysql.TypeVarchar, size: 256},
+	{name: "USER", tp: mysql.TypeVarchar, size: 64},
+	{name: "ROLES", tp: mysql.TypeVarchar, size: 256},
+	{name: "CONNECTION_ID", tp: mysql.TypeVarchar, size: 256},
+	{name: "TABLES", tp: mysql.TypeVarchar, size: 256},
+	{name: "STATUS_CODE", tp: mysql.TypeVarchar, size: 20},
+	{name: "REASON", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "CURRENT_DB", tp: mysql.TypeVarchar, size: 64},
+	{name: "SQL_TEXT", tp: mysql.TypeVarchar, size: 1024},
+	{name: "EXECUTE_PARAMS", tp: mysql.TypeVarchar, size: 256},
+	{name: "AFFECTED_ROWS", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "CONNECTION_TYPE", tp: mysql.TypeVarchar, size: 20},
+	{name: "PID", tp: mysql.TypeVarchar, size: 256},
+	{name: "SERVER_VERSION", tp: mysql.TypeVarchar, size: 100},
+	{name: "SSL_VERSION", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOST_IP", tp: mysql.TypeVarchar, size: 64},
+	{name: "HOST_PORT", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLIENT_IP", tp: mysql.TypeVarchar, size: 64},
+	{name: "CLIENT_PORT", tp: mysql.TypeVarchar, size: 64},
+	{name: "AUTH_METHOD", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONN_ATTRS", tp: mysql.TypeVarchar, size: 200},
+
+	{name: "AUDIT_OP_TARGET", tp: mysql.TypeVarchar, size: 256},
+	{name: "AUDIT_OP_ARGS", tp: mysql.TypeVarchar, size: 256},
+
+	{name: "INFO", tp: mysql.TypeVarchar, size: 1024},
 }
 
 // TableTiDBHotRegionsCols is TiDB hot region mem table columns.
@@ -2355,6 +2392,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableProcesslist:                        tableProcesslistCols,
 	TableTiDBIndexes:                        tableTiDBIndexesCols,
 	TableSlowQuery:                          slowQueryCols,
+	TableAuditLog:                           auditLogCols,
 	TableTiDBHotRegions:                     TableTiDBHotRegionsCols,
 	TableTiDBHotRegionsHistory:              TableTiDBHotRegionsHistoryCols,
 	TableTiKVStoreStatus:                    TableTiKVStoreStatusCols,

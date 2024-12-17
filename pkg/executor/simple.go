@@ -94,6 +94,8 @@ type SimpleExec struct {
 
 	// staleTxnStartTS is the StartTS that is used to execute the staleness txn during a read-only begin statement.
 	staleTxnStartTS uint64
+
+	extensions *extension.SessionExtensions
 }
 
 type resourceOptionsInfo struct {
@@ -1926,6 +1928,13 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 		if len(plOptions.lockAccount) != 0 {
 			fields = append(fields, alterField{"account_locked=%?", plOptions.lockAccount})
+			if plOptions.lockAccount == "N" && e.extensions != nil {
+				e.extensions.OnConnectionEvent(extension.ConnConnected, &extension.ConnEventInfo{
+					ConnectionInfo: e.Ctx().GetSessionVars().ConnectionInfo,
+					ActiveRoles:    e.Ctx().GetSessionVars().ActiveRoles,
+					Info:           fmt.Sprintf("unlock %s@%s", spec.User.Username, spec.User.Hostname),
+				})
+			}
 		}
 
 		// support alter Password_reuse_history and Password_reuse_time.

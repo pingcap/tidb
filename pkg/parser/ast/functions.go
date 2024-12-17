@@ -270,6 +270,7 @@ const (
 	FormatBytes          = "format_bytes"
 	FormatNanoTime       = "format_nano_time"
 	CurrentResourceGroup = "current_resource_group"
+	DataOperationAudit   = "data_operation_audit"
 
 	// control functions
 	If     = "if"

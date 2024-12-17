@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
@@ -997,6 +998,291 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 }
 
+type securityEventInfo struct {
+	info string
+}
+
+func (e *securityEventInfo) SecurityInfo() string {
+	return e.info
+}
+
+func (e *securityEventInfo) User() string { return "" }
+
+func (e *securityEventInfo) Host() string { return "" }
+
+func (e *securityEventInfo) OriginalText() string { return "" }
+
+func (e *securityEventInfo) RedactedText() string { return "" }
+
+func auditServerInfos(last, cur []infoschema.ServerInfo, label string) string {
+	var res []string
+	lastMap, curMap := make(map[string]interface{}, len(last)), make(map[string]interface{}, len(cur))
+	// add
+	for _, s := range last {
+		lastMap[s.Address] = nil
+	}
+	for _, s := range cur {
+		curMap[s.Address] = nil
+	}
+
+	for _, s := range last {
+		k := s.Address
+		_, ok := curMap[k]
+		if ok {
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d %s node(s): ", len(lastMap), label))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d %s node(s): ", len(curMap), label))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	return strings.Join(res, ". ")
+}
+
+func auditStoresStat(last, cur *pdhttp.StoresInfo) string {
+	var res []string
+	lastMap, curMap := make(map[string]string, len(last.Stores)), make(map[string]string, len(cur.Stores))
+	// add
+	for _, s := range last.Stores {
+		lastMap[s.Store.Address] = s.Store.StateName
+	}
+	for _, s := range cur.Stores {
+		curMap[s.Store.Address] = s.Store.StateName
+	}
+
+	for _, s := range last.Stores {
+		k := s.Store.Address
+		_, ok := curMap[k]
+		if ok {
+			// audit if its state has changed
+			if cv, lv := curMap[k], lastMap[k]; cv != lv {
+				if cv == "Up" {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s, data consistency checked)", k, lv, cv))
+				} else {
+					res = append(res, fmt.Sprintf("Store node %s state change (%s -> %s)", k, lv, cv))
+				}
+			}
+			delete(lastMap, k)
+			delete(curMap, k)
+		}
+	}
+	if len(lastMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Remove %d store node(s): ", len(lastMap)))
+		for addr := range lastMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		res = append(res, sb.String())
+	}
+	if len(curMap) != 0 {
+		var sb strings.Builder
+		var nodes []string
+		sb.WriteString(fmt.Sprintf("Add %d store node(s): ", len(curMap)))
+		for addr := range curMap {
+			nodes = append(nodes, addr)
+		}
+		sb.WriteString(strings.Join(nodes, ","))
+		sb.WriteString(" (data consistency checked)")
+		res = append(res, sb.String())
+	}
+
+	return strings.Join(res, ". ")
+}
+
+func getEarliestStartComponents(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo) int64 {
+	earliestTime := time.Now().Unix()
+	for _, tidb := range tidbs {
+		if tidb.StartTimestamp < earliestTime {
+			earliestTime = tidb.StartTimestamp
+		}
+	}
+	for _, pd := range pds {
+		if pd.StartTimestamp < earliestTime {
+			earliestTime = pd.StartTimestamp
+		}
+	}
+	if tikvs != nil {
+		for _, node := range tikvs.Stores {
+			if strings.ToUpper(node.Store.StateName) == "UP" {
+				if node.Store.StartTimestamp < earliestTime {
+					earliestTime = node.Store.StartTimestamp
+				}
+			}
+		}
+	}
+	return earliestTime
+}
+
+// checkClusterRestart Check whether all components in the current cluster restart within `times` minutes.
+// If the restart occurs, the audit log is printed only once within `times` minutes.
+func ifClusterRestartRecent(tidbs, pds []infoschema.ServerInfo, tikvs *pdhttp.StoresInfo, times int64) bool {
+	earliestTime := getEarliestStartComponents(tidbs, pds, tikvs)
+	return time.Now().Unix()-times*60 < earliestTime
+}
+
+// ifTikvClusterRunning CheckTikvClusterRunStatus check whether tikv cluster can normal execution.
+func ifTikvClusterRunning(tikvs *pdhttp.StoresInfo) bool {
+	if len(tikvs.Stores) <= 0 {
+		return false
+	}
+	upNum := 0
+	for _, node := range tikvs.Stores {
+		if strings.ToUpper(node.Store.StateName) == "UP" {
+			upNum++
+		}
+	}
+	return (upNum * 2) > tikvs.Count
+}
+
+func (do *Domain) auditComponentsLoop() {
+	ticker := time.Tick(2 * time.Second)
+	e, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().Warn("get extensions failed", zap.Error(err))
+		return
+	}
+	extensions := e.NewSessionExtensions()
+
+	var (
+		lastTiDBs, lastPDs            []infoschema.ServerInfo
+		lastStoresInfo                *pdhttp.StoresInfo
+		failOnPDNodes                 = false
+		failOnTiDBNodes               = false
+		failOnTikvNodes               = false
+		failOnMostTikvNodeUnavailable = false
+		ifClusterRestartInLast5min    = false
+	)
+
+	for {
+		select {
+		case <-do.exit:
+			logutil.BgLogger().Info("Domain stop auditing components")
+			return
+		case <-ticker:
+		}
+		se, err := do.sysSessionPool.Get()
+		if err != nil {
+			logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+			if se != nil {
+				do.sysSessionPool.Put(se)
+			}
+			continue
+		}
+
+		//failOnAllNodes := true
+		// 1. TiDB
+		curTiDBs, err := infoschema.GetTiDBServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnTiDBNodes = false
+			if lastTiDBs != nil {
+				info := auditServerInfos(lastTiDBs, curTiDBs, "tidb")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastTiDBs = curTiDBs
+		} else if !failOnTiDBNodes {
+			failOnTiDBNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because tidb nodes information cannot be obtained",
+			})
+		}
+
+		// 2. PD
+		curPDs, err := infoschema.GetPDServerInfo(se.(sessionctx.Context))
+		if err == nil {
+			failOnPDNodes = false
+			if lastPDs != nil {
+				info := auditServerInfos(lastPDs, curPDs, "pd")
+				if len(info) > 0 {
+					extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+						info: info,
+					})
+				}
+			}
+			lastPDs = curPDs
+		} else if !failOnPDNodes {
+			failOnPDNodes = true
+			extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+				info: "the cluster is unavailable because pd nodes information cannot be obtained",
+			})
+		}
+
+		// 3. TiKV
+		tikvStore, ok := se.(sessionctx.Context).GetStore().(helper.Storage)
+		if ok {
+			tikvHelper := &helper.Helper{
+				Store:       tikvStore,
+				RegionCache: tikvStore.GetRegionCache(),
+			}
+			var curStoresStat *pdhttp.StoresInfo
+			pdCli, err := tikvHelper.TryGetPDHTTPClient()
+			if err == nil {
+				curStoresStat, err = pdCli.GetStores(context.Background())
+			}
+			if err == nil {
+				failOnTikvNodes = false
+				if lastStoresInfo != nil {
+					info := auditStoresStat(lastStoresInfo, curStoresStat)
+					if len(info) > 0 {
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: info,
+						})
+					}
+				}
+				if !ifTikvClusterRunning(curStoresStat) {
+					if !failOnMostTikvNodeUnavailable {
+						failOnMostTikvNodeUnavailable = true
+						extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+							info: "the cluster is unavailable because most tikv nodes are unavailable",
+						})
+					}
+				} else {
+					failOnMostTikvNodeUnavailable = false
+				}
+				lastStoresInfo = curStoresStat
+			} else if !failOnTikvNodes {
+				failOnTikvNodes = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster is unavailable because tikv nodes information cannot be obtained",
+				})
+			}
+		}
+		if ifClusterRestartRecent(curTiDBs, curPDs, lastStoresInfo, 5) {
+			if !ifClusterRestartInLast5min {
+				ifClusterRestartInLast5min = true
+				extensions.OnSecurityEvent(extension.SecurityEvent, &securityEventInfo{
+					info: "the cluster has restarted in last 5 minutes",
+				})
+			}
+		} else {
+			ifClusterRestartInLast5min = false
+		}
+		do.sysSessionPool.Put(se)
+	}
+}
+
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
@@ -1483,6 +1769,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+	do.wg.Run(do.auditComponentsLoop, "auditComponentsLoop")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard

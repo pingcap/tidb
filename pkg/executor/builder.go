@@ -54,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/extension/enterprise/audit"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -83,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
@@ -94,6 +97,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 // executorBuilder builds an Executor from a Plan.
@@ -954,6 +958,12 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 	}
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
 	base.SetInitCap(chunk.ZeroCapacity)
+	var extensions *extension.SessionExtensions
+	if e, err := extension.GetExtensions(); err != nil {
+		logutil.BgLogger().Warn("get extensions failed", zap.Error(err))
+	} else {
+		extensions = e.NewSessionExtensions()
+	}
 	e := &SimpleExec{
 		BaseExecutor:    base,
 		Statement:       v.Statement,
@@ -961,6 +971,7 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 		IsFromRemote:    v.IsFromRemote,
 		is:              b.is,
 		staleTxnStartTS: v.StaleTxnStartTS,
+		extensions:      extensions,
 	}
 	return e
 }
@@ -2385,6 +2396,21 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 					outputCols: v.Columns,
 					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
 					memTracker: memTracker,
+				},
+			}
+		case strings.ToLower(infoschema.TableAuditLog), strings.ToLower(infoschema.ClusterTableAuditLog):
+			memTracker := memory.NewTracker(v.ID(), -1)
+			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
+			return &MemTableReaderExec{
+				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &auditLogRetriever{
+					table:      v.Table,
+					outputCols: v.Columns,
+					extractor:  v.Extractor.(*plannercore.AuditLogExtractor),
+					memTracker: memTracker,
+					auditLog:   audit.GlobalLogManager.GetLogPath(),
+					logType:    audit.GlobalLogManager.GetLogFormat(),
 				},
 			}
 		case strings.ToLower(infoschema.TableStorageStats):

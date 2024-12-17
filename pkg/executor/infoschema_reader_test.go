@@ -107,7 +107,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY' AND TABLE_NAME != 'CLUSTER_AUDIT_LOG';").Check([][]any{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
 	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
@@ -126,7 +126,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "tester1",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
+	tk1.MustQuery(";select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY' AND TABLE_NAME != 'CLUSTER_AUDIT_LOG'").Check([][]any{})
 
 	// test the privilege of user with some privilege for information_schema
 	tk.MustExec("create user tester2")
@@ -616,7 +616,7 @@ func TestColumnTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|tbl1|col_2"))
 	tk.MustQuery(`select count(*) from information_schema.columns;`).Check(
-		testkit.RowsWithSep("|", "5033"))
+		testkit.RowsWithSep("|", "5091"))
 }
 
 func TestIndexUsageTable(t *testing.T) {
@@ -663,7 +663,7 @@ func TestIndexUsageTable(t *testing.T) {
 		testkit.RowsWithSep("|",
 			"test|idt2|idx_4"))
 	tk.MustQuery(`select count(*) from information_schema.tidb_index_usage;`).Check(
-		testkit.RowsWithSep("|", "84"))
+		testkit.RowsWithSep("|", "87"))
 
 	tk.MustQuery(`select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage
 				where TABLE_SCHEMA = 'test1';`).Check(testkit.Rows())
@@ -866,22 +866,22 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t1";`).Check(testkit.RowsWithSep("|",
-		"139|add index|public|132|137|t1|synced",
-		"138|create table|public|132|137|t1|synced",
-		"125|add index|public|118|123|t1|synced",
-		"124|create table|public|118|123|t1|synced",
+		"143|add index|public|136|141|t1|synced",
+		"142|create table|public|136|141|t1|synced",
+		"129|add index|public|122|127|t1|synced",
+		"128|create table|public|122|127|t1|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d1" and JOB_TYPE LIKE "add index%%";`).Check(testkit.RowsWithSep("|",
-		"145|add index|public|132|143|t3|synced",
-		"142|add index|public|132|140|t2|synced",
-		"139|add index|public|132|137|t1|synced",
-		"136|add index|public|132|134|t0|synced",
+		"149|add index|public|136|147|t3|synced",
+		"146|add index|public|136|144|t2|synced",
+		"143|add index|public|136|141|t1|synced",
+		"140|add index|public|136|138|t0|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and table_name = "t3";`).Check(testkit.RowsWithSep("|",
-		"131|add index|public|118|129|t3|synced",
-		"130|create table|public|118|129|t3|synced",
+		"135|add index|public|122|133|t3|synced",
+		"134|create table|public|122|133|t3|synced",
 	))
 	tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 					FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.Rows())
@@ -892,15 +892,15 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 		if job.SchemaState == model.StateWriteOnly && loaded.CompareAndSwap(false, true) {
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE table_name = "t0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"146 add index write only 118 120 t0 running",
+				"150 add index write only 122 124 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "d0" and state = "running";`).Check(testkit.RowsWithSep("|",
-				"146 add index write only 118 120 t0 running",
+				"150 add index write only 122 124 t0 running",
 			))
 			tk2.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE state = "running";`).Check(testkit.RowsWithSep("|",
-				"146 add index write only 118 120 t0 running",
+				"150 add index write only 122 124 t0 running",
 			))
 		}
 	})
@@ -916,8 +916,8 @@ func TestInfoSchemaDDLJobs(t *testing.T) {
 	tk.MustExec("create table test2.t1(id int)")
 	tk.MustQuery(`SELECT JOB_ID, JOB_TYPE, SCHEMA_STATE, SCHEMA_ID, TABLE_ID, table_name, STATE
 				   FROM information_schema.ddl_jobs WHERE db_name = "test2" and table_name = "t1"`).Check(testkit.RowsWithSep("|",
-		"155|create table|public|152|154|t1|synced",
-		"150|create table|public|147|149|t1|synced",
+		"159|create table|public|156|158|t1|synced",
+		"154|create table|public|151|153|t1|synced",
 	))
 
 	// Test explain output, since the output may change in future.

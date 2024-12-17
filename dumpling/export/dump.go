@@ -312,6 +312,31 @@ func (d *Dumper) Dump() (dumpErr error) {
 	})
 	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
+	am := newAccessMeta(conf)
+	al := newAuditLog(DUMPDATA, "", "", am.output)
+	if am.dumpTableList != nil {
+		al.updateTableList(am.dumpTableList.tableNames)
+	}
+	defer func() {
+		tctx.L().Info("begin write audit log ")
+		if err != nil {
+			al.updateRes("task failed")
+		} else {
+			al.updateRes("task success")
+		}
+		err = al.writeAuditLog(baseConn.DBConn)
+		if err != nil {
+			tctx.L().Error("write audit log fail ," + err.Error())
+		} else {
+			tctx.L().Info("write audit log success")
+		}
+		_ = baseConn.DBConn.Close()
+	}()
+	err = am.getUserGrants(metaConn)
+	if err != nil {
+		return err
+	}
+
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
 			return err
@@ -325,7 +350,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 		time.Sleep(1 * time.Second)
 		tctx.L().Debug("progress ready, sleep 1s")
 	})
-	_ = baseConn.DBConn.Close()
 	if err := wg.Wait(); err != nil {
 		summary.CollectFailureUnit("dump table data", err)
 		return errors.Trace(err)
@@ -334,6 +358,13 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	summary.SetSuccessStatus(true)
 	m.recordFinishTime(time.Now())
+	am.setDumpEndTime()
+	err = am.writeAccessMeta()
+	if err != nil {
+		tctx.L().Error("write access meta fail ," + err.Error())
+		return err
+	}
+	_ = baseConn.DBConn.Close()
 	return nil
 }
 

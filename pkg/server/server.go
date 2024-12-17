@@ -476,10 +476,28 @@ func (s *Server) Run(dom *domain.Domain) error {
 	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
 		<-dom.StatsHandle().InitStatsDone
 	}
+
+	extensions, err := extension.GetExtensions()
+	if err != nil {
+		logutil.BgLogger().With(zap.Uint64("server", 0)).
+			Error("error in get extensions", zap.Error(err))
+		return err
+	}
+
+	// If encryption is configured, audit logs are displayed.
+	if svrExtensions := extensions.NewSessionExtensions(); svrExtensions != nil {
+		if len(s.cfg.Security.SSLCA) > 0 || len(s.cfg.Security.SSLCert) > 0 || len(s.cfg.Security.SSLKey) > 0 {
+			onExtensionSecurity("TLS between servers and clients has been enabled", svrExtensions)
+		}
+		if len(s.cfg.Security.ClusterSSLCA) > 0 || len(s.cfg.Security.ClusterSSLCert) > 0 || len(s.cfg.Security.ClusterSSLKey) > 0 {
+			onExtensionSecurity("TLS between cluster components has been enabled", svrExtensions)
+		}
+	}
+
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
 	errChan := make(chan error, 2)
-	err := s.initTiDBListener()
+	err = s.initTiDBListener()
 	if err != nil {
 		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
 		return err

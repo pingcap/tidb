@@ -20,6 +20,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
+)
+
+const (
+	// commitFailAuditLogStr is the audit log string template of commit failure.
+	commitFailAuditLogStr = "[Commit failed error info: %s]"
 )
 
 type domainMap struct {
@@ -291,6 +297,7 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 
 	if !sessVars.InTxn() {
 		if err := se.CommitTxn(ctx); err != nil {
+			sessionctx.OnExtensionSecurity(se, fmt.Sprintf(commitFailAuditLogStr, err.Error()), se.GetSessionVars().StmtCtx)
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
 				err = errors.Annotatef(err, "previous statement: %s", se.GetSessionVars().PrevStmt)
 			}

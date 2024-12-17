@@ -17,6 +17,7 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/session/cursor",
         "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/table/tblctx",
