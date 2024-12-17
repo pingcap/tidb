@@ -112,10 +112,6 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	return wrk
 }
 
-func sleep(secs time.Duration) {
-	time.Sleep(time.Second * secs)
-}
-
 func eventuallyWithLock(t *testing.T, wrk *worker, fn func() bool) {
 	require.Eventually(t, func() bool {
 		wrk.Lock()
@@ -230,10 +226,7 @@ func TestMultipleWorker(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker1")
-		if cnt >= cnt1 {
-			return true
-		}
-		return false
+		return cnt >= cnt1
 	}, time.Minute, time.Second)
 
 	// stop worker 2, worker 1 should become owner
@@ -249,10 +242,7 @@ func TestMultipleWorker(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker2")
-		if cnt >= cnt2 {
-			return true
-		}
-		return false
+		return cnt >= cnt2
 	}, time.Minute, time.Second)
 }
 
@@ -452,7 +442,7 @@ func TestStoppingAndRestartingWorker(t *testing.T) {
 	snapshotCnt := len(tk.MustQuery("select snap_id from workload_schema." + histSnapshotsTable).Rows())
 
 	// Wait for 5 seconds to make sure no new samples are taken
-	sleep(5)
+	time.Sleep(time.Second * 5)
 	require.True(t, len(tk.MustQuery("select instance_id from workload_schema.hist_memory_usage").Rows()) == samplingCnt)
 	require.True(t, len(tk.MustQuery("select snap_id from workload_schema."+histSnapshotsTable).Rows()) == snapshotCnt)
 
