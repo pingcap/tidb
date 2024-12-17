@@ -259,10 +259,6 @@ Variable_name	Value
 character_set_server	utf8mb4
 SHOW VARIABLES LIKE 'innodb_file_format';
 Variable_name	Value
-innodb_file_format	Barracuda
-SHOW VARIABLES LIKE 'innodb_large_prefix';
-Variable_name	Value
-innodb_large_prefix	ON
 drop table if exists t;
 create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
