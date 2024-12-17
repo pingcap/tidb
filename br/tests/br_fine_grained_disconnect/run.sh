@@ -41,7 +41,7 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/disconnect=100"
 
 output=$(run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" 2>&1)
 
-if ! echo "$output" | grep -q "Failed to connect to store"; then
+if ! echo "$output" | grep -q "Failed to connect to store \d+ more than \d+ times"; then
   exit 1  
 fi
 
