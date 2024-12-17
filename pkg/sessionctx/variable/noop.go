@@ -45,6 +45,12 @@ var noopSysVars = []*SysVar{
 		return checkReadOnly(vars, normalizedValue, originalValue, scope, false)
 	}},
 	{Scope: ScopeGlobal, Name: ConnectTimeout, Value: "10", Type: TypeUnsigned, MinValue: 2, MaxValue: secondsPerYear},
+	{
+		Scope:                   ScopeGlobal | ScopeSession,
+		Name:                    "sql_buffer_result",
+		Value:                   Off,
+		IsHintUpdatableVerified: true,
+	},
 	{Scope: ScopeGlobal, Name: MyISAMUseMmap, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "gtid_mode", Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: FlushTime, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
