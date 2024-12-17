@@ -498,7 +498,7 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || len(copStats.ReqStats.RPCStats) == 0)) {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && copStats.ReqStats == nil) {
 		return
 	}
 
@@ -511,7 +511,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
-			backoffSleep:       make(map[string]time.Duration),
 			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
@@ -522,12 +521,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
-
-	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
-	}
 	if len(r.copPlanIDs) > 0 {
-		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), &copStats.TimeDetail)
+		r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail, &copStats.TimeDetail)
 	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -657,10 +652,21 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 	} else {
 		s.procKeys.Add(0)
 	}
-	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
+	if len(copStats.BackoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		maps.Copy(s.backoffSleep, copStats.BackoffSleep)
+	}
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.reqStat.Merge(copStats.ReqStats)
+	if copStats.ReqStats != nil {
+		if s.reqStat == nil {
+			s.reqStat = copStats.ReqStats
+		} else {
+			s.reqStat.Merge(copStats.ReqStats)
+		}
+	}
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -698,8 +704,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.copRespTime.MergePercentile(&other.copRespTime)
 	s.procKeys.MergePercentile(&other.procKeys)
 
-	for k, v := range other.backoffSleep {
-		s.backoffSleep[k] += v
+	if len(other.backoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		for k, v := range other.backoffSleep {
+			s.backoffSleep[k] += v
+		}
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime

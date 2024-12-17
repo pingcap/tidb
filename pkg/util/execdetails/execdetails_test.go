@@ -15,6 +15,10 @@
 package execdetails
 
 import (
+	"github.com/pingcap/kvproto/pkg/coprocessor"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/kvproto/pkg/sharedbytes"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -219,7 +223,7 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+	stats.RecordCopStats(tableScanID, "tikv", scanDetail, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
@@ -272,7 +276,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordScanDetail(tableScanID, "tiflash", scanDetail)
+	stats.RecordCopStats(tableScanID, "tiflash", scanDetail, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
@@ -545,11 +549,10 @@ func TestCopRuntimeStats2(t *testing.T) {
 		KvReadWallTime:   5 * time.Millisecond,
 		TotalRPCWallTime: 50 * time.Millisecond,
 	}
-	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+	stats.RecordCopStats(tableScanID, "tikv", scanDetail, nil)
 	for range 1005 {
 		stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
-		stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-		stats.RecordTimeDetail(tableScanID, "tikv", timeDetail)
+		stats.RecordCopStats(tableScanID, "tikv", scanDetail, timeDetail)
 	}
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
@@ -561,4 +564,32 @@ func TestCopRuntimeStats2(t *testing.T) {
 		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
+}
+
+func BenchmarkRPCRuntimeStats(b *testing.B) {
+	details := make([]*kvrpcpb.ExecDetails, 1000)
+	for i := 0; i < b.N; i++ {
+		details[i%len(details)] = getStats()
+		if i%10 == 0 {
+			runtime.GC()
+		}
+	}
+	//time.Sleep(time.Second)
+}
+
+func getStats() *kvrpcpb.ExecDetails {
+	resp := buildResp()
+	detail := resp.ExecDetails
+	//resp.ExecDetails = nil
+	return detail
+}
+
+func buildResp() *coprocessor.Response {
+	resp := new(coprocessor.Response)
+	resp.Data = make(sharedbytes.SharedBytes, 0, 1024*64)
+	resp.ExecDetails = &kvrpcpb.ExecDetails{
+		TimeDetail: &kvrpcpb.TimeDetail{},
+		ScanDetail: &kvrpcpb.ScanDetail{},
+	}
+	return resp
 }
