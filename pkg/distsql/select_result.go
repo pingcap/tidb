@@ -473,27 +473,27 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
-func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, callee string, storeType kv.StoreType, allPlanIDs []int, recordedPlanIDs map[int]int) {
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
-			runtimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+			runtimeStatsColl.RecordOneCopTask(planID, storeType, callee, dummySummary)
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
-func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeType kv.StoreType, allPlanIDs []int) {
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			recordedPlanIDs[runtimeStatsColl.
-				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
+				RecordOneCopTask(-1, storeType, callee, detail)] = 0
 		}
 	}
-	FillDummySummariesForTiFlashTasks(runtimeStatsColl, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+	FillDummySummariesForTiFlashTasks(runtimeStatsColl, callee, storeType, allPlanIDs, recordedPlanIDs)
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
@@ -524,10 +524,10 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
-		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
+		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail)
 	}
 	if len(r.copPlanIDs) > 0 {
-		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), &copStats.TimeDetail)
+		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.TimeDetail)
 	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -551,7 +551,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
-		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
+		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType, r.copPlanIDs)
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -570,7 +570,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
 				planID := r.copPlanIDs[i]
 				r.ctx.RuntimeStatsColl.
-					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
+					RecordOneCopTask(planID, r.storeType, callee, detail)
 			}
 		}
 	}
