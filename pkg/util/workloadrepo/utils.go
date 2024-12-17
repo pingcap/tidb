@@ -62,7 +62,7 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now t
 		newPtTime := firstPart.AddDate(0, 0, 1)
 		newPtName := generatePartitionName(newPtTime)
 
-		if allExisted == false {
+		if !allExisted {
 			fmt.Fprintf(sb, ", ")
 		}
 		fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPtName, newPtTime.Format("2006-01-02"))

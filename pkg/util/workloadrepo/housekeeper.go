@@ -85,7 +85,7 @@ func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
 	}
 	pi := tbInfo.GetPartitionInfo()
 	if pi == nil {
-		return fmt.Errorf("workload repository could not load partition infomation for '%s'", tbl.destTable)
+		return fmt.Errorf("workload repository could not load partition information for '%s'", tbl.destTable)
 	}
 	for _, pt := range pi.Definitions {
 		ot, err := parsePartitionName(pt.Name.L)
@@ -113,15 +113,15 @@ func dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infosche
 		return nil
 	}
 
-	var err error = nil
+	var err error
 	for _, tbl := range workloadTables {
 		err2 := dropOldPartition(ctx, is, &tbl, now, retention, sess)
 		if err2 != nil {
 			logutil.BgLogger().Warn("workload repository could not drop partitions", zap.NamedError("err", err2))
 			err = errors.Join(err, err2)
 		}
-
 	}
+
 	return err
 }
 
@@ -131,15 +131,15 @@ func (w *worker) getHouseKeeper(ctx context.Context, fn func(time.Time) time.Dur
 		timer := time.NewTimer(fn(now))
 		defer timer.Stop()
 
+		_sessctx := w.getSessionWithRetry()
+		defer w.sesspool.Put(_sessctx)
+		sess := _sessctx.(sessionctx.Context)
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case now := <-timer.C:
-				_sessctx := w.getSessionWithRetry()
-				defer w.sesspool.Put(_sessctx)
-				sess := _sessctx.(sessionctx.Context)
-
 				// Owner only
 				if !w.owner.IsOwner() {
 					continue

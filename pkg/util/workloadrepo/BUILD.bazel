@@ -47,9 +47,11 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/domain",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/owner",
         "//pkg/parser/ast",
+        "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
