@@ -214,6 +214,8 @@ func TestColumnBasic(t *testing.T) {
 
 	h, err := tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(11, 12, 13, 14))
 	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 	_, err = newTxn(ctx)
 	require.NoError(t, err)
 	values, err := tables.RowWithCols(tbl, ctx, h, tbl.Cols())
