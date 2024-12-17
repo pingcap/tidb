@@ -313,6 +313,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
+<<<<<<< HEAD
 // GetEncodedPassword implements the Manager interface.
 func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	mysqlPriv := p.Handle.Get()
@@ -328,6 +329,8 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	return ""
 }
 
+=======
+>>>>>>> c8ba4e3ace2 (*: avoid some unnecessary call of ensureActiveUser() (#57388))
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
