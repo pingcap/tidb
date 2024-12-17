@@ -320,8 +320,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
-				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, pctx, scope, binding)
+				//binding.Status = bindinfo.Invalid
+				//handleInvalidBinding(ctx, pctx, scope, binding)
 				continue
 			}
 			if cost < minCost {
