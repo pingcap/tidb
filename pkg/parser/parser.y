@@ -8186,10 +8186,6 @@ FunctionCallKeyword:
 	{
 		$$ = &ast.BinaryOperationExpr{Op: opcode.Mod, L: $3, R: $5}
 	}
-|	"PASSWORD" '(' ExpressionListOpt ')'
-	{
-		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.PasswordFunc), Args: $3.([]ast.ExprNode)}
-	}
 
 FunctionCallNonKeyword:
 	builtinCurTime '(' FuncDatetimePrecListOpt ')'

@@ -319,7 +319,6 @@ var funcName2Alias = map[string]string{
 	"encrypt":                    ast.Encrypt,
 	"md5":                        ast.MD5,
 	"old_password":               ast.OldPassword,
-	"password_func":              ast.PasswordFunc,
 	"random_bytes":               ast.RandomBytes,
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,

@@ -56,9 +56,6 @@ var vecBuiltinEncryptionCases = map[string][]vecExprBenchCase{
 	ast.SHA1: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb"},
 	},
-	ast.PasswordFunc: {
-		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20)}},
-	},
 	ast.SHA2: {
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA0, SHA0+1)}},
 		{retEvalType: types.ETString, childrenTypes: []types.EvalType{types.ETString, types.ETInt}, aesModes: "aes-128-ecb", geners: []dataGenerator{newRandLenStrGener(10, 20), newRangeInt64Gener(SHA224, SHA224+1)}},

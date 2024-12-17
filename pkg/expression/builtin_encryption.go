@@ -54,7 +54,6 @@ var (
 	_ functionClass = &encryptFunctionClass{}
 	_ functionClass = &md5FunctionClass{}
 	_ functionClass = &oldPasswordFunctionClass{}
-	_ functionClass = &passwordFunctionClass{}
 	_ functionClass = &randomBytesFunctionClass{}
 	_ functionClass = &sha1FunctionClass{}
 	_ functionClass = &sha2FunctionClass{}
@@ -70,7 +69,6 @@ var (
 	_ builtinFunc = &builtinAesEncryptIVSig{}
 	_ builtinFunc = &builtinCompressSig{}
 	_ builtinFunc = &builtinMD5Sig{}
-	_ builtinFunc = &builtinPasswordSig{}
 	_ builtinFunc = &builtinRandomBytesSig{}
 	_ builtinFunc = &builtinSHA1Sig{}
 	_ builtinFunc = &builtinSHA2Sig{}
@@ -505,57 +503,6 @@ type oldPasswordFunctionClass struct {
 
 func (c *oldPasswordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "OLD_PASSWORD")
-}
-
-type passwordFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *passwordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	if err := c.verifyArgs(args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
-	if err != nil {
-		return nil, err
-	}
-	bf.tp.SetFlen(mysql.PWDHashLen + 1)
-	sig := &builtinPasswordSig{bf}
-	sig.setPbCode(tipb.ScalarFuncSig_Password)
-	return sig, nil
-}
-
-type builtinPasswordSig struct {
-	baseBuiltinFunc
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
-}
-
-func (b *builtinPasswordSig) Clone() builtinFunc {
-	newSig := &builtinPasswordSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-// evalString evals a builtinPasswordSig.
-// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
-	pass, isNull, err := b.args[0].EvalString(ctx, row)
-	if isNull || err != nil {
-		return "", isNull, err
-	}
-
-	if len(pass) == 0 {
-		return "", false, nil
-	}
-
-	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
-	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-	tc := typeCtx(ctx)
-	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
-
-	return auth.EncodePassword(pass), false, nil
 }
 
 type randomBytesFunctionClass struct {

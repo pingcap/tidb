@@ -581,8 +581,6 @@ func getSignatureByPB(ctx BuildContext, sigCode tipb.ScalarFuncSig, tp *tipb.Fie
 		f = &builtinCompressSig{base}
 	case tipb.ScalarFuncSig_MD5:
 		f = &builtinMD5Sig{base}
-	case tipb.ScalarFuncSig_Password:
-		f = &builtinPasswordSig{base}
 	case tipb.ScalarFuncSig_RandomBytes:
 		f = &builtinRandomBytesSig{base}
 	case tipb.ScalarFuncSig_SHA1:
