@@ -14,14 +14,14 @@ set @@global.tidb_max_delta_schema_count= default;
 # TestGetSetNoopVars
 SELECT @@innodb_buffer_pool_size;
 SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
-SET innodb_buffer_pool_size=134217728;
+SET GLOBAL innodb_buffer_pool_size=134217728;
 SELECT @@innodb_buffer_pool_size;
 SET GLOBAL tidb_enable_noop_variables = OFF;
 SELECT @@global.tidb_enable_noop_variables;
 SELECT @@innodb_buffer_pool_size;
 SHOW WARNINGS;
 SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
-SET innodb_buffer_pool_size = 805306368;
+SET GLOBAL innodb_buffer_pool_size = 805306368;
 SHOW WARNINGS;
 SELECT @@innodb_buffer_pool_size;
 -- error 1231
@@ -31,7 +31,7 @@ SET GLOBAL tidb_enable_noop_variables = 'warn';
 SET GLOBAL tidb_enable_noop_variables = ON;
 
 SET GLOBAL tidb_enable_noop_variables = default;
-SET innodb_buffer_pool_size = default;
+SET GLOBAL innodb_buffer_pool_size = default;
 
 # TestSetCharset
 show VARIABLES like 'character_set_%';
