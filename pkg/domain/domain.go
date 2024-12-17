@@ -2370,7 +2370,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
-	do.wg.Run(do.asyncLoad, "asyncLoadStats")
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
@@ -2529,7 +2529,7 @@ func (do *Domain) loadStatsWorker() {
 	}
 }
 
-func (do *Domain) asyncLoad() {
+func (do *Domain) asyncLoadHistogram() {
 	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
 	lease := do.statsLease
 	if lease == 0 {
