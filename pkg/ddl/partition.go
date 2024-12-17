@@ -3867,19 +3867,20 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// Check if we can write the old key, since there can still be concurrent update
 				// happening on the rows from fetchRowColVals(), we can involve them in this
 				// transaction and fail when committing, so we will retry with a new snapshot.
-				// TODO: Test a concurrent pessimistic transaction that reads/writes concurrently here,
-				// and commits after after this transaction.
-				err = txn.Set(w.oldKeys[i], prr.vals)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				// Ensure the key does not exist!
+				// First assert the key does not exist!
 				// It actually works without this assertion, but it may help troubleshooting.
 				err = txn.SetAssertion(w.oldKeys[i], kv.SetAssertNotExist)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				// Also don't actually write it :)
+				// Write the key, to trigger transaction failure in case a concurrent
+				// transaction involved the same key.
+				err = txn.Set(w.oldKeys[i], prr.vals)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				// Also don't actually write it,
+				// for the normal case where there are no concurrent UPDATE :)
 				err = txn.Delete(w.oldKeys[i])
 				if err != nil {
 					return errors.Trace(err)
