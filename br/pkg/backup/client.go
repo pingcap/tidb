@@ -50,7 +50,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
@@ -107,7 +106,10 @@ func (e *StoreBasedErr) Cause() error {
 // This is a bug: see https://github.com/pingcap/errors/issues/72
 // We manually make this a multierr to workaround this...
 func (e *StoreBasedErr) Errors() []error {
-	return multierr.Errors(e.err)
+	if errs, ok := e.err.(errors.ErrorGroup); ok {
+		return errs.Errors()
+	}
+	return nil
 }
 
 const (
