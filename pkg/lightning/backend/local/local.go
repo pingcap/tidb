@@ -897,17 +897,11 @@ func (local *Backend) prepareAndSendJob(
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
-	lfTotalSize, lfLength := engine.KVStatistics()
 	log.FromContext(ctx).Info("import engine ranges", zap.Int("len(regionSplitKeyCnt)", len(regionSplitKeys)))
 
 	// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 	// the table when table is created.
-	needSplit := len(regionSplitKeys) > 2 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeyCnt
-	// split region by given ranges
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-		needSplit = true
-	})
-	if needSplit {
+	if len(regionSplitKeys) > 0 {
 		var err error
 		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
 		backOffTime := 10 * time.Second
@@ -1319,24 +1313,26 @@ func (local *Backend) ImportEngine(
 		return nil
 	}
 
-	// split sorted file into range about regionSplitSize per file
-	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
+	// now the engine has data, we should do some preparation for the key range of
+	// this import
+	// TODO(lance6716): use errgroup to spawn goroutine
+	startKey, endKey, err := e.GetKeyRange()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-
-	if len(splitKeys) > 0 && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
-		log.FromContext(ctx).Info("pause pd scheduler of table scope")
+	if len(startKey) > 0 {
+		startKey = codec.EncodeBytes(nil, startKey)
+	}
+	if len(endKey) > 0 {
+		endKey = codec.EncodeBytes(nil, endKey)
+	}
+	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		log.FromContext(ctx).Info("pause pd scheduler of table scope",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		var startKey, endKey []byte
-		if len(splitKeys[0]) > 0 {
-			startKey = codec.EncodeBytes(nil, splitKeys[0])
-		}
-		if len(splitKeys[len(splitKeys)-1]) > 0 {
-			endKey = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
-		}
 		done, err := pdutil.PauseSchedulersByKeyRange(subCtx, local.pdHTTPCli, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
@@ -1346,15 +1342,14 @@ func (local *Backend) ImportEngine(
 			<-done
 		}()
 	}
-
-	if len(splitKeys) > 0 && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
 		log.FromContext(ctx).Info("switch import mode of ranges",
-			zap.String("startKey", hex.EncodeToString(splitKeys[0])),
-			zap.String("endKey", hex.EncodeToString(splitKeys[len(splitKeys)-1])))
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)))
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
 
-		done, err := local.switchModeBySplitKeys(subCtx, splitKeys)
+		done, err := local.switchModeBySplitKeys(subCtx, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1364,9 +1359,15 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
+	// split sorted file into range about regionSplitSize per file
+	splitKeys, err := getRegionSplitKeys(ctx, e, regionSplitSize, regionSplitKeys)
+	if err != nil {
+		return err
+	}
+
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)+1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
@@ -1675,17 +1676,14 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 // notify the caller that the background goroutine is exited.
 func (local *Backend) switchModeBySplitKeys(
 	ctx context.Context,
-	splitKeys [][]byte,
+	encodedStartKey, encodedEndKey []byte,
 ) (<-chan struct{}, error) {
 	switcher := NewTiKVModeSwitcher(local.tls.TLSConfig(), local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
-	keyRange := &sst.Range{}
-	if len(splitKeys[0]) > 0 {
-		keyRange.Start = codec.EncodeBytes(nil, splitKeys[0])
-	}
-	if len(splitKeys[len(splitKeys)-1]) > 0 {
-		keyRange.End = codec.EncodeBytes(nil, splitKeys[len(splitKeys)-1])
+	keyRange := &sst.Range{
+		Start: encodedStartKey,
+		End:   encodedEndKey,
 	}
 
 	go func() {

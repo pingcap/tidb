@@ -32,13 +32,15 @@ type Engine interface {
 	ID() string
 	// LoadIngestData sends DataAndRanges to outCh.
 	LoadIngestData(ctx context.Context, outCh chan<- DataAndRanges) error
-	// KVStatistics returns the total kv size and total kv count.
+	// KVStatistics returns the total kv size and total kv count. If the total KV
+	// size is 0, it means the engine is empty.
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.
 	ImportedStatistics() (importedKVSize int64, importedKVCount int64)
 	// GetKeyRange returns the key range [startKey, endKey) of the engine. If the
 	// duplicate detection is enabled, the keys in engine are encoded by duplicate
 	// detection but the returned keys should not be encoded.
+	// TODO(lance6716): assert for startKey and endKey has non-zero length.
 	GetKeyRange() (startKey []byte, endKey []byte, err error)
 	// GetRegionSplitKeys checks the KV distribution of the Engine and returns the
 	// keys that can be used as region split keys. If the duplicate detection is
