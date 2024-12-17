@@ -181,7 +181,6 @@ set global innodb_default_row_format = dynamic;
 set global innodb_default_row_format = 'dynamic';
 SHOW VARIABLES LIKE 'innodb_default_row_format';
 SHOW VARIABLES LIKE 'character_set_server';
-SHOW VARIABLES LIKE 'innodb_file_format';
 
 # TestIfNullParamMarker
 drop table if exists t;
