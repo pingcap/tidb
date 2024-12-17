@@ -602,10 +602,10 @@ func buildPartitionString(partitions []time.Time) string {
 
 func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit, tbl *repositoryTable,
 	sess sessionctx.Context, partitions []time.Time) {
-	createSql, err := buildCreateQuery(ctx, sess, tbl)
+	createSQL, err := buildCreateQuery(ctx, sess, tbl)
 	require.NoError(t, err)
-	createSql += buildPartitionString(partitions)
-	tk.MustExec(createSql)
+	createSQL += buildPartitionString(partitions)
+	tk.MustExec(createSQL)
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
 }
 
