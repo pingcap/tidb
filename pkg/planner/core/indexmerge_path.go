@@ -148,15 +148,39 @@ func generateNormalIndexPartialPath(
 			needSelection = true
 		}
 	}
-	partialPath := accessPathsForConds(ds, pushedDownCNFItems,  []*util.AccessPath{candidatePath})
-	if len(partialPath) != 1 {
+	itemPaths := accessPathsForConds(ds, pushedDownCNFItems, []*util.AccessPath{candidatePath})
+	if len(itemPaths) != 1 {
+		// for this dnf item, we couldn't generate an index merge partial path.
+		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
+		// the entire index merge is not valid anymore.
+		return nil, false
+	}
+	partialPath := buildIndexMergePartialPath(itemPaths)
+	if partialPath == nil {
 		// for this dnf item, we couldn't generate an index merge partial path.
 		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
 		// the entire index merge is not valid anymore.
 		return nil, false
 	}
 
-	return partialPath[0], needSelection
+	// identify whether all pushedDownCNFItems are fully used.
+	// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+	if len(partialPath.TableFilters) > 0 {
+		needSelection = true
+		partialPath.TableFilters = nil
+	}
+	// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+	if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
+		needSelection = true
+		// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+		partialPath.IndexFilters = nil
+	}
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
+		needSelection = true
+	}
+
+	return partialPath, needSelection
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
