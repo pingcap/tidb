@@ -367,7 +367,7 @@ func TestBothEncrypted(t *testing.T) {
 	kit := NewLogBackupKit(t)
 	createSimpleTableWithData(kit)
 
-	keyContent, err := hex.DecodeString("0ae31c060ff933cabe842430e1716185cc9c6b5cdde8e56976afaff41b92528f")
+	keyContent, err := hex.DecodeString("319b4a104651746f1bf1ad67c9ba7d635d8c4769b03f3e5c63f1da93891ce4f9")
 	require.NoError(t, err)
 	keyFile := kit.tempFile("KEY", keyContent)
 
