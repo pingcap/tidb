@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -123,9 +124,7 @@ func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 		zap.String("jobID", t.JobID),
 		zap.Int64("scanID", t.ScanID),
 		zap.Int64("tableID", t.TableID),
-		zap.String("db", t.tbl.Schema.O),
-		zap.String("table", t.tbl.Name.O),
-		zap.String("partition", t.tbl.Partition.O),
+		zap.String("table", t.tbl.FullName()),
 	)
 }
 
@@ -175,7 +174,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		rawSess.Close()
 	}()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
+	now := rawSess.Now()
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, now)
 	if err != nil {
 		return t.result(err)
 	}
@@ -191,7 +191,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
+		return t.result(errors.Errorf(
+			"current expire time is after safe expire time. (%d > %d, expire expr: %s %s, now: %d, nowTZ: %s)",
+			t.ExpireTime.Unix(), safeExpire.Unix(),
+			t.tbl.TTLInfo.IntervalExprStr, ast.TimeUnitType(t.tbl.TTLInfo.IntervalTimeUnit).String(),
+			now.Unix(), now.Location().String(),
+		))
 	}
 
 	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
@@ -277,6 +282,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		}
 
 		delTask := &ttlDeleteTask{
+			jobID:      t.JobID,
+			scanID:     t.ScanID,
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
 			rows:       lastResult,
