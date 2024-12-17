@@ -1419,9 +1419,9 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	// load the id maps only when the checkpoint mode is used and not the first execution
-	newTask := true
+	currentIdMapSaved := false
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
-		newTask = false
+		currentIdMapSaved = true
 	}
 
 	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
@@ -1432,7 +1432,7 @@ func restoreStream(
 	// get the schemas ID replace information.
 	// since targeted full backup storage, need to use the full backup cipher
 	tableMappingManager, err := client.BuildTableMappingManager(ctx, &logclient.BuildTableMappingManagerConfig{
-		IsNewTask:         newTask,
+		CurrentIdMapSaved: currentIdMapSaved,
 		TableFilter:       cfg.TableFilter,
 		FullBackupStorage: fullBackupStorage,
 		CipherInfo:        &cfg.Config.CipherInfo,

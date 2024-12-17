@@ -891,8 +891,8 @@ type FullBackupStorageConfig struct {
 
 type BuildTableMappingManagerConfig struct {
 	// required
-	IsNewTask   bool
-	TableFilter filter.Filter
+	CurrentIdMapSaved bool
+	TableFilter       filter.Filter
 
 	// optional
 	FullBackupStorage *FullBackupStorageConfig
@@ -958,20 +958,24 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 }
 
 // BuildTableMappingManager builds the table mapping manager. It reads the full backup storage to get the full backup
-// table info to initialize the manager, or it loads the saved mapping from last time of run.
+// table info to initialize the manager, or it reads the id map from previous task,
+// or it loads the saved mapping from last time of run of the same task.
 func (rc *LogClient) BuildTableMappingManager(
 	ctx context.Context,
 	cfg *BuildTableMappingManagerConfig,
 ) (*stream.TableMappingManager, error) {
 	var (
-		err        error
-		dbMaps     []*backuppb.PitrDBMap
-		dbReplaces map[stream.UpstreamID]*stream.DBReplace
+		err    error
+		dbMaps []*backuppb.PitrDBMap
+		// the id map doesn't need to construct only when it is not the first execution
+		needConstructIdMap bool
+		dbReplaces         map[stream.UpstreamID]*stream.DBReplace
 	)
 
-	// not new task, load schemas map from external storage
-	if !cfg.IsNewTask {
-		log.Info("try to load pitr id maps")
+	// this is a retry, id map saved last time, load it from external storage
+	if cfg.CurrentIdMapSaved {
+		log.Info("try to load previously saved pitr id maps")
+		needConstructIdMap = false
 		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -982,6 +986,7 @@ func (rc *LogClient) BuildTableMappingManager(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		needConstructIdMap = true
 		dbMaps, err = rc.initSchemasMap(ctx, rc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -998,9 +1003,9 @@ func (rc *LogClient) BuildTableMappingManager(
 		}
 	}
 
-	foundSavedIdMap := len(dbMaps) > 0
-	if !foundSavedIdMap {
+	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
+		needConstructIdMap = true
 		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1010,7 +1015,7 @@ func (rc *LogClient) BuildTableMappingManager(
 	}
 
 	for oldDBID, dbReplace := range dbReplaces {
-		log.Info("replace info", func() []zapcore.Field {
+		log.Info("base replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
 				zap.String("dbName", dbReplace.Name),
@@ -1028,8 +1033,8 @@ func (rc *LogClient) BuildTableMappingManager(
 
 	tableMappingManager := stream.NewTableMappingManager(dbReplaces, rc.GenGlobalID)
 
-	// not loaded from storage, need to iter meta kv and build and save the map
-	if !foundSavedIdMap {
+	// not loaded from previously saved, need to iter meta kv and build and save the map
+	if needConstructIdMap {
 		if err = rc.IterMetaKVToBuildAndSaveIdMap(ctx, tableMappingManager, cfg.Files); err != nil {
 			return nil, errors.Trace(err)
 		}
