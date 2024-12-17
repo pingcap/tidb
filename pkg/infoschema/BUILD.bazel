@@ -93,7 +93,7 @@ go_test(
     ],
     embed = [":infoschema"],
     flaky = True,
-    shard_count = 26,
+    shard_count = 27,
     deps = [
         "//pkg/ddl/placement",
         "//pkg/domain",
@@ -113,6 +113,7 @@ go_test(
         "//pkg/testkit/testutil",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/benchdaily",
         "//pkg/util/logutil",
         "//pkg/util/set",
         "//pkg/util/size",

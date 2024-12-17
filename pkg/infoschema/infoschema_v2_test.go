@@ -17,6 +17,7 @@ package infoschema
 import (
 	"context"
 	"math"
+	"strconv"
 	"testing"
 
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 
@@ -740,4 +742,39 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.True(t, dbItem.tomb)
+}
+
+func TestBenchDaily(t *testing.T) {
+	benchdaily.Run(
+		BenchmarkSearchByID_100,
+		BenchmarkSearchByID_1000,
+		BenchmarkSearchByID_10000,
+	)
+}
+
+func BenchmarkSearchByID_100(b *testing.B) {
+	benchmarkSearchByID(b, 100)
+}
+
+func BenchmarkSearchByID_1000(b *testing.B) {
+	benchmarkSearchByID(b, 1000)
+}
+
+func BenchmarkSearchByID_10000(b *testing.B) {
+	benchmarkSearchByID(b, 10000)
+}
+
+func benchmarkSearchByID(b *testing.B, tbls int) {
+	is := NewInfoSchemaV2(nil, nil, NewData())
+	is.schemaMetaVersion = 2
+
+	for i := 0; i < tbls; i++ {
+		is.Data.byID.Set(tableItem{pmodel.NewCIStr("test"), 0, pmodel.NewCIStr("t" + strconv.Itoa(i)), int64(i) + 1, 1, false})
+	}
+
+	b.ResetTimer()
+	targetID := int64(tbls / 2)
+	for i := 0; i < b.N; i++ {
+		is.searchTableItemByID(targetID)
+	}
 }

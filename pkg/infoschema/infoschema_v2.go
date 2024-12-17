@@ -553,12 +553,12 @@ func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error
 	}
 }
 
-func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (tableItem, bool) {
+func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b tableItem) bool) (tableItem, bool) {
 	var ok bool
 	var target tableItem
 	// Iterate through the btree, find the query item whose schema version is the largest one (latest).
 	bt.Descend(end, func(item tableItem) bool {
-		if !matchFn(&end, &item) {
+		if !matchFn(end, item) {
 			return false
 		}
 		if item.schemaVersion > schemaVersion {
@@ -595,7 +595,7 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 }
 
 func (is *infoschemaV2) searchTableItemByID(tableID int64) (tableItem, bool) {
-	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
+	eq := func(a, b tableItem) bool { return a.tableID == b.tableID }
 	return search(
 		is.byID,
 		is.infoSchema.schemaMetaVersion,
@@ -730,7 +730,7 @@ func IsSpecialDB(dbName string) bool {
 
 // EvictTable is exported for testing only.
 func (is *infoschemaV2) EvictTable(schema, tbl pmodel.CIStr) {
-	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
+	eq := func(a, b tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName, is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
 		return
