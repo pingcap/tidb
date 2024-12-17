@@ -112,7 +112,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var allJobs []trafficJob
+	allJobs := make([]trafficJob, 0, len(resps))
 	for addr, resp := range resps {
 		var jobs []trafficJob
 		if err := json.Unmarshal([]byte(resp), &jobs); err != nil {
