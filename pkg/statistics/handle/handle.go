@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -146,6 +147,14 @@ func NewHandle(
 		handle.StatsReadWriter,
 		handle,
 	)
+	if ddlNotifier != nil {
+		// In test environments, we use a channel-based approach to handle DDL events.
+		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+		// In production, DDL events are handled by the notifier system instead.
+		if !intest.InTest {
+			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.DDL.HandleDDLEvent)
+		}
+	}
 	return handle, nil
 }
 
@@ -197,12 +206,6 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	for len(h.DDLEventCh()) > 0 {
-		e := <-h.DDLEventCh()
-		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
-		}
-	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}

@@ -28,7 +28,7 @@ import (
 // UtilCleanBindingEnv cleans the binding environment.
 func UtilCleanBindingEnv(tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	dom.BindHandle().Clear()
+	dom.BindHandle().Reset()
 }
 
 // UtilNormalizeWithDefaultDB normalizes the SQL and returns the normalized SQL and its digest.
