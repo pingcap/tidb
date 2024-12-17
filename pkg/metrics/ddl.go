@@ -50,6 +50,12 @@ var (
 	WorkerFinishDDLJob      = "finish_job"
 	WorkerWaitSchemaChanged = "wait_schema_changed"
 	DDLWorkerHistogram      *prometheus.HistogramVec
+	IncrSchemaVersionOpHist prometheus.Observer
+	LockSchemaVersionOpHist prometheus.Observer
+	AsyncNotifyOpHist       prometheus.Observer
+	RunJobOpHist            prometheus.Observer
+	HandleJobDoneOpHist     prometheus.Observer
+	RunOneStepOpHist        prometheus.Observer
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -174,6 +180,13 @@ func InitDDLMetrics() {
 		Help:      "scan rate",
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
+
+	IncrSchemaVersionOpHist = DDLWorkerHistogram.WithLabelValues("incr_schema_version", "*", "*")
+	LockSchemaVersionOpHist = DDLWorkerHistogram.WithLabelValues("lock_schema_version", "*", "*")
+	AsyncNotifyOpHist = DDLWorkerHistogram.WithLabelValues("async_notify", "*", "*")
+	RunJobOpHist = DDLWorkerHistogram.WithLabelValues("run_job", "*", "*")
+	HandleJobDoneOpHist = DDLWorkerHistogram.WithLabelValues("handle_job_done", "*", "*")
+	RunOneStepOpHist = DDLWorkerHistogram.WithLabelValues("run_one_step", "*", "*")
 }
 
 // Label constants.

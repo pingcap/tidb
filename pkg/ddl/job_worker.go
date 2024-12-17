@@ -473,6 +473,10 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
+	start := time.Now()
+	defer func() {
+		metrics.HandleJobDoneOpHist.Observe(time.Since(start).Seconds())
+	}()
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -565,6 +569,10 @@ func (w *worker) transitOneJobStep(
 	}
 	failpoint.InjectCall("beforeRunOneJobStep", job)
 
+	start := time.Now()
+	defer func() {
+		metrics.RunOneStepOpHist.Observe(time.Since(start).Seconds())
+	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
@@ -788,7 +796,7 @@ func (w *worker) runOneJobStep(
 		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues("process_one_step", job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
 	if job.IsCancelling() {

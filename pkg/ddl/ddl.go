@@ -399,12 +399,16 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 	}
 	// TODO we can merge this txn into job transaction to avoid schema version
 	//  without differ.
+	start := time.Now()
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
+	defer func() {
+		metrics.IncrSchemaVersionOpHist.Observe(time.Since(start).Seconds())
+	}()
 	return schemaVersion, err
 }
 
@@ -414,7 +418,11 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
 	// if they are the same job.
 	if ownerID != jobID {
+		start := time.Now()
 		sv.schemaVersionMu.Lock()
+		defer func() {
+			metrics.LockSchemaVersionOpHist.Observe(time.Since(start).Seconds())
+		}()
 		sv.lockOwner.Store(jobID)
 	}
 	return nil
@@ -581,6 +589,10 @@ const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
 // give up notify and log it.
 // subJobID is used to identify the sub job in a merged ddl, such as create tables, should pass noSubJob(-1) if not a merged ddl.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
+	start := time.Now()
+	defer func() {
+		metrics.AsyncNotifyOpHist.Observe(time.Since(start).Seconds())
+	}()
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.

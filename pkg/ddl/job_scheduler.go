@@ -476,6 +476,10 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
 
 	s.wg.Run(func() {
+		start := time.Now()
+		defer func() {
+			metrics.RunJobOpHist.Observe(time.Since(start).Seconds())
+		}()
 		defer func() {
 			r := recover()
 			if r != nil {
