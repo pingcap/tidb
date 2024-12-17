@@ -71,6 +71,7 @@ func NewDiskRootImpl(path string) DiskRoot {
 // TrackerCountForTest is only used for test.
 var TrackerCountForTest = atomic.Int64{}
 
+// Add adds a tracker to disk root.
 func (d *diskRootImpl) Add(id int64, tracker UsageTracker) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -78,6 +79,7 @@ func (d *diskRootImpl) Add(id int64, tracker UsageTracker) {
 	TrackerCountForTest.Add(1)
 }
 
+// Remove removes a tracker from disk root.
 func (d *diskRootImpl) Remove(id int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -192,6 +194,7 @@ func RiskOfDiskFull(available, capacity uint64) bool {
 	return float64(available) < (1-capacityThreshold)*float64(capacity)
 }
 
+// CheckIngestLeakageForTest is only used in test.
 func CheckIngestLeakageForTest(exitCode int) {
 	if exitCode == 0 {
 		leakObj := ""
