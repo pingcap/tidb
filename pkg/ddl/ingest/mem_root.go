@@ -140,6 +140,6 @@ func (m *memRootImpl) ReleaseWithTag(tag string) {
 }
 
 // RefreshConsumption implements MemRoot.
-func (m *memRootImpl) RefreshConsumption() {
+func (*memRootImpl) RefreshConsumption() {
 	// TODO(tagnenta): find a better solution that don't rely on backendCtxMgr.
 }
