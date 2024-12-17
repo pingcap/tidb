@@ -47,6 +47,8 @@ filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
 gioui.org v0.0.0-20210308172011-57750fc8a0a6/go.mod h1:RSH6KIUZ0p2xy5zHDxgAM4zumjgTw83q2ge/PI+yyw8=
 git.sr.ht/~sbinet/gg v0.3.1/go.mod h1:KGYtlADtqsqANL9ueOFkWymvzUvLMQllU5Ixo+8v3pc=
+gitee.com/joccau/orc v0.0.0-20231201065950-efbd25e5a1f1 h1:e2mR/qBSrUi8oDwtRH8FA2QmgnHNhRJlKcFuN7euhMo=
+gitee.com/joccau/orc v0.0.0-20231201065950-efbd25e5a1f1/go.mod h1:2dpQvF1xymy2MALHDq+TPS//qOQs8ls4cPZb4oT/7n0=
 gitee.com/Trisia/gotlcp v1.3.18 h1:eVa41lAeNHsiT6uR/zWlY3dlqXVJ2aEqJ4qsQjfqAK8=
 gitee.com/Trisia/gotlcp v1.3.18/go.mod h1:neIy4hVQh598WBn2DwMlBuOE8E+SlW6z4GEfUfvww0o=
 github.com/Azure/azure-sdk-for-go/sdk/azcore v1.12.0 h1:1nGuui+4POelzDwI7RG56yfQJHCnKvwfMoU7VsEp+Zg=
@@ -745,6 +747,8 @@ github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 h1:GHRpF1pTW19a
 github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46/go.mod h1:uAQ5PCi+MFsC7HjREoAz1BU+Mq60+05gifQSsHSDG/8=
 github.com/sasha-s/go-deadlock v0.3.5 h1:tNCOEEDG6tBqrNDOX35j/7hL5FcFViG6awUGROb2NsU=
 github.com/sasha-s/go-deadlock v0.3.5/go.mod h1:bugP6EGbdGYObIlx7pUZtWqlvo8k9H6vCBBsiChJQ5U=
+github.com/scritchley/orc v0.0.0-20210513144143-06dddf1ad665 h1:W7Y6ejGhTaW9WlWhTtxE8f+SOa3c1NoFWsU9XT2cUOY=
+github.com/scritchley/orc v0.0.0-20210513144143-06dddf1ad665/go.mod h1:U4h1RViHcbDQl9stSaImdd7N3/ZnUkZ2yombj5cSgEY=
 github.com/segmentio/asm v1.2.0 h1:9BQrFxC+YOHJlTlHGkTrFWf59nbL3XnCoFLTwDCI7ys=
 github.com/segmentio/asm v1.2.0/go.mod h1:BqMnlJP91P8d+4ibuonYZw9mfnzI9HfxselHZr5aAcs=
 github.com/sergi/go-diff v1.0.0/go.mod h1:0CfEIISq7TuYL3j771MWULgwwjU+GofnZX9QAmXWZgo=

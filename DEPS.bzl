@@ -70,6 +70,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_gitee_joccau_orc",
+        build_file_proto_mode = "disable_global",
+        importpath = "gitee.com/joccau/orc",
+        sha256 = "ea6c89cc10e6af2c6ffdf426dd2999adc439b1e28cd4beff81a8087be29bc129",
+        strip_prefix = "gitee.com/joccau/orc@v0.0.0-20231201065950-efbd25e5a1f1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/gitee.com/joccau/orc/com_gitee_joccau_orc-v0.0.0-20231201065950-efbd25e5a1f1.zip",
+            "http://ats.apps.svc/gomod/gitee.com/joccau/orc/com_gitee_joccau_orc-v0.0.0-20231201065950-efbd25e5a1f1.zip",
+            "https://cache.hawkingrei.com/gomod/gitee.com/joccau/orc/com_gitee_joccau_orc-v0.0.0-20231201065950-efbd25e5a1f1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/gitee.com/joccau/orc/com_gitee_joccau_orc-v0.0.0-20231201065950-efbd25e5a1f1.zip",
+        ],
+    )
+    go_repository(
         name = "com_gitee_trisia_gotlcp",
         build_file_proto_mode = "disable_global",
         importpath = "gitee.com/Trisia/gotlcp",
@@ -6420,6 +6433,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/schollz/closestmatch/com_github_schollz_closestmatch-v2.1.0+incompatible.zip",
             "https://cache.hawkingrei.com/gomod/github.com/schollz/closestmatch/com_github_schollz_closestmatch-v2.1.0+incompatible.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/schollz/closestmatch/com_github_schollz_closestmatch-v2.1.0+incompatible.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_scritchley_orc",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/scritchley/orc",
+        sha256 = "c408dc34d42c0caabd900418e3144398e082aff9fc5f95cf55b1c58b2cf13f4e",
+        strip_prefix = "github.com/scritchley/orc@v0.0.0-20210513144143-06dddf1ad665",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/scritchley/orc/com_github_scritchley_orc-v0.0.0-20210513144143-06dddf1ad665.zip",
+            "http://ats.apps.svc/gomod/github.com/scritchley/orc/com_github_scritchley_orc-v0.0.0-20210513144143-06dddf1ad665.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/scritchley/orc/com_github_scritchley_orc-v0.0.0-20210513144143-06dddf1ad665.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/scritchley/orc/com_github_scritchley_orc-v0.0.0-20210513144143-06dddf1ad665.zip",
         ],
     )
     go_repository(

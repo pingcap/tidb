@@ -851,7 +851,7 @@ ChunkLoop:
 	for _, chunk := range cp.Chunks {
 		totalKVSize += chunk.Checksum.SumSize()
 		totalSQLSize += chunk.UnfinishedSize()
-		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet || chunk.FileMeta.Type == mydump.SourceTypeORC {
 			logKeyName = "read(rows)"
 		}
 	}

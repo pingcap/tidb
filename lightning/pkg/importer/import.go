@@ -1496,7 +1496,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 					for _, chunk := range eng.Chunks {
 						// for parquet files filesize is more accurate, we can calculate correct unfinished bytes unless
 						//  we set up the reader, so we directly use filesize here
-						if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+						if chunk.FileMeta.Type == mydump.SourceTypeParquet || chunk.FileMeta.Type == mydump.SourceTypeORC {
 							totalDataSizeToRestore += chunk.FileMeta.FileSize
 							if m, ok := metric.FromContext(ctx); ok {
 								m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(chunk.UnfinishedSize()))
