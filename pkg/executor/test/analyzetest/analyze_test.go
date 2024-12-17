@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -496,7 +497,8 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	statsHandle := domain.GetDomain(tk.Session().(sessionctx.Context)).StatsHandle()
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index index_a(a))")
-	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(statsHandle)
+	require.NoError(t, err)
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -2719,7 +2721,8 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
@@ -2836,7 +2839,8 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"index ij_binary((cast(j->'$.bin' as binary(50) array)))," +
 		"index ij_char((cast(j->'$.char' as char(50) array)))" +
 		")")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	jsonData := []map[string]any{
 		{
 			"signed":   []int64{1, 2, 300, 300, 0, 4, 5, -40000},
