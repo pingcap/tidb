@@ -89,8 +89,9 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 16,
+    shard_count = 17,
     deps = [
+        "//br/pkg/storage",
         "//pkg/ddl",
         "//pkg/disttask/framework/planner",
         "//pkg/disttask/framework/proto",
@@ -124,6 +125,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//:client",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
     ],
