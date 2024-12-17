@@ -3710,8 +3710,6 @@ const (
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
 	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
-	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
-	InnodbSupportXA = "innodb_support_xa"
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
 	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
 	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
