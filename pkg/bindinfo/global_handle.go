@@ -82,9 +82,6 @@ type GlobalBindingHandle interface {
 
 	// Methods for memory control.
 
-	// Size returns the size of bind info cache.
-	Size() int
-
 	// SetBindingCacheCapacity reset the capacity for the bindingCache.
 	SetBindingCacheCapacity(capacity int64)
 
@@ -93,12 +90,6 @@ type GlobalBindingHandle interface {
 
 	// GetMemCapacity returns the memory capacity for the bind cache.
 	GetMemCapacity() (memCapacity int64)
-
-	// Clear resets the bind handle. It is only used for test.
-	Clear()
-
-	// FlushGlobalBindings flushes the Bindings in temp maps to storage and loads them into cache.
-	FlushGlobalBindings() error
 
 	// Methods for Auto Capture.
 
@@ -215,7 +206,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
 			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
-			metrics.BindingCacheNumBindings.Set(float64(h.Size()))
+			metrics.BindingCacheNumBindings.Set(float64(len(h.getCache().GetAllBindings())))
 		}()
 
 		for _, row := range rows {
@@ -492,12 +483,6 @@ func (h *globalBindingHandle) AddInvalidGlobalBinding(invalidBinding Binding) {
 	h.invalidBindings.add(invalidBinding)
 }
 
-// Size returns the size of bind info cache.
-func (h *globalBindingHandle) Size() int {
-	size := len(h.getCache().GetAllBindings())
-	return size
-}
-
 // MatchGlobalBinding returns the matched binding for this statement.
 func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
 	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
@@ -660,19 +645,6 @@ func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
 
 func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
-}
-
-// Clear resets the bind handle. It is only used for test.
-func (h *globalBindingHandle) Clear() {
-	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
-	h.setLastUpdateTime(types.ZeroTimestamp)
-	h.invalidBindings.reset()
-}
-
-// FlushGlobalBindings flushes the Bindings in temp maps to storage and loads them into cache.
-func (h *globalBindingHandle) FlushGlobalBindings() error {
-	h.DropInvalidGlobalBinding()
-	return h.LoadFromStorageToCache(false)
 }
 
 func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
