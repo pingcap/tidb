@@ -464,7 +464,7 @@ func prepareZoneInfo(store kv.Storage) (bool, map[string]bool) {
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
 		return false, nil
-	} 
+	}
 	cache := tikvStore.GetRegionCache()
 	allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
 	for _, tiflashStore := range allTiFlashStores {
