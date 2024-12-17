@@ -18,6 +18,7 @@ go_library(
         "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/util/intest",
+        "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_pingcap_failpoint//:failpoint",
     ],
 )

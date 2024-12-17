@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -633,7 +634,8 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(b))")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 
 	statsJSONFromOldVersion := `{

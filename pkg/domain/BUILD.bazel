@@ -96,6 +96,7 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/syncutil",
+        "//pkg/workloadbasedlearning",
         "@com_github_burntsushi_toml//:toml",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
