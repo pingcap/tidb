@@ -431,7 +431,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -452,6 +452,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		rangeJobKeys = append(rangeJobKeys, startKey)
 		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
 		rangeJobKeys = append(rangeJobKeys, endKey)
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
