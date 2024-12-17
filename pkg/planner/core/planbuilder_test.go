@@ -882,24 +882,37 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 }
 
 func TestTraffic(t *testing.T) {
-	sqls := []string{
-		"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
-		"traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
-		"show traffic jobs",
-		"cancel traffic jobs",
+	tests := []struct {
+		sql  string
+		cols int
+	}{
+		{
+			sql: "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+		},
+		{
+			sql: "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+		},
+		{
+			sql:  "show traffic jobs",
+			cols: 7,
+		},
+		{
+			sql: "cancel traffic jobs",
+		},
 	}
 
 	parser := parser.New()
 	sctx := MockContext()
 	ctx := context.TODO()
 	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	for _, sql := range sqls {
-		stmt, err := parser.ParseOneStmt(sql, "", "")
+	for _, test := range tests {
+		stmt, err := parser.ParseOneStmt(test.sql, "", "")
 		require.NoError(t, err)
 		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
 		require.NoError(t, err)
-		_, ok := p.(*Traffic)
+		traffic, ok := p.(*Traffic)
 		require.True(t, ok)
+		require.Equal(t, test.cols, len(traffic.names))
 	}
 }
 
