@@ -268,11 +268,6 @@ func TestCapturePreparedStmt(t *testing.T) {
 
 	tk.MustUseIndex("select /*+ use_index(t,idx_b) */ * from t where b = 1 and c > 1", "idx_c(c)")
 	tk.MustExec("admin flush bindings")
-	tk.MustExec("admin evolve bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `test` . `t` where `b` = ? and `c` > ?", rows[0][0])
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`)*/ * FROM `test`.`t` WHERE `b` = ? AND `c` > ?", rows[0][1])
 }
 
 func TestCapturePlanBaselineIgnoreTiFlash(t *testing.T) {

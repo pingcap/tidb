@@ -1366,7 +1366,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
