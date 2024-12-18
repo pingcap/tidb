@@ -35,8 +35,10 @@ go_test(
     shard_count = 3,
     deps = [
         "//pkg/parser/model",
+        "//pkg/store/mockstore",
         "//pkg/testkit",
         "@com_github_pingcap_kvproto//pkg/autoid",
+        "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_etcd_go_etcd_tests_v3//integration",

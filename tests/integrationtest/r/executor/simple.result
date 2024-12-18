@@ -153,6 +153,9 @@ create user test_all;
 set default role all to test_all;
 drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
+SHOW GRANTS FOR 'testflush'@'localhost';
+Grants for testflush@localhost
+GRANT USAGE ON *.* TO 'testflush'@'localhost'
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 Error 1142 (42000): SELECT command denied to user 'testflush'@'localhost' for table 'user'

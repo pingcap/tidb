@@ -1537,7 +1537,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "goroutine scheduler lattency",
+          "title": "goroutine scheduler latency",
           "tooltip": {
             "msResolution": false,
             "shared": true,

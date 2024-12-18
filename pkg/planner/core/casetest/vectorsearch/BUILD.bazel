@@ -21,6 +21,7 @@ go_test(
         "//pkg/planner/core/base",
         "//pkg/planner/core/resolve",
         "//pkg/session",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testdata",

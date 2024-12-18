@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -83,13 +84,14 @@ func TestTiFlashANNIndex(t *testing.T) {
 			('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
 			('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')
 	`)
-	for i := 0; i < 14; i++ {
+	for i := 0; i < 4; i++ {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t1")
 	handle := dom.StatsHandle()
-	require.NoError(t, handle.HandleDDLEvent(<-handle.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(handle)
+	require.NoError(t, err)
 	tk.MustExec("analyze table t1")
 
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")

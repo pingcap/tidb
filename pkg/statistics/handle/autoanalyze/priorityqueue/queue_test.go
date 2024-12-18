@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -642,7 +643,8 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	tk.MustExec("drop table t1")
 	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
 	require.NotNil(t, deleteEvent)
-	require.NoError(t, handle.HandleDDLEvent(deleteEvent))
+	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
+	require.NoError(t, err)
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
 	// Make sure handle.Get() returns false.

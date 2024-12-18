@@ -65,6 +65,54 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
+// cacheOfBatchUpdate is a cache for batch update the stats cache.
+// We should not insert a item based on a item which we get from the cache long time ago.
+// It may cause the cache to be inconsistent.
+// The item should be quickly modified and inserted back to the cache.
+type cacheOfBatchUpdate struct {
+	op        func(toUpdate []*statistics.Table, toDelete []int64)
+	toUpdate  []*statistics.Table
+	toDelete  []int64
+	batchSize int
+}
+
+const batchSizeOfUpdateBatch = 10
+
+func (t *cacheOfBatchUpdate) internalFlush() {
+	t.op(t.toUpdate, t.toDelete)
+	t.toUpdate = t.toUpdate[:0]
+	t.toDelete = t.toDelete[:0]
+}
+
+func (t *cacheOfBatchUpdate) addToUpdate(table *statistics.Table) {
+	if len(t.toUpdate) == t.batchSize {
+		t.internalFlush()
+	}
+	t.toUpdate = append(t.toUpdate, table)
+}
+
+func (t *cacheOfBatchUpdate) addToDelete(tableID int64) {
+	if len(t.toDelete) == t.batchSize {
+		t.internalFlush()
+	}
+	t.toDelete = append(t.toDelete, tableID)
+}
+
+func (t *cacheOfBatchUpdate) flush() {
+	if len(t.toUpdate) > 0 || len(t.toDelete) > 0 {
+		t.internalFlush()
+	}
+}
+
+func newCacheOfBatchUpdate(batchSize int, op func(toUpdate []*statistics.Table, toDelete []int64)) cacheOfBatchUpdate {
+	return cacheOfBatchUpdate{
+		op:        op,
+		toUpdate:  make([]*statistics.Table, 0, batchSize),
+		toDelete:  make([]int64, 0, batchSize),
+		batchSize: batchSize,
+	}
+}
+
 // Update reads stats meta from store and updates the stats map.
 func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
 	start := time.Now()
@@ -100,8 +148,15 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		return errors.Trace(err)
 	}
 
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
+	tblToUpdateOrDelete := newCacheOfBatchUpdate(batchSizeOfUpdateBatch, func(toUpdate []*statistics.Table, toDelete []int64) {
+		s.UpdateStatsCache(types.CacheUpdate{
+			Updated: toUpdate,
+			Deleted: toDelete,
+			Options: types.UpdateOptions{
+				SkipMoveForward: skipMoveForwardStatsCache,
+			},
+		})
+	})
 
 	for _, row := range rows {
 		version := row.GetUint64(0)
@@ -122,7 +177,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 				"unknown physical ID in stats meta table, maybe it has been dropped",
 				zap.Int64("ID", physicalID),
 			)
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
 		tableInfo := table.Meta()
@@ -148,7 +203,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			continue
 		}
 		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, physicalID)
+			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
 		tbl.Version = version
@@ -165,16 +220,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
 			tbl.LastAnalyzeVersion = snapshot
 		}
-		tables = append(tables, tbl)
+		tblToUpdateOrDelete.addToUpdate(tbl)
 	}
 
-	s.UpdateStatsCache(types.CacheUpdate{
-		Updated: tables,
-		Deleted: deletedTableIDs,
-		Options: types.UpdateOptions{
-			SkipMoveForward: skipMoveForwardStatsCache,
-		},
-	})
+	tblToUpdateOrDelete.flush()
 	dur := time.Since(start)
 	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil

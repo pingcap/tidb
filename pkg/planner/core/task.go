@@ -46,13 +46,13 @@ import (
 // Currently this only applies to Vector data types and their functions. The HeavyFunctionOptimize
 // eliminate the usage of the function in TopN operators to avoid vector distance re-calculation
 // of TopN in the root task.
-var HeavyFunctionNameMap = map[string]bool{
-	"vec_cosine_distance":        true,
-	"vec_l1_distance":            true,
-	"vec_l2_distance":            true,
-	"vec_negative_inner_product": true,
-	"vec_dims":                   true,
-	"vec_l2_norm":                true,
+var HeavyFunctionNameMap = map[string]struct{}{
+	"vec_cosine_distance":        {},
+	"vec_l1_distance":            {},
+	"vec_l2_distance":            {},
+	"vec_negative_inner_product": {},
+	"vec_dims":                   {},
+	"vec_l2_norm":                {},
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
