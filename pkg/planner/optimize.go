@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cascades/old"
@@ -320,8 +319,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
-				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, pctx, scope, binding)
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
 				continue
 			}
 			if cost < minCost {
@@ -583,20 +581,6 @@ func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resol
 		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
 	}
 	return p, nil
-}
-
-func handleInvalidBinding(ctx context.Context, sctx planctx.PlanContext, level string, binding bindinfo.Binding) {
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding([]string{binding.SQLDigest})
-	if err != nil {
-		logutil.Logger(ctx).Info("drop session bindings failed")
-	}
-	if level == metrics.ScopeSession {
-		return
-	}
-
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
 // setVarHintChecker checks whether the variable name in set_var hint is valid.

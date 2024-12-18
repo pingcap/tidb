@@ -3326,6 +3326,19 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	return cols.col2Schema(), cols.names
 }
 
+func buildShowTrafficJobsSchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(7)
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "INSTANCE", mysql.TypeVarchar, 256))
+	schema.Append(buildColumnWithName("", "TYPE", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "PROGRESS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "STATUS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "FAIL_REASON", mysql.TypeVarchar, 256))
+
+	return schema.col2Schema(), schema.names
+}
+
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -5825,11 +5838,15 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 }
 
 func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
-	return &Traffic{
+	p := &Traffic{
 		OpType:  pc.OpType,
 		Options: pc.Options,
 		Dir:     pc.Dir,
 	}
+	if pc.OpType == ast.TrafficOpShow {
+		p.setSchemaAndNames(buildShowTrafficJobsSchema())
+	}
+	return p
 }
 
 // buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.
