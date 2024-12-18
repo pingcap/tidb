@@ -559,10 +559,9 @@ type basicCopRuntimeStats struct {
 	// executor consume time, including open, next, and close time.
 	consume int64
 	// executor return row count.
-	rows       int64
-	threads    int32
-	totalTasks int32
-	procTimes  Percentile[Duration]
+	rows      int64
+	threads   int32
+	procTimes Percentile[Duration]
 	// executor extra infos
 	tiflashScanContext *TiFlashScanContext
 	tiflashWaitSummary *TiFlashWaitSummary
@@ -717,12 +716,11 @@ func (e *basicCopRuntimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats := &basicCopRuntimeStats{
-		loop:       e.loop,
-		consume:    e.consume,
-		rows:       e.rows,
-		threads:    e.threads,
-		totalTasks: e.totalTasks,
-		procTimes:  e.procTimes,
+		loop:      e.loop,
+		consume:   e.consume,
+		rows:      e.rows,
+		threads:   e.threads,
+		procTimes: e.procTimes,
 	}
 	if e.tiflashScanContext != nil {
 		stats.tiflashScanContext = e.tiflashScanContext.Clone()
@@ -743,7 +741,6 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.consume += tmp.consume
 	e.rows += tmp.rows
 	e.threads += tmp.threads
-	e.totalTasks += tmp.totalTasks
 	if tmp.procTimes.Size() == 0 {
 		e.procTimes.Add(Duration(tmp.consume))
 	} else {
@@ -769,7 +766,6 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 	e.consume += (int64(*summary.TimeProcessedNs))
 	e.rows += (int64(*summary.NumProducedRows))
 	e.threads += int32(summary.GetConcurrency())
-	e.totalTasks++
 	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
 	if tiflashScanContext := summary.GetTiflashScanContext(); tiflashScanContext != nil {
 		var regionsOfInstance map[string]uint64
@@ -866,13 +862,13 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 }
 
 // GetActRows return total rows of CopRuntimeStats.
-func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
+func (crs *CopRuntimeStats) GetActRows() int64 {
 	return crs.stats.rows
 }
 
 // GetTasks return total tasks of CopRuntimeStats
-func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
-	return crs.stats.totalTasks
+func (crs *CopRuntimeStats) GetTasks() int32 {
+	return int32(len(crs.stats.procTimes.values))
 }
 
 func (crs *CopRuntimeStats) String() string {
@@ -882,7 +878,7 @@ func (crs *CopRuntimeStats) String() string {
 
 	procTimes := crs.stats.procTimes
 	totalTime := time.Duration(crs.stats.consume)
-	totalTasks := crs.stats.totalTasks
+	totalTasks := len(crs.stats.procTimes.values)
 	totalLoops := crs.stats.loop
 	totalThreads := crs.stats.threads
 	totalTiFlashScanContext := crs.stats.tiflashScanContext
