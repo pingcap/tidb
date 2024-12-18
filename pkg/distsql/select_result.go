@@ -511,7 +511,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
-			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		if ci, ok := r.resp.(copr.CopInfo); ok {
