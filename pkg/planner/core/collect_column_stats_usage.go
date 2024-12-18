@@ -326,7 +326,6 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
-	map[int64][][]*expression.Column,
 ) {
 	if strings.HasPrefix(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b") {
 		fmt.Println(1)
@@ -336,5 +335,5 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.tableID2ColGroups
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
 }

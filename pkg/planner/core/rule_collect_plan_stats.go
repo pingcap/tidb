@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -51,7 +50,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	if strings.HasPrefix(plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select count(1) from t1 group by a, b") {
 		fmt.Println(1)
 	}
-	predicateColumns, visitedPhysTblIDs, tid2pids, tableID2ColGroups := CollectColumnStatsUsage(plan, histNeeded)
+	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
@@ -83,7 +82,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, tableID2ColGroups)
+	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
 	if len(histNeededItems) > 0 {
@@ -373,7 +372,6 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]*model.TableInfo, neededIte
 func collectSyncIndices(ctx base.PlanContext,
 	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]*model.TableInfo,
-	tableID2ColGroups map[int64][][]*expression.Column,
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
@@ -405,47 +403,6 @@ func collectSyncIndices(ctx base.PlanContext,
 					continue
 				}
 				histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
-			}
-		}
-	}
-	// require for composite index for group ndv
-	for tid, groups := range tableID2ColGroups {
-		tbl := tblID2Tbl[tid]
-		if tbl == nil {
-			continue
-		}
-		for _, group := range groups {
-			// for each index
-			for _, idx := range tbl.Indices {
-				if idx.State != model.StatePublic {
-					continue
-				}
-				// for each column inside group
-				groupMatch := true
-				for _, column := range group {
-					colName := tbl.FindColumnNameByID(column.ID)
-					if colName == "" {
-						groupMatch = false
-						break
-					}
-					idxCol := idx.FindColumnByName(colName)
-					if idxCol == nil {
-						groupMatch = false
-						break
-					}
-				}
-				if groupMatch {
-					idxID := idx.ID
-					tblStats := stats.GetTableStats(tbl)
-					if tblStats == nil || tblStats.Pseudo {
-						continue
-					}
-					_, loadNeeded := tblStats.IndexIsLoadNeeded(idxID)
-					if !loadNeeded {
-						continue
-					}
-					histNeededIndices[model.TableItemID{TableID: tid, ID: idxID, IsIndex: true}] = struct{}{}
-				}
 			}
 		}
 	}
