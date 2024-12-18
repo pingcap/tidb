@@ -46,7 +46,7 @@ type InfoCache struct {
 	firstKnownSchemaVersion int64
 
 	lastCheckVersion int64
-	lastCheckTime time.Time
+	lastCheckTime    time.Time
 }
 
 type schemaAndTimestamp struct {
