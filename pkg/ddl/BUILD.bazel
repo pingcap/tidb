@@ -349,6 +349,7 @@ go_test(
         "//pkg/util/sem",
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",
+        "@com_github_coreos_go_semver//semver",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

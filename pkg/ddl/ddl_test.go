@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/tidb/pkg/ddl/testargsv1"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -463,6 +464,28 @@ func TestMergeContinuousKeyRanges(t *testing.T) {
 	}
 }
 
+func TestMayConvertFromEEVersion(t *testing.T) {
+	testcases := []struct {
+		input    string
+		expected string
+	}{
+		{"7.1.8-5", "8.5.0"},
+		{"7.1.7-5", "7.5.0"},
+
+		{"7.1.8-5.0", "8.5.0"},
+		{"7.1.8-5.1", "8.5.1"},
+
+		{"7.1.8-5.0-alpha", "8.5.0-alpha"},
+		{"7.1.8-5.1-20300102", "8.5.1-20300102"},
+		{"7.1.8-5.0-20300102-abcdefg", "8.5.0-20300102-abcdefg"},
+	}
+	for _, tc := range testcases {
+		ver := semver.New(tc.input)
+		ver = mayConvertFromEEVersion(ver)
+		require.Equal(t, tc.expected, ver.String(), "input: %s, expected: %s, actual: %s", tc.input, tc.expected, ver.String())
+	}
+}
+
 func TestDetectAndUpdateJobVersion(t *testing.T) {
 	d := &ddl{ddlCtx: &ddlCtx{ctx: context.Background()}}
 
@@ -500,7 +523,8 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 	t.Run("all support v2, even with pre-release label", func(t *testing.T) {
 		reset()
 		mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0-alpha-228-g650888fea7-dirty",
-			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta")
+			"8.0.11-TiDB-v8.4.1", "8.0.11-TiDB-8.5.0-beta",
+			"8.0.11-TiDB-7.1.8-5.0", "8.0.11-TiDB-7.1.8-5.1", "8.0.11-TiDB-7.1.8-5.0-dirty", "8.0.11-TiDB-7.1.8-5.0-beta")
 		d.detectAndUpdateJobVersion()
 		require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 	})
@@ -531,18 +555,22 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 				mockGetAllServerInfo(t, "8.0.11-TiDB-8.3.0")
 			} else if iterateCnt == 4 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
-				// upgrade case
-				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0")
+				// less than 8.4.0
+				mockGetAllServerInfo(t, "8.0.11-TiDB-7.1.7-5.3")
 			} else if iterateCnt == 5 {
 				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
+				// upgrade case
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.3.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v7.1.8-5.0")
+			} else if iterateCnt == 6 {
+				require.Equal(t, model.JobVersion1, model.GetJobVerInUse())
 				// upgrade done
-				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0")
+				mockGetAllServerInfo(t, "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v8.4.0", "8.0.11-TiDB-v7.1.8-5.0")
 			} else {
 				require.Equal(t, model.JobVersion2, model.GetJobVerInUse())
 			}
 		})
 		d.detectAndUpdateJobVersion()
 		d.wg.Wait()
-		require.EqualValues(t, 6, iterateCnt)
+		require.EqualValues(t, 7, iterateCnt)
 	})
 }

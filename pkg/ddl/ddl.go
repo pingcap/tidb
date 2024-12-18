@@ -92,7 +92,30 @@ const (
 var (
 	jobV2FirstVer        = *semver.New("8.4.0")
 	detectJobVerInterval = 10 * time.Second
+	eeVersions           = map[string]string{
+		"7.1.8-5": "8.5",
+		"7.1.7-5": "7.5",
+	}
 )
+
+func mayConvertFromEEVersion(ver *semver.Version) *semver.Version {
+	strVer := ver.String()
+	for eeVersion, version := range eeVersions {
+		if strings.HasPrefix(strVer, eeVersion) {
+			newVersion := strings.Replace(strVer, eeVersion, version, 1)
+			if newVersion == version {
+				// Add the patch version
+				newVersion += ".0"
+			}
+			newVer, err := semver.NewVersion(newVersion)
+			if err == nil {
+				return newVer
+			}
+		}
+	}
+	// no one match, just return the original one
+	return ver
+}
 
 // StartMode is an enum type for the start mode of the DDL.
 type StartMode string
@@ -928,6 +951,9 @@ func (d *ddl) detectAndUpdateJobVersionOnce() error {
 			logutil.SampleLogger().Warn("parse server version failed", zap.String("version", info.Version),
 				zap.String("err", err2.Error()))
 			break
+		}
+		if string(ver.PreRelease) != "" {
+			ver = mayConvertFromEEVersion(ver)
 		}
 		// sem-ver also compares pre-release labels, but we don't need to consider
 		// them here, so we clear them.

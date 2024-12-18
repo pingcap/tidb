@@ -46,7 +46,7 @@ GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../...
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
-TIDB_EDITION    ?= Community
+TIDB_EDITION    ?= Enterprise
 
 # Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
 ifneq "$(TIDB_EDITION)" "Community"

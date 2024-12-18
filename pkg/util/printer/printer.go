@@ -40,6 +40,8 @@ func PrintTiDBInfo() {
 		zap.String("Release Version", mysql.TiDBReleaseVersion),
 		zap.String("Edition", versioninfo.TiDBEdition),
 		zap.String("Git Commit Hash", versioninfo.TiDBGitHash),
+		zap.String("Git TiDB Enterprise Utilities Commit Hash", versioninfo.TiDBEnterpriseUtilitiesGitHash),
+		zap.String("Git TiDB Security Advanced Commit Hash", versioninfo.TiDBSecurityAdvancedGitHash),
 		zap.String("Git Branch", versioninfo.TiDBGitBranch),
 		zap.String("UTC Build Time", versioninfo.TiDBBuildTS),
 		zap.String("GoVersion", buildVersion),
@@ -66,6 +68,8 @@ func GetTiDBInfo() string {
 	return fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
+		"Git TiDB Enterprise Utilities Commit Hash: %s\n"+
+		"Git TiDB Security Advanced Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
 		"UTC Build Time: %s\n"+
 		"GoVersion: %s\n"+
@@ -76,6 +80,8 @@ func GetTiDBInfo() string {
 		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
+		versioninfo.TiDBEnterpriseUtilitiesGitHash,
+		versioninfo.TiDBSecurityAdvancedGitHash,
 		versioninfo.TiDBGitBranch,
 		versioninfo.TiDBBuildTS,
 		buildVersion,
