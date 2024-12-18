@@ -34,7 +34,7 @@ go_test(
     ],
     embed = [":notifier"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//pkg/ddl",
         "//pkg/ddl/session",
@@ -47,5 +47,6 @@ go_test(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
