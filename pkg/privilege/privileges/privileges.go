@@ -317,22 +317,6 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
-// GetEncodedPassword implements the Manager interface.
-func (p *UserPrivileges) GetEncodedPassword(ctx context.Context, user, host string) string {
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
-	mysqlPriv := p.Handle.Get()
-	record := mysqlPriv.connectionVerification(user, host)
-	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
-			zap.String("user", user), zap.String("host", host))
-		return ""
-	}
-	if p.isValidHash(record) {
-		return record.AuthenticationString
-	}
-	return ""
-}
-
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
 	if SkipWithGrant {

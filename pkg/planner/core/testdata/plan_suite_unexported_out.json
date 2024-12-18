@@ -856,12 +856,12 @@
         "Right": "[]"
       },
       {
-        "Plan": "Join{DataScan(t1)->DataScan(t2)}->Projection",
+        "Plan": "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->Projection",
         "Left": "[]",
         "Right": "[]"
       },
       {
-        "Plan": "Join{DataScan(t1)->DataScan(t2)}->Projection",
+        "Plan": "Join{DataScan(t1)->DataScan(t2)}(test.t.e,test.t.e)->Projection",
         "Left": "[]",
         "Right": "[]"
       },
