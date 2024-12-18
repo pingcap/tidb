@@ -320,7 +320,7 @@ func (c *Constant) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 			return c.Value, err
 		}
 		if dt.IsNull() {
-			return types.NewDatum(nil), nil
+			return dt, nil
 		}
 		if c.DeferredExpr != nil {
 			if dt.Kind() != types.KindMysqlDecimal {
