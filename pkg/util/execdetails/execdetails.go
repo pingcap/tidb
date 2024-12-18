@@ -28,6 +28,7 @@ import (
 
 	"github.com/influxdata/tdigest"
 	"github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -553,7 +554,7 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 }
 
 type basicCopRuntimeStats struct {
-	storeType string
+	storeType kv.StoreType
 	BasicRuntimeStats
 	threads    int32
 	totalTasks int32
@@ -687,15 +688,26 @@ func (p *Percentile[valueType]) Sum() float64 {
 
 // String implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) String() string {
-	if e.storeType == "tiflash" {
+	buf := bytes.NewBuffer(make([]byte, 0, 16))
+	buf.WriteString("time:")
+	buf.WriteString(FormatDuration(time.Duration(e.consume.Load())))
+	buf.WriteString(", loops:")
+	buf.WriteString(strconv.Itoa(int(e.loop.Load())))
+	if e.storeType == kv.TiFlash {
+		buf.WriteString(", threads:")
+		buf.WriteString(strconv.Itoa(int(e.threads)))
+		buf.WriteString(", ")
 		if e.tiflashScanContext != nil && e.tiflashWaitSummary != nil {
 			if e.tiflashWaitSummary.CanBeIgnored() {
-				return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashScanContext.String())
+				buf.WriteString(e.tiflashScanContext.String())
+			} else {
+				buf.WriteString(e.tiflashWaitSummary.String())
+				buf.WriteString(", ")
+				buf.WriteString(e.tiflashScanContext.String())
 			}
-			return fmt.Sprintf("time:%v, loops:%d, threads:%d, %s, %s", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load(), e.threads, e.tiflashWaitSummary.String(), e.tiflashScanContext.String())
 		}
 	}
-	return fmt.Sprintf("time:%v, loops:%d", FormatDuration(time.Duration(e.consume.Load())), e.loop.Load())
+	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
@@ -836,8 +848,7 @@ type CopRuntimeStats struct {
 	stats      map[string]*basicCopRuntimeStats
 	scanDetail *util.ScanDetail
 	timeDetail *util.TimeDetail
-	// do not use kv.StoreType because it will meet cycle import error
-	storeType string
+	storeType  kv.StoreType
 	sync.Mutex
 }
 
@@ -901,30 +912,51 @@ func (crs *CopRuntimeStats) String() string {
 
 	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalTiFlashScanContext, totalTiFlashWaitSummary := crs.MergeBasicStats()
 	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
-	isTiFlashCop := crs.storeType == "tiflash"
+	isTiFlashCop := crs.storeType == kv.TiFlash
 
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
 		printTiFlashSpecificInfo := func() {
 			if isTiFlashCop {
-				fmt.Fprintf(buf, ", threads:%d}", totalThreads)
+				buf.WriteString(", ")
+				buf.WriteString("threads:")
+				buf.WriteString(strconv.Itoa(int(totalThreads)))
+				buf.WriteString("}")
 				if !totalTiFlashWaitSummary.CanBeIgnored() {
-					buf.WriteString(", " + totalTiFlashWaitSummary.String())
+					buf.WriteString(", ")
+					buf.WriteString(totalTiFlashWaitSummary.String())
 				}
 				if !totalTiFlashScanContext.Empty() {
-					buf.WriteString(", " + totalTiFlashScanContext.String())
+					buf.WriteString(", ")
+					buf.WriteString(totalTiFlashScanContext.String())
 				}
 			} else {
 				buf.WriteString("}")
 			}
 		}
 		if totalTasks == 1 {
-			fmt.Fprintf(buf, "%v_task:{time:%v, loops:%d", crs.storeType, FormatDuration(time.Duration(procTimes.GetPercentile(0))), totalLoops)
+			buf.WriteString(crs.storeType.Name())
+			buf.WriteString("_task:{time:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0))))
+			buf.WriteString(", loops:")
+			buf.WriteString(strconv.Itoa(int(totalLoops)))
 			printTiFlashSpecificInfo()
 		} else {
-			fmt.Fprintf(buf, "%v_task:{proc max:%v, min:%v, avg: %v, p80:%v, p95:%v, iters:%v, tasks:%v",
-				crs.storeType, FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())), FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())), FormatDuration(avgTime),
-				FormatDuration(time.Duration(procTimes.GetPercentile(0.8))), FormatDuration(time.Duration(procTimes.GetPercentile(0.95))), totalLoops, totalTasks)
+			buf.WriteString(crs.storeType.Name())
+			buf.WriteString("_task:{proc max:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())))
+			buf.WriteString(", min:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())))
+			buf.WriteString(", avg: ")
+			buf.WriteString(FormatDuration(avgTime))
+			buf.WriteString(", p80:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.8))))
+			buf.WriteString(", p95:")
+			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.95))))
+			buf.WriteString(", iters:")
+			buf.WriteString(strconv.Itoa(int(totalLoops)))
+			buf.WriteString(", tasks:")
+			buf.WriteString(strconv.Itoa(int(totalTasks)))
 			printTiFlashSpecificInfo()
 		}
 	}
@@ -1468,11 +1500,16 @@ func (e *BasicRuntimeStats) String() string {
 	totalTime := e.consume.Load()
 	openTime := e.open.Load()
 	closeTime := e.close.Load()
-	str.WriteString(fmt.Sprintf("%stime:", timePrefix))
+	str.WriteString(timePrefix)
+	str.WriteString("time:")
 	str.WriteString(FormatDuration(time.Duration(totalTime)))
-	str.WriteString(fmt.Sprintf(", %sopen:", timePrefix))
+	str.WriteString(", ")
+	str.WriteString(timePrefix)
+	str.WriteString("open:")
 	str.WriteString(FormatDuration(time.Duration(openTime)))
-	str.WriteString(fmt.Sprintf(", %sclose:", timePrefix))
+	str.WriteString(", ")
+	str.WriteString(timePrefix)
+	str.WriteString("close:")
 	str.WriteString(FormatDuration(time.Duration(closeTime)))
 	str.WriteString(", loops:")
 	str.WriteString(strconv.FormatInt(int64(e.loop.Load()), 10))
@@ -1596,7 +1633,7 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 }
 
 // GetOrCreateCopStats gets the CopRuntimeStats specified by planID, if not exists a new one will be created.
-func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType string) *CopRuntimeStats {
+func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType kv.StoreType) *CopRuntimeStats {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -1623,7 +1660,7 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, address string, summary *tipb.ExecutorExecutionSummary) int {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, address string, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
 	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
@@ -1634,7 +1671,7 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType string, addres
 	return planID
 }
 
-func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType string, scan *util.ScanDetail, time *util.TimeDetail) {
+func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time *util.TimeDetail) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -1724,20 +1761,23 @@ func (e *RuntimeStatsWithConcurrencyInfo) Clone() RuntimeStats {
 
 // String implements the RuntimeStats interface.
 func (e *RuntimeStatsWithConcurrencyInfo) String() string {
-	var result string
+	buf := bytes.NewBuffer(make([]byte, 0, 8))
 	if len(e.concurrency) > 0 {
 		for i, concurrency := range e.concurrency {
 			if i > 0 {
-				result += ", "
+				buf.WriteString(", ")
 			}
 			if concurrency.concurrencyNum > 0 {
-				result += fmt.Sprintf("%s:%d", concurrency.concurrencyName, concurrency.concurrencyNum)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteByte(':')
+				buf.WriteString(strconv.Itoa(concurrency.concurrencyNum))
 			} else {
-				result += fmt.Sprintf("%s:OFF", concurrency.concurrencyName)
+				buf.WriteString(concurrency.concurrencyName)
+				buf.WriteString(":OFF")
 			}
 		}
 	}
-	return result
+	return buf.String()
 }
 
 // Merge implements the RuntimeStats interface.
@@ -1839,11 +1879,11 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(commitBackoffTime)))
 			if len(e.Commit.Mu.PrewriteBackoffTypes) > 0 {
 				buf.WriteString(", prewrite type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.PrewriteBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.PrewriteBackoffTypes)
 			}
 			if len(e.Commit.Mu.CommitBackoffTypes) > 0 {
 				buf.WriteString(", commit type: ")
-				buf.WriteString(e.formatBackoff(e.Commit.Mu.CommitBackoffTypes))
+				e.formatBackoff(buf, e.Commit.Mu.CommitBackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1921,7 +1961,7 @@ func (e *RuntimeStatsWithCommit) String() string {
 			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
 			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
 				buf.WriteString(", type: ")
-				buf.WriteString(e.formatBackoff(e.LockKeys.Mu.BackoffTypes))
+				e.formatBackoff(buf, e.LockKeys.Mu.BackoffTypes)
 			}
 			buf.WriteString("}")
 		}
@@ -1955,9 +1995,9 @@ func (e *RuntimeStatsWithCommit) String() string {
 	return buf.String()
 }
 
-func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
+func (*RuntimeStatsWithCommit) formatBackoff(buf *bytes.Buffer, backoffTypes []string) {
 	if len(backoffTypes) == 0 {
-		return ""
+		return
 	}
 	tpMap := make(map[string]struct{})
 	tpArray := []string{}
@@ -1970,7 +2010,14 @@ func (*RuntimeStatsWithCommit) formatBackoff(backoffTypes []string) string {
 		tpArray = append(tpArray, tpStr)
 	}
 	slices.Sort(tpArray)
-	return fmt.Sprintf("%v", tpArray)
+	buf.WriteByte('[')
+	for i, tp := range tpArray {
+		if i > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(tp)
+	}
+	buf.WriteByte(']')
 }
 
 // FormatDuration uses to format duration, this function will prune precision before format duration.
@@ -2036,7 +2083,10 @@ type RURuntimeStats struct {
 // String implements the RuntimeStats interface.
 func (e *RURuntimeStats) String() string {
 	if e.RUDetails != nil {
-		return fmt.Sprintf("RU:%f", e.RRU()+e.WRU())
+		buf := bytes.NewBuffer(make([]byte, 0, 8))
+		buf.WriteString("RU:")
+		buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))
+		return buf.String()
 	}
 	return ""
 }
