@@ -85,6 +85,9 @@ type DistSQLContext struct {
 	SessionAlias                string
 
 	ExecDetails *execdetails.SyncExecDetails
+
+	// Only one cop-reader can use lite worker. Using lite-worker in multiple readers will affect the concurrent execution of readers.
+	TryCopLiteWorker uint32
 }
 
 // AppendWarning appends the warning to the warning handler.

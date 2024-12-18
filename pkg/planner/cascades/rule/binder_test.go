@@ -239,7 +239,8 @@ func TestBinderMultiNext(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo()
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
 	mm.CopyIn(gE.Inputs[0], t3)
@@ -340,7 +341,8 @@ func TestBinderAny(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo()
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
 	mm.CopyIn(gE.Inputs[0], t3)
@@ -427,7 +429,8 @@ func TestBinderMultiAny(t *testing.T) {
 	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
 
 	mm := memo.NewMemo()
-	gE := mm.Init(join1)
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
 
 	// which means t1 and t3 are equivalent class.
 	mm.CopyIn(gE.Inputs[0], t3)

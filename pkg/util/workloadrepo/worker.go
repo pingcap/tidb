@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -334,6 +335,7 @@ func (w *worker) start() error {
 		return errors.New("etcd client required for workload repository")
 	}
 
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -352,6 +354,7 @@ func (w *worker) stop() {
 
 	w.cancel()
 	w.wg.Wait()
+	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(true)
 
 	if w.owner != nil {
 		w.owner.Close()

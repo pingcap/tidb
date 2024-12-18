@@ -18,7 +18,6 @@ import (
 	"container/list"
 	"context"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
@@ -28,7 +27,7 @@ import (
 type entry[K comparable, V any] struct {
 	key     K
 	value   V
-	visited atomic.Bool
+	visited bool
 	element *list.Element
 	size    uint64
 }
@@ -49,7 +48,7 @@ func (t *entry[K, V]) Size() uint64 {
 type Sieve[K comparable, V any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
-	mu     sync.RWMutex
+	mu     sync.Mutex
 	size   uint64
 	// capacity can be set to zero for disabling infoschema v2
 	capacity uint64
@@ -133,7 +132,7 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 
 	if e, ok := s.items[key]; ok {
 		e.value = value
-		e.visited.Store(true)
+		e.visited = true
 		return
 	}
 
@@ -157,13 +156,10 @@ func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
 		var v V
 		failpoint.Return(v, false)
 	})
-
-	s.mu.RLock()
-	e, ok := s.items[key]
-	s.mu.RUnlock()
-
-	if ok {
-		e.visited.Store(true)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.items[key]; ok {
+		e.visited = true
 		s.hook.onHit()
 		return e.value, true
 	}
@@ -258,8 +254,8 @@ func (s *Sieve[K, V]) evict() {
 		panic("sieve: evicting non-existent element")
 	}
 
-	for el.visited.Load() {
-		el.visited.Store(false)
+	for el.visited {
+		el.visited = false
 		o = o.Prev()
 		if o == nil {
 			o = s.ll.Back()
