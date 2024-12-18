@@ -47,8 +47,6 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 		return e.dropSQLBindByDigest()
 	case plannercore.OpFlushBindings:
 		return e.flushBindings()
-	case plannercore.OpCaptureBindings:
-		e.captureBindings()
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
 	case plannercore.OpSetBindingStatus:
@@ -58,7 +56,6 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
-	return nil
 }
 
 func (e *SQLBindExec) dropSQLBind() error {
@@ -158,10 +155,6 @@ func (e *SQLBindExec) createSQLBind() error {
 
 func (e *SQLBindExec) flushBindings() error {
 	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(false)
-}
-
-func (e *SQLBindExec) captureBindings() {
-	domain.GetDomain(e.Ctx()).BindHandle().CaptureBaselines()
 }
 
 func (e *SQLBindExec) reloadBindings() error {
