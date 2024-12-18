@@ -56,6 +56,11 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -521,6 +526,11 @@ error = '''
 check local storage resource error
 '''
 
+["Lightning:PreCheck:ErrCheckPDTiDBSameCluster"]
+error = '''
+check PD and TiDB in the same cluster error
+'''
+
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
 error = '''
 check table empty error
@@ -899,6 +909,11 @@ error = '''
 ["ddl:1350"]
 error = '''
 View's SELECT contains a '%s' clause
+'''
+
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
 '''
 
 ["ddl:1353"]
@@ -2166,6 +2181,11 @@ error = '''
 not implemented
 '''
 
+["kv:8178"]
+error = '''
+key is too large, the size of given key is %d
+'''
+
 ["kv:9007"]
 error = '''
 Write conflict, txnStartTS=%d, conflictStartTS=%d, conflictCommitTS=%d, key=%s%s%s%s, reason=%s [try again later]
@@ -2914,6 +2934,11 @@ Too many connections
 ["server:1045"]
 error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
+'''
+
+["server:1053"]
+error = '''
+Server shutdown in progress
 '''
 
 ["server:1148"]

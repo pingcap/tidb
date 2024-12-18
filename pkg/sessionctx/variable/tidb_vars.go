@@ -525,6 +525,9 @@ const (
 	// It can be: PRIORITY_LOW, PRIORITY_NORMAL, PRIORITY_HIGH
 	TiDBDDLReorgPriority = "tidb_ddl_reorg_priority"
 
+	// TiDBDDLReorgMaxWriteSpeed defines the max write limitation for the lightning local backend
+	TiDBDDLReorgMaxWriteSpeed = "tidb_ddl_reorg_max_write_speed"
+
 	// TiDBEnableAutoIncrementInGenerated disables the mysql compatibility check on using auto-incremented columns in
 	// expression indexes and generated columns described here https://dev.mysql.com/doc/refman/5.7/en/create-table-generated-columns.html for details.
 	TiDBEnableAutoIncrementInGenerated = "tidb_enable_auto_increment_in_generated"
@@ -1324,6 +1327,7 @@ const (
 	DefTiDBDDLReorgBatchSize                = 256
 	DefTiDBDDLFlashbackConcurrency          = 64
 	DefTiDBDDLErrorCountLimit               = 512
+	DefTiDBDDLReorgMaxWriteSpeed            = 0
 	DefTiDBMaxDeltaSchemaCount              = 1024
 	DefTiDBPlacementMode                    = PlacementModeStrict
 	DefTiDBEnableAutoIncrementInGenerated   = false
@@ -1440,8 +1444,10 @@ const (
 	DefTiDBSessionPlanCacheSize                       = 100
 	DefTiDBEnablePrepPlanCacheMemoryMonitor           = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio              = 0.1
+	DefTiDBEnableWorkloadBasedLearning                = false
+	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
-	DefTiDBEnableFastCreateTable                      = false
+	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
 	DefTiFlashFineGrainedShuffleStreamCount           = 0
@@ -1465,6 +1471,7 @@ const (
 	DefTiDBNonPreparedPlanCacheSize                   = 100
 	DefTiDBPlanCacheMaxPlanSize                       = 2 * size.MB
 	DefTiDBInstancePlanCacheMaxMemSize                = 100 * size.MB
+	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
 	MaxDDLReorgBatchSize                  int32  = 10240
@@ -1590,6 +1597,7 @@ var (
 	ddlFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
 	ddlErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
 	ddlReorgRowFormat       int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
 	maxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold                  = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
@@ -1621,11 +1629,13 @@ var (
 	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
-	DDLForce2Queue                      = atomic.NewBool(false)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                           = atomic.NewBool(false)
 	AutoAnalyzePartitionBatchSize       = atomic.NewInt64(DefTiDBAutoAnalyzePartitionBatchSize)
 	AutoAnalyzeConcurrency              = atomic.NewInt32(DefTiDBAutoAnalyzeConcurrency)
+	// TODO: set value by session variable
+	EnableWorkloadBasedLearning   = atomic.NewBool(DefTiDBEnableWorkloadBasedLearning)
+	WorkloadBasedLearningInterval = atomic.NewDuration(DefTiDBWorkloadBasedLearningInterval)
 	// EnableFastReorg indicates whether to use lightning to enhance DDL reorg performance.
 	EnableFastReorg = atomic.NewBool(DefTiDBEnableFastReorg)
 	// DDLDiskQuota is the temporary variable for set disk quota for lightning

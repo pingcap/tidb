@@ -325,14 +325,18 @@ func DecodeTableID(key kv.Key) int64 {
 
 // DecodeRowKey decodes the key and gets the handle.
 func DecodeRowKey(key kv.Key) (kv.Handle, error) {
-	if len(key) < RecordRowKeyLen || !hasTablePrefix(key) || !hasRecordPrefixSep(key[prefixLen-2:]) {
-		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", key)
+	// In the read path, remove the keyspace prefix
+	// to ensure compatibility with the key parsing implemented in the mock.
+	tempKey := rowcodec.RemoveKeyspacePrefix(key)
+
+	if len(tempKey) < RecordRowKeyLen || !hasTablePrefix(tempKey) || !hasRecordPrefixSep(tempKey[prefixLen-2:]) {
+		return kv.IntHandle(0), errInvalidKey.GenWithStack("invalid key - %q", tempKey)
 	}
-	if len(key) == RecordRowKeyLen {
-		u := binary.BigEndian.Uint64(key[prefixLen:])
+	if len(tempKey) == RecordRowKeyLen {
+		u := binary.BigEndian.Uint64(tempKey[prefixLen:])
 		return kv.IntHandle(codec.DecodeCmpUintToInt(u)), nil
 	}
-	return kv.NewCommonHandle(key[prefixLen:])
+	return kv.NewCommonHandle(tempKey[prefixLen:])
 }
 
 // EncodeValue encodes a go value to bytes.
@@ -832,7 +836,13 @@ func reEncodeHandleConsiderNewCollation(handle kv.Handle, columns []rowcodec.Col
 	if len(restoreData) == 0 {
 		return cHandleBytes, nil
 	}
-	return decodeRestoredValuesV5(columns, cHandleBytes, restoreData)
+	// Remove some extra columns(ID < 0), such like `model.ExtraPhysTblID`.
+	// They are not belong to common handle and no need to restore data.
+	idx := len(columns)
+	for idx > 0 && columns[idx-1].ID < 0 {
+		idx--
+	}
+	return decodeRestoredValuesV5(columns[:idx], cHandleBytes, restoreData)
 }
 
 func decodeRestoredValues(columns []rowcodec.ColInfo, restoredVal []byte) ([][]byte, error) {
@@ -946,7 +956,7 @@ func decodeIndexKvOldCollation(key, value []byte, hdStatus HandleStatus, buf []b
 		}
 	} else {
 		// In unique int handle index.
-		handle = decodeIntHandleInIndexValue(value)
+		handle = DecodeIntHandleInIndexValue(value)
 		resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1025,11 +1035,11 @@ func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
 // DecodeHandleInIndexValue decodes handle in unqiue index value.
 func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	if len(value) <= MaxOldEncodeValueLen {
-		return decodeIntHandleInIndexValue(value), nil
+		return DecodeIntHandleInIndexValue(value), nil
 	}
 	seg := SplitIndexValue(value)
 	if len(seg.IntHandle) != 0 {
-		handle = decodeIntHandleInIndexValue(seg.IntHandle)
+		handle = DecodeIntHandleInIndexValue(seg.IntHandle)
 	}
 	if len(seg.CommonHandle) != 0 {
 		handle, err = kv.NewCommonHandle(seg.CommonHandle)
@@ -1047,8 +1057,8 @@ func DecodeHandleInIndexValue(value []byte) (handle kv.Handle, err error) {
 	return handle, nil
 }
 
-// decodeIntHandleInIndexValue uses to decode index value as int handle id.
-func decodeIntHandleInIndexValue(data []byte) kv.Handle {
+// DecodeIntHandleInIndexValue uses to decode index value as int handle id.
+func DecodeIntHandleInIndexValue(data []byte) kv.Handle {
 	return kv.IntHandle(binary.BigEndian.Uint64(data))
 }
 
@@ -1307,7 +1317,7 @@ func (v TempIndexValue) FilterOverwritten() TempIndexValue {
 // A temp index value element is encoded as one of:
 //   - [flag 1 byte][value_length 2 bytes ] [value value_len bytes]   [key_version 1 byte] {distinct normal}
 //   - [flag 1 byte][value value_len bytes]                           [key_version 1 byte] {non-distinct normal}
-//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [key_version 1 byte] {distinct deleted}
+//   - [flag 1 byte][handle_length 2 bytes] [handle handle_len bytes] [partitionIdFlag 1 byte] [partitionID 8 bytes] [key_version 1 byte] {distinct deleted}
 //   - [flag 1 byte]                                                  [key_version 1 byte] {non-distinct deleted}
 type TempIndexValueElem struct {
 	Value    []byte
@@ -1315,7 +1325,23 @@ type TempIndexValueElem struct {
 	KeyVer   byte
 	Delete   bool
 	Distinct bool
+
+	// Global means it's a global Index, for partitioned tables. Currently only used in `distinct` + `deleted` scenarios.
+	Global bool
 }
+
+const (
+	// TempIndexKeyTypeNone means the key is not a temporary index key.
+	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeDelete indicates this value is written in the delete-only stage.
+	TempIndexKeyTypeDelete byte = 'd'
+	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
+	TempIndexKeyTypeBackfill byte = 'b'
+	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
+	TempIndexKeyTypeMerge byte = 'm'
+	// TempIndexKeyTypePartitionIDFlag indicates the following value is partition id.
+	TempIndexKeyTypePartitionIDFlag byte = 'p'
+)
 
 // Encode encodes the temp index value.
 func (v *TempIndexValueElem) Encode(buf []byte) []byte {
@@ -1331,13 +1357,21 @@ func (v *TempIndexValueElem) Encode(buf []byte) []byte {
 				hEncoded = handle.Encoded()
 				hLen = uint16(len(hEncoded))
 			}
-			// flag + handle length + handle + temp key version
+			// flag + handle length + handle + [partition id] + temp key version
 			if buf == nil {
-				buf = make([]byte, 0, hLen+4)
+				l := hLen + 4
+				if v.Global {
+					l += 9
+				}
+				buf = make([]byte, 0, l)
 			}
 			buf = append(buf, byte(TempIndexValueFlagDeleted))
 			buf = append(buf, byte(hLen>>8), byte(hLen))
 			buf = append(buf, hEncoded...)
+			if v.Global {
+				buf = append(buf, TempIndexKeyTypePartitionIDFlag)
+				buf = append(buf, codec.EncodeInt(nil, v.Handle.(kv.PartitionHandle).PartitionID)...)
+			}
 			buf = append(buf, v.KeyVer)
 			return buf
 		}
@@ -1410,11 +1444,21 @@ func (v *TempIndexValueElem) DecodeOne(b []byte) (remain []byte, err error) {
 		hLen := (uint16(b[0]) << 8) + uint16(b[1])
 		b = b[2:]
 		if hLen == idLen {
-			v.Handle = decodeIntHandleInIndexValue(b[:idLen])
+			v.Handle = DecodeIntHandleInIndexValue(b[:idLen])
 		} else {
 			v.Handle, _ = kv.NewCommonHandle(b[:hLen])
 		}
 		b = b[hLen:]
+		if b[0] == TempIndexKeyTypePartitionIDFlag {
+			v.Global = true
+			var pid int64
+			_, pid, err = codec.DecodeInt(b[1:9])
+			if err != nil {
+				return nil, err
+			}
+			v.Handle = kv.NewPartitionHandle(pid, v.Handle)
+			b = b[9:]
+		}
 		v.KeyVer = b[0]
 		b = b[1:]
 		v.Distinct = true
@@ -1871,7 +1915,7 @@ func decodeIndexKvGeneral(key, value []byte, colsLen int, hdStatus HandleStatus,
 
 	if segs.IntHandle != nil {
 		// In unique int handle index.
-		handle = decodeIntHandleInIndexValue(segs.IntHandle)
+		handle = DecodeIntHandleInIndexValue(segs.IntHandle)
 	} else if segs.CommonHandle != nil {
 		// In unique common handle index.
 		handle, err = decodeHandleInIndexKey(segs.CommonHandle)

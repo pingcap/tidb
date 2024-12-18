@@ -222,10 +222,8 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx().GetSessionVars().StmtCtx, e.Ctx().GetStore(), newSnapshotTS)
-		} else {
-			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
+		err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx().GetStore(), newSnapshotTS)
+		if name != variable.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.

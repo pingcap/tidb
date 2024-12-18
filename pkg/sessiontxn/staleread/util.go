@@ -67,15 +67,26 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 }
 
 // CalculateTsWithReadStaleness calculates the TsExpr for readStaleness duration
-func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
+func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, readStaleness time.Duration) (uint64, error) {
 	nowVal, err := expression.GetStmtTimestamp(sctx.GetExprCtx().GetEvalCtx())
 	if err != nil {
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
 	sc := sctx.GetSessionVars().StmtCtx
-	minTsVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
-	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
+	minSafeTSVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
+	calculatedTime := expression.CalAppropriateTime(tsVal, nowVal, minSafeTSVal)
+	readTS := oracle.GoTimeToTS(calculatedTime)
+	if calculatedTime.After(minSafeTSVal) {
+		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
+		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
+		// So in this case, do an extra check on it.
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return readTS, nil
 }
 
 // IsStmtStaleness indicates whether the current statement is staleness or not

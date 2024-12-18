@@ -15,6 +15,7 @@
 package types
 
 import (
+	"bytes"
 	"cmp"
 	gjson "encoding/json"
 	"fmt"
@@ -556,31 +557,37 @@ func (d *Datum) GetValue() any {
 // but truncated (for example, for strings, only first 64 bytes is printed).
 // This function is useful in contexts like EXPLAIN.
 func (d *Datum) TruncatedStringify() string {
-	const maxLen = 64
-
 	switch d.k {
 	case KindString, KindBytes:
-		str := d.GetString()
-		if len(str) > maxLen {
-			// This efficiently returns the truncated string without
-			// less possible allocations.
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetString())
 	case KindMysqlJSON:
-		// For now we can only stringify then truncate.
-		str := d.GetMysqlJSON().String()
-		if len(str) > maxLen {
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetMysqlJSON().String())
 	case KindVectorFloat32:
 		// Vector supports native efficient truncation.
 		return d.GetVectorFloat32().TruncatedString()
+	case KindInt64:
+		return strconv.FormatInt(d.GetInt64(), 10)
+	case KindUint64:
+		return strconv.FormatUint(d.GetUint64(), 10)
 	default:
 		// For other types, no truncation is needed.
 		return fmt.Sprintf("%v", d.GetValue())
 	}
+}
+
+func truncateStringIfNeeded(str string) string {
+	const maxLen = 64
+	if len(str) > maxLen {
+		const suffix = "...(len:"
+		lenStr := strconv.Itoa(len(str))
+		buf := bytes.NewBuffer(make([]byte, 0, maxLen+len(suffix)+len(lenStr)+1))
+		buf.WriteString(str[:maxLen])
+		buf.WriteString(suffix)
+		buf.WriteString(lenStr)
+		buf.WriteByte(')')
+		return buf.String()
+	}
+	return str
 }
 
 // SetValueWithDefaultCollation sets any kind of value.
@@ -1705,38 +1712,13 @@ func (d *Datum) ConvertToMysqlYear(ctx Context, target *FieldType) (Datum, error
 	return ret, errors.Trace(err)
 }
 
-func (d *Datum) convertStringToMysqlBit(ctx Context) (uint64, error) {
-	bitStr, err := ParseBitStr(BinaryLiteral(d.b).ToString())
-	if err != nil {
-		// It cannot be converted to bit type, so we need to convert it to int type.
-		return BinaryLiteral(d.b).ToInt(ctx)
-	}
-	return bitStr.ToInt(ctx)
-}
-
 func (d *Datum) convertToMysqlBit(ctx Context, target *FieldType) (Datum, error) {
 	var ret Datum
 	var uintValue uint64
 	var err error
 	switch d.k {
-	case KindBytes:
+	case KindString, KindBytes:
 		uintValue, err = BinaryLiteral(d.b).ToInt(ctx)
-	case KindString:
-		// For single bit value, we take string like "true", "1" as 1, and "false", "0" as 0,
-		// this behavior is not documented in MySQL, but it behaves so, for more information, see issue #18681
-		s := BinaryLiteral(d.b).ToString()
-		if target.GetFlen() == 1 {
-			switch strings.ToLower(s) {
-			case "true", "1":
-				uintValue = 1
-			case "false", "0":
-				uintValue = 0
-			default:
-				uintValue, err = d.convertStringToMysqlBit(ctx)
-			}
-		} else {
-			uintValue, err = d.convertStringToMysqlBit(ctx)
-		}
 	case KindInt64:
 		// if input kind is int64 (signed), when trans to bit, we need to treat it as unsigned
 		d.k = KindUint64

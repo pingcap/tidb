@@ -194,7 +194,6 @@ func appendToSubJobs(m *model.MultiSchemaInfo, jobW *JobWrapper) error {
 		Revertible:  true,
 		CtxVars:     jobW.CtxVars,
 		ReorgTp:     reorgTp,
-		UseCloud:    false,
 	})
 	return nil
 }

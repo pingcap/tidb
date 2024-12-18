@@ -165,7 +165,7 @@
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a",
-        "Best": "LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)->Sort"
+        "Best": "IndexJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.a)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a order by t1.a limit 1",

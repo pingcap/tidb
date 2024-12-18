@@ -396,7 +396,7 @@ func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
 
 	cfg := util.NewTestConfig()
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true

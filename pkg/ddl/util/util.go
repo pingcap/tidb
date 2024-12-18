@@ -49,7 +49,7 @@ const (
 	completeDeleteMultiRangesSQL = `DELETE FROM mysql.gc_delete_range WHERE job_id = %?`
 	updateDeleteRangeSQL         = `UPDATE mysql.gc_delete_range SET start_key = %? WHERE job_id = %? AND element_id = %? AND start_key = %?`
 	deleteDoneRecordSQL          = `DELETE FROM mysql.gc_delete_range_done WHERE job_id = %? AND element_id = %?`
-	loadGlobalVars               = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
+	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 	// KeyOpDefaultTimeout is the default timeout for each key operation.
 	KeyOpDefaultTimeout = 2 * time.Second
 	// KeyOpRetryInterval is the interval between two key operations.
@@ -187,20 +187,20 @@ func UpdateDeleteRange(sctx sessionctx.Context, dr DelRangeTask, newStartKey, ol
 func LoadDDLReorgVars(ctx context.Context, sctx sessionctx.Context) error {
 	// close issue #21391
 	// variable.TiDBRowFormatVersion is used to encode the new row for column type change.
-	return LoadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
+	return loadGlobalVars(ctx, sctx, []string{variable.TiDBDDLReorgWorkerCount, variable.TiDBDDLReorgBatchSize, variable.TiDBRowFormatVersion})
 }
 
 // LoadDDLVars loads ddl variable from mysql.global_variables.
 func LoadDDLVars(ctx sessionctx.Context) error {
-	return LoadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
+	return loadGlobalVars(context.Background(), ctx, []string{variable.TiDBDDLErrorCountLimit})
 }
 
-// LoadGlobalVars loads global variable from mysql.global_variables.
-func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
+// loadGlobalVars loads global variable from mysql.global_variables.
+func loadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []string) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	e := sctx.GetRestrictedSQLExecutor()
 	var buf strings.Builder
-	buf.WriteString(loadGlobalVars)
+	buf.WriteString(loadGlobalVarsSQL)
 	paramNames := make([]any, 0, len(varNames))
 	for i, name := range varNames {
 		if i > 0 {

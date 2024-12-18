@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -106,7 +106,7 @@ func (ss *Schemas) BackupSchemas(
 		}
 
 		var checksum *checkpoint.ChecksumItem
-		var exists bool = false
+		var exists = false
 		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
@@ -145,7 +145,7 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("calculate-take", calculateCost))
+							zap.Duration("TimeTaken", calculateCost))
 					}
 				}
 				if statsHandle != nil {

@@ -16,6 +16,7 @@ package util
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
@@ -100,4 +101,10 @@ func contextDone(ctx context.Context, err error) error {
 	}
 
 	return nil
+}
+
+// FormatLeaseID formats lease id to hex string as what etcdctl does.
+// see https://github.com/etcd-io/etcd/blob/995027f5c1363404e86f7a858ea2833df01f0954/etcdctl/ctlv3/command/printer_simple.go#L118
+func FormatLeaseID(id clientv3.LeaseID) string {
+	return fmt.Sprintf("%016x", id)
 }

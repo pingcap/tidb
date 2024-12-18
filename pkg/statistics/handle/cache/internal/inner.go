@@ -41,4 +41,6 @@ type StatsCacheInner interface {
 	SetCapacity(int64)
 	// Close stops the cache
 	Close()
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }

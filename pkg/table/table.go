@@ -202,7 +202,7 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
-	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt}
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
 // GetCreateIdxOpt creates a CreateIdxOpt.

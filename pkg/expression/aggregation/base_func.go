@@ -64,11 +64,14 @@ func (a *baseFuncDesc) Hash64(h base.Hasher) {
 
 // Equals implements the base.Equals interface.
 func (a *baseFuncDesc) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	a2, ok := other.(*baseFuncDesc)
 	if !ok {
+		return false
+	}
+	if a == nil {
+		return a2 == nil
+	}
+	if a2 == nil {
 		return false
 	}
 	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))

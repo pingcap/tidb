@@ -29,7 +29,7 @@ import (
 
 // LogicalUnionAll represents LogicalUnionAll plan.
 type LogicalUnionAll struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 }
 
 // Init initializes LogicalUnionAll.

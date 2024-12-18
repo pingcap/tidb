@@ -640,25 +640,25 @@ func TestSwapColumn(t *testing.T) {
 	checkRef()
 
 	// swap two chunk's columns
-	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
+	require.NoError(t, chk1.swapColumn(0, chk2, 0))
 	checkRef()
 
-	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
+	require.NoError(t, chk1.swapColumn(0, chk2, 0))
 	checkRef()
 
 	// swap reference and referenced columns
-	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
+	require.NoError(t, chk2.swapColumn(1, chk2, 0))
 	checkRef()
 
 	// swap the same column in the same chunk
-	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
+	require.NoError(t, chk2.swapColumn(1, chk2, 1))
 	checkRef()
 
 	// swap reference and another column
-	require.NoError(t, chk2.SwapColumn(1, chk2, 2))
+	require.NoError(t, chk2.swapColumn(1, chk2, 2))
 	checkRef()
 
-	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
+	require.NoError(t, chk2.swapColumn(2, chk2, 0))
 	checkRef()
 }
 

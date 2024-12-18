@@ -254,6 +254,21 @@ type tikvStore struct {
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
 	codec     tikv.Codec
+	opts      sync.Map
+}
+
+// GetOption wraps around sync.Map.
+func (s *tikvStore) GetOption(k any) (any, bool) {
+	return s.opts.Load(k)
+}
+
+// SetOption wraps around sync.Map.
+func (s *tikvStore) SetOption(k, v any) {
+	if v == nil {
+		s.opts.Delete(k)
+	} else {
+		s.opts.Store(k, v)
+	}
 }
 
 // Name gets the name of the storage engine

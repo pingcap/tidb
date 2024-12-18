@@ -185,7 +185,7 @@ func TestMockTargetInfoBasic(t *testing.T) {
 			RowCount: 100,
 		},
 	)
-	tblInfos, err := ti.FetchRemoteTableModels(ctx, "testdb")
+	tblInfos, err := ti.FetchRemoteTableModels(ctx, "testdb", []string{"testtbl1", "testtbl2"})
 	require.NoError(t, err)
 	require.Equal(t, 2, len(tblInfos))
 	for _, tblInfo := range tblInfos {

@@ -21,6 +21,7 @@
 //go:generate go run generator/other_vec.go
 //go:generate go run generator/string_vec.go
 //go:generate go run generator/time_vec.go
+//go:generate go run generator/builtin_threadsafe.go
 
 package expression
 
@@ -57,7 +58,18 @@ type baseBuiltinFunc struct {
 	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
 
+	safeToShareAcrossSessionFlag uint32 // 0 not-initialized, 1 safe, 2 unsafe
+
 	collationInfo
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+// SafeToShareAcrossSession implements the builtinFunc interface.
+func (*baseBuiltinFunc) SafeToShareAcrossSession() bool {
+	return false
 }
 
 func (b *baseBuiltinFunc) PbCode() tipb.ScalarFuncSig {
@@ -530,6 +542,7 @@ type vecBuiltinFunc interface {
 type builtinFunc interface {
 	expropt.RequireOptionalEvalProps
 	vecBuiltinFunc
+	SafeToShareAcrossSession
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)

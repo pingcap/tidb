@@ -139,9 +139,9 @@ func TestDeleteIgnoreWithFK(t *testing.T) {
 	tk.MustExec("insert into child2 values (1)")
 	require.NotNil(t, tk.ExecToErr("delete from parent, parent2 using parent inner join parent2 where parent.a = parent2.a"))
 	tk.MustExec("delete ignore from parent, parent2 using parent inner join parent2 where parent.a = parent2.a")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))",
-		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent2` (`a`))"))
+	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
+		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent2` (`a`))",
+		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
 	tk.MustQuery("select * from parent").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from parent2").Check(testkit.Rows("1"))
 

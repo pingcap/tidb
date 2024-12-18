@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"slices"
 	"testing"
 	"time"
 
@@ -109,6 +108,7 @@ func TestSleep(t *testing.T) {
 	// non-strict model
 	var levels errctx.LevelMap
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
@@ -129,6 +129,7 @@ func TestSleep(t *testing.T) {
 
 	// for error case under the strict model
 	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelError
 	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
@@ -658,43 +659,4 @@ func TestOptionalProp(t *testing.T) {
 	evalSuit := NewEvaluatorSuite([]Expression{fe, fe2}, false)
 	require.Equal(t, exprctx.OptPropCurrentUser.AsPropKeySet()|exprctx.OptPropDDLOwnerInfo.AsPropKeySet()|
 		exprctx.OptPropAdvisoryLock.AsPropKeySet(), evalSuit.RequiredOptionalEvalProps())
-}
-
-func TestMergeInputIdxToOutputIdxes(t *testing.T) {
-	ctx := createContext(t)
-	inputIdxToOutputIdxes := make(map[int][]int)
-	// input 0th should be column referred as 0th and 1st in output columns.
-	inputIdxToOutputIdxes[0] = []int{0, 1}
-	// input 1th should be column referred as 2nd and 3rd in output columns.
-	inputIdxToOutputIdxes[1] = []int{2, 3}
-	columnEval := columnEvaluator{inputIdxToOutputIdxes: inputIdxToOutputIdxes}
-
-	input := chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
-	input.AppendInt64(0, 99)
-	// input chunk's 0th and 1st are column referred itself.
-	input.MakeRef(0, 1)
-
-	// chunk:     col1 <---(ref) col2
-	// ____________/ \___________/  \___
-	// proj:  col1   col2     col3   col4
-	//
-	// original case after inputIdxToOutputIdxes[0], the original col2 will be nil pointer
-	// cause consecutive col3,col4 ref projection are invalid.
-	//
-	// after fix, the new inputIdxToOutputIdxes should be: inputIdxToOutputIdxes[0]: {0, 1, 2, 3}
-
-	output := chunk.NewEmptyChunk([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)})
-
-	err := columnEval.run(ctx, input, output)
-	require.NoError(t, err)
-	// all four columns are column-referred, pointing to the first one.
-	require.Equal(t, output.Column(0), output.Column(1))
-	require.Equal(t, output.Column(1), output.Column(2))
-	require.Equal(t, output.Column(2), output.Column(3))
-	require.Equal(t, output.GetRow(0).GetInt64(0), int64(99))
-
-	require.Equal(t, len(*columnEval.mergedInputIdxToOutputIdxes.Load()), 1)
-	slices.Sort((*columnEval.mergedInputIdxToOutputIdxes.Load())[0])
-	require.Equal(t, (*columnEval.mergedInputIdxToOutputIdxes.Load())[0], []int{0, 1, 2, 3})
 }

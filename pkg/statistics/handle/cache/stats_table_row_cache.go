@@ -239,28 +239,27 @@ func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHi
 
 // GetDataAndIndexLength gets the data and index length of the table.
 func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (dataLength, indexLength uint64) {
-	columnLength := make(map[string]uint64, len(info.Columns))
-	for _, col := range info.Columns {
+	columnLength := make([]uint64, len(info.Columns))
+	for i, col := range info.Columns {
 		if col.State != model.StatePublic {
 			continue
 		}
-		length := col.FieldType.StorageLength()
-		if length != types.VarStorageLen {
-			columnLength[col.Name.L] = rowCount * uint64(length)
+		var length uint64
+		if storageLen := col.FieldType.StorageLength(); storageLen != types.VarStorageLen {
+			length = rowCount * uint64(storageLen)
 		} else {
-			length := c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
-			columnLength[col.Name.L] = length
+			length = c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
 		}
-	}
-	for _, length := range columnLength {
 		dataLength += length
+		columnLength[i] = length
 	}
+
 	for _, idx := range info.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
 		if info.GetPartitionInfo() != nil {
-			// Global indexes calcuated in table level.
+			// Global indexes calculated in table level.
 			if idx.Global && info.ID != physicalID {
 				continue
 			}
@@ -271,7 +270,7 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 		}
 		for _, col := range idx.Columns {
 			if col.Length == types.UnspecifiedLength {
-				indexLength += columnLength[col.Name.L]
+				indexLength += columnLength[col.Offset]
 			} else {
 				indexLength += rowCount * uint64(col.Length)
 			}

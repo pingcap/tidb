@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
 // TableLockType is the type of the table lock.
@@ -255,6 +256,26 @@ func (r ReferOptionType) String() string {
 type CIStr struct {
 	O string `json:"O"` // Original string.
 	L string `json:"L"` // Lower case string.
+}
+
+// Hash64 implements HashEquals interface.
+func (cis *CIStr) Hash64(h types.IHasher) {
+	h.HashString(cis.L)
+}
+
+// Equals implements HashEquals interface.
+func (cis *CIStr) Equals(other any) bool {
+	cis2, ok := other.(*CIStr)
+	if !ok {
+		return false
+	}
+	if cis == nil {
+		return cis2 == nil
+	}
+	if cis2 == nil {
+		return false
+	}
+	return cis.L == cis2.L
 }
 
 // String implements fmt.Stringer interface.

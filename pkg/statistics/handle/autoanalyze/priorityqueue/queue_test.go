@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -167,21 +169,37 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.Len(t, runningJobs, 2)
 }
 
-func TestProcessDMLChanges(t *testing.T) {
+func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int)")
-	tk.MustExec("create table t2 (a int)")
+	ctx := context.Background()
+	if partitioned {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		tk.MustExec("create table t2 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		// Because we don't handle the DDL events in unit tests by default,
+		// we need to use this way to make sure the stats record for the global table is created.
+		// Insert some rows into the tables.
+		tk.MustExec("insert into t1 values (11)")
+		tk.MustExec("insert into t2 values (12)")
+		require.NoError(t, handle.DumpStatsDeltaToKV(true))
+		// Analyze the tables.
+		tk.MustExec("analyze table t1")
+		tk.MustExec("analyze table t2")
+		require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	} else {
+		tk.MustExec("use test")
+		tk.MustExec("create table t1 (a int)")
+		tk.MustExec("create table t2 (a int)")
+	}
 	tk.MustExec("insert into t1 values (1)")
-	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("insert into t2 values (1), (2)")
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 
-	ctx := context.Background()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	schema := pmodel.NewCIStr("test")
@@ -201,14 +219,18 @@ func TestProcessDMLChanges(t *testing.T) {
 	job2, err := pq.Pop()
 	require.NoError(t, err)
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID())
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	valid, _ = job2.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, job2.Analyze(handle, dom.SysProcTracker()))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
-	// Insert 10 rows into t1.
-	tk.MustExec("insert into t1 values (2), (3), (4), (5), (6), (7), (8), (9), (10), (11)")
-	// Insert 2 rows into t2.
-	tk.MustExec("insert into t2 values (2), (3)")
+	// Insert 9 rows into t1.
+	tk.MustExec("insert into t1 values (3), (4), (5), (6), (7), (8), (9), (10), (11)")
+	// Insert 1 row into t2.
+	tk.MustExec("insert into t2 values (3)")
 
 	// Dump the stats to kv.
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -240,6 +262,14 @@ func TestProcessDMLChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
 	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+}
+
+func TestProcessDMLChanges(t *testing.T) {
+	testProcessDMLChanges(t, false)
+}
+
+func TestProcessDMLChangesPartitioned(t *testing.T) {
+	testProcessDMLChanges(t, true)
 }
 
 func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
@@ -306,6 +336,8 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl2.Meta().ID, job2.GetTableID(), "t1 should not be in the queue since it's a running job")
 
 	// Analyze the job.
+	valid, _ := job1.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
 	require.NoError(t, job1.Analyze(handle, dom.SysProcTracker()))
 
 	// Add more rows to t1.
@@ -324,7 +356,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	require.Equal(t, tbl1.Meta().ID, job1.GetTableID(), "t1 has been removed from running jobs and should be in the queue")
 }
 
-func TestRequeueFailedJobs(t *testing.T) {
+func TestRequeueMustRetryJobs(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	handle := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
@@ -356,7 +388,7 @@ func TestRequeueFailedJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, job)
 	sctx := tk.Session().(sessionctx.Context)
-	ok, _ := job.IsValidToAnalyze(sctx)
+	ok, _ := job.ValidateAndPrepare(sctx)
 	require.False(t, ok)
 
 	// Insert more rows.
@@ -371,7 +403,7 @@ func TestRequeueFailedJobs(t *testing.T) {
 	require.Equal(t, 0, l)
 
 	// Requeue the failed jobs.
-	pq.RequeueFailedJobs()
+	pq.RequeueMustRetryJobs()
 	l, err = pq.Len()
 	require.NoError(t, err)
 	require.Equal(t, 1, l)
@@ -557,4 +589,69 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	require.NoError(t, err)
 	pid = tbl.Meta().Partition.Definitions[0].ID
 	require.Equal(t, pid, job.GetTableID())
+}
+
+func TestPQCanBeClosedAndReInitialized(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Close the priority queue.
+	pq.Close()
+
+	// Check if the priority queue is closed.
+	require.False(t, pq.IsInitialized())
+
+	// Re-initialize the priority queue.
+	require.NoError(t, pq.Initialize())
+
+	// Check if the priority queue is initialized.
+	require.True(t, pq.IsInitialized())
+}
+
+func TestPQHandlesTableDeletionGracefully(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	handle := dom.StatsHandle()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("insert into t1 values (1)")
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	ctx := context.Background()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
+	defer pq.Close()
+	require.NoError(t, pq.Initialize())
+
+	// Check the priority queue is not empty.
+	l, err := pq.Len()
+	require.NoError(t, err)
+	require.NotEqual(t, 0, l)
+
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+
+	// Drop the table and mock the table stats is removed from the cache.
+	tk.MustExec("drop table t1")
+	deleteEvent := findEvent(handle.DDLEventCh(), model.ActionDropTable)
+	require.NotNil(t, deleteEvent)
+	err = statstestutil.HandleDDLEventWithTxn(handle, deleteEvent)
+	require.NoError(t, err)
+	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
+
+	// Make sure handle.Get() returns false.
+	_, ok := handle.Get(tbl.Meta().ID)
+	require.False(t, ok)
+
+	require.NotPanics(t, func() {
+		pq.RefreshLastAnalysisDuration()
+	})
 }

@@ -28,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -118,7 +119,36 @@ type StatsHistory interface {
 	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
+// PriorityQueueSnapshot is the snapshot of the stats priority queue.
+type PriorityQueueSnapshot struct {
+	CurrentJobs     []AnalysisJobJSON `json:"current_jobs"`
+	MustRetryTables []int64           `json:"must_retry_tables"`
+}
+
+// AnalysisJobJSON represents the JSON format of an AnalysisJob.
+//
+//nolint:fieldalignment
+type AnalysisJobJSON struct {
+	Type               string            `json:"type"`
+	TableID            int64             `json:"table_id"`
+	Weight             float64           `json:"weight"`
+	PartitionIDs       []int64           `json:"partition_ids"`
+	IndexIDs           []int64           `json:"index_ids"`
+	PartitionIndexIDs  map[int64][]int64 `json:"partition_index_ids"`
+	Indicators         IndicatorsJSON    `json:"indicators"`
+	HasNewlyAddedIndex bool              `json:"has_newly_added_index"`
+}
+
+// IndicatorsJSON represents the JSON format of Indicators.
+type IndicatorsJSON struct {
+	ChangePercentage     string `json:"change_percentage"`
+	TableSize            string `json:"table_size"`
+	LastAnalysisDuration string `json:"last_analysis_duration"`
+}
+
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+// We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
+// Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
 	owner.Listener
 
@@ -161,8 +191,27 @@ type StatsAnalyze interface {
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
 
+	// GetPriorityQueueSnapshot returns the stats priority queue.
+	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
 	// Close closes the analyze worker.
 	Close()
+}
+
+// CacheUpdate encapsulates changes to be made to the stats cache
+type CacheUpdate struct {
+	Updated []*statistics.Table
+	Deleted []int64
+	Options UpdateOptions
+}
+
+// UpdateOptions contains configuration for cache updates
+type UpdateOptions struct {
+	// SkipMoveForward controls whether to skip updating the cache's max version number.
+	// When true, the cache max version number stays unchanged even after updates.
+	// This improves performance when analyzing a small number of tables by avoiding
+	// unnecessary full cache reloads that would normally be triggered by version changes.
+	SkipMoveForward bool
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -174,7 +223,8 @@ type StatsCache interface {
 	Clear()
 
 	// Update reads stats meta from store and updates the stats map.
-	Update(ctx context.Context, is infoschema.InfoSchema) error
+	// To work with auto-analyze's needs, we'll update all table's stats meta into memory.
+	Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
@@ -185,8 +235,8 @@ type StatsCache interface {
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
-	// UpdateStatsCache updates the cache.
-	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+	// UpdateStatsCache applies a batch of changes to the cache
+	UpdateStatsCache(update CacheUpdate)
 
 	// GetNextCheckVersionWithOffset returns the last version with offset.
 	// It is used to fetch updated statistics from the stats meta table.
@@ -210,6 +260,9 @@ type StatsCache interface {
 
 	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 	UpdateStatsHealthyMetrics()
+
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -466,7 +519,7 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
+	HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
 	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
@@ -474,16 +527,16 @@ type DDL interface {
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// Pool is used to get a session or a goroutine to execute stats updating.
-	statsutil.Pool
+	handleutil.Pool
 
 	// AutoAnalyzeProcIDGenerator is used to generate auto analyze proc ID.
-	statsutil.AutoAnalyzeProcIDGenerator
+	handleutil.AutoAnalyzeProcIDGenerator
 
 	// LeaseGetter is used to get stats lease.
-	statsutil.LeaseGetter
+	handleutil.LeaseGetter
 
 	// TableInfoGetter is used to get table meta info.
-	statsutil.TableInfoGetter
+	handleutil.TableInfoGetter
 
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table

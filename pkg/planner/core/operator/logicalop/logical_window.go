@@ -15,9 +15,12 @@
 package logicalop
 
 import (
+	"fmt"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -31,12 +34,12 @@ import (
 
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	WindowFuncDescs []*aggregation.WindowFuncDesc
-	PartitionBy     []property.SortItem
-	OrderBy         []property.SortItem
-	Frame           *WindowFrame
+	WindowFuncDescs []*aggregation.WindowFuncDesc `hash64-equals:"true"`
+	PartitionBy     []property.SortItem           `hash64-equals:"true"`
+	OrderBy         []property.SortItem           `hash64-equals:"true"`
+	Frame           *WindowFrame                  `hash64-equals:"true"`
 }
 
 // WindowFrame represents a window function frame.
@@ -44,6 +47,36 @@ type WindowFrame struct {
 	Type  ast.FrameType
 	Start *FrameBound
 	End   *FrameBound
+}
+
+// Hash64 implements HashEquals interface.
+func (wf *WindowFrame) Hash64(h base2.Hasher) {
+	h.HashInt(int(wf.Type))
+	if wf.Start != nil {
+		h.HashByte(base2.NotNilFlag)
+		wf.Start.Hash64(h)
+	} else {
+		h.HashByte(base2.NilFlag)
+		wf.End.Hash64(h)
+	}
+}
+
+// Equals implements HashEquals interface.
+func (wf *WindowFrame) Equals(other any) bool {
+	wf2, ok := other.(*WindowFrame)
+	if !ok {
+		return false
+	}
+	if wf == nil {
+		return wf2 == nil
+	}
+	if wf2 == nil {
+		return false
+	}
+	if wf.Type != wf2.Type || !wf.Start.Equals(wf2.Start) || !wf.End.Equals(wf2.End) {
+		return false
+	}
+	return true
 }
 
 // Clone copies a window frame totally.
@@ -74,6 +107,85 @@ type FrameBound struct {
 	CmpDataType tipb.RangeCmpDataType
 	// IsExplicitRange marks if this range explicitly appears in the sql
 	IsExplicitRange bool
+}
+
+// Hash64 implement HashEquals interface.
+func (fb *FrameBound) Hash64(h base2.Hasher) {
+	h.HashInt(int(fb.Type))
+	h.HashBool(fb.UnBounded)
+	h.HashUint64(fb.Num)
+	if fb.CalcFuncs == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(fb.CalcFuncs))
+		for _, one := range fb.CalcFuncs {
+			one.Hash64(h)
+		}
+	}
+	if fb.CompareCols == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(fb.CompareCols))
+		for _, one := range fb.CompareCols {
+			one.Hash64(h)
+		}
+	}
+	if fb.CmpFuncs == nil {
+		h.HashByte(base2.NilFlag)
+	} else {
+		h.HashByte(base2.NotNilFlag)
+		h.HashInt(len(fb.CmpFuncs))
+		for _, f := range fb.CmpFuncs {
+			h.HashString(fmt.Sprintf("%p", f))
+		}
+	}
+	h.HashInt64(int64(fb.CmpDataType))
+	h.HashBool(fb.IsExplicitRange)
+}
+
+// Equals implement HashEquals interface.
+func (fb *FrameBound) Equals(other any) bool {
+	fb2, ok := other.(*FrameBound)
+	if !ok {
+		return false
+	}
+	if fb == nil {
+		return fb2 == nil
+	}
+	if fb2 == nil {
+		return false
+	}
+	if fb.Type != fb2.Type || fb.UnBounded != fb2.UnBounded || fb.Num != fb2.Num {
+		return false
+	}
+	if fb.CalcFuncs == nil && fb2.CalcFuncs != nil || fb.CalcFuncs != nil && fb2.CalcFuncs == nil || len(fb.CalcFuncs) != len(fb2.CmpFuncs) {
+		return false
+	}
+	for i, one := range fb.CalcFuncs {
+		if !one.Equals(fb2.CalcFuncs[i]) {
+			return false
+		}
+	}
+	if fb.CompareCols == nil && fb2.CompareCols != nil || fb.CompareCols != nil && fb2.CompareCols == nil || len(fb.CompareCols) != len(fb2.CompareCols) {
+		return false
+	}
+	for i, one := range fb.CompareCols {
+		if !one.Equals(fb2.CompareCols[i]) {
+			return false
+		}
+	}
+	if fb.CmpFuncs == nil && fb2.CmpFuncs != nil || fb.CmpFuncs != nil && fb2.CmpFuncs == nil || len(fb.CmpFuncs) != len(fb2.CmpFuncs) {
+		return false
+	}
+	for i, one := range fb.CmpFuncs {
+		// com function addr
+		if fmt.Sprintf("%p", one) != fmt.Sprintf("%p", fb2.CmpFuncs[i]) {
+			return false
+		}
+	}
+	return fb.CmpDataType == fb2.CmpDataType && fb.IsExplicitRange == fb2.IsExplicitRange
 }
 
 // Clone copies a frame bound totally.

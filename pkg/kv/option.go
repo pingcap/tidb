@@ -240,6 +240,8 @@ const (
 	LossyDDLColumnReorgSource = 1
 	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
+	// LightningPhysicalImportTxnSource the 17th bit is set as the txn source for Lightning physical import.
+	LightningPhysicalImportTxnSource = 1 << 16
 )
 
 // SetCDCWriteSource sets the TiCDC write source in the txnSource.

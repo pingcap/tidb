@@ -411,6 +411,7 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 	tk := testkit.NewTestKit(t, s.store)
+	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists ddltiflash")
@@ -424,7 +425,7 @@ func TestTiFlashFailTruncatePartition(t *testing.T) {
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 
 	tk.MustExec("insert into ddltiflash values(1, 'abc'), (11, 'def')")
-	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]enforced error")
+	tk.MustGetErrMsg("alter table ddltiflash truncate partition p1", "[ddl:-1]DDL job rollback, error msg: enforced error")
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailablePartitionTable)
 	CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", "ddltiflash")
 }
@@ -1411,7 +1412,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	// Note that the mock TiFlash does not have any data or regions, so the wait for regions being available will fail
 	done := false
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then increase the count to skip retry
 			if job.ErrorCount > 0 {
@@ -1423,7 +1424,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	tk.MustContainErrMsg(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`, "[ddl] add partition wait for tiflash replica to complete")
 
 	done = false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then mock the regions into the partitions
 			if job.ErrorCount > 0 {

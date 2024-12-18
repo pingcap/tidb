@@ -45,6 +45,8 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
+        "//pkg/config",
+        "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",

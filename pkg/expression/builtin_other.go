@@ -191,6 +191,10 @@ type baseInSig struct {
 	// It works with builtinInXXXSig.hashset to accelerate 'eval'.
 	nonConstArgsIdx []int
 	hasNull         bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 // builtinInIntSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
@@ -198,13 +202,18 @@ type builtinInIntSig struct {
 	baseInSig
 	// the bool value in the map is used to identify whether the constant stored in key is signed or unsigned
 	hashSet map[int64]bool
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -214,7 +223,13 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -290,6 +305,10 @@ func (b *builtinInIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 type builtinInStringSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
@@ -297,7 +316,8 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -307,7 +327,13 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -364,13 +390,18 @@ func (b *builtinInStringSig) evalInt(ctx EvalContext, row chunk.Row) (int64, boo
 type builtinInRealSig struct {
 	baseInSig
 	hashSet set.Float64Set
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -380,7 +411,13 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(val)
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -435,13 +472,18 @@ func (b *builtinInRealSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDecimalSig struct {
 	baseInSig
 	hashSet set.StringSet
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -455,7 +497,13 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				return err
 			}
 			b.hashSet.Insert(string(key))
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -515,13 +563,18 @@ func (b *builtinInDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bo
 type builtinInTimeSig struct {
 	baseInSig
 	hashSet map[types.CoreTime]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -531,7 +584,13 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val.CoreTime()] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -586,13 +645,18 @@ func (b *builtinInTimeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 type builtinInDurationSig struct {
 	baseInSig
 	hashSet map[time.Duration]struct{}
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -602,7 +666,13 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 				continue
 			}
 			b.hashSet[val.Duration] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -656,6 +726,9 @@ func (b *builtinInDurationSig) evalInt(ctx EvalContext, row chunk.Row) (int64, b
 // builtinInJSONSig see https://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_in
 type builtinInJSONSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInJSONSig) Clone() builtinFunc {
@@ -689,6 +762,9 @@ func (b *builtinInJSONSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 
 type builtinInVectorFloat32Sig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInVectorFloat32Sig) Clone() builtinFunc {
@@ -742,6 +818,9 @@ func (c *rowFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig
 
 type builtinRowSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinRowSig) Clone() builtinFunc {
@@ -1025,6 +1104,9 @@ func (c *getStringVarFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinGetStringVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetStringVarSig) Clone() builtinFunc {
@@ -1076,6 +1158,9 @@ func (c *getIntVarFunctionClass) getFunction(ctx BuildContext, args []Expression
 
 type builtinGetIntVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetIntVarSig) Clone() builtinFunc {
@@ -1115,6 +1200,9 @@ func (c *getRealVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetRealVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetRealVarSig) Clone() builtinFunc {
@@ -1158,6 +1246,9 @@ func (c *getDecimalVarFunctionClass) getFunction(ctx BuildContext, args []Expres
 
 type builtinGetDecimalVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
@@ -1209,6 +1300,9 @@ func (c *getTimeVarFunctionClass) getFunction(ctx BuildContext, args []Expressio
 
 type builtinGetTimeVarSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetTimeVarSig) Clone() builtinFunc {
@@ -1608,6 +1702,9 @@ func (c *bitCountFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinBitCountSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinBitCountSig) Clone() builtinFunc {
@@ -1651,6 +1748,9 @@ func (c *getParamFunctionClass) getFunction(ctx BuildContext, args []Expression)
 
 type builtinGetParamStringSig struct {
 	baseBuiltinFunc
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinGetParamStringSig) Clone() builtinFunc {

@@ -1209,7 +1209,7 @@ func TestEncodeDecodeRowWithChecksum(t *testing.T) {
 	require.Zero(t, checksum)
 
 	rawChecksum := rowcodec.RawChecksum{
-		Key: []byte("0x1"),
+		Handle: kv.IntHandle(1),
 	}
 	raw, err = enc.Encode(time.UTC, nil, nil, rawChecksum, nil)
 	require.NoError(t, err)
@@ -1226,7 +1226,7 @@ func TestEncodeDecodeRowWithChecksum(t *testing.T) {
 	require.Equal(t, expected, checksum)
 
 	version := dec.ChecksumVersion()
-	require.Equal(t, 1, version)
+	require.Equal(t, 2, version)
 }
 
 var (

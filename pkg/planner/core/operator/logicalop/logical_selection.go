@@ -43,7 +43,7 @@ type LogicalSelection struct {
 	// Originally the WHERE or ON condition is parsed into a single expression,
 	// but after we converted to CNF(Conjunctive normal form), it can be
 	// split into a list of AND conditions.
-	Conditions []expression.Expression
+	Conditions []expression.Expression `hash64-equals:"true"`
 }
 
 // Init initializes LogicalSelection.

@@ -89,7 +89,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	return external.MergeOverlappingFiles(
+	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
@@ -100,6 +100,10 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		subtask.Concurrency,
 		true,
 	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(ctx, subtask)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -107,7 +111,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {

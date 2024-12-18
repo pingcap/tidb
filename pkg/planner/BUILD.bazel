@@ -13,7 +13,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/model",
-        "//pkg/planner/cascades",
+        "//pkg/planner/cascades/old",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/resolve",

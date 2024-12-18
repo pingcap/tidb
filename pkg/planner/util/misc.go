@@ -74,30 +74,6 @@ func CloneExpressions(exprs []expression.Expression) []expression.Expression {
 	return CloneExprs(exprs)
 }
 
-// CloneExpression2D uses CloneExprs to clone a 2D slice of expression.Expression.
-func CloneExpression2D(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, CloneExprs(e))
-	}
-	return cloned
-}
-
-// CloneScalarFunctions uses (*ScalarFunction).Clone to clone a slice of *ScalarFunction.
-func CloneScalarFunctions(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
-	if scalarFuncs == nil {
-		return nil
-	}
-	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
-	for _, f := range scalarFuncs {
-		cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
-	}
-	return cloned
-}
-
 // CloneAssignments uses (*Assignment).Clone to clone a slice of *Assignment.
 func CloneAssignments(assignments []*expression.Assignment) []*expression.Assignment {
 	if assignments == nil {
@@ -138,11 +114,6 @@ func CloneCols(cols []*expression.Column) []*expression.Column {
 	return cloned
 }
 
-// CloneColumns uses CloneCols to clone a slice of expression.Column.
-func CloneColumns(cols []*expression.Column) []*expression.Column {
-	return CloneCols(cols)
-}
-
 // CloneConstants uses (*Constant).Clone to clone a slice of *Constant.
 func CloneConstants(constants []*expression.Constant) []*expression.Constant {
 	if constants == nil {
@@ -151,18 +122,6 @@ func CloneConstants(constants []*expression.Constant) []*expression.Constant {
 	cloned := make([]*expression.Constant, 0, len(constants))
 	for _, c := range constants {
 		cloned = append(cloned, c.Clone().(*expression.Constant))
-	}
-	return cloned
-}
-
-// CloneConstant2D uses CloneConstants to clone a 2D slice of *Constant.
-func CloneConstant2D(constants [][]*expression.Constant) [][]*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([][]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, CloneConstants(c))
 	}
 	return cloned
 }
