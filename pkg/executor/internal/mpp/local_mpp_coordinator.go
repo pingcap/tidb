@@ -640,7 +640,7 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
-							RecordOneCopTask(-1, kv.TiFlash, report.mppReq.Meta.GetAddress(), detail)] = 0
+							RecordOneCopTask(-1, kv.TiFlash, report.mppReq.Meta.GetAddress(), nil, nil, detail)] = 0
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {

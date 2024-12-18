@@ -1660,29 +1660,15 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, address string, summary *tipb.ExecutorExecutionSummary) int {
-	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
-	// summary, use it overwrite the planID
-	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
-		planID = id
-	}
-	copStats := e.GetOrCreateCopStats(planID, storeType)
-	copStats.RecordOneCopTask(address, summary)
-	return planID
-}
-
-func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time *util.TimeDetail) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, address string, scan *util.ScanDetail, time *util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		copStats = &CopRuntimeStats{
-			scanDetail: scan,
-			timeDetail: time,
-			storeType:  storeType,
+			storeType: storeType,
 		}
 		e.copStats[planID] = copStats
-		return
 	}
 	if scan != nil {
 		if copStats.scanDetail == nil {
@@ -1698,6 +1684,26 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 			copStats.timeDetail.Merge(time)
 		}
 	}
+	if summary != nil {
+		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
+		// summary, use it overwrite the planID
+		id, valid := getPlanIDFromExecutionSummary(summary)
+		if valid && id != planID {
+			planID = id
+			copStats, ok = e.copStats[planID]
+			if !ok {
+				copStats = &CopRuntimeStats{
+					storeType: storeType,
+				}
+				e.copStats[planID] = copStats
+			}
+		}
+		copStats.RecordOneCopTask(address, summary)
+	}
+	return planID
+}
+
+func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time *util.TimeDetail) {
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
