@@ -290,8 +290,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
