@@ -341,9 +341,7 @@ func buildIntoAccessPath(
 		return nil
 	}
 
-	// 1. Generate one or more partial access path for each partial unfinished path (access filter on mv index may
-	// produce several partial paths).
-
+	// 1. Use the collected usable filters to build partial paths for each alternative of each OR branch.
 	allAlternativePaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
 
 	// for each OR branch
@@ -421,7 +419,14 @@ func buildIntoAccessPath(
 		allAlternativePaths = append(allAlternativePaths, alternativesForORBranch)
 	}
 
+	// 2. Some extra setup and checks.
+
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
+	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
+	var containMVPath bool
+	// We do two things in this loop:
+	// 1. Clean/Set KeepIndexMergeORSourceFilter, InexFilters and TableFilters for each partial path.
+	// 2. Collect all index IDs and check if there is any MV index.
 	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
 		if len(p.TableFilters) > 0 {
@@ -434,11 +439,7 @@ func buildIntoAccessPath(
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			p.IndexFilters = nil
 		}
-	}
 
-	possibleIdxIDs := make(map[int64]struct{}, len(allAlternativePaths))
-	var containMVPath bool
-	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
 		if p.IsTablePath() {
 			possibleIdxIDs[-1] = struct{}{}
 		} else {
@@ -448,6 +449,7 @@ func buildIntoAccessPath(
 			containMVPath = true
 		}
 	}
+
 	if !containMVPath && len(possibleIdxIDs) <= 1 {
 		return nil
 	}
@@ -457,7 +459,7 @@ func buildIntoAccessPath(
 		[]expression.Expression{allConds[orListIdxInAllConds]},
 	)
 
-	// 3. Build the final access path
+	// 3. Build the final access path.
 	possiblePath := &util.AccessPath{
 		PartialAlternativeIndexPaths: allAlternativePaths,
 		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
@@ -465,6 +467,8 @@ func buildIntoAccessPath(
 		KeepIndexMergeORSourceFilter: needKeepORSourceFilter,
 	}
 
+	// For estimation, we need the decided partial paths. So we use a simple heuristic to choose the partial paths by
+	// comparing the row count just for estimation here.
 	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
 	for _, oneORBranch := range allAlternativePaths {
 		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternativesByRowCount)
