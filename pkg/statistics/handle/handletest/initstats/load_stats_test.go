@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConcurrentlyInitStats(t *testing.T) {
+func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
