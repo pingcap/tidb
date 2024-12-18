@@ -123,7 +123,7 @@ func IsColsAllFromOuterTable(cols []*expression.Column, outerUniqueIDs set.Int64
 
 // check whether one of unique keys sets is contained by inner join keys
 func (*OuterJoinEliminator) isInnerJoinKeysContainUniqueKey(innerPlan base.LogicalPlan, joinKeys *expression.Schema) (bool, error) {
-	for _, keyInfo := range innerPlan.Schema().Keys {
+	for _, keyInfo := range innerPlan.Schema().PKOrUK {
 		joinKeysContainKeyInfo := true
 		for _, col := range keyInfo {
 			if !joinKeys.Contains(col) {

@@ -438,6 +438,7 @@ go_test(
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/staleread",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/util",
         "//pkg/store/copr",
