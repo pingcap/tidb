@@ -726,6 +726,24 @@ type IndexOption struct {
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
+	Global       bool
+	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+}
+
+// IsEmpty is true if only default options are given
+// and it should not be added to the output
+func (n *IndexOption) IsEmpty() bool {
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
+		n.KeyBlockSize > 0 ||
+		n.Tp != model.IndexTypeInvalid ||
+		len(n.ParserName.O) > 0 ||
+		n.Comment != "" ||
+		n.Global ||
+		n.Visibility != IndexVisibilityDefault ||
+		n.SplitOpt != nil {
+		return false
+	}
+	return true
 }
 
 // Restore implements Node interface.
@@ -784,6 +802,24 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
+		hasPrevOption = true
+	}
+
+	if n.SplitOpt != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+		ctx.WritePlain(" = ")
+		if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+			ctx.WritePlainf("%d", n.SplitOpt.Num)
+		} else {
+			ctx.WritePlain("(")
+			if err := n.SplitOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+			}
+			ctx.WritePlain(")")
+		}
 	}
 	return nil
 }
@@ -795,6 +831,13 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
+	if n.SplitOpt != nil {
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SplitOpt = node.(*SplitOption)
+	}
 	return v.Leave(n)
 }
 
