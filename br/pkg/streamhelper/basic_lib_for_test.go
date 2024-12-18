@@ -687,7 +687,12 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	defer t.mu.Unlock()
 
 	if checkpoint < t.checkpoint {
-		t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		log.Error("checkpoint rolling back",
+			zap.Uint64("from", t.checkpoint),
+			zap.Uint64("to", checkpoint),
+			zap.Stack("stack"))
+		// t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		return errors.New("checkpoint rolling back")
 	}
 	t.checkpoint = checkpoint
 	return nil
@@ -747,6 +752,8 @@ func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	log.Info("advance checkpoint", zap.Duration("duration", duration), zap.Uint64("from", t.checkpoint))
+
 	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
 }
 
@@ -766,7 +773,8 @@ func (t *testEnv) putTask() {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}

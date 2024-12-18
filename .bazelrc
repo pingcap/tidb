@@ -6,10 +6,6 @@ run:ci --color=yes
 
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
-build --java_language_version=17
-build --java_runtime_version=17
-build --tool_java_language_version=17
-build --tool_java_runtime_version=17
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
 build:ci --color=yes
 build:ci --experimental_remote_cache_compression
