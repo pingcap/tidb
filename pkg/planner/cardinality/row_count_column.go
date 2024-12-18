@@ -174,10 +174,24 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return histCnt, nil
 	}
+<<<<<<< HEAD
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
 	// or all values assumed to be contained within TopN.
 	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
 	return rowEstimate, nil
+=======
+	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
+	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	if histNDV <= 0 {
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
+		// c.Histogram.NDV stores the full NDV regardless of histograms empty or populated.
+		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
+		return outOfRangeFullNDV(float64(c.Histogram.NDV), c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, modifyCount), nil
+	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
+	return c.Histogram.NotNullCount() / histNDV, nil
+>>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -303,7 +317,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			if c.StatsVer == statistics.Version2 {
 				histNDV -= int64(c.TopN.Num())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV, increaseFactor)
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
 		}
 
 		if debugTrace {

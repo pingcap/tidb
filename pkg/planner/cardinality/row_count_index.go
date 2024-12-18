@@ -214,7 +214,7 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 	return false
 }
 
-// It uses the modifyCount to adjust the influence of modifications on the table.
+// It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
@@ -358,6 +358,10 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			} else {
 				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV, increaseFactor)
 			}
+<<<<<<< HEAD
+=======
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+>>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
 		}
 
 		if debugTrace {
@@ -498,11 +502,27 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		return histCnt
 	}
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
+<<<<<<< HEAD
 	// branch1: histDNV <= 0 means that all NDV's are in TopN, and no histograms.
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
 	return estimateRowCountWithUniformDistribution(sctx, idx, realtimeRowCount, modifyCount)
+=======
+	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	if histNDV <= 0 {
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms.
+		// The histogram wont have a NotNullCount - so it needs to be derived.
+		notNullCount := idx.Histogram.NotNullCount()
+		if notNullCount <= 0 {
+			notNullCount = idx.TotalRowCount() - float64(idx.Histogram.NullCount)
+		}
+		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
+		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
+	return idx.Histogram.NotNullCount() / histNDV
+>>>>>>> a3574aa6a3b (planner: Refactor out-of-range estimation based upon modifyCount (#57431))
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
