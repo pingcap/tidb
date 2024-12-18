@@ -3858,6 +3858,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			taskCtx.scanCount++
 			key := prr.key
 
+			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if len(w.oldKeys) > 0 {
 				if _, ok := found[string(w.oldKeys[i])]; ok {
 					// Already filled, i.e. double written earlier by concurrent DML
