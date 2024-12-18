@@ -319,6 +319,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
 				continue
 			}
 			if cost < minCost {
