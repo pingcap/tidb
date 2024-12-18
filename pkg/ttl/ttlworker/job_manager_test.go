@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -673,10 +674,18 @@ func TestLocalJobs(t *testing.T) {
 }
 
 func TestSplitCnt(t *testing.T) {
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
 	require.Equal(t, 64, getScanSplitCnt(nil))
 	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
 
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(nil)}
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
 	for i := uint64(1); i <= 128; i++ {
 		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
 		if i <= 64 {
