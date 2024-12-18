@@ -374,6 +374,9 @@ func buildIntoAccessPath(
 
 			alternativesForORBranch = append(alternativesForORBranch, alternative{paths, needSelection})
 		}
+		if len(alternativesForORBranch) == 0 {
+			return nil
+		}
 
 		bestAlternative := slices.MinFunc(
 			alternativesForORBranch, func(a, b alternative) int {
