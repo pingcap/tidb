@@ -1351,6 +1351,12 @@ func TestValidateSetVar(t *testing.T) {
 	err = tk.ExecToErr("set @@global.innodb_ft_enable_stopword=2")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
+	tk.MustContainErrMsg("set @@query_cache_type=0", "[variable:1193]Unknown system variable 'query_cache_type'")
+	tk.MustContainErrMsg("select @@query_cache_type;", "[variable:1193]Unknown system variable 'query_cache_type'")
+
+	tk.MustContainErrMsg("set @@query_cache_type=2", "[variable:1193]Unknown system variable 'query_cache_type'")
+	tk.MustContainErrMsg("select @@query_cache_type;", "[variable:1193]Unknown system variable 'query_cache_type'")
+
 	tk.MustExec("set @@global.sync_binlog=-1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))
 
