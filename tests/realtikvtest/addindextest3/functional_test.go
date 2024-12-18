@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -142,4 +144,93 @@ func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
 	rows = tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 2, 2));").Rows()
 	rs = rows[0][0].(string)
 	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
+}
+
+func TestAddIndexPresplitIndexRegions(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	var splitKeyHex [][]byte
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePresplitIndex", func(splitKeys [][]byte) {
+		for _, k := range splitKeys {
+			splitKeyHex = append(splitKeyHex, bytes.Clone(k))
+		}
+	})
+	checkSplitKeys := func(idxID int64, count int, reset bool) {
+		cnt := 0
+		for _, k := range splitKeyHex {
+			indexID, err := tablecodec.DecodeIndexID(k)
+			if err == nil && indexID == idxID {
+				cnt++
+			}
+		}
+		require.Equal(t, count, cnt, splitKeyHex)
+		if reset {
+			splitKeyHex = nil
+		}
+	}
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	retRows := tk.MustQuery("show table t regions;").Rows()
+	require.Len(t, retRows, 1)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(1, 3, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(2, 2, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(3, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|3, 3, true)
+
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	// Test partition tables.
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
+	for i := 0; i < 10; i++ {
+		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(1, 3*4, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+	checkSplitKeys(2, 2*4, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
+	checkSplitKeys(3, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
+	tk.MustExec("drop index idx on t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+}
+
+func TestAddIndexPresplitFunctional(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 0);",
+		"Split index region num should be greater than 0")
+	tk.MustGetErrMsg("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 10000);",
+		"Split index region num exceeded the limit 1000")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSplitIndexRegionAndWaitErr", "2*return")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (0) and (10 * 10000) regions 3);")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a bigint primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (10, 1);")
+	tk.MustExec("alter table t add index idx(b) pre_split_regions = (between (1) and (2) regions 3);")
+	tk.MustExec("drop table t;")
 }
