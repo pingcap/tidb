@@ -164,6 +164,12 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
+	}()
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
