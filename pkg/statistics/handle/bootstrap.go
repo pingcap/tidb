@@ -181,17 +181,13 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 	}
 }
 
-<<<<<<< HEAD
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk) {
-=======
-func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
 				zap.Stack("stack"))
 		}
 	}()
->>>>>>> f05cbddfd3a (statistics: skip non-exicted table when to init stats (#58381))
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
