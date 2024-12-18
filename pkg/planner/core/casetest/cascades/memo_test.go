@@ -67,7 +67,8 @@ func TestDeriveStats(t *testing.T) {
 		p, err := builder.Build(ctx, nodeW)
 		p.SCtx().GetSessionVars().StmtCtx.OriginalSQL = tt
 		require.NoError(t, err, tt)
-		p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
+		builder.
+			p, err = plannercore.LogicalOptimizeTest(ctx, builder.GetOptFlag()|rule.FlagCollectPredicateColumnsPoint, p.(base.LogicalPlan))
 		require.NoError(t, err, tt)
 		lp := p.(base.LogicalPlan)
 		// after stats derive is done, which means the up-down propagation of group ndv is done, in bottom-up building phase

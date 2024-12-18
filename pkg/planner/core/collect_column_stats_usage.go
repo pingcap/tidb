@@ -15,9 +15,6 @@
 package core
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -327,9 +324,6 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	*intset.FastIntSet,
 	map[int64][]int64,
 ) {
-	if strings.HasPrefix(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select count(1) from t1 left join t2 on t1.a = t2.a group by t1.a, t1.b") {
-		fmt.Println(1)
-	}
 	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
