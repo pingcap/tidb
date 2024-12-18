@@ -25,7 +25,7 @@ import (
 
 // Store is the (de)serialization and persistent layer.
 type Store interface {
-	Insert(context.Context, *sess.Session, *schemaChange) error
+	Insert(context.Context, *sess.Session, *SchemaChange) error
 	UpdateProcessed(
 		ctx context.Context,
 		se *sess.Session,
@@ -34,7 +34,20 @@ type Store interface {
 		processedBy uint64,
 	) error
 	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
-	List(ctx context.Context, se *sess.Session) ([]*schemaChange, error)
+	// List will start a transaction of given session and read all schema changes
+	// through a ListResult. The session should not be used for other operations and
+	// caller should rollback the session after the List operation.
+	List(ctx context.Context, se *sess.Session) ListResult
+}
+
+// ListResult is the result stream of a List operation.
+type ListResult interface {
+	// Read tries to decode at most `len(changes)` SchemaChange into given slices. It
+	// returns the number of schemaChanges decoded, 0 means no more schemaChanges.
+	//
+	// Note that the previous SchemaChange in the slice will be overwritten when call
+	// Read.
+	Read(changes []*SchemaChange) (int, error)
 }
 
 type tableStore struct {
@@ -42,7 +55,8 @@ type tableStore struct {
 	table string
 }
 
-func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schemaChange) error {
+// Insert implements Store interface.
+func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *SchemaChange) error {
 	event, err := json.Marshal(change.event)
 	if err != nil {
 		return errors.Trace(err)
@@ -58,11 +72,12 @@ func (t *tableStore) Insert(ctx context.Context, s *sess.Session, change *schema
 	)
 	_, err = s.Execute(
 		ctx, sql, "ddl_notifier",
-		change.ddlJobID, change.multiSchemaChangeSeq, event,
+		change.ddlJobID, change.subJobID, event,
 	)
 	return err
 }
 
+// UpdateProcessed implements Store interface.
 func (t *tableStore) UpdateProcessed(
 	ctx context.Context,
 	se *sess.Session,
@@ -81,6 +96,7 @@ func (t *tableStore) UpdateProcessed(
 	return err
 }
 
+// DeleteAndCommit implements Store interface.
 func (t *tableStore) DeleteAndCommit(
 	ctx context.Context,
 	se *sess.Session,
@@ -106,34 +122,75 @@ func (t *tableStore) DeleteAndCommit(
 	return errors.Trace(err)
 }
 
-func (t *tableStore) List(ctx context.Context, se *sess.Session) ([]*schemaChange, error) {
-	sql := fmt.Sprintf(`
-		SELECT
-			ddl_job_id,
-			sub_job_id,
-			schema_change,
-			processed_by_flag
-		FROM %s.%s ORDER BY ddl_job_id, sub_job_id`,
-		t.db, t.table)
-	rows, err := se.Execute(ctx, sql, "ddl_notifier")
-	if err != nil {
-		return nil, err
+// List implements Store interface.
+func (t *tableStore) List(ctx context.Context, se *sess.Session) ListResult {
+	return &listResult{
+		ctx: ctx,
+		se:  se,
+		sqlTemplate: fmt.Sprintf(`
+			SELECT
+				ddl_job_id,
+				sub_job_id,
+				schema_change,
+				processed_by_flag
+			FROM %s.%s
+			WHERE (ddl_job_id, sub_job_id) > (%%?, %%?)
+			ORDER BY ddl_job_id, sub_job_id
+			LIMIT %%?`,
+			t.db, t.table),
+		// DDL job ID are always positive, so we can use 0 as the initial value.
+		maxReturnedDDLJobID: 0,
+		maxReturnedSubJobID: 0,
 	}
-	ret := make([]*schemaChange, 0, len(rows))
-	for _, row := range rows {
-		event := SchemaChangeEvent{}
-		err = json.Unmarshal(row.GetBytes(2), &event)
+}
+
+type listResult struct {
+	ctx                 context.Context
+	se                  *sess.Session
+	sqlTemplate         string
+	maxReturnedDDLJobID int64
+	maxReturnedSubJobID int64
+}
+
+// Read implements ListResult interface.
+func (r *listResult) Read(changes []*SchemaChange) (int, error) {
+	if r.maxReturnedDDLJobID == 0 && r.maxReturnedSubJobID == 0 {
+		err := r.se.Begin(r.ctx)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
-		ret = append(ret, &schemaChange{
-			ddlJobID:             row.GetInt64(0),
-			multiSchemaChangeSeq: row.GetInt64(1),
-			event:                &event,
-			processedByFlag:      row.GetUint64(3),
-		})
 	}
-	return ret, nil
+
+	rows, err := r.se.Execute(
+		r.ctx, r.sqlTemplate, "ddl_notifier",
+		r.maxReturnedDDLJobID, r.maxReturnedSubJobID, len(changes),
+	)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	for i, row := range rows {
+		if changes[i] == nil {
+			changes[i] = new(SchemaChange)
+		}
+		if changes[i].event == nil {
+			changes[i].event = new(SchemaChangeEvent)
+		}
+
+		err = json.Unmarshal(row.GetBytes(2), changes[i].event)
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+		changes[i].ddlJobID = row.GetInt64(0)
+		changes[i].subJobID = row.GetInt64(1)
+		changes[i].processedByFlag = row.GetUint64(3)
+
+		if i == len(rows)-1 {
+			r.maxReturnedDDLJobID = changes[i].ddlJobID
+			r.maxReturnedSubJobID = changes[i].subJobID
+		}
+	}
+	return len(rows), nil
 }
 
 // OpenTableStore opens a store on a created table `db`.`table`. The table should
