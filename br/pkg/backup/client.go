@@ -77,12 +77,30 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+type StoreBasedErr struct {
+	storeID uint64
+	err     error
+}
+
+func (e *StoreBasedErr) Error() string {
+	return fmt.Sprintf("Store ID '%d': %v", e.storeID, e.err.Error())
+}
+
+func (e *StoreBasedErr) Unwrap() error {
+	return e.err
+}
+
+func (e *StoreBasedErr) Cause() error {
+	return e.err
+}
+
 const (
 	// backupFineGrainedMaxBackoff is 1 hour.
 	// given it begins the fine-grained backup, there must be some problems in the cluster.
 	// We need to be more patient.
 	backupFineGrainedMaxBackoff = 3600000
 	backupRetryTimes            = 5
+	disconnectRetryTimeout      = 20000
 	// RangeUnit represents the progress updated counter when a range finished.
 	RangeUnit ProgressUnit = "range"
 	// RegionUnit represents the progress updated counter when a region finished.
@@ -1122,6 +1140,7 @@ func (bc *Client) fineGrainedBackup(
 	})
 
 	bo := utils.AdaptTiKVBackoffer(ctx, backupFineGrainedMaxBackoff, berrors.ErrUnknown)
+	maxDisconnect := make(map[uint64]uint)
 	for {
 		// Step1, check whether there is any incomplete range
 		incomplete := pr.Res.GetIncompleteRange(req.StartKey, req.EndKey)
@@ -1169,8 +1188,19 @@ func (bc *Client) fineGrainedBackup(
 		for {
 			select {
 			case err := <-errCh:
-				// TODO: should we handle err here?
-				return errors.Trace(err)
+				if !berrors.Is(err, berrors.ErrFailedToConnect) {
+					return errors.Trace(err)
+				}
+				storeErr, ok := err.(*StoreBasedErr)
+				if !ok {
+					return errors.Trace(err)
+				}
+
+				storeID := storeErr.storeID
+				maxDisconnect[storeID]++
+				if maxDisconnect[storeID] > backupRetryTimes {
+					return errors.Annotatef(err, "Failed to connect to store %d more than %d times", storeID, backupRetryTimes)
+				}
 			case resp, ok := <-respCh:
 				if !ok {
 					// Finished.
@@ -1271,12 +1301,22 @@ func (bc *Client) handleFineGrained(
 	storeID := targetPeer.GetStoreId()
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
+
+	// inject a disconnect failpoint
+	failpoint.Inject("disconnect", func(_ failpoint.Value) {
+		logutil.CL(ctx).Warn("This is a injected disconnection error")
+		err = berrors.ErrFailedToConnect
+	})
+
 	if err != nil {
 		if berrors.Is(err, berrors.ErrFailedToConnect) {
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, nil
+			return disconnectRetryTimeout, &StoreBasedErr{
+				storeID: storeID,
+				err:     err,
+			}
 		}
 
 		logutil.CL(ctx).Error("fail to connect store", zap.Uint64("StoreID", storeID))
@@ -1315,7 +1355,10 @@ func (bc *Client) handleFineGrained(
 			// When the leader store is died,
 			// 20s for the default max duration before the raft election timer fires.
 			logutil.CL(ctx).Warn("failed to connect to store, skipping", logutil.ShortError(err), zap.Uint64("storeID", storeID))
-			return 20000, nil
+			return disconnectRetryTimeout, &StoreBasedErr{
+				storeID: storeID,
+				err:     err,
+			}
 		}
 		logutil.CL(ctx).Error("failed to send fine-grained backup", zap.Uint64("storeID", storeID), logutil.ShortError(err))
 		return 0, errors.Annotatef(err, "failed to send fine-grained backup [%s, %s)",
