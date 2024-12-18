@@ -102,3 +102,20 @@ func testConcurrentlyInitStats(t *testing.T) {
 	}
 	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
 }
+
+func TestIssue58371(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t( id int, a int, b int, index idx(id, a));")
+	tk.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);")
+	tk.MustExec("insert into t select * from t where id<>2;")
+	tk.MustExec("insert into t select * from t where id<>2;")
+	tk.MustExec("insert into t select * from t where id<>2;")
+	tk.MustExec("insert into t select * from t where id<>2;")
+	tk.MustExec("analyze table t all columns;")
+	tk.MustExec("drop table t")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	require.NoError(t, h.InitStats(context.Background(), is))
+}
