@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -257,8 +258,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 		for i, tbl := range partitions.Definitions {
 			newID, exist := tableReplace.PartitionMap[tbl.ID]
 			if !exist {
-				// partition filtered out
-				return nil, nil
+				log.Error("expect partition info in table replace but got none", zap.Int64("partitionID", tbl.ID))
+				return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find partition id:%v in replace maps", tbl.ID)
 			}
 			partitions.Definitions[i].ID = newID
 		}
