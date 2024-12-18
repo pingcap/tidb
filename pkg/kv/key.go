@@ -67,6 +67,26 @@ func (k Key) PrefixNext() Key {
 	return buf
 }
 
+// PrefixNextInPlace tries to modifies the key itself to the next prefix key, returns false when lack of space (in which
+// case the key is kept unchanged and the caller can append 0 to the key).
+func (k Key) PrefixNextInPlace() bool {
+	var i int
+	for i = len(k) - 1; i >= 0; i-- {
+		k[i]++
+		if k[i] != 0 {
+			break
+		}
+	}
+	if i == -1 {
+		// revert the key
+		for i := range k {
+			k[i]--
+		}
+		return false
+	}
+	return true
+}
+
 // Cmp returns the comparison result of two key.
 // The result will be 0 if a==b, -1 if a < b, and +1 if a > b.
 func (k Key) Cmp(another Key) int {

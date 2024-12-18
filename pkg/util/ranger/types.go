@@ -502,7 +502,7 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	lowVsHigh, err := compareLexicographically(tc, ran.LowVal, otherRange.HighVal, ran.Collators,
 		ran.LowExclude, otherRange.HighExclude, true, false)
 	if err != nil {
-		return &Range{}, err
+		return nil, err
 	}
 	if lowVsHigh == 1 {
 		return nil, nil
@@ -511,7 +511,7 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	lowVsHigh, err = compareLexicographically(tc, otherRange.LowVal, ran.HighVal, ran.Collators,
 		otherRange.LowExclude, ran.HighExclude, true, false)
 	if err != nil {
-		return &Range{}, err
+		return nil, err
 	}
 	if lowVsHigh == 1 {
 		return nil, nil
@@ -520,7 +520,7 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	lowVsLow, err := compareLexicographically(tc, ran.LowVal, otherRange.LowVal,
 		ran.Collators, ran.LowExclude, otherRange.LowExclude, true, true)
 	if err != nil {
-		return &Range{}, err
+		return nil, err
 	}
 	if lowVsLow == -1 {
 		result.LowVal = otherRange.LowVal
@@ -533,7 +533,7 @@ func (ran *Range) IntersectRange(tc types.Context, otherRange *Range) (*Range, e
 	highVsHigh, err := compareLexicographically(tc, ran.HighVal, otherRange.HighVal,
 		ran.Collators, ran.HighExclude, otherRange.HighExclude, false, false)
 	if err != nil {
-		return &Range{}, err
+		return nil, err
 	}
 	if highVsHigh == 1 {
 		result.HighVal = otherRange.HighVal
@@ -564,4 +564,98 @@ func (rs Ranges) IntersectRanges(tc types.Context, otherRanges Ranges) Ranges {
 		}
 	}
 	return result
+}
+
+// AllocatorProvider defines the interface for getting an Allocator.
+type AllocatorProvider interface {
+	GetRangerAllocator() *Allocator
+}
+
+type baseRangeData struct {
+	lval     [1]types.Datum
+	hval     [1]types.Datum
+	collator [1]collate.Collator
+	Range
+}
+
+// Allocator is used to allocate points and ranges. It reuses the underlying slices to reduce allocations.
+type Allocator struct {
+	points []point
+	slices [][4]*point
+	ranges []baseRangeData
+	sindex int
+	rindex int
+}
+
+// Reset resets the underlying data slices for reusing.
+func (a *Allocator) Reset() {
+	a.points = a.points[:0]
+	a.sindex = 0
+	a.rindex = 0
+}
+
+func (a *Allocator) newPoint(value types.Datum, excl bool, start bool) *point {
+	if a == nil {
+		return &point{value: value, excl: excl, start: start}
+	}
+	a.points = append(a.points, point{value: value, excl: excl, start: start})
+	return &a.points[len(a.points)-1]
+}
+
+func (a *Allocator) points2(p1, p2 *point) []*point {
+	if a == nil {
+		return []*point{p1, p2}
+	}
+	if a.sindex >= len(a.slices) {
+		a.slices = append(a.slices, [4]*point{})
+	}
+	points := append(a.slices[a.sindex][:0], p1, p2)
+	a.sindex++
+	return points
+}
+
+func (a *Allocator) points4(p1, p2, p3, p4 *point) []*point {
+	if a == nil {
+		return []*point{p1, p2, p3, p4}
+	}
+	if a.sindex >= len(a.slices) {
+		a.slices = append(a.slices, [4]*point{})
+	}
+	points := append(a.slices[a.sindex][:0], p1, p2, p3, p4)
+	a.sindex++
+	return points
+}
+
+func (a *Allocator) newRange(p1, p2 *point, collator collate.Collator) *Range {
+	if a == nil {
+		return &Range{
+			LowVal:      []types.Datum{p1.value},
+			LowExclude:  p1.excl,
+			HighVal:     []types.Datum{p2.value},
+			HighExclude: p2.excl,
+			Collators:   []collate.Collator{collator},
+		}
+	}
+	if a.rindex >= len(a.ranges) {
+		a.ranges = append(a.ranges, baseRangeData{})
+	}
+	data := &a.ranges[a.rindex]
+	data.lval[0] = p1.value
+	data.Range.LowVal = data.lval[:]
+	data.Range.LowExclude = p1.excl
+	data.hval[0] = p2.value
+	data.Range.HighVal = data.hval[:]
+	data.Range.HighExclude = p2.excl
+	data.collator[0] = collator
+	data.Range.Collators = data.collator[:]
+	a.rindex++
+	return &data.Range
+}
+
+func (a *Allocator) rangesFromPoints(points []*point, collator collate.Collator) Ranges {
+	ranges := make(Ranges, 0, len(points)/2)
+	for i := 0; i < len(points); i += 2 {
+		ranges = append(ranges, a.newRange(points[i], points[i+1], collator))
+	}
+	return ranges
 }

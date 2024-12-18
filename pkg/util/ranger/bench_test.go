@@ -130,8 +130,10 @@ WHERE
 
 	b.ResetTimer()
 	pctx := sctx.GetPlanCtx()
+	allocator := new(ranger.Allocator)
 	for range b.N {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
+		allocator.Reset()
+		_, err = ranger.DetachCondAndBuildRangeForIndexWithAllocator(pctx.GetRangerCtx(), allocator, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()

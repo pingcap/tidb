@@ -71,14 +71,6 @@ func (rp *point) String() string {
 	return fmt.Sprintf("%v%s", val, symbol)
 }
 
-func (rp *point) Clone(value types.Datum) *point {
-	return &point{
-		value: value,
-		excl:  rp.excl,
-		start: rp.start,
-	}
-}
-
 type pointSorter struct {
 	err      error
 	collator collate.Collator
@@ -130,7 +122,7 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
-func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+func pointsConvertToSortKey(r *builder, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
 	// Only handle normal string type here.
 	// Currently, set won't be pushed down and it shouldn't reach here in theory.
 	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
@@ -142,7 +134,7 @@ func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, new
 	}
 	ps := make([]*point, 0, len(inputPs))
 	for _, p := range inputPs {
-		np, err := pointConvertToSortKey(sctx, p, newTp, true)
+		np, err := pointConvertToSortKey(r, p, newTp, true)
 		if err != nil {
 			return nil, err
 		}
@@ -152,12 +144,12 @@ func pointsConvertToSortKey(sctx *rangerctx.RangerContext, inputPs []*point, new
 }
 
 func pointConvertToSortKey(
-	sctx *rangerctx.RangerContext,
+	r *builder,
 	inputP *point,
 	newTp *types.FieldType,
 	trimTrailingSpace bool,
 ) (*point, error) {
-	p, err := convertPoint(sctx, inputP, newTp)
+	p, err := convertPoint(r, inputP, newTp)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +163,7 @@ func pointConvertToSortKey(
 		sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
 	}
 
-	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
+	return r.alloc(types.NewBytesDatum(sortKey), p.excl, p.start), nil
 }
 
 func (r *pointSorter) Swap(i, j int) {
@@ -182,18 +174,18 @@ func (r *pointSorter) Swap(i, j int) {
  * If use []point, fullRange will be copied when used.
  * So for keep this behaver, getFullRange function is introduced.
  */
-func getFullRange() []*point {
-	return []*point{
-		{start: true},
-		{value: types.MaxValueDatum()},
-	}
+func getFullRange(allocator *Allocator) []*point {
+	return allocator.points2(
+		allocator.newPoint(types.Datum{}, false, true),
+		allocator.newPoint(types.MaxValueDatum(), false, false),
+	)
 }
 
-func getNotNullFullRange() []*point {
-	return []*point{
-		{value: types.MinNotNullDatum(), start: true},
-		{value: types.MaxValueDatum()},
-	}
+func getNotNullFullRange(allocator *Allocator) []*point {
+	return allocator.points2(
+		allocator.newPoint(types.MinNotNullDatum(), false, true),
+		allocator.newPoint(types.MaxValueDatum(), false, false),
+	)
 }
 
 // FullIntRange is used for table range. Since table range cannot accept MaxValueDatum as the max value.
@@ -242,8 +234,13 @@ func NullRange() Ranges {
 
 // builder is the range builder struct.
 type builder struct {
-	err  error
-	sctx *rangerctx.RangerContext
+	err       error
+	sctx      *rangerctx.RangerContext
+	allocator *Allocator
+}
+
+func (r *builder) alloc(value types.Datum, excl bool, start bool) *point {
+	return r.allocator.newPoint(value, excl, start)
 }
 
 // build converts Expression on one column into point, which can be further built into Range.
@@ -268,7 +265,7 @@ func (r *builder) build(
 		return r.buildFromConstant(x)
 	}
 
-	return getFullRange()
+	return getFullRange(r.allocator)
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
@@ -291,18 +288,18 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 	if val == 0 {
 		return nil
 	}
-	return getFullRange()
+	return getFullRange(r.allocator)
 }
 
-func (*builder) buildFromColumn() []*point {
+func (r *builder) buildFromColumn() []*point {
 	// column name expression is equivalent to column name is true.
-	startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
-	endPoint1 := &point{excl: true}
+	startPoint1 := r.alloc(types.MinNotNullDatum(), false, true)
+	endPoint1 := r.alloc(types.Datum{}, true, false)
 	endPoint1.value.SetInt64(0)
-	startPoint2 := &point{excl: true, start: true}
+	startPoint2 := r.alloc(types.Datum{}, true, true)
 	startPoint2.value.SetInt64(0)
-	endPoint2 := &point{value: types.MaxValueDatum()}
-	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+	endPoint2 := r.alloc(types.MaxValueDatum(), false, false)
+	return r.allocator.points4(startPoint1, endPoint1, startPoint2, endPoint2)
 }
 
 func (r *builder) buildFromBinOp(
@@ -403,7 +400,7 @@ func (r *builder) buildFromBinOp(
 	if err != nil {
 		if op == ast.NE {
 			// col != an impossible value (not valid year)
-			return getNotNullFullRange()
+			return getNotNullFullRange(r.allocator)
 		}
 		// col = an impossible value (not valid year)
 		return nil
@@ -420,50 +417,50 @@ func (r *builder) buildFromBinOp(
 	}
 
 	if ft.GetType() == mysql.TypeEnum && ft.EvalType() == types.ETString {
-		return handleEnumFromBinOp(tc, ft, value, op)
+		return handleEnumFromBinOp(r.allocator, tc, ft, value, op)
 	}
 
 	var res []*point
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
-			res = []*point{{start: true}, {}} // [null, null]
+			res = r.allocator.points2(r.alloc(types.Datum{}, false, true), r.alloc(types.Datum{}, false, false)) // [null, null]
 			break
 		}
 		fallthrough
 	case ast.EQ:
-		startPoint := &point{value: value, start: true}
-		endPoint := &point{value: value}
-		res = []*point{startPoint, endPoint}
+		startPoint := r.alloc(value, false, true)
+		endPoint := r.alloc(value, false, false)
+		res = r.allocator.points2(startPoint, endPoint)
 	case ast.NE:
-		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint1 := &point{value: value, excl: true}
-		startPoint2 := &point{value: value, start: true, excl: true}
-		endPoint2 := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		startPoint1 := r.alloc(types.MinNotNullDatum(), false, true)
+		endPoint1 := r.alloc(value, true, false)
+		startPoint2 := r.alloc(value, true, true)
+		endPoint2 := r.alloc(types.MaxValueDatum(), false, false)
+		res = r.allocator.points4(startPoint1, endPoint1, startPoint2, endPoint2)
 	case ast.LT:
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: value, excl: true}
-		res = []*point{startPoint, endPoint}
+		startPoint := r.alloc(types.MinNotNullDatum(), false, true)
+		endPoint := r.alloc(value, true, false)
+		res = r.allocator.points2(startPoint, endPoint)
 	case ast.LE:
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: value}
-		res = []*point{startPoint, endPoint}
+		startPoint := r.alloc(types.MinNotNullDatum(), false, true)
+		endPoint := r.alloc(value, false, false)
+		res = r.allocator.points2(startPoint, endPoint)
 	case ast.GT:
-		startPoint := &point{value: value, start: true, excl: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint, endPoint}
+		startPoint := r.alloc(value, true, true)
+		endPoint := r.alloc(types.MaxValueDatum(), false, false)
+		res = r.allocator.points2(startPoint, endPoint)
 	case ast.GE:
-		startPoint := &point{value: value, start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		res = []*point{startPoint, endPoint}
+		startPoint := r.alloc(value, false, true)
+		endPoint := r.alloc(types.MaxValueDatum(), false, false)
+		res = r.allocator.points2(startPoint, endPoint)
 	}
 	cutPrefixForPoints(res, prefixLen, ft)
 	if convertToSortKey {
-		res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+		res, err = pointsConvertToSortKey(r, res, newTp)
 		if err != nil {
 			r.err = err
-			return getFullRange()
+			return getFullRange(r.allocator)
 		}
 	}
 	return res
@@ -547,15 +544,14 @@ func handleBoundCol(ft *types.FieldType, val types.Datum, op string) (types.Datu
 	return val, op, true
 }
 
-func handleEnumFromBinOp(tc types.Context, ft *types.FieldType, val types.Datum, op string) []*point {
+func handleEnumFromBinOp(allocator *Allocator, tc types.Context, ft *types.FieldType, val types.Datum, op string) []*point {
 	res := make([]*point, 0, len(ft.GetElems())*2)
 	appendPointFunc := func(d types.Datum) {
-		res = append(res, &point{value: d, excl: false, start: true})
-		res = append(res, &point{value: d, excl: false, start: false})
+		res = append(res, allocator.newPoint(d, false, true), allocator.newPoint(d, false, false))
 	}
 
 	if op == ast.NullEQ && val.IsNull() {
-		res = append(res, &point{start: true}, &point{}) // null point
+		res = append(res, allocator.newPoint(types.Datum{}, false, true), allocator.newPoint(types.Datum{}, false, false))
 	}
 
 	tmpEnum := types.Enum{}
@@ -600,52 +596,52 @@ func handleEnumFromBinOp(tc types.Context, ft *types.FieldType, val types.Datum,
 	return res
 }
 
-func (*builder) buildFromIsTrue(_ *expression.ScalarFunction, isNot int, keepNull bool) []*point {
+func (r *builder) buildFromIsTrue(_ *expression.ScalarFunction, isNot int, keepNull bool) []*point {
 	if isNot == 1 {
 		if keepNull {
 			// Range is {[0, 0]}
-			startPoint := &point{start: true}
+			startPoint := r.alloc(types.Datum{}, false, true)
 			startPoint.value.SetInt64(0)
-			endPoint := &point{}
+			endPoint := r.alloc(types.Datum{}, false, false)
 			endPoint.value.SetInt64(0)
-			return []*point{startPoint, endPoint}
+			return r.allocator.points2(startPoint, endPoint)
 		}
 		// NOT TRUE range is {[null null] [0, 0]}
-		startPoint1 := &point{start: true}
-		endPoint1 := &point{}
-		startPoint2 := &point{start: true}
+		startPoint1 := r.alloc(types.Datum{}, false, true)
+		endPoint1 := r.alloc(types.Datum{}, false, false)
+		startPoint2 := r.alloc(types.Datum{}, false, true)
 		startPoint2.value.SetInt64(0)
-		endPoint2 := &point{}
+		endPoint2 := r.alloc(types.Datum{}, false, false)
 		endPoint2.value.SetInt64(0)
-		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		return r.allocator.points4(startPoint1, endPoint1, startPoint2, endPoint2)
 	}
 	// TRUE range is {[-inf 0) (0 +inf]}
-	startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
-	endPoint1 := &point{excl: true}
+	startPoint1 := r.alloc(types.MinNotNullDatum(), false, true)
+	endPoint1 := r.alloc(types.Datum{}, true, false)
 	endPoint1.value.SetInt64(0)
-	startPoint2 := &point{excl: true, start: true}
+	startPoint2 := r.alloc(types.Datum{}, true, true)
 	startPoint2.value.SetInt64(0)
-	endPoint2 := &point{value: types.MaxValueDatum()}
-	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+	endPoint2 := r.alloc(types.MaxValueDatum(), false, false)
+	return r.allocator.points4(startPoint1, endPoint1, startPoint2, endPoint2)
 }
 
-func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*point {
+func (r *builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*point {
 	if isNot == 1 {
 		// NOT FALSE range is {[-inf, 0), (0, +inf], [null, null]}
-		startPoint1 := &point{start: true}
-		endPoint1 := &point{excl: true}
+		startPoint1 := r.alloc(types.Datum{}, false, true)
+		endPoint1 := r.alloc(types.Datum{}, true, false)
 		endPoint1.value.SetInt64(0)
-		startPoint2 := &point{start: true, excl: true}
+		startPoint2 := r.alloc(types.Datum{}, true, true)
 		startPoint2.value.SetInt64(0)
-		endPoint2 := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		endPoint2 := r.alloc(types.MaxValueDatum(), false, false)
+		return r.allocator.points4(startPoint1, endPoint1, startPoint2, endPoint2)
 	}
 	// FALSE range is {[0, 0]}
-	startPoint := &point{start: true}
+	startPoint := r.alloc(types.Datum{}, false, true)
 	startPoint.value.SetInt64(0)
-	endPoint := &point{}
+	endPoint := r.alloc(types.Datum{}, false, false)
 	endPoint.value.SetInt64(0)
-	return []*point{startPoint, endPoint}
+	return r.allocator.points2(startPoint, endPoint)
 }
 
 func (r *builder) buildFromIn(
@@ -665,12 +661,12 @@ func (r *builder) buildFromIn(
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
-			return getFullRange(), hasNull
+			return getFullRange(r.allocator), hasNull
 		}
 		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
 			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e.StringWithCtx(evalCtx, errors.RedactLogDisable))
-			return getFullRange(), hasNull
+			return getFullRange(r.allocator), hasNull
 		}
 		if dt.IsNull() {
 			hasNull = true
@@ -709,8 +705,8 @@ func (r *builder) buildFromIn(
 		var startValue, endValue types.Datum
 		dt.Copy(&startValue)
 		dt.Copy(&endValue)
-		startPoint := &point{value: startValue, start: true}
-		endPoint := &point{value: endValue}
+		startPoint := r.alloc(startValue, false, true)
+		endPoint := r.alloc(endValue, false, false)
 		rangePoints = append(rangePoints, startPoint, endPoint)
 	}
 	sorter := pointSorter{points: rangePoints, tc: tc, collator: collate.GetCollator(colCollate)}
@@ -736,10 +732,10 @@ func (r *builder) buildFromIn(
 	cutPrefixForPoints(rangePoints, prefixLen, ft)
 	var err error
 	if convertToSortKey {
-		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
+		rangePoints, err = pointsConvertToSortKey(r, rangePoints, newTp)
 		if err != nil {
 			r.err = err
-			return getFullRange(), false
+			return getFullRange(r.allocator), false
 		}
 	}
 	return rangePoints, hasNull
@@ -753,29 +749,29 @@ func (r *builder) newBuildFromPatternLike(
 ) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()).GetCollate(), collation) {
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
 	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx())
 	if err != nil {
 		r.err = errors.Trace(err)
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
 	pattern, err := pdt.ToString()
 	if err != nil {
 		r.err = errors.Trace(err)
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
 	// non-exceptional return case 1: empty pattern
 	if pattern == "" {
-		startPoint := &point{value: types.NewStringDatum(""), start: true}
-		endPoint := &point{value: types.NewStringDatum("")}
-		res := []*point{startPoint, endPoint}
+		startPoint := r.alloc(types.NewStringDatum(""), false, true)
+		endPoint := r.alloc(types.NewStringDatum(""), false, false)
+		res := r.allocator.points2(startPoint, endPoint)
 		if convertToSortKey {
-			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+			res, err = pointsConvertToSortKey(r, res, newTp)
 			if err != nil {
 				r.err = err
-				return getFullRange()
+				return getFullRange(r.allocator)
 			}
 		}
 		return res
@@ -784,7 +780,7 @@ func (r *builder) newBuildFromPatternLike(
 	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx.ExprCtx.GetEvalCtx(), chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
 	escape := byte(edt.GetInt64())
 	var exclude bool
@@ -821,20 +817,20 @@ func (r *builder) newBuildFromPatternLike(
 	}
 	// non-exceptional return case 2: no characters before the wildcard
 	if len(lowValue) == 0 {
-		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+		return r.allocator.points2(r.alloc(types.MinNotNullDatum(), false, true), r.alloc(types.MaxValueDatum(), false, false))
 	}
 	// non-exceptional return case 3: pattern contains valid characters and doesn't contain the wildcard
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
-		startPoint := &point{value: val, start: true}
-		endPoint := &point{value: val}
-		res := []*point{startPoint, endPoint}
+		startPoint := r.alloc(val, false, true)
+		endPoint := r.alloc(val, false, false)
+		res := r.allocator.points2(startPoint, endPoint)
 		cutPrefixForPoints(res, prefixLen, tpOfPattern)
 		if convertToSortKey {
-			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+			res, err = pointsConvertToSortKey(r, res, newTp)
 			if err != nil {
 				r.err = err
-				return getFullRange()
+				return getFullRange(r.allocator)
 			}
 		}
 		return res
@@ -847,12 +843,12 @@ func (r *builder) newBuildFromPatternLike(
 	// a range for the wildcard.
 	if !convertToSortKey &&
 		!collate.IsBinCollation(tpOfPattern.GetCollate()) {
-		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+		return r.allocator.points2(r.alloc(types.MinNotNullDatum(), false, true), r.alloc(types.MaxValueDatum(), false, false))
 	}
 
 	// non-exceptional return case 4-2: build a range for the wildcard
 	// the end_key is sortKey(start_value) + 1
-	originalStartPoint := &point{start: true, excl: exclude}
+	originalStartPoint := r.alloc(types.Datum{}, exclude, true)
 	originalStartPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
 	cutPrefixForPoints([]*point{originalStartPoint}, prefixLen, tpOfPattern)
 
@@ -863,18 +859,18 @@ func (r *builder) newBuildFromPatternLike(
 	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'. ( ' ' is 32 and '!' is 33
 	// in ASCII)
 	shouldTrimTrailingSpace := collate.IsPadSpaceCollation(collation)
-	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
+	startPoint, err := pointConvertToSortKey(r, originalStartPoint, newTp, shouldTrimTrailingSpace)
 	if err != nil {
 		r.err = errors.Trace(err)
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
-	sortKeyPointWithoutTrim, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, false)
+	sortKeyPointWithoutTrim, err := pointConvertToSortKey(r, originalStartPoint, newTp, false)
 	if err != nil {
 		r.err = errors.Trace(err)
-		return getFullRange()
+		return getFullRange(r.allocator)
 	}
 	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
-	endPoint := &point{value: types.MaxValueDatum(), excl: true}
+	endPoint := r.alloc(types.MaxValueDatum(), true, false)
 	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
@@ -889,7 +885,7 @@ func (r *builder) newBuildFromPatternLike(
 			endPoint.value = types.MaxValueDatum()
 		}
 	}
-	return []*point{startPoint, endPoint}
+	return r.allocator.points2(startPoint, endPoint)
 }
 
 func (r *builder) buildFromNot(
@@ -936,36 +932,36 @@ func (r *builder) buildFromNot(
 		retRangePoints := make([]*point, 0, 2+len(rangePoints))
 		previousValue := types.Datum{}
 		for i := 0; i < len(rangePoints); i += 2 {
-			retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
-			retRangePoints = append(retRangePoints, &point{value: rangePoints[i].value, excl: true})
+			retRangePoints = append(retRangePoints, r.alloc(previousValue, true, true))
+			retRangePoints = append(retRangePoints, r.alloc(rangePoints[i].value, true, false))
 			previousValue = rangePoints[i].value
 		}
 		// Append the interval (last element, max value].
-		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
-		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		retRangePoints = append(retRangePoints, r.alloc(previousValue, true, true))
+		retRangePoints = append(retRangePoints, r.alloc(types.MaxValueDatum(), false, false))
 		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType(r.sctx.ExprCtx.GetEvalCtx()))
 		if convertToSortKey {
 			var err error
-			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
+			retRangePoints, err = pointsConvertToSortKey(r, retRangePoints, newTp)
 			if err != nil {
 				r.err = err
-				return getFullRange()
+				return getFullRange(r.allocator)
 			}
 		}
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
 		r.err = plannererrors.ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
-		return getFullRange()
+		return getFullRange(r.allocator)
 	case ast.IsNull:
-		startPoint := &point{value: types.MinNotNullDatum(), start: true}
-		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		startPoint := r.alloc(types.MinNotNullDatum(), false, true)
+		endPoint := r.alloc(types.MaxValueDatum(), false, false)
+		return r.allocator.points2(startPoint, endPoint)
 	}
 	// TODO: currently we don't handle ast.LogicAnd, ast.LogicOr, ast.GT, ast.LT and so on. Most of those cases are eliminated
 	// by PushDownNot but they may happen. For now, we return full range for those unhandled cases in order to keep correctness.
 	// Later we need to cover those cases and set r.err when meeting some unexpected case.
-	return getFullRange()
+	return getFullRange(r.allocator)
 }
 
 func (r *builder) buildFromScalarFunc(
@@ -1001,9 +997,9 @@ func (r *builder) buildFromScalarFunc(
 	case ast.Like:
 		return r.newBuildFromPatternLike(expr, newTp, prefixLen, convertToSortKey)
 	case ast.IsNull:
-		startPoint := &point{start: true}
-		endPoint := &point{}
-		return []*point{startPoint, endPoint}
+		startPoint := r.alloc(types.Datum{}, false, true)
+		endPoint := r.alloc(types.Datum{}, false, false)
+		return r.allocator.points2(startPoint, endPoint)
 	case ast.UnaryNot:
 		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), newTp, prefixLen, convertToSortKey)
 	}
