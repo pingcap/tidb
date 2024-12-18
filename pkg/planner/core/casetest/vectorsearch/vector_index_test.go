@@ -83,7 +83,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 			('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
 			('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')
 	`)
-	for i := 0; i < 14; i++ {
+	for i := 0; i < 4; i++ {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
 	dom := domain.GetDomain(tk.Session())

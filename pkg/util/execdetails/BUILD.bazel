@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/execdetails",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/kv",
         "@com_github_influxdata_tdigest//:tdigest",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_pingcap_tipb//go-tipb",
@@ -25,6 +26,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/kv",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
