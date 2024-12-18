@@ -3840,6 +3840,8 @@ type SplitRegionStmt struct {
 }
 
 type SplitOption struct {
+	stmtNode
+
 	Lower      []ExprNode
 	Upper      []ExprNode
 	Num        int64
@@ -3899,29 +3901,13 @@ func (n *SplitRegionStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
-	for i, val := range n.SplitOpt.Lower {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitOpt.Lower[i] = node.(ExprNode)
-	}
-	for i, val := range n.SplitOpt.Upper {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitOpt.Upper[i] = node.(ExprNode)
-	}
 
-	for i, list := range n.SplitOpt.ValueLists {
-		for j, val := range list {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
+	if n.SplitOpt != nil {
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
 		}
+		n.SplitOpt = node.(*SplitOption)
 	}
 	return v.Leave(n)
 }
@@ -3972,6 +3958,41 @@ func (n *SplitOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SplitOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SplitOption)
+
+	for i, val := range n.Lower {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Lower[i] = node.(ExprNode)
+	}
+	for i, val := range n.Upper {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Upper[i] = node.(ExprNode)
+	}
+
+	for i, list := range n.ValueLists {
+		for j, val := range list {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.ValueLists[i][j] = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
 }
 
 type FulltextSearchModifier int

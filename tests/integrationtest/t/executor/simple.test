@@ -165,6 +165,7 @@ disconnect conn1;
 # TestFlushPrivileges
 drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
+SHOW GRANTS FOR 'testflush'@'localhost';
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 connect (conn1, localhost, testflush,,);
 --error 1142
