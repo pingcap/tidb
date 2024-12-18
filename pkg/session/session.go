@@ -3154,9 +3154,6 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
-		}
 	}
 
 	s.cursorTracker = cursor.NewTracker()
@@ -3824,9 +3821,6 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		}
-		if s.idxUsageCollector == nil && config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
 
