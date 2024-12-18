@@ -175,19 +175,21 @@ func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 
 // StringWithCtx implements Expression interface.
 func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
+	v := c.Value
 	if c.ParamMarker != nil {
 		dt, err := c.ParamMarker.GetUserVar(ctx)
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			return "?"
 		}
-		if redact == perrors.RedactLogDisable {
-			return dt.TruncatedStringify()
-		} else if redact == perrors.RedactLogMarker {
-			return fmt.Sprintf("‹%s›", dt.TruncatedStringify())
-		}
+		v = dt
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
+	}
+	if redact == perrors.RedactLogDisable {
+		return v.TruncatedStringify()
+	} else if redact == perrors.RedactLogMarker {
+		return fmt.Sprintf("‹%s›", v.TruncatedStringify())
 	}
 	return "?"
 }
