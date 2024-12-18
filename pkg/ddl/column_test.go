@@ -381,7 +381,9 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -403,7 +405,9 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 	i = 0
 	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -443,7 +447,9 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -465,7 +471,10 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -503,7 +512,9 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -526,7 +537,9 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -569,7 +582,9 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	}
 	handle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{updatedRow, newRow}
@@ -589,8 +604,10 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, handle, newRow)
 	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 
-	_, err = newTxn(ctx)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
