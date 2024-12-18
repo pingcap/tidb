@@ -993,6 +993,13 @@ SwitchIndexState:
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
 		}
+		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		if err != nil {
+			if !isRetryableJobError(err, job.ErrorCount) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
+		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
 			moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
