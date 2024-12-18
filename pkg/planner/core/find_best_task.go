@@ -918,11 +918,17 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	//  path2: {pk}
 	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
 	// so we should collect all match prop paths down, stored as matchIdxes here.
-	for pathIdx, oneItemAlternatives := range path.PartialAlternativeIndexPaths {
+	for pathIdx, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
-		for i, oneIndexAlternativePath := range oneItemAlternatives {
+		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
-			if !noSortItem && !isMatchProp(ds, oneIndexAlternativePath, prop) {
+			match := true
+			for _, oneAccessPath := range oneAlternative {
+				if !noSortItem && !isMatchProp(ds, oneAccessPath, prop) {
+					match = false
+				}
+			}
+			if !match {
 				continue
 			}
 			// two possibility here:
@@ -937,26 +943,18 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
-			tmpOneItemAlternatives := oneItemAlternatives
+			alternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
-				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
-				}
-				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
-				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
-				}
-				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmpAlternativesByRowCount(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}
 				// If CountAfterAccess is same, any path is global index should be the first one.
 				var lIsGlobalIndex, rIsGlobalIndex int
-				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+				if !alternatives[a][0].IsTablePath() && alternatives[a][0].Index.Global {
 					lIsGlobalIndex = 1
 				}
-				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+				if !alternatives[b][0].IsTablePath() && alternatives[b][0].Index.Global {
 					rIsGlobalIndex = 1
 				}
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
@@ -983,14 +981,14 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// By this way, a distinguished one is better.
 		for _, oneIdx := range matchIdxes.matchIdx {
 			var indexID int64
-			if alternatives[oneIdx].IsTablePath() {
+			if alternatives[oneIdx][0].IsTablePath() {
 				indexID = -1
 			} else {
-				indexID = alternatives[oneIdx].Index.ID
+				indexID = alternatives[oneIdx][0].Index.ID
 			}
 			if _, ok := usedIndexMap[indexID]; !ok {
 				// try to avoid all index partial paths are all about a single index.
-				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx].Clone())
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx][0].Clone())
 				usedIndexMap[indexID] = struct{}{}
 				found = true
 				break
@@ -999,7 +997,8 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		if !found {
 			// just pick the same name index (just using the first one is ok), in case that there may be some other
 			// picked distinctive index path for other partial paths latter.
-			determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[matchIdxes.matchIdx[0]].Clone())
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+				alternatives[matchIdxes.matchIdx[0]][0].Clone())
 			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
 		}
 	}
