@@ -2349,6 +2349,12 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.FastGenByArgs(user))
 		}
 
+		// if the mode of duty-separation is enabled, forbidding dropping admin roles.
+		if variable.EnableDutySeparationMode.Load() && IsAdminRole(user.Username) {
+			failedUsers = append(failedUsers, user.String())
+			break
+		}
+
 		// Certain users require additional privileges in order to be modified.
 		// If this is the case, we need to rollback all changes and return a privilege error.
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that

@@ -1233,6 +1233,8 @@ const (
 	TiDBEnableProcedureAstCache = "tidb_enable_sp_ast_cache"
 	//TiDBProcedureLastErrorSQL procedure last hander SQL warning/error.
 	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
+	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
 )
 
 // TiDB intentional limits
@@ -1588,6 +1590,7 @@ const (
 	DefTiDBLoginHistoryRetainDuration                 = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize                         = 256
 	DefTiDBEnableProcedure                            = false
+	DefTiDBEnableDutySeparationMode                   = false
 	DefTiDBEnableUDVSubstitute                        = false
 	DefTiDBEnableSPParamSubstitute                    = false
 )
@@ -1719,6 +1722,7 @@ var (
 	TiDBEnableSPAstReuse       = atomic.NewBool(true)
 	TiDBEnableProcedureValue   = atomic.NewBool(DefTiDBEnableProcedure)
 	AutomaticSPPrivileges      = atomic.NewBool(true)
+	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 )
 
 var (

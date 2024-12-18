@@ -3419,6 +3419,62 @@ func InitMDLVariable(store kv.Storage) error {
 	return err
 }
 
+func executeDutySeparation(s types.Session, sql string, args ...any) error {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
+	_, err := s.ExecuteInternal(ctx, sql, args...)
+	defer cancel()
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to execute grant admin role", zap.Error(err))
+	}
+	return err
+}
+
+// GrantDutySeparation creates the 4 admin roles and grants corresponding privilege.
+func GrantDutySeparation(s types.Session) error {
+	for _, sqls := range executor.DutyRoles {
+		for _, sql := range sqls {
+			if err := executeDutySeparation(s, sql); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// checkAndGrantDutySeparation checks duty separation, grant it if need.
+func checkAndGrantDutySeparation(store kv.Storage) error {
+	sess, err := CreateSession(store)
+	if err != nil {
+		logutil.BgLogger().Error("failed to create session", zap.Error(err))
+		return err
+	}
+
+	// if the TiDBEnableDutySeparationMode is On already, do not need to grant duty repeatedly.
+	if variable.EnableDutySeparationMode.Load() {
+		return nil
+	}
+
+	if err = GrantDutySeparation(sess); err != nil {
+		logutil.BgLogger().Error("failed to grant admin role", zap.Error(err))
+		return err
+	}
+
+	if err = sess.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVarOnly(
+		context.TODO(),
+		variable.TiDBEnableDutySeparationMode,
+		variable.BoolToOnOff(true),
+		true,
+	); err != nil {
+		logutil.BgLogger().Error("failed to set config", zap.String("item", variable.TiDBEnableDutySeparationMode), zap.Error(err))
+		return err
+	}
+
+	logutil.BgLogger().Info("set duty separation successfully", zap.Bool("duty-separation", variable.EnableDutySeparationMode.Load()))
+	return nil
+}
+
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
 	return bootstrapSessionImpl(context.Background(), store, createSessions)
@@ -3475,8 +3531,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	ver := getStoreBootstrapVersionWithCache(store)
 	verEE := getStoreEEBootstrapVersion(store)
+	startMode := ddl.Normal
 	if ver < currentBootstrapVersion || verEE < currentEEBootstrapVersion {
-		runInBootstrapSession(store, ver, verEE)
+		startMode = runInBootstrapSession(store, ver, verEE)
 	} else {
 		err = InitMDLVariable(store)
 		if err != nil {
@@ -3548,6 +3605,13 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
+			return nil, err
+		}
+	}
+
+	// check TiDBEnableDutySeparationMode config and grant duty separation
+	if (startMode == ddl.Bootstrap || startMode == ddl.Upgrade) && cfg.Security.TidbEnableDutySeparationMode {
+		if err := checkAndGrantDutySeparation(store); err != nil {
 			return nil, err
 		}
 	}
@@ -3705,7 +3769,7 @@ func getStartMode(ver, verEE int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver, verEE int64) {
+func runInBootstrapSession(store kv.Storage, ver, verEE int64) ddl.StartMode {
 	startMode := getStartMode(ver, verEE)
 
 	if startMode == ddl.Upgrade {
@@ -3762,6 +3826,8 @@ func runInBootstrapSession(store kv.Storage, ver, verEE int64) {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	domap.Delete(store)
+
+	return startMode
 }
 
 func createSessions(store kv.Storage, cnt int) ([]*session, error) {

@@ -619,6 +619,8 @@ type Security struct {
 	DisconnectOnExpiredPassword bool `toml:"disconnect-on-expired-password" json:"disconnect-on-expired-password"`
 	// EnableWhiteListPlugin indicate whether enable whitelist plugin
 	EnableWhiteListPlugin bool `toml:"enable-whitelist-plugin" json:"enable-whitelist-plugin"`
+	// TidbEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TidbEnableDutySeparationMode bool `toml:"tidb-enable-duty-separation-mode" json:"tidb-enable-duty-separation-mode"`
 	// TLCP config
 	TLCPCA      string `toml:"tlcp-ca" json:"tlcp-ca"`
 	TLCPSigCert string `toml:"tlcp-sig-cert" json:"tlcp-sig-cert"`
@@ -1056,14 +1058,15 @@ var defaultConf = Config{
 	Labels:                     make(map[string]string),
 	EnableGlobalIndex:          false,
 	Security: Security{
-		SpilledFileEncryptionMethod: SpilledFileEncryptionMethodPlaintext,
-		EnableSEM:                   false,
-		AutoTLS:                     false,
-		RSAKeySize:                  4096,
-		AuthTokenJWKS:               "",
-		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
-		DisconnectOnExpiredPassword: true,
-		EnableWhiteListPlugin:       false,
+		SpilledFileEncryptionMethod:  SpilledFileEncryptionMethodPlaintext,
+		EnableSEM:                    false,
+		AutoTLS:                      false,
+		RSAKeySize:                   4096,
+		AuthTokenJWKS:                "",
+		AuthTokenRefreshInterval:     DefAuthTokenRefreshInterval.String(),
+		DisconnectOnExpiredPassword:  true,
+		TidbEnableDutySeparationMode: false,
+		EnableWhiteListPlugin:        false,
 	},
 	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,

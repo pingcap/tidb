@@ -3290,6 +3290,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return strconv.Itoa(ldap.LDAPSimpleAuthImpl.GetMaxCapacity()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableDutySeparationMode, Value: BoolToOnOff(DefTiDBEnableDutySeparationMode), Type: TypeBool, ReadOnly: true,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableDutySeparationMode.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableDutySeparationMode.Load()), nil
+		},
+	},
 	// runtime filter variables group
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRuntimeFilterTypeName, Value: DefRuntimeFilterType, Type: TypeStr,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
