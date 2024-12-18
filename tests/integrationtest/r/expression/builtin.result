@@ -2906,6 +2906,8 @@ set tidb_enable_vectorized_expression=default;
 drop table if exists t;
 create table t(a char(41), b char(41), c char(41));
 insert into t values(NULL, '', 'abc');
+select password(a) from t;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "(a) from t;" 
 drop table if exists t;
 create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
 insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
