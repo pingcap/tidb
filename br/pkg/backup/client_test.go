@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -32,8 +33,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/multierr"
-
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 )
 
 type testBackup struct {
