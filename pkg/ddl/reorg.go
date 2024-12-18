@@ -408,15 +408,25 @@ func getIndexNamesFromJobArgs(reorgInfo *reorgInfo) string {
 	indexNames := make([]model.CIStr, 1)
 	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
 	indexOption := make([]*ast.IndexOption, 1)
+	splitOpt := make([]*indexPresplitOpt, 1)
 	var sqlMode mysql.SQLMode
 	var warnings []string
 	hiddenCols := make([][]*model.ColumnInfo, 1)
 
 	if reorgInfo.Type == model.ActionAddPrimaryKey {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0], &splitOpt[0])
+		if err != nil {
+			err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		}
 	} else if reorgInfo.Type == model.ActionAddIndex {
-		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0], &splitOpt[0])
+		if err != nil {
+			err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		}
+		if err != nil {
+			err = reorgInfo.Job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global, &splitOpt)
+		}
 		if err != nil {
 			err = reorgInfo.Job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
 		}
