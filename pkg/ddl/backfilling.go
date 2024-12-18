@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -194,21 +196,56 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		id = int(backfillContextID.Add(1))
 	}
 
+	colOrIdxName := ""
+	switch label {
+	case metrics.LblAddIdxRate:
+		fallthrough
+	case metrics.LblMergeTmpIdxRate:
+		colOrIdxName = getIdxNamesFromArgs(rInfo.jobCtx.jobArgs)
+	case metrics.LblUpdateColRate:
+		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
+		colOrIdxName = oldCol.Name.String()
+
+	// partition scenarios, just leave the colOrIdxName empty
+	case metrics.LblReorgPartitionRate:
+	case metrics.LblCleanupIdxRate:
+
+	default:
+		if intest.InTest {
+			panic("Handle the new added label")
+		} else {
+			logutil.DDLLogger().Error("unknow label", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
+		}
+	}
+
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		warnings:   warnHandler,
-		exprCtx:    exprCtx,
-		tblCtx:     tblCtx,
-		loc:        exprCtx.GetEvalCtx().Location(),
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   batchCnt,
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		id:            id,
+		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
+		warnings:      warnHandler,
+		exprCtx:       exprCtx,
+		tblCtx:        tblCtx,
+		loc:           exprCtx.GetEvalCtx().Location(),
+		schemaName:    schemaName,
+		table:         tbl,
+		batchCnt:      batchCnt,
+		jobContext:    jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
+}
+
+func getIdxNamesFromArgs(jobArgs model.JobArgs) string {
+	args, ok := jobArgs.(*model.ModifyIndexArgs)
+	var sb strings.Builder
+	if ok {
+		for i, idx := range args.IndexArgs {
+			if i > 0 {
+				sb.WriteString("+")
+			}
+			sb.WriteString(idx.IndexName.O)
+		}
+	}
+	return sb.String()
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
@@ -686,6 +723,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	var indexNames strings.Builder
 	uniques := make([]bool, 0, idxCnt)
 	hasUnique := false
 	for _, e := range reorgInfo.elements {
@@ -699,6 +737,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
+		if indexNames.Len() > 0 {
+			indexNames.WriteString("+")
+		}
+		indexNames.WriteString(indexInfo.Name.O)
 		uniques = append(uniques, indexInfo.Unique)
 		hasUnique = hasUnique || indexInfo.Unique
 	}
@@ -736,8 +778,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
 
 	sctx, err := sessPool.Get()
