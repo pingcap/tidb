@@ -496,9 +496,9 @@ type GroupRange struct {
 	Ranges []Range
 }
 
-func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []*backuppb.SubRanges {
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []*backuppb.SortedSubRanges {
 	// about 64 MB memory if there are 1 million ranges
-	incompleteGroupRanges := make([]*backuppb.SubRanges, 0)
+	incompleteGroupRanges := make([]*backuppb.SortedSubRanges, 0)
 	rightContinuous := false
 	rangeTree.Ascend(func(item *ProgressRange) bool {
 		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
@@ -510,10 +510,10 @@ func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []*backuppb.SubRanges 
 		if rightContinuous && bytes.Equal(incomplete[0].StartKey, item.Origin.StartKey) {
 			incompleteGroupRanges[len(incompleteGroupRanges)-1].SubRanges = append(incompleteGroupRanges[len(incompleteGroupRanges)-1].SubRanges, incomplete[0].ToKeyRange())
 		} else {
-			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[0].ToKeyRange()}})
+			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SortedSubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[0].ToKeyRange()}})
 		}
 		for i := 1; i < len(incomplete); i += 1 {
-			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[i].ToKeyRange()}})
+			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SortedSubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[i].ToKeyRange()}})
 		}
 		rightContinuous = bytes.Equal(incomplete[len(incomplete)-1].EndKey, item.Origin.EndKey)
 		return true

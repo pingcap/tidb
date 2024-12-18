@@ -596,12 +596,12 @@ func (importer *SnapFileImporter) buildDownloadRequest(
 	}
 
 	req := &import_sstpb.DownloadRequest{
-		Sst:            *sstMeta,
-		StorageBackend: importer.backend,
-		Name:           file.GetName(),
-		RewriteRules:   sortedFileRules,
-		CipherInfo:     cipher,
-		StorageCacheId: importer.cacheKey,
+		Sst:                *sstMeta,
+		StorageBackend:     importer.backend,
+		Name:               file.GetName(),
+		SortedRewriteRules: sortedFileRules,
+		CipherInfo:         cipher,
+		StorageCacheId:     importer.cacheKey,
 		// For the older version of TiDB, the request type will  be default to `import_sstpb.RequestType_Legacy`
 		RequestType: import_sstpb.DownloadRequestType_Keyspace,
 		Context: &kvrpcpb.Context{

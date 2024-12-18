@@ -203,7 +203,7 @@ mainLoop:
 		// Compute the left ranges that not backuped yet
 		start := time.Now()
 
-		var inCompleteRanges []*backuppb.SubRanges
+		var inCompleteRanges []*backuppb.SortedSubRanges
 		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
@@ -225,7 +225,7 @@ mainLoop:
 		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
 			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
 
-		loop.BackupReq.SubRangesGroups = inCompleteRanges
+		loop.BackupReq.SortedSubRangesGroups = inCompleteRanges
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
