@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
+func TestConcurrentlyInitStats(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -103,7 +103,27 @@ func testConcurrentlyInitStats(t *testing.T) {
 	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
 }
 
-func TestIssue58371(t *testing.T) {
+func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.LiteInitStats = false
+		conf.Performance.ConcurrentlyInitStats = true
+	})
+	testDropTableBeforeInitStats(t)
+}
+
+func TestDropTableBeforeNonLiteInitStats(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.LiteInitStats = false
+		conf.Performance.ConcurrentlyInitStats = false
+	})
+	testDropTableBeforeInitStats(t)
+}
+
+func testDropTableBeforeInitStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
