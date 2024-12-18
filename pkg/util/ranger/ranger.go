@@ -91,6 +91,7 @@ func convertPoints(r *builder, rangePoints []*point, newTp *types.FieldType, ski
 	for j := 0; j < numPoints; j += 2 {
 		startPoint, err := convertPoint(r, rangePoints[j], newTp)
 		if err != nil {
+			keybufPool.Put(buf)
 			return nil, errors.Trace(err)
 		}
 		if tableRange {
