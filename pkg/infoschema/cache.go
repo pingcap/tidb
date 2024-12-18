@@ -17,6 +17,7 @@ package infoschema
 import (
 	"sort"
 	"sync"
+	"time"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -44,7 +45,8 @@ type InfoCache struct {
 	// are known as long as we keep the DDL history correctly.
 	firstKnownSchemaVersion int64
 
-	lastCheck int64
+	lastCheckVersion int64
+	lastCheckTime time.Time
 }
 
 type schemaAndTimestamp struct {
@@ -294,7 +296,7 @@ func (h *InfoCache) GetBySnapshotTS(snapshotTS uint64) InfoSchema {
 	return nil
 }
 
-const gcCheckInterval = 64
+const gcCheckInterval = 128
 
 // Insert will **TRY** to insert the infoschema into the cache.
 // It only promised to cache the newest infoschema.
@@ -306,10 +308,12 @@ func (h *InfoCache) Insert(is InfoSchema, schemaTS uint64) bool {
 	defer h.mu.Unlock()
 
 	version := is.SchemaMetaVersion()
-	if h.lastCheck == 0 {
-		h.lastCheck = version
-	} else if version > h.lastCheck+gcCheckInterval {
-		h.lastCheck = version
+	if h.lastCheckVersion == 0 {
+		h.lastCheckVersion = version
+		h.lastCheckTime = time.Now()
+	} else if version > h.lastCheckVersion+gcCheckInterval && time.Since(h.lastCheckTime) > time.Minute {
+		h.lastCheckVersion = version
+		h.lastCheckTime = time.Now()
 		go h.gcOldVersion()
 	}
 
@@ -397,8 +401,12 @@ func (h *InfoCache) gcOldVersion() {
 		logutil.BgLogger().Warn("failed to GC old schema version", zap.Error(err))
 		return
 	}
-	count := h.Data.GCOldVersion(version)
+	start := time.Now()
+	deleted, total := h.Data.GCOldVersion(version)
 	logutil.BgLogger().Info("GC compact old schema version",
-		zap.Int64("version", version),
-		zap.Int("deleted", count))
+		zap.Int64("current version", h.lastCheckVersion),
+		zap.Int64("oldest version", version),
+		zap.Int("deleted", deleted),
+		zap.Int64("total", total),
+		zap.Duration("takes", time.Since(start)))
 }

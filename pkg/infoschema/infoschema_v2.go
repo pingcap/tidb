@@ -259,13 +259,14 @@ func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 
 // GCOldVersion compacts btree nodes by removing items older than schema version.
 // exported for testing
-func (isd *Data) GCOldVersion(schemaVersion int64) int {
+func (isd *Data) GCOldVersion(schemaVersion int64) (int, int64) {
 	maxv, ok := isd.byName.Max()
 	if !ok {
-		return 0
+		return 0, 0
 	}
 
-	var deletes []tableItem
+	var total int64
+	var deletes []*tableItem
 	var prev *tableItem
 	// Example:
 	// gcOldVersion to v4
@@ -277,14 +278,19 @@ func (isd *Data) GCOldVersion(schemaVersion int64) int {
 	//	db1 tbl3 v4
 	//	...
 	// So the rule can be simplify to "remove all items whose (version < schemaVersion && previous item is same table)"
-	isd.byName.Descend(maxv, func(item tableItem) bool {
+	isd.byName.Descend(maxv, func(item *tableItem) bool {
+		total++
 		if item.schemaVersion < schemaVersion {
 			if prev != nil && prev.dbName == item.dbName && prev.tableName == item.tableName {
 				// find one!
 				deletes = append(deletes, item)
+				// Don't do too much work in one batch!
+				if len(deletes) > 1024 {
+					return false
+				}
 			}
 		}
-		prev = &item
+		prev = item
 		return true
 	})
 
@@ -292,7 +298,7 @@ func (isd *Data) GCOldVersion(schemaVersion int64) int {
 		isd.byName.Delete(item)
 		isd.byID.Delete(item)
 	}
-	return len(deletes)
+	return len(deletes), total
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().

@@ -81,7 +81,8 @@ func TestGCOldVersion(t *testing.T) {
 	require.True(t, ok)
 
 	// After GC, the related table item are deleted.
-	v2.GCOldVersion(curr - 5)
+	deleted, _ := v2.GCOldVersion(curr - 5)
+	require.True(t, deleted > 0)
 
 	// So TableByID using old ID with the old schema version would fail.
 	_, ok = oldIS.TableByID(context.Background(), t1.ID)
