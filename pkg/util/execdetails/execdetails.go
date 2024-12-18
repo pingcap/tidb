@@ -555,7 +555,12 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 
 type basicCopRuntimeStats struct {
 	storeType kv.StoreType
-	BasicRuntimeStats
+	// executor's Next() called times.
+	loop int32
+	// executor consume time, including open, next, and close time.
+	consume int64
+	// executor return row count.
+	rows       int64
 	threads    int32
 	totalTasks int32
 	procTimes  Percentile[Duration]
@@ -690,9 +695,9 @@ func (p *Percentile[valueType]) Sum() float64 {
 func (e *basicCopRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString("time:")
-	buf.WriteString(FormatDuration(time.Duration(e.consume.Load())))
+	buf.WriteString(FormatDuration(time.Duration(e.consume)))
 	buf.WriteString(", loops:")
-	buf.WriteString(strconv.Itoa(int(e.loop.Load())))
+	buf.WriteString(strconv.Itoa(int(e.loop)))
 	if e.storeType == kv.TiFlash {
 		buf.WriteString(", threads:")
 		buf.WriteString(strconv.Itoa(int(e.threads)))
@@ -713,15 +718,14 @@ func (e *basicCopRuntimeStats) String() string {
 // Clone implements the RuntimeStats interface.
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats := &basicCopRuntimeStats{
-		BasicRuntimeStats: BasicRuntimeStats{},
-		threads:           e.threads,
-		storeType:         e.storeType,
-		totalTasks:        e.totalTasks,
-		procTimes:         e.procTimes,
+		loop:       e.loop,
+		consume:    e.consume,
+		rows:       e.rows,
+		threads:    e.threads,
+		storeType:  e.storeType,
+		totalTasks: e.totalTasks,
+		procTimes:  e.procTimes,
 	}
-	stats.loop.Store(e.loop.Load())
-	stats.consume.Store(e.consume.Load())
-	stats.rows.Store(e.rows.Load())
 	if e.tiflashScanContext != nil {
 		stats.tiflashScanContext = e.tiflashScanContext.Clone()
 	}
@@ -737,13 +741,13 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	if !ok {
 		return
 	}
-	e.loop.Add(tmp.loop.Load())
-	e.consume.Add(tmp.consume.Load())
-	e.rows.Add(tmp.rows.Load())
+	e.loop += tmp.loop
+	e.consume += tmp.consume
+	e.rows += tmp.rows
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
 	if tmp.procTimes.Size() == 0 {
-		e.procTimes.Add(Duration(tmp.consume.Load()))
+		e.procTimes.Add(Duration(tmp.consume))
 	} else {
 		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
@@ -763,9 +767,9 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 
 // mergeExecSummary likes Merge, but it merges ExecutorExecutionSummary directly.
 func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
-	e.loop.Add(int32(*summary.NumIterations))
-	e.consume.Add(int64(*summary.TimeProcessedNs))
-	e.rows.Add(int64(*summary.NumProducedRows))
+	e.loop += (int32(*summary.NumIterations))
+	e.consume += (int64(*summary.TimeProcessedNs))
+	e.rows += (int64(*summary.NumProducedRows))
 	e.threads += int32(summary.GetConcurrency())
 	e.totalTasks++
 	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
@@ -871,7 +875,7 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	for _, instanceStats := range crs.stats {
-		totalRows += instanceStats.rows.Load()
+		totalRows += instanceStats.rows
 	}
 	return totalRows
 }
@@ -891,8 +895,8 @@ func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], t
 	}
 	for _, instanceStats := range crs.stats {
 		procTimes.MergePercentile(&instanceStats.procTimes)
-		totalTime += time.Duration(instanceStats.consume.Load())
-		totalLoops += instanceStats.loop.Load()
+		totalTime += time.Duration(instanceStats.consume)
+		totalLoops += instanceStats.loop
 		totalThreads += instanceStats.threads
 		if instanceStats.tiflashScanContext != nil {
 			totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
