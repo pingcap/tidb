@@ -1001,6 +1001,22 @@ SwitchIndexState:
 			job.State = model.JobStateCancelled
 			return ver, err
 		}
+<<<<<<< HEAD
+=======
+		loadCloudStorageURI(w, job)
+		if reorgTp.NeedMergeProcess() {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateRunning
+			}
+		}
+		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		if err != nil {
+			if !isRetryableJobError(err, job.ErrorCount) {
+				job.State = model.JobStateCancelled
+			}
+			return ver, err
+		}
+>>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
 			moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
