@@ -1565,7 +1565,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminFlushBindings:
 		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		return nil, errors.Errorf("Auto Capture is not supported")
 	case ast.AdminEvolveBindings:
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
