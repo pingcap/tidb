@@ -209,6 +209,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -247,6 +251,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -261,6 +269,10 @@ func checkAddWriteOnly(ctx sessionctx.Context, deleteOnlyTable, writeOnlyTable t
 	}
 	// DeleteOnlyTable: delete from t where c2 = 2
 	err = deleteOnlyTable.RemoveRecord(ctx.GetTableCtx(), txn, h, types.MakeDatums(2, 2))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Commit(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -293,6 +305,10 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	if err != nil {
 		return errors.Trace(err)
 	}
+	err = txn.Commit(context.Background())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	txn, err = newTxn(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -307,6 +323,10 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 	}
 	newRow := types.MakeDatums(3, 4, oldRow[2].GetValue())
 	err = writeOnlyTable.UpdateRecord(sctx.GetTableCtx(), txn, h, oldRow, newRow, touchedSlice(writeOnlyTable))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	err = txn.Commit(context.Background())
 	if err != nil {
 		return errors.Trace(err)
 	}
