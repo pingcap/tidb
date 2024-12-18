@@ -193,6 +193,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
 		if !ok {
+			// this table has been dropped. but stats meta still exists and wait for being deleted.
 			logutil.BgLogger().Warn("cannot find this table when to init stats", zap.Int64("tableID", table.PhysicalID))
 			continue
 		}
