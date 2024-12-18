@@ -20,7 +20,7 @@ go_library(
         "//pkg/util/intest",
         "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_zyedidia_generic//hashmap:go_default_library",
+        "@com_github_zyedidia_generic//hashmap",
     ],
 )
 
@@ -44,7 +44,7 @@ go_test(
         "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_zyedidia_generic//hashmap:go_default_library",
+        "@com_github_zyedidia_generic//hashmap",
         "@org_uber_go_goleak//:goleak",
     ],
 )
