@@ -19,6 +19,9 @@ import (
 )
 
 func TestSize(t *testing.T) {
+	stringSlice := make([]string, 2, 5)
+	stringSlice[0] = "AAAAAAAAAA"
+	stringSlice[1] = "BBBBBBBBBBBB"
 	tests := []struct {
 		name string
 		v    any
@@ -30,9 +33,19 @@ func TestSize(t *testing.T) {
 			want: 12,
 		},
 		{
+			name: "Array 2",
+			v:    [5]string{}, // 5 * 16  = 80
+			want: 80,
+		},
+		{
 			name: "Slice",
 			v:    make([]int64, 2, 5), // 5 * 8 + 24 = 64
 			want: 64,
+		},
+		{
+			name: "string Slice",
+			v:    stringSlice, // 5 * 16 + 10 + 12 + 24 = 126
+			want: 126,
 		},
 		{
 			name: "String",

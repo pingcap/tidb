@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/zyedidia/generic/hashmap"
 )
 
 var _ base.HashEquals = &Group{}
@@ -41,7 +42,7 @@ type Group struct {
 	Operand2FirstExpr map[pattern.Operand]*list.Element
 
 	// hash2GroupExpr is used to de-duplication in the list.
-	hash2GroupExpr map[uint64]*list.Element
+	hash2GroupExpr *hashmap.Map[*GroupExpression, *list.Element]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
@@ -74,22 +75,13 @@ func (g *Group) Equals(other any) bool {
 
 // ******************************************* end of HashEqual methods *******************************************
 
-// Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(e *GroupExpression) bool {
-	one, ok := g.hash2GroupExpr[e.GetHash64()]
-	if !ok {
-		return false
-	}
-	return one.Value.(*GroupExpression).Equals(e)
-}
-
 // Insert adds a GroupExpression to the Group.
 func (g *Group) Insert(e *GroupExpression) bool {
 	if e == nil {
 		return false
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
-	if g.Exists(e) {
+	if _, ok := g.hash2GroupExpr.Get(e); ok {
 		return false
 	}
 	operand := pattern.GetOperand(e.LogicalPlan)
@@ -103,7 +95,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		newEquiv = g.logicalExpressions.PushBack(e)
 		g.Operand2FirstExpr[operand] = newEquiv
 	}
-	g.hash2GroupExpr[e.GetHash64()] = newEquiv
+	g.hash2GroupExpr.Put(e, newEquiv)
 	e.group = g
 	return true
 }
@@ -174,9 +166,17 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 func NewGroup(prop *property.LogicalProperty) *Group {
 	g := &Group{
 		logicalExpressions: list.New(),
-		hash2GroupExpr:     make(map[uint64]*list.Element),
 		Operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
 		logicalProp:        prop,
+		hash2GroupExpr: hashmap.New[*GroupExpression, *list.Element](
+			4,
+			func(a, b *GroupExpression) bool {
+				return a.Equals(b)
+			},
+			func(t *GroupExpression) uint64 {
+				return t.GetHash64()
+			},
+		),
 	}
 	return g
 }
