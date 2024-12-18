@@ -114,10 +114,16 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 		intest.Assert(currentChildG != target)
 		childGroups = append(childGroups, currentChildG)
 	}
-	hasher := mm.GetHasher()
-	groupExpr := NewGroupExpression(lp, childGroups)
-	groupExpr.Init(hasher)
-	if _, ok := mm.InsertGroupExpression(groupExpr, target); ok && target == nil {
+	var (
+		ok        bool
+		h         base2.Hasher
+		groupExpr *GroupExpression
+	)
+	h = mm.GetHasher()
+	groupExpr = NewGroupExpression(lp, childGroups)
+	groupExpr.Init(h)
+	groupExpr, ok = mm.InsertGroupExpression(groupExpr, target)
+	if ok && target == nil {
 		// derive logical property for new group.
 		err := groupExpr.DeriveLogicalProp()
 		if err != nil {
