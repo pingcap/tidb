@@ -181,14 +181,13 @@ func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
 		if err != nil {
 			return "?"
 		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		if redact == perrors.RedactLogDisable {
+			return dt.TruncatedStringify()
+		} else if redact == perrors.RedactLogMarker {
+			return fmt.Sprintf("‹%s›", dt.TruncatedStringify())
+		}
 	} else if c.DeferredExpr != nil {
 		return c.DeferredExpr.StringWithCtx(ctx, redact)
-	}
-	if redact == perrors.RedactLogDisable {
-		return c.Value.TruncatedStringify()
-	} else if redact == perrors.RedactLogMarker {
-		return fmt.Sprintf("‹%s›", c.Value.TruncatedStringify())
 	}
 	return "?"
 }
