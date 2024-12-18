@@ -56,7 +56,6 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 	default:
 		return errors.Errorf("unsupported SQL bind operation: %v", e.sqlBindOp)
 	}
-	return nil
 }
 
 func (e *SQLBindExec) dropSQLBind() error {
