@@ -244,6 +244,14 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 	return expiredTime, nil
 }
 
+// FullName returns the full name of the table
+func (t *PhysicalTable) FullName() string {
+	if t.Partition.L != "" {
+		return fmt.Sprintf("%s.%s.%s", t.Schema.O, t.Name.O, t.Partition.O)
+	}
+	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
+}
+
 // EvalExpireTime returns the expired time for the current time.
 // It uses the global timezone in session to evaluation the context
 // and the return time is in the same timezone of now argument.
