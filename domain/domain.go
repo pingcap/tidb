@@ -2193,12 +2193,44 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+<<<<<<< HEAD:domain/domain.go
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
 	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
 	do.wg.Run(func() {
 		do.handleDDLEvent()
 	}, "handleDDLEvent")
+=======
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
+	// The stats updated worker doesn't require the stats initialization to be completed.
+	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
+	// These tasks do not interfere with or depend on the initialization process.
+	do.wg.Run(func() { do.updateStatsWorker(ctx) }, "updateStatsWorker")
+	// Wait for the stats worker to finish the initialization.
+	// Otherwise, we may start the auto analyze worker before the stats cache is initialized.
+	do.wg.Run(
+		func() {
+			select {
+			case <-do.StatsHandle().InitStatsDone:
+			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+				return
+			}
+			do.autoAnalyzeWorker()
+		},
+		"autoAnalyzeWorker",
+	)
+	do.wg.Run(
+		func() {
+			select {
+			case <-do.StatsHandle().InitStatsDone:
+			case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+				return
+			}
+			do.analyzeJobsCleanupWorker()
+		},
+		"analyzeJobsCleanupWorker",
+	)
+>>>>>>> 0be1983389d (domain: move async load stats into single goroutine (#58302)):pkg/domain/domain.go
 	do.wg.Run(
 		func() {
 			// The initStatsCtx is used to store the internal session for initializing stats,
@@ -2296,7 +2328,38 @@ func (do *Domain) loadStatsWorker() {
 			if err != nil {
 				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+<<<<<<< HEAD:domain/domain.go
 			err = statsHandle.LoadNeededHistograms()
+=======
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
+			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
+>>>>>>> 0be1983389d (domain: move async load stats into single goroutine (#58302)):pkg/domain/domain.go
 			if err != nil {
 				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
