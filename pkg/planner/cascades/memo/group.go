@@ -37,12 +37,15 @@ type Group struct {
 	// logicalExpressions indicates the logical equiv classes for this group.
 	logicalExpressions *list.List
 
-	// Operand2FirstExpr is used to locate to the first same type logical expression
-	// in list above instead of traverse them all.
+	// Operand2FirstExpr is used to locate to the first same type logicalExpression list.
 	Operand2FirstExpr map[pattern.Operand]*list.Element
 
 	// hash2GroupExpr is used to de-duplication in the list.
 	hash2GroupExpr *hashmap.Map[*GroupExpression, *list.Element]
+
+	// hash2ParentGroupExpr is reverted pointer back from current Group to parent referred GEs.
+	// uint64 means *list.Element's addr, list.Element means the pos in global memo group expression's list.
+	hash2ParentGroupExpr *hashmap.Map[*GroupExpression, struct{}]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
@@ -80,10 +83,12 @@ func (g *Group) Insert(e *GroupExpression) bool {
 	if e == nil {
 		return false
 	}
+	// first: judge the e's existence from the hash map.
 	// GroupExpressions hash should be initialized within Init(xxx) method.
 	if _, ok := g.hash2GroupExpr.Get(e); ok {
 		return false
 	}
+	// second: insert it into the logicalExpressions list and maintain the Operand2FirstExpr
 	operand := pattern.GetOperand(e.LogicalPlan)
 	var newEquiv *list.Element
 	mark, ok := g.Operand2FirstExpr[operand]
@@ -95,9 +100,38 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		newEquiv = g.logicalExpressions.PushBack(e)
 		g.Operand2FirstExpr[operand] = newEquiv
 	}
+	// third: insert the list.element into the map.
 	g.hash2GroupExpr.Put(e, newEquiv)
 	e.group = g
 	return true
+}
+
+// Delete an existing Group expression
+func (g *Group) Delete(e *GroupExpression) {
+	// first: del it from map and get its list element if any.
+	existElem, ok := g.hash2GroupExpr.Get(e)
+	if !ok {
+		// not exist at all.
+		return
+	}
+	g.hash2GroupExpr.Remove(e)
+	// second: maintain the Operand2FirstExpr
+	operand := pattern.GetOperand(existElem.Value.(*GroupExpression).LogicalPlan)
+	if g.Operand2FirstExpr[operand] == existElem {
+		// The target GroupExpr is the first Element of the same Operand.
+		// We need to change the FirstExpr to the next Expr, or delete the FirstExpr.
+		nextElem := existElem.Next()
+		if nextElem != nil && pattern.GetOperand(nextElem.Value.(*GroupExpression).LogicalPlan) == operand {
+			// next elem still the same operand, just move it forward.
+			g.Operand2FirstExpr[operand] = nextElem
+		} else {
+			// There is no more same GE of the Operand, so we should delete the FirstExpr of this Operand.
+			delete(g.Operand2FirstExpr, operand)
+		}
+	}
+	// third: just remove this element from logicalExpression list.
+	g.logicalExpressions.Remove(existElem)
+	e.group = nil
 }
 
 // GetGroupID gets the group id.
@@ -162,6 +196,20 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 	}
 }
 
+// removeParentGEs remove the current Group's parent GE ref which is pointed to parent.
+func (g *Group) removeParentGEs(parent *GroupExpression) {
+	_, ok := g.hash2ParentGroupExpr.Get(parent)
+	intest.Assert(ok)
+	g.hash2ParentGroupExpr.Remove(parent)
+}
+
+// addParentGEs is used to maintain the reverted parent pointer from Group to parent GEs.
+func (g *Group) addParentGEs(parent *GroupExpression) {
+	_, ok := g.hash2ParentGroupExpr.Get(parent)
+	intest.Assert(!ok)
+	g.hash2ParentGroupExpr.Put(parent, struct{}{})
+}
+
 // NewGroup creates a new Group with given logical prop.
 func NewGroup(prop *property.LogicalProperty) *Group {
 	g := &Group{
@@ -169,6 +217,15 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 		Operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
 		logicalProp:        prop,
 		hash2GroupExpr: hashmap.New[*GroupExpression, *list.Element](
+			4,
+			func(a, b *GroupExpression) bool {
+				return a.Equals(b)
+			},
+			func(t *GroupExpression) uint64 {
+				return t.GetHash64()
+			},
+		),
+		hash2ParentGroupExpr: hashmap.New[*GroupExpression, struct{}](
 			4,
 			func(a, b *GroupExpression) bool {
 				return a.Equals(b)

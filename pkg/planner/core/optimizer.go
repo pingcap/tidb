@@ -21,6 +21,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -967,6 +968,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range optRuleList {
+		if strings.Contains(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "intersect") && i == 12 {
+			fmt.Println(1)
+		}
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.

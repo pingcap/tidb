@@ -20,6 +20,7 @@ import (
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/zyedidia/generic/hashmap"
 )
 
 // Memo is the main structure of the memo package.
@@ -36,8 +37,9 @@ type Memo struct {
 	// groupID2Group is the map from group id to group.
 	groupID2Group map[GroupID]*list.Element
 
-	// hash2GroupExpr is the map from hash to group expression.
-	hash2GroupExpr map[uint64]*list.Element
+	// hash2GlobalGroupExpr is the map from hash to each all group's groupExpression.
+	// two same hash64 and equals GE means a group merge trigger.
+	hash2GlobalGroupExpr *hashmap.Map[*GroupExpression, *GroupExpression]
 
 	// hasher is the pointer of hasher.
 	hasher base2.Hasher
@@ -49,7 +51,16 @@ func NewMemo() *Memo {
 		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
-		hasher:        base2.NewHashEqualer(),
+		hash2GlobalGroupExpr: hashmap.New[*GroupExpression, *GroupExpression](
+			// todo: feel the operator count at the prev normalization rule.
+			4,
+			func(a, b *GroupExpression) bool {
+				return a.Equals(b)
+			},
+			func(ge *GroupExpression) uint64 {
+				return ge.GetHash64()
+			}),
+		hasher: base2.NewHashEqualer(),
 	}
 }
 
@@ -106,7 +117,7 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 	hasher := mm.GetHasher()
 	groupExpr := NewGroupExpression(lp, childGroups)
 	groupExpr.Init(hasher)
-	if mm.InsertGroupExpression(groupExpr, target) && target == nil {
+	if _, ok := mm.InsertGroupExpression(groupExpr, target); ok && target == nil {
 		// derive logical property for new group.
 		err := groupExpr.DeriveLogicalProp()
 		if err != nil {
@@ -132,19 +143,27 @@ func (mm *Memo) GetRootGroup() *Group {
 }
 
 // InsertGroupExpression insert ge into a target group.
+// @GroupExpression indicates the returned group expression, which may be the existed one or the newly inserted.
 // @bool indicates whether the groupExpr is inserted to a new group.
-func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) bool {
+func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) (*GroupExpression, bool) {
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
-	// todo: merge group
+	if existedGE, ok := mm.hash2GlobalGroupExpr.Get(groupExpr); ok {
+		existedGroup := existedGE.GetGroup()
+		mm.mergeGroup(existedGroup, target)
+		return existedGE, false
+	}
 	if target == nil {
 		target = mm.NewGroup()
 		mm.groups.PushBack(target)
 		mm.groupID2Group[target.groupID] = mm.groups.Back()
 	}
+	// if target has already existed a same groupExpr, it should exit above and return existedGE. Here just safely add it.
 	target.Insert(groupExpr)
-	return true
+	// record them in the global GE map.
+	mm.hash2GlobalGroupExpr.Put(groupExpr, groupExpr)
+	return groupExpr, true
 }
 
 // NewGroup creates a new group.
@@ -175,4 +194,15 @@ func (mm *Memo) ForEachGroup(f func(g *Group) bool) {
 			break
 		}
 	}
+}
+
+// mergeGroup will merge two equivalent group together if the following meets.
+// two group expression from two groups: dst, src share the same hash64 means:
+// 1: this two GEs has the same output schema.
+// 2: this two GEs has the same input groups.
+// 3: this two GEs has the same operator info.
+// from the 3 above, we could say this two group expression are equivalent,
+// and their groups are equivalent as well from the equivalent transitive rule.
+func (mm *Memo) mergeGroup(src, dst *Group) {
+	// todo: in next pull request
 }
