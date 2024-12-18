@@ -442,18 +442,8 @@ func TestErrorBind(t *testing.T) {
 	require.NotNil(t, binding.UpdateTime)
 
 	tk.MustExec("drop index index_t on t")
-	rs, err := tk.Exec("select * from t where i > 10")
-	require.NoError(t, err)
-	rs.Close()
-
-	dom.BindHandle().DropInvalidGlobalBinding()
-
-	rs, err = tk.Exec("show global bindings")
-	require.NoError(t, err)
-	chk := rs.NewChunk(nil)
-	err = rs.Next(context.TODO(), chk)
-	require.NoError(t, err)
-	require.Equal(t, 0, chk.NumRows())
+	require.Equal(t, 1, len(tk.MustQuery(`show global bindings`).Rows()))
+	tk.MustQuery("select * from t where i > 10")
 }
 
 func TestStmtHints(t *testing.T) {

@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "join",
     srcs = [
+        "anti_semi_join_probe.go",
         "base_join_probe.go",
         "base_semi_join.go",
         "concurrent_map.go",
@@ -77,6 +78,7 @@ go_test(
     name = "join_test",
     timeout = "short",
     srcs = [
+        "anti_semi_join_probe_test.go",
         "bench_test.go",
         "concurrent_map_test.go",
         "hash_table_v1_test.go",

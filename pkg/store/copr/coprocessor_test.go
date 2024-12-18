@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -880,4 +881,54 @@ func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	count, conc = smallTaskConcurrency(tasks, 0)
 	require.Equal(t, smallConcPerCore, conc)
 	require.Equal(t, smallTaskCount, count)
+}
+
+func TestBatchStoreCoprOnlySendToLeader(t *testing.T) {
+	// nil --- 'g' --- 'n' --- 't' --- nil
+	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+	_, _, _ = testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
+	pdCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+	defer pdCli.Close()
+	cache := NewRegionCache(tikv.NewRegionCache(pdCli))
+	defer cache.Close()
+
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	req := &kv.Request{
+		StoreBatchSize:     3,
+		StoreBusyThreshold: time.Second,
+	}
+	ranges := buildCopRanges("a", "c", "d", "e", "h", "x", "y", "z")
+	tasks, err := buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 1)
+	require.Zero(t, tasks[0].busyThreshold)
+	batched := tasks[0].batchTaskList
+	require.Len(t, batched, 3)
+	for _, task := range batched {
+		require.Zero(t, task.task.busyThreshold)
+	}
+
+	req = &kv.Request{
+		StoreBatchSize:     0,
+		StoreBusyThreshold: time.Second,
+	}
+	tasks, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
+		req:      req,
+		cache:    cache,
+		rowHints: []int{1, 1, 3, 3},
+	})
+	require.Len(t, tasks, 4)
+	for _, task := range tasks {
+		require.Equal(t, task.busyThreshold, time.Second)
+	}
 }

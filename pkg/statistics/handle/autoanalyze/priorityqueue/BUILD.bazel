@@ -68,6 +68,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/store/mockstore",

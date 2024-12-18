@@ -25,9 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -40,7 +42,8 @@ import (
 type UpdateExec struct {
 	exec.BaseExecutor
 
-	OrderedList []*expression.Assignment
+	OrderedList         []*expression.Assignment
+	assignmentsPerTable map[int][]*expression.Assignment
 
 	// updatedRowKeys is a map for unique (TableAlias, handle) pair.
 	// The value is true if the row is changed, or false otherwise
@@ -120,7 +123,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	return nil
 }
 
-func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) error {
+func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 	if e.mergedRowData == nil {
 		e.mergedRowData = make(map[int64]*kv.MemAwareHandleMap[[]types.Datum])
 	}
@@ -152,7 +155,7 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 		if v, ok := e.mergedRowData[content.TblID].Get(handle); ok {
 			mergedData = v
 			for i, flag := range flags {
-				if tbl.WritableCols()[i].IsGenerated() != mergeGenerated {
+				if tbl.WritableCols()[i].IsGenerated() {
 					continue
 				}
 				mergedData[i].Copy(&oldData[i])
@@ -174,11 +177,83 @@ func (e *UpdateExec) merge(row, newData []types.Datum, mergeGenerated bool) erro
 	return nil
 }
 
-func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newData []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
+func (e *UpdateExec) mergeGenerated(row, newData []types.Datum, i int, beforeEval bool) error {
+	if e.virtualAssignmentsOffset >= len(e.OrderedList) {
+		return nil
+	}
+
+	var mergedData []types.Datum
+	// merge updates from and into mergedRowData
+	var totalMemDelta int64
+
+	content := e.tblColPosInfos[i]
+
+	if !e.multiUpdateOnSameTable[content.TblID] {
+		// No need to merge if not multi-updated
+		return nil
+	}
+	if !e.tableUpdatable[i] {
+		// If there's nothing to update, we can just skip current row
+		return nil
+	}
+	if e.changed[i] {
+		// Each matched row is updated once, even if it matches the conditions multiple times.
+		return nil
+	}
+	handle := e.handles[i]
+	flags := e.assignFlag[content.Start:content.End]
+
+	if e.mergedRowData[content.TblID] == nil {
+		e.mergedRowData[content.TblID] = kv.NewMemAwareHandleMap[[]types.Datum]()
+	}
+	tbl := e.tblID2table[content.TblID]
+	oldData := row[content.Start:content.End]
+	newTableData := newData[content.Start:content.End]
+
+	// We don't check the second return value here because we have already called mergeNonGenerated() before.
+	mergedData, _ = e.mergedRowData[content.TblID].Get(handle)
+	for i, flag := range flags {
+		if !tbl.WritableCols()[i].IsGenerated() {
+			continue
+		}
+		// Before evaluate generated columns,
+		// we need to copy new values to both oldData and newData.
+		// After evaluation,
+		/// we need to copy new generated values into mergedData.
+		if beforeEval {
+			mergedData[i].Copy(&oldData[i])
+			if flag < 0 {
+				mergedData[i].Copy(&newTableData[i])
+			}
+		} else {
+			if flag >= 0 {
+				newTableData[i].Copy(&mergedData[i])
+			}
+		}
+	}
+
+	memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
+	memDelta += types.EstimatedMemUsage(mergedData, 1) + int64(handle.ExtraMemSize())
+	totalMemDelta += memDelta
+
+	e.memTracker.Consume(totalMemDelta)
+	return nil
+}
+
+func (e *UpdateExec) exec(
+	ctx context.Context,
+	_ *expression.Schema,
+	rowIdx int, row, newData []types.Datum,
+	dupKeyCheck table.DupKeyCheckMode,
+) error {
 	defer trace.StartRegion(ctx, "UpdateExec").End()
 	bAssignFlag := make([]bool, len(e.assignFlag))
 	for i, flag := range e.assignFlag {
 		bAssignFlag[i] = flag >= 0
+	}
+
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
+		return handleUpdateError(sctx, assign.ColName, assign.Col.ToInfo(), rowIdx, err)
 	}
 
 	var totalMemDelta int64
@@ -204,23 +279,38 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 		newTableData := newData[content.Start:content.End]
 		flags := bAssignFlag[content.Start:content.End]
 
-		// Update row
-		fkChecks := e.fkChecks[content.TblID]
-		fkCascades := e.fkCascades[content.TblID]
-
-		if e.IgnoreError {
-			ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[tbl.Meta().ID], newTableData)
-			if err != nil {
-				return err
-			}
-
-			// meets an error, skip this row.
-			if ignored {
-				continue
-			}
+		// Evaluate generated columns and write to table.
+		// Evaluated values will be stored in newRow.
+		var assignments []*expression.Assignment
+		if a, ok := e.assignmentsPerTable[i]; ok {
+			assignments = a
 		}
-		changed, err1 := updateRecord(ctx, e.Ctx(), handle, oldData, newTableData, flags, tbl, false, e.memTracker, fkChecks, fkCascades, dupKeyCheck, e.IgnoreError)
-		if err1 == nil {
+
+		// Copy data from merge row to old and new rows
+		if err := e.mergeGenerated(row, newData, i, true); err != nil {
+			return errors.Trace(err)
+		}
+
+		// Update row
+		changed, ignored, err := updateRecord(
+			ctx, e.Ctx(),
+			handle, oldData, newTableData,
+			content.Start, assignments, e.evalBuffer, errorHandler,
+			flags, tbl, false, e.memTracker,
+			e.fkChecks[content.TblID],
+			e.fkCascades[content.TblID],
+			dupKeyCheck, e.IgnoreError)
+
+		// Copy data from new row to merge row
+		if err := e.mergeGenerated(row, newData, i, false); err != nil {
+			return errors.Trace(err)
+		}
+
+		if ignored {
+			continue
+		}
+
+		if err == nil {
 			_, exist := e.updatedRowKeys[content.Start].Get(handle)
 			memDelta := e.updatedRowKeys[content.Start].Set(handle, changed)
 			if !exist {
@@ -230,14 +320,14 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 			continue
 		}
 
-		if kv.ErrKeyExists.Equal(err1) || table.ErrCheckConstraintViolated.Equal(err1) {
+		if kv.ErrKeyExists.Equal(err) || table.ErrCheckConstraintViolated.Equal(err) {
 			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
-			if err1 = ec.HandleErrorWithAlias(kv.ErrKeyExists, err1, err1); err1 != nil {
-				return err1
+			if err = ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err); err != nil {
+				return err
 			}
 			continue
 		}
-		return err1
+		return err
 	}
 	if txn, _ := e.Ctx().Txn(false); txn != nil {
 		return txn.MayFlush()
@@ -293,6 +383,20 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	if e.virtualAssignmentsOffset < len(e.OrderedList) {
+		e.assignmentsPerTable = make(map[int][]*expression.Assignment, 0)
+		for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
+			tblIdx := e.assignFlag[assign.Col.Index]
+			if tblIdx < 0 {
+				continue
+			}
+			if _, ok := e.assignmentsPerTable[tblIdx]; !ok {
+				e.assignmentsPerTable[tblIdx] = make([]*expression.Assignment, 0)
+			}
+			e.assignmentsPerTable[tblIdx] = append(e.assignmentsPerTable[tblIdx], assign)
+		}
+	}
+
 	dupKeyCheck := optimizeDupKeyCheckForUpdate(txn, e.IgnoreError)
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -333,24 +437,20 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				return 0, err
 			}
 			// merge non-generated columns
-			if err := e.merge(datumRow, newRow, false); err != nil {
+			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
 				return 0, err
 			}
+
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
-				// compose generated columns
-				newRow, err = e.composeGeneratedColumns(globalRowIdx, newRow, colsInfo)
-				if err != nil {
-					return 0, err
-				}
-				// merge generated columns
-				if err := e.merge(datumRow, newRow, true); err != nil {
-					return 0, err
-				}
+				e.evalBuffer.SetDatums(newRow...)
 			}
-			// write to table
-			if err := e.exec(ctx, e.Children(0).Schema(), datumRow, newRow, dupKeyCheck); err != nil {
+
+			if err := e.exec(
+				ctx, e.Children(0).Schema(),
+				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
 				return 0, err
 			}
+			globalRowIdx++
 		}
 		totalNumRows += chk.NumRows()
 		chk = chunk.Renew(chk, e.MaxChunkSize())
@@ -358,7 +458,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {
+func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -370,8 +470,9 @@ func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx in
 	if types.ErrOverflow.Equal(err) {
 		return types.ErrWarnDataOutOfRange.GenWithStackByArgs(colName.O, rowIdx+1)
 	}
-	if types.ErrTruncatedWrongVal.Equal(err) && col != nil && col.ColumnInfo != nil && col.ColumnInfo.GetType() == mysql.TypeTimestamp {
-		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+
+	if types.ErrTruncatedWrongVal.Equal(err) && colInfo != nil && colInfo.GetType() == mysql.TypeTimestamp {
+		ec := sctx.GetSessionVars().StmtCtx.ErrCtx()
 		return errors.AddStack(ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err))
 	}
 	return err
@@ -380,13 +481,18 @@ func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx in
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
+		var colInfo *mmodel.ColumnInfo
+		if cols[assign.Col.Index] != nil {
+			colInfo = cols[assign.Col.Index].ColumnInfo
+		}
+
 		tblIdx := e.assignFlag[assign.Col.Index]
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), emptyRow)
-		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
+		if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -394,7 +500,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
+			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -420,43 +526,14 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
+			colInfo := cols[assign.Col.Index].ColumnInfo
+			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
+			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
 
 		val.Copy(&newRowData[assign.Col.Index])
-	}
-	return newRowData, nil
-}
-
-func (e *UpdateExec) composeGeneratedColumns(rowIdx int, newRowData []types.Datum, cols []*table.Column) ([]types.Datum, error) {
-	if e.allAssignmentsAreConstant {
-		return newRowData, nil
-	}
-	e.evalBuffer.SetDatums(newRowData...)
-	for _, assign := range e.OrderedList[e.virtualAssignmentsOffset:] {
-		tblIdx := e.assignFlag[assign.Col.Index]
-		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
-			continue
-		}
-		val, err := assign.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), e.evalBuffer.ToRow())
-		if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
-			return nil, err
-		}
-
-		// info of `_tidb_rowid` column is nil.
-		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
-			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = e.handleErr(assign.ColName, cols[assign.Col.Index], rowIdx, err); err != nil {
-				return nil, err
-			}
-		}
-
-		val.Copy(&newRowData[assign.Col.Index])
-		e.evalBuffer.SetDatum(assign.Col.Index, val)
 	}
 	return newRowData, nil
 }

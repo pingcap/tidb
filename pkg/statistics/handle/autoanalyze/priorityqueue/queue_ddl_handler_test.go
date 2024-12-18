@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -128,10 +129,10 @@ func TestHandleDDLEventsWithRunningJobs(t *testing.T) {
 	addIndexEvent := findEvent(handle.DDLEventCh(), model.ActionAddIndex)
 
 	// Handle the add index event.
-	require.NoError(t, handle.HandleDDLEvent(addIndexEvent))
+	err = statstestutil.HandleDDLEventWithTxn(handle, addIndexEvent)
+	require.NoError(t, err)
 
 	// Handle the add index event in priority queue.
-
 	require.NoError(t, statsutil.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
 		return pq.HandleDDLEvent(ctx, sctx, addIndexEvent)
 	}, statsutil.FlagWrapTxn))
@@ -200,7 +201,8 @@ func TestTruncateTable(t *testing.T) {
 	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Handle the truncate table event.
-	require.NoError(t, h.HandleDDLEvent(truncateTableEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -261,7 +263,8 @@ func testTruncatePartitionedTable(
 	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
 
 	// Handle the truncate table event.
-	require.NoError(t, h.HandleDDLEvent(truncateTableEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -311,7 +314,8 @@ func TestDropTable(t *testing.T) {
 	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
 
 	// Handle the drop table event.
-	require.NoError(t, h.HandleDDLEvent(dropTableEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -372,7 +376,8 @@ func testDropPartitionedTable(
 	dropTableEvent := findEvent(h.DDLEventCh(), model.ActionDropTable)
 
 	// Handle the drop table event.
-	require.NoError(t, h.HandleDDLEvent(dropTableEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, dropTableEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	sctx := testKit.Session().(sessionctx.Context)
@@ -425,7 +430,8 @@ func TestTruncateTablePartition(t *testing.T) {
 	truncateTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
 
 	// Handle the truncate table partition event.
-	require.NoError(t, h.HandleDDLEvent(truncateTablePartitionEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTablePartitionEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -483,7 +489,8 @@ func TestDropTablePartition(t *testing.T) {
 	dropTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
 
 	// Handle the drop table partition event.
-	require.NoError(t, h.HandleDDLEvent(dropTablePartitionEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, dropTablePartitionEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -547,7 +554,8 @@ func TestExchangeTablePartition(t *testing.T) {
 	exchangeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
 
 	// Handle the exchange table partition event.
-	require.NoError(t, h.HandleDDLEvent(exchangeTablePartitionEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, exchangeTablePartitionEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -608,7 +616,8 @@ func TestReorganizeTablePartition(t *testing.T) {
 	reorganizeTablePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
 
 	// Handle the reorganize table partition event.
-	require.NoError(t, h.HandleDDLEvent(reorganizeTablePartitionEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, reorganizeTablePartitionEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -666,7 +675,8 @@ func TestAlterTablePartitioning(t *testing.T) {
 	alterTablePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
 
 	// Handle the alter table partitioning event.
-	require.NoError(t, h.HandleDDLEvent(alterTablePartitioningEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, alterTablePartitioningEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -724,7 +734,8 @@ func TestRemovePartitioning(t *testing.T) {
 	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
 
 	// Handle the remove partitioning event.
-	require.NoError(t, h.HandleDDLEvent(removePartitioningEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, removePartitioningEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -794,7 +805,8 @@ func TestDropSchemaEventWithDynamicPartition(t *testing.T) {
 	require.NotNil(t, dropSchemaEvent)
 
 	// Handle the drop schema event.
-	require.NoError(t, h.HandleDDLEvent(dropSchemaEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
@@ -846,7 +858,8 @@ func TestDropSchemaEventWithStaticPartition(t *testing.T) {
 	require.NotNil(t, dropSchemaEvent)
 
 	// Handle the drop schema event.
-	require.NoError(t, h.HandleDDLEvent(dropSchemaEvent))
+	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
+	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, statsutil.CallWithSCtx(
