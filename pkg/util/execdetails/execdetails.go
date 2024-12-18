@@ -554,7 +554,6 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 }
 
 type basicCopRuntimeStats struct {
-	storeType kv.StoreType
 	// executor's Next() called times.
 	loop int32
 	// executor consume time, including open, next, and close time.
@@ -698,7 +697,7 @@ func (e *basicCopRuntimeStats) String() string {
 	buf.WriteString(FormatDuration(time.Duration(e.consume)))
 	buf.WriteString(", loops:")
 	buf.WriteString(strconv.Itoa(int(e.loop)))
-	if e.storeType == kv.TiFlash {
+	if e.tiflashScanContext != nil || e.tiflashWaitSummary != nil {
 		buf.WriteString(", threads:")
 		buf.WriteString(strconv.Itoa(int(e.threads)))
 		buf.WriteString(", ")
@@ -722,7 +721,6 @@ func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 		consume:    e.consume,
 		rows:       e.rows,
 		threads:    e.threads,
-		storeType:  e.storeType,
 		totalTasks: e.totalTasks,
 		procTimes:  e.procTimes,
 	}
@@ -849,7 +847,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      map[string]*basicCopRuntimeStats
+	stats      *basicCopRuntimeStats
 	scanDetail *util.ScanDetail
 	timeDetail *util.TimeDetail
 	storeType  kv.StoreType
@@ -862,59 +860,33 @@ func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.Execu
 	defer crs.Unlock()
 
 	if crs.stats == nil {
-		crs.stats = make(map[string]*basicCopRuntimeStats)
+		crs.stats = &basicCopRuntimeStats{}
 	}
-	stats := crs.stats[address]
-	if stats == nil {
-		stats = &basicCopRuntimeStats{storeType: crs.storeType}
-		crs.stats[address] = stats
-	}
-	stats.mergeExecSummary(summary)
+	crs.stats.mergeExecSummary(summary)
 }
 
 // GetActRows return total rows of CopRuntimeStats.
 func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
-	for _, instanceStats := range crs.stats {
-		totalRows += instanceStats.rows
-	}
-	return totalRows
+	return crs.stats.rows
 }
 
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
-	for _, instanceStats := range crs.stats {
-		totalTasks += instanceStats.totalTasks
-	}
-	return totalTasks
-}
-
-// MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
-func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext, totalTiFlashWaitSummary TiFlashWaitSummary) {
-	totalTiFlashScanContext = TiFlashScanContext{
-		regionsOfInstance: make(map[string]uint64),
-	}
-	for _, instanceStats := range crs.stats {
-		procTimes.MergePercentile(&instanceStats.procTimes)
-		totalTime += time.Duration(instanceStats.consume)
-		totalLoops += instanceStats.loop
-		totalThreads += instanceStats.threads
-		if instanceStats.tiflashScanContext != nil {
-			totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
-		}
-		if instanceStats.tiflashScanContext != nil {
-			totalTiFlashWaitSummary.Merge(instanceStats.tiflashWaitSummary)
-		}
-		totalTasks += instanceStats.totalTasks
-	}
-	return
+	return crs.stats.totalTasks
 }
 
 func (crs *CopRuntimeStats) String() string {
-	if len(crs.stats) == 0 {
+	if crs.stats == nil {
 		return ""
 	}
 
-	procTimes, totalTime, totalTasks, totalLoops, totalThreads, totalTiFlashScanContext, totalTiFlashWaitSummary := crs.MergeBasicStats()
+	procTimes := crs.stats.procTimes
+	totalTime := time.Duration(crs.stats.consume)
+	totalTasks := crs.stats.totalTasks
+	totalLoops := crs.stats.loop
+	totalThreads := crs.stats.threads
+	totalTiFlashScanContext := crs.stats.tiflashScanContext
+	totalTiFlashWaitSummary := crs.stats.tiflashWaitSummary
 	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == kv.TiFlash
 
@@ -926,11 +898,11 @@ func (crs *CopRuntimeStats) String() string {
 				buf.WriteString("threads:")
 				buf.WriteString(strconv.Itoa(int(totalThreads)))
 				buf.WriteString("}")
-				if !totalTiFlashWaitSummary.CanBeIgnored() {
+				if totalTiFlashWaitSummary != nil && !totalTiFlashWaitSummary.CanBeIgnored() {
 					buf.WriteString(", ")
 					buf.WriteString(totalTiFlashWaitSummary.String())
 				}
-				if !totalTiFlashScanContext.Empty() {
+				if totalTiFlashScanContext != nil && !totalTiFlashScanContext.Empty() {
 					buf.WriteString(", ")
 					buf.WriteString(totalTiFlashScanContext.String())
 				}
@@ -1643,7 +1615,6 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType kv.StoreTyp
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		copStats = &CopRuntimeStats{
-			stats:      make(map[string]*basicCopRuntimeStats),
 			scanDetail: &util.ScanDetail{},
 			timeDetail: &util.TimeDetail{},
 			storeType:  storeType,
@@ -1702,7 +1673,10 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 				e.copStats[planID] = copStats
 			}
 		}
-		copStats.RecordOneCopTask(address, summary)
+		if copStats.stats == nil {
+			copStats.stats = &basicCopRuntimeStats{}
+		}
+		copStats.stats.mergeExecSummary(summary)
 	}
 	return planID
 }
