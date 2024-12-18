@@ -212,7 +212,8 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[int64]bool, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -222,7 +223,13 @@ func (b *builtinInIntSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val] = mysql.HasUnsignedFlag(b.args[i].GetType(ctx.GetEvalCtx()).GetFlag())
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalInt(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -309,7 +316,8 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.hashSet = set.NewStringSet()
 	collator := collate.GetCollator(b.collation)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -319,7 +327,13 @@ func (b *builtinInStringSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(string(collator.Key(val))) // should do memory copy here
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalString(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -386,7 +400,8 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewFloat64Set()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -396,7 +411,13 @@ func (b *builtinInRealSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet.Insert(val)
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalReal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -461,7 +482,8 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = set.NewStringSet()
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -475,7 +497,13 @@ func (b *builtinInDecimalSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				return err
 			}
 			b.hashSet.Insert(string(key))
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDecimal(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -545,7 +573,8 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[types.CoreTime]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -555,7 +584,13 @@ func (b *builtinInTimeSig) buildHashMapForConstArgs(ctx BuildContext) error {
 				continue
 			}
 			b.hashSet[val.CoreTime()] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalTime(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
@@ -620,7 +655,8 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 	b.nonConstArgsIdx = make([]int, 0)
 	b.hashSet = make(map[time.Duration]struct{}, len(b.args)-1)
 	for i := 1; i < len(b.args); i++ {
-		if b.args[i].ConstLevel() == ConstStrict {
+		switch b.args[i].ConstLevel() {
+		case ConstStrict:
 			val, isNull, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil {
 				return err
@@ -630,7 +666,13 @@ func (b *builtinInDurationSig) buildHashMapForConstArgs(ctx BuildContext) error 
 				continue
 			}
 			b.hashSet[val.Duration] = struct{}{}
-		} else {
+		case ConstOnlyInContext:
+			// Avoid build plans for wrong type.
+			if _, _, err := b.args[i].EvalDuration(ctx.GetEvalCtx(), chunk.Row{}); err != nil {
+				return err
+			}
+			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
+		default:
 			b.nonConstArgsIdx = append(b.nonConstArgsIdx, i)
 		}
 	}
