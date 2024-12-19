@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -38,12 +39,8 @@ const (
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
-	// Invalid is the bind info's invalid status.
-	Invalid = "invalid"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
-	// Capture indicates the binding is captured by TiDB automatically.
-	Capture = "capture"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest
@@ -130,7 +127,13 @@ func HasAvailableBinding(br Bindings) bool {
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(sctx sessionctx.Context, binding *Binding) error {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
+		}
+	}()
+
 	p := parser.New()
 	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
 		return nil

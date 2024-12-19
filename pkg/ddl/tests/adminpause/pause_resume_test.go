@@ -24,11 +24,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -157,25 +157,23 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		stmtKit.MustExec(prepareStmt)
 	}
 
-	var hook = &callback.TestDDLCallback{Do: dom}
-	originalHook := dom.DDL().GetHook()
-
-	hook.OnJobRunBeforeExported = pauseFunc
-	var rf = resumeFunc
-	hook.OnJobUpdatedExported.Store(&rf)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", resumeFunc)
 
 	Logger.Debug("pauseResumeAndCancel: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
 		if doCancel {
-			hook.OnGetJobBeforeExported = cancelFunc
-			dom.DDL().SetHook(hook.Clone())
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+				cancelFunc()
+			})
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs")
 			Logger.Info("pauseResumeAndCancel: statement execution should have been cancelled.")
 
 			verifyCancelResult(t, adminCommandKit)
 		} else {
-			dom.DDL().SetHook(hook.Clone())
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 			stmtKit.MustExec(stmtCase.stmt)
 			Logger.Info("pauseResumeAndCancel: statement execution should finish successfully.")
@@ -189,7 +187,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		verifyPauseResult(t, adminCommandKit)
 		verifyResumeResult(t, adminCommandKit)
 	} else {
-		dom.DDL().SetHook(hook.Clone())
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 		stmtKit.MustExec(stmtCase.stmt)
 
 		require.False(t, isPaused)
@@ -198,7 +196,8 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	}
 
 	// Should not affect the 'stmtCase.rollbackStmts'
-	dom.DDL().SetHook(originalHook)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	// Statement in `stmtCase` will be finished successfully all the way, need to roll it back.
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
@@ -232,7 +231,11 @@ func TestPauseAndResumeSchemaStmt(t *testing.T) {
 func TestPauseAndResumeIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, false)
@@ -299,7 +302,11 @@ func TestPauseResumeCancelAndRerunSchemaStmt(t *testing.T) {
 func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+
 	require.Nil(t, generateTblUser(stmtKit, 10))
+	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseResumeAndCancel(t, stmtKit, adminCommandKit, dom, &stmtCase, true)

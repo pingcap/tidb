@@ -189,6 +189,8 @@ func (s *SelectIntoExec) dumpToOutfile() error {
 				s.fieldBuf = append(s.fieldBuf, row.GetSet(j).String()...)
 			case mysql.TypeJSON:
 				s.fieldBuf = append(s.fieldBuf, row.GetJSON(j).String()...)
+			case mysql.TypeTiDBVectorFloat32:
+				s.fieldBuf = append(s.fieldBuf, row.GetVectorFloat32(j).String()...)
 			}
 
 			switch col.GetType(s.Ctx().GetExprCtx().GetEvalCtx()).EvalType() {

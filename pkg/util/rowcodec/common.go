@@ -23,10 +23,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	data "github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // CodecVer is the constant number that represent the new row format.
@@ -40,16 +41,20 @@ var (
 
 // First byte in the encoded value which specifies the encoding type.
 const (
-	NilFlag          byte = 0
-	BytesFlag        byte = 1
-	CompactBytesFlag byte = 2
-	IntFlag          byte = 3
-	UintFlag         byte = 4
-	FloatFlag        byte = 5
-	DecimalFlag      byte = 6
-	VarintFlag       byte = 8
-	VaruintFlag      byte = 9
-	JSONFlag         byte = 10
+	NilFlag           byte = 0
+	BytesFlag         byte = 1
+	CompactBytesFlag  byte = 2
+	IntFlag           byte = 3
+	UintFlag          byte = 4
+	FloatFlag         byte = 5
+	DecimalFlag       byte = 6
+	VarintFlag        byte = 8
+	VaruintFlag       byte = 9
+	JSONFlag          byte = 10
+	VectorFloat32Flag byte = 20
+
+	keyspacePrefixLen       = 4
+	apiV2TxnModePrefix byte = 'x'
 )
 
 func bytesToU32Slice(b []byte) []uint32 {
@@ -350,6 +355,8 @@ func appendDatumForChecksum(loc *time.Location, buf []byte, dat *data.Datum, typ
 		out = binary.LittleEndian.AppendUint64(buf, v)
 	case mysql.TypeJSON:
 		out = appendLengthValue(buf, []byte(dat.GetMysqlJSON().String()))
+	case mysql.TypeTiDBVectorFloat32:
+		out = dat.GetVectorFloat32().SerializeTo(buf)
 	case mysql.TypeNull, mysql.TypeGeometry:
 		out = buf
 	default:
@@ -361,4 +368,22 @@ func appendDatumForChecksum(loc *time.Location, buf []byte, dat *data.Datum, typ
 func appendLengthValue(buf []byte, val []byte) []byte {
 	buf = binary.LittleEndian.AppendUint32(buf, uint32(len(val)))
 	return append(buf, val...)
+}
+
+// RemoveKeyspacePrefix is used to remove keyspace prefix from the key.
+func RemoveKeyspacePrefix(key []byte) []byte {
+	// If it is not a UT scenario, the operation to remove the keyspace prefix is performed in client-go,
+	// so there is no need to remove it again.
+	if !intest.InTest {
+		return key
+	}
+
+	if len(key) <= keyspacePrefixLen {
+		return key
+	}
+
+	if key[0] != apiV2TxnModePrefix {
+		return key
+	}
+	return key[keyspacePrefixLen:]
 }

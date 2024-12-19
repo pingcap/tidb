@@ -33,3 +33,21 @@ alter table t rename column b to b2;
 Error 3837 (HY000): Column 'b' has an expression index dependency and cannot be dropped or renamed
 alter table t drop column b;
 Error 3837 (HY000): Column 'b' has an expression index dependency and cannot be dropped or renamed
+drop table if exists t;
+create table t(a int, b int, c int);
+insert into t values(NULL, NULL, NULL);
+alter table t modify column a timestamp not null;
+select floor((unix_timestamp() - unix_timestamp(a)) / 2) from t;
+floor((unix_timestamp() - unix_timestamp(a)) / 2)
+0
+set @@time_zone='UTC';
+alter table t modify column b timestamp not null;
+select floor((unix_timestamp() - unix_timestamp(b)) / 2) from t;
+floor((unix_timestamp() - unix_timestamp(b)) / 2)
+0
+set @@time_zone='Asia/Tokyo';
+alter table t modify column c timestamp not null;
+select floor((unix_timestamp() - unix_timestamp(c)) / 2) from t;
+floor((unix_timestamp() - unix_timestamp(c)) / 2)
+0
+set @@time_zone='SYSTEM'

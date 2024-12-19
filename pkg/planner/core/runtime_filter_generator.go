@@ -15,11 +15,13 @@
 package core
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -81,9 +83,6 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *PhysicalHashJoin) {
 	// precondition: the storage type of hash join must be TiFlash
 	if hashJoinPlan.storeTp != kv.TiFlash {
-		logutil.BgLogger().Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
-			zap.Int("PhysicalHashJoinId", hashJoinPlan.ID()),
-			zap.String("StoreTP", hashJoinPlan.storeTp.Name()))
 		return
 	}
 	// check hash join pattern
@@ -161,8 +160,8 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
-		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
-			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
+		if hashJoinPlan.JoinType == logicalop.LeftOuterJoin || hashJoinPlan.JoinType == logicalop.AntiSemiJoin ||
+			hashJoinPlan.JoinType == logicalop.LeftOuterSemiJoin || hashJoinPlan.JoinType == logicalop.AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -170,7 +169,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		}
 	} else {
 		// case2: build side is on the left
-		if hashJoinPlan.JoinType == RightOuterJoin {
+		if hashJoinPlan.JoinType == logicalop.RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -185,7 +184,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)))
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
@@ -202,7 +201,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
@@ -214,7 +213,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
 		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx)),
+			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
 			zap.String("SrcColumn", srcColumn.String()),
 			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
 		return false

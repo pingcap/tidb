@@ -22,15 +22,21 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/size"
+)
+
+var (
+	_ base.HashEquals = &Column{}
+	_ base.HashEquals = &CorrelatedColumn{}
 )
 
 // CorrelatedColumn stands for a column in a correlated sub query.
@@ -38,6 +44,12 @@ type CorrelatedColumn struct {
 	Column
 
 	Data *types.Datum
+}
+
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *CorrelatedColumn) SafeToShareAcrossSession() bool {
+	// TODO: optimize this to make it's safe.
+	return false // due to col.Data
 }
 
 // Clone implements Expression interface.
@@ -81,6 +93,11 @@ func (col *CorrelatedColumn) VecEvalDuration(ctx EvalContext, input *chunk.Chunk
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (col *CorrelatedColumn) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return genVecFromConstExpr(ctx, col, types.ETJson, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *CorrelatedColumn) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return genVecFromConstExpr(ctx, col, types.ETVectorFloat32, input, result)
 }
 
 // Traverse implements the TraverseDown interface.
@@ -152,6 +169,14 @@ func (col *CorrelatedColumn) EvalJSON(ctx EvalContext, row chunk.Row) (types.Bin
 		return types.BinaryJSON{}, true, nil
 	}
 	return col.Data.GetMysqlJSON(), false, nil
+}
+
+// EvalVectorFloat32 returns VectorFloat32 representation of CorrelatedColumn.
+func (col *CorrelatedColumn) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if col.Data.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return col.Data.GetVectorFloat32(), false, nil
 }
 
 // Equal implements Expression interface.
@@ -228,9 +253,32 @@ func (col *CorrelatedColumn) RemapColumn(m map[int64]*Column) (Expression, error
 	}, nil
 }
 
+// Hash64 implements HashEquals.<0th> interface.
+func (col *CorrelatedColumn) Hash64(h base.Hasher) {
+	// correlatedColumn flag here is used to distinguish correlatedColumn and Column.
+	h.HashByte(correlatedColumn)
+	col.Column.Hash64(h)
+	// since col.Datum is filled in the runtime, we can't use it to calculate hash now, correlatedColumn flag + column is enough.
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *CorrelatedColumn) Equals(other any) bool {
+	col2, ok := other.(*CorrelatedColumn)
+	if !ok {
+		return false
+	}
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
+		return false
+	}
+	return col.Column.Equals(&col2.Column)
+}
+
 // Column represents a column.
 type Column struct {
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// ID is used to specify whether this column is ExtraHandleColumn or to access histogram.
 	// We'll try to remove it in the future.
 	ID int64
@@ -262,6 +310,11 @@ type Column struct {
 	collationInfo
 
 	CorrelatedColUniqueID int64
+}
+
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (col *Column) SafeToShareAcrossSession() bool {
+	return col.VirtualExpr == nil // for safety
 }
 
 // Equal implements Expression interface.
@@ -387,19 +440,29 @@ func (col *Column) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (col *Column) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	input.Column(col.Index).CopyReconstruct(input.Sel(), result)
+	return nil
+}
+
 const columnPrefix = "Column#"
 
 // StringWithCtx implements Expression interface.
-func (col *Column) StringWithCtx(ctx ParamValues) string {
-	return col.String()
+func (col *Column) StringWithCtx(_ ParamValues, redact string) string {
+	return col.string(redact)
 }
 
 // String implements Stringer interface.
 func (col *Column) String() string {
+	return col.string(errors.RedactLogDisable)
+}
+
+func (col *Column) string(redact string) string {
 	if col.IsHidden && col.VirtualExpr != nil {
 		// A hidden column without virtual expression indicates it's a stored type.
 		// a virtual column should be able to be stringified without context.
-		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues)
+		return col.VirtualExpr.StringWithCtx(exprctx.EmptyParamValues, redact)
 	}
 	if col.OrigName != "" {
 		return col.OrigName
@@ -417,6 +480,59 @@ func (col *Column) GetType(_ EvalContext) *types.FieldType {
 // GetStaticType returns the type without considering the context.
 func (col *Column) GetStaticType() *types.FieldType {
 	return col.RetType
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (col *Column) Hash64(h base.Hasher) {
+	if col.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.RetType.Hash64(h)
+	}
+	h.HashInt64(col.ID)
+	h.HashInt64(col.UniqueID)
+	h.HashInt(col.Index)
+	if col.VirtualExpr == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		col.VirtualExpr.Hash64(h)
+	}
+	h.HashString(col.OrigName)
+	h.HashBool(col.IsHidden)
+	h.HashBool(col.IsPrefix)
+	h.HashBool(col.InOperand)
+	col.collationInfo.Hash64(h)
+	h.HashInt64(col.CorrelatedColUniqueID)
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (col *Column) Equals(other any) bool {
+	col2, ok := other.(*Column)
+	if !ok {
+		return false
+	}
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
+		return false
+	}
+	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
+	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
+	ok = col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
+	return ok &&
+		col.ID == col2.ID &&
+		col.UniqueID == col2.UniqueID &&
+		col.Index == col2.Index &&
+		col.OrigName == col2.OrigName &&
+		col.IsHidden == col2.IsHidden &&
+		col.IsPrefix == col2.IsPrefix &&
+		col.InOperand == col2.InOperand &&
+		col.collationInfo.Equals(&col2.collationInfo) &&
+		col.CorrelatedColUniqueID == col2.CorrelatedColUniqueID
 }
 
 // Traverse implements the TraverseDown interface.
@@ -510,9 +626,21 @@ func (col *Column) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	return row.GetJSON(col.Index), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of Column.
+func (col *Column) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	if row.IsNull(col.Index) {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return row.GetVectorFloat32(col.Index), false, nil
+}
+
 // Clone implements Expression interface.
 func (col *Column) Clone() Expression {
 	newCol := *col
+	if col.hashcode != nil {
+		newCol.hashcode = make([]byte, len(col.hashcode))
+		copy(newCol.hashcode, col.hashcode)
+	}
 	return &newCol
 }
 

@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"time"
 
@@ -35,10 +36,10 @@ import (
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, binding Binding) (err error)
+	CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
-	DropSessionBinding(sqlDigest string) error
+	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
 	MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
@@ -75,26 +76,36 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindi
 
 // CreateSessionBinding creates a Bindings to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, binding Binding) (err error) {
-	if err := prepareHints(sctx, &binding); err != nil {
-		return err
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+	for _, binding := range bindings {
+		if err := prepareHints(sctx, binding); err != nil {
+			return err
+		}
 	}
-	binding.Db = strings.ToLower(binding.Db)
-	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
-	binding.CreateTime = now
-	binding.UpdateTime = now
+	for _, binding := range bindings {
+		binding.Db = strings.ToLower(binding.Db)
+		now := types.NewTime(
+			types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())),
+			mysql.TypeTimestamp,
+			3,
+		)
+		binding.CreateTime = now
+		binding.UpdateTime = now
 
-	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), []Binding{binding})
+		// update the BindMeta to the cache.
+		h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), []Binding{*binding})
+	}
 	return nil
 }
 
 // DropSessionBinding drop Bindings in the cache.
-func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
-	if sqlDigest == "" {
+func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
+	if slices.Contains(sqlDigests, "") {
 		return errors.New("sql digest is empty")
 	}
-	h.ch.RemoveBinding(sqlDigest)
+	for _, sqlDigest := range sqlDigests {
+		h.ch.RemoveBinding(sqlDigest)
+	}
 	return nil
 }
 

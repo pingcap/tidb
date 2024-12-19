@@ -230,16 +230,17 @@ func TestIssue18681(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	createSQL := `drop table if exists load_data_test;
-		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1));`
+		create table load_data_test (a bit(1),b bit(1),c bit(1),d bit(1),e bit(32),f bit(1));`
 	tk.MustExec(createSQL)
 	loadSQL := "load data local infile '/tmp/nonexistence.csv' ignore into table load_data_test"
 	ctx := tk.Session().(sessionctx.Context)
 
 	deleteSQL := "delete from load_data_test"
-	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
+	selectSQL := "select bin(a), bin(b), bin(c), bin(d), bin(e), bin(f) from load_data_test;"
 	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
 	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	levels[errctx.ErrGroupNoDefault] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()
@@ -248,7 +249,7 @@ func TestIssue18681(t *testing.T) {
 	}()
 	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	tests := []testCase{
-		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
+		{[]byte("true\tfalse\t0\t1\tb'1'\tb'1'\n"), []string{"1|1|1|1|1100010001001110011000100100111|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 5"},
 	}
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	require.Equal(t, uint16(0), sc.WarningCount())
@@ -339,7 +340,7 @@ func TestReplaceLog(t *testing.T) {
 	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")
-	tbl, err := is.TableByName(dbName, tblName)
+	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("b")
@@ -370,14 +371,14 @@ func TestRebaseIfNeeded(t *testing.T) {
 
 	ctx := mock.NewContext()
 	ctx.Store = store
-	tbl, err := domain.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
 	// AddRecord directly here will skip to rebase the auto ID in the insert statement,
 	// which could simulate another TiDB adds a large auto ID.
-	_, err = tbl.AddRecord(ctx.GetTableCtx(), types.MakeDatums(30001, 2))
-	require.NoError(t, err)
-	txn, err := ctx.Txn(true)
+	_, err = tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(30001, 2))
 	require.NoError(t, err)
 	require.NoError(t, txn.Commit(context.Background()))
 

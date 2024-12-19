@@ -15,6 +15,7 @@
 package priorityqueue_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -27,8 +28,8 @@ import (
 
 func TestGenSQLForNonPartitionedTable(t *testing.T) {
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema: "test_schema",
-		TableName:   "test_table",
+		SchemaName: "test_schema",
+		TableName:  "test_table",
 	}
 
 	expectedSQL := "analyze table %n.%n"
@@ -42,8 +43,8 @@ func TestGenSQLForNonPartitionedTable(t *testing.T) {
 
 func TestGenSQLForNonPartitionedTableIndex(t *testing.T) {
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema: "test_schema",
-		TableName:   "test_table",
+		SchemaName: "test_schema",
+		TableName:  "test_table",
 	}
 
 	index := "test_index"
@@ -65,7 +66,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema:   "test",
+		SchemaName:    "test",
 		TableName:     "t",
 		TableStatsVer: 2,
 	}
@@ -73,7 +74,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	// Before analyze table.
 	handle := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.True(t, tblStats.Pseudo)
@@ -81,7 +82,7 @@ func TestAnalyzeNonPartitionedTable(t *testing.T) {
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
@@ -94,24 +95,28 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema:   "test",
-		TableName:     "t",
-		Indexes:       []string{"idx", "idx1"},
+		TableID:       tblInfo.Meta().ID,
+		IndexIDs:      map[int64]struct{}{1: {}, 2: {}},
 		TableStatsVer: 2,
 	}
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
 
+	valid, failReason := job.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats.GetIdx(1))
@@ -124,73 +129,79 @@ func TestAnalyzeNonPartitionedIndexes(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
-func TestNonPartitionedTableIsValidToAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestNonPartitionedTableValidateAndPrepare(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec("create schema example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table1"))
+	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema:   "example_schema",
-		TableName:     "example_table1",
+		TableID:       tableInfo.Meta().ID,
 		TableStatsVer: 2,
 		Weight:        3,
 	}
 	initJobs(tk)
-	insertMultipleFinishedJobs(tk, job.TableName, "")
+	insertMultipleFinishedJobs(tk, "example_table1", "")
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx)
+	valid, failReason := job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
-	valid, _ = job.IsValidToAnalyze(sctx)
+	valid, _ = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 }
 
-func TestIsValidToAnalyzeWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestValidateAndPrepareWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec("create schema example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table1 (a int, b int, index idx(a))")
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table1"))
+	require.NoError(t, err)
 	job := &priorityqueue.NonPartitionedTableAnalysisJob{
-		TableSchema: "example_schema",
-		TableName:   "example_table1",
-		Weight:      2,
+		TableID: tableInfo.Meta().ID,
+		Weight:  2,
 	}
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx)
+	valid, failReason := job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 	// Failed long long ago.
 	startTime := tk.MustQuery("select now() - interval 30 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", startTime)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
 	// Failed recently.
 	tenSecondsAgo := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", tenSecondsAgo)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, job.TableName, "", tenSecondsAgo)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)
 }

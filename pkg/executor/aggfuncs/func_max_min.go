@@ -156,6 +156,8 @@ const (
 	DefPartialResult4MaxMinStringSize = int64(unsafe.Sizeof(partialResult4MaxMinString{}))
 	// DefPartialResult4MaxMinJSONSize is the size of partialResult4MaxMinJSON
 	DefPartialResult4MaxMinJSONSize = int64(unsafe.Sizeof(partialResult4MaxMinJSON{}))
+	// DefPartialResult4MaxMinVectorFloat32Size is the size of partialResult4MaxMinVectorFloat32
+	DefPartialResult4MaxMinVectorFloat32Size = int64(unsafe.Sizeof(partialResult4MaxMinVectorFloat32{}))
 	// DefPartialResult4MaxMinEnumSize is the size of partialResult4MaxMinEnum
 	DefPartialResult4MaxMinEnumSize = int64(unsafe.Sizeof(partialResult4MaxMinEnum{}))
 	// DefPartialResult4MaxMinSetSize is the size of partialResult4MaxMinSet
@@ -218,6 +220,11 @@ type partialResult4MaxMinString struct {
 
 type partialResult4MaxMinJSON struct {
 	val    types.BinaryJSON
+	isNull bool
+}
+
+type partialResult4MaxMinVectorFloat32 struct {
+	val    types.VectorFloat32
 	isNull bool
 }
 
@@ -1287,6 +1294,26 @@ func (e *maxMin4Time) MergePartialResult(_ AggFuncUpdateContext, src, dst Partia
 	return 0, nil
 }
 
+func (e *maxMin4Time) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Time) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Time) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinTime)(pr)
+	success := helper.deserializePartialResult4MaxMinTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4TimeSliding struct {
 	maxMin4Time
 	windowInfo
@@ -1630,6 +1657,75 @@ func (e *maxMin4JSON) deserializeForSpill(helper *deserializeHelper) (PartialRes
 		return nil, 0
 	}
 	return pr, memDelta
+}
+
+type maxMin4VectorFloat32 struct {
+	baseMaxMinAggFunc
+}
+
+func (*maxMin4VectorFloat32) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4MaxMinVectorFloat32)
+	p.isNull = true
+	return PartialResult(p), DefPartialResult4MaxMinVectorFloat32Size
+}
+
+func (*maxMin4VectorFloat32) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4MaxMinVectorFloat32)(pr)
+	p.isNull = true
+}
+
+func (e *maxMin4VectorFloat32) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4MaxMinVectorFloat32)(pr)
+	if p.isNull {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	chk.AppendVectorFloat32(e.ordinal, p.val)
+	return nil
+}
+
+func (e *maxMin4VectorFloat32) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4MaxMinVectorFloat32)(pr)
+	for _, row := range rowsInGroup {
+		input, isNull, err := e.args[0].EvalVectorFloat32(sctx, row)
+		if err != nil {
+			return memDelta, err
+		}
+		if isNull {
+			continue
+		}
+		if p.isNull {
+			p.val = input.Clone()
+			memDelta += int64(input.EstimatedMemUsage())
+			p.isNull = false
+			continue
+		}
+		cmp := input.Compare(p.val)
+		if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+			oldMem := p.val.EstimatedMemUsage()
+			newMem := input.EstimatedMemUsage()
+			memDelta += int64(newMem - oldMem)
+			p.val = input.Clone()
+		}
+	}
+	return memDelta, nil
+}
+
+func (e *maxMin4VectorFloat32) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+	p1, p2 := (*partialResult4MaxMinVectorFloat32)(src), (*partialResult4MaxMinVectorFloat32)(dst)
+	if p1.isNull {
+		return 0, nil
+	}
+	if p2.isNull {
+		*p2 = *p1
+		return 0, nil
+	}
+	cmp := p1.val.Compare(p2.val)
+	if e.isMax && cmp > 0 || !e.isMax && cmp < 0 {
+		p2.val = p1.val
+		p2.isNull = false
+	}
+	return 0, nil
 }
 
 type maxMin4Enum struct {

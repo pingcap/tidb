@@ -6,7 +6,7 @@ create table t1(a int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, primary key(a,b));
 insert into t1 values(1,1);
 insert into t2 values(1,1,1),(1,2,1);
-analyze table t1,t2;
+analyze table t1,t2 all columns;
 ## Row count of IndexScan should be 2.
 explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from t1 join t2 on t1.a = t2.a and t1.c = t2.c;
 ## Row count of IndexScan should be 2.
@@ -70,7 +70,7 @@ create table t1(a int not null, b int not null, c int not null);
 create table t2(a int not null, b int not null, c int not null, index idx1(a,b), index idx2(c));
 insert into t1 values(1,1,1),(1,1,1),(1,1,1);
 insert into t2 values(1,1,1),(1,1,2),(1,1,3);
-analyze table t1, t2;
+analyze table t1, t2 all columns;
 ## t2 should use idx2 instead of idx1, since idx2 has larger NDV.
 explain format = 'brief' select /*+ inl_join(t2) */ * from t1, t2 where t1.a = t2.a and t1.b = t2.b and t1.c = t2.c;
 set tidb_cost_model_version=default;

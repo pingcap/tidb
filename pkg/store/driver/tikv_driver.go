@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 	"sync"
@@ -159,6 +160,9 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		KeyPath:  d.security.ClusterSSLKey,
 	},
 		pd.WithGRPCDialOptions(
+			// keep the same with etcd, see
+			// https://github.com/etcd-io/etcd/blob/5704c6148d798ea444db26a966394406d8c10526/server/etcdserver/api/v3rpc/grpc.go#L34
+			grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(math.MaxInt32)),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
 				Time:    time.Duration(d.tikvConfig.GrpcKeepAliveTime) * time.Second,
 				Timeout: time.Duration(d.tikvConfig.GrpcKeepAliveTimeout) * time.Second,
@@ -250,6 +254,21 @@ type tikvStore struct {
 	gcWorker  *gcworker.GCWorker
 	coprStore *copr.Store
 	codec     tikv.Codec
+	opts      sync.Map
+}
+
+// GetOption wraps around sync.Map.
+func (s *tikvStore) GetOption(k any) (any, bool) {
+	return s.opts.Load(k)
+}
+
+// SetOption wraps around sync.Map.
+func (s *tikvStore) SetOption(k, v any) {
+	if v == nil {
+		s.opts.Delete(k)
+	} else {
+		s.opts.Store(k, v)
+	}
 }
 
 // Name gets the name of the storage engine

@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -273,7 +273,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 }
 
 // RowToDatums converts row to datum slice.
-func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
+func RowToDatums(row chunk.Row, fields []*resolve.ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)

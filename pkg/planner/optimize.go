@@ -27,13 +27,17 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/cascades"
-	pctx "github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/indexadvisor"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -43,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -126,7 +131,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 }
 
 // Optimize does optimization and creates a Plan.
-func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
@@ -135,7 +141,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	if !sessVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
-		allowed, err := allowInReadOnlyMode(pctx, node)
+		allowed, err := allowInReadOnlyMode(pctx, node.Node)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -144,7 +150,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
+	if sessVars.SQLMode.HasStrictMode() && !IsReadOnly(node.Node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -159,13 +165,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// handle the execute statement
-	if execAST, ok := node.(*ast.ExecuteStmt); ok {
-		p, names, err := OptimizeExecStmt(ctx, sctx, execAST, is)
+	if _, ok := node.Node.(*ast.ExecuteStmt); ok {
+		p, names, err := OptimizeExecStmt(ctx, sctx, node, is)
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sessVars.StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
+	tableHints := hint.ExtractTableHintsFromStmtNode(node.Node, sessVars.StmtCtx)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker(ctx, is),
+		sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -232,7 +240,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
-	stmtNode, isStmtNode := node.(ast.StmtNode)
+	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
 	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
 	var bindings bindinfo.Bindings
 	if match {
@@ -262,7 +270,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if isStmtNode {
 		// add the extra Limit after matching the bind record
 		stmtNode = core.TryAddExtraLimit(sctx, stmtNode)
-		node = stmtNode
+		node = node.CloneWithNewNode(stmtNode)
 	}
 
 	// try to get Plan from the NonPrepared Plan Cache
@@ -297,7 +305,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				core.DebugTraceTryBinding(pctx, binding.Hint)
 			}
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetStmtHints(),
+				setVarHintChecker, hypoIndexChecker(ctx, is),
+				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -309,8 +319,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
-				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, pctx, scope, binding)
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
 				continue
 			}
 			if cost < minCost {
@@ -387,7 +396,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 // OptimizeForForeignKeyCascade does optimization and creates a Plan for foreign key cascade.
 // Compare to Optimize, OptimizeForForeignKeyCascade only build plan by StmtNode,
 // doesn't consider plan cache and plan binding, also doesn't do privilege check.
-func OptimizeForForeignKeyCascade(ctx context.Context, sctx pctx.PlanContext, node ast.StmtNode, is infoschema.InfoSchema) (base.Plan, error) {
+func OptimizeForForeignKeyCascade(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
@@ -402,7 +411,7 @@ func OptimizeForForeignKeyCascade(ctx context.Context, sctx pctx.PlanContext, no
 	return p, nil
 }
 
-func allowInReadOnlyMode(sctx pctx.PlanContext, node ast.Node) (bool, error) {
+func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) {
 	pm := privilege.GetPrivilegeManager(sctx)
 	if pm == nil {
 		return true, nil
@@ -451,10 +460,10 @@ var planBuilderPool = sync.Pool{
 // optimizeCnt is a global variable only used for test.
 var optimizeCnt int
 
-func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
+func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, float64, error) {
 	failpoint.Inject("checkOptimizeCountOne", func(val failpoint.Value) {
 		// only count the optimization for SQL with specified text
-		if testSQL, ok := val.(string); ok && testSQL == node.OriginalText() {
+		if testSQL, ok := val.(string); ok && testSQL == node.Node.OriginalText() {
 			optimizeCnt++
 			if optimizeCnt > 1 {
 				failpoint.Return(nil, nil, 0, errors.New("gofail wrong optimizerCnt error"))
@@ -473,7 +482,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 
 	// build logical plan
 	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
-	node.Accept(hintProcessor)
+	node.Node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
@@ -488,7 +497,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 	// we need the table information to check privilege, which is collected
 	// into the visitInfo in the logical plan builder.
 	if pm := privilege.GetPrivilegeManager(sctx); pm != nil {
-		visitInfo := core.VisitInfo4PrivCheck(is, node, builder.GetVisitInfo())
+		visitInfo := core.VisitInfo4PrivCheck(ctx, is, node.Node, builder.GetVisitInfo())
 		if err := core.CheckPrivilege(activeRoles, pm, visitInfo); err != nil {
 			return nil, nil, 0, err
 		}
@@ -510,7 +519,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 
 	// Handle the logical plan statement, use cascades planner if enabled.
 	if sessVars.GetEnableCascadesPlanner() {
-		finalPlan, cost, err := cascades.DefaultOptimizer.FindBestPlan(sctx, logic)
+		finalPlan, cost, err := old.DefaultOptimizer.FindBestPlan(sctx, logic)
 		return finalPlan, names, cost, err
 	}
 
@@ -524,7 +533,7 @@ func optimize(ctx context.Context, sctx pctx.PlanContext, node ast.Node, is info
 
 // OptimizeExecStmt to handle the "execute" statement
 func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
-	execAst *ast.ExecuteStmt, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error) {
+	execAst *resolve.NodeW, is infoschema.InfoSchema) (base.Plan, types.NameSlice, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	pctx := sctx.GetPlanCtx()
@@ -548,7 +557,7 @@ func OptimizeExecStmt(ctx context.Context, sctx sessionctx.Context,
 	return exec, names, nil
 }
 
-func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node, builder *core.PlanBuilder) (base.Plan, error) {
+func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW, builder *core.PlanBuilder) (base.Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
 	sctx.GetSessionVars().MapScalarSubQ = nil
@@ -574,20 +583,6 @@ func buildLogicalPlan(ctx context.Context, sctx pctx.PlanContext, node ast.Node,
 	return p, nil
 }
 
-func handleInvalidBinding(ctx context.Context, sctx pctx.PlanContext, level string, binding bindinfo.Binding) {
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
-	if err != nil {
-		logutil.Logger(ctx).Info("drop session bindings failed")
-	}
-	if level == metrics.ScopeSession {
-		return
-	}
-
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(binding)
-}
-
 // setVarHintChecker checks whether the variable name in set_var hint is valid.
 func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	sysVar := variable.GetSysVar(varName)
@@ -600,9 +595,39 @@ func setVarHintChecker(varName, hint string) (ok bool, warning error) {
 	return true, warning
 }
 
+func hypoIndexChecker(ctx context.Context, is infoschema.InfoSchema) func(db, tbl, col model.CIStr) (colOffset int, err error) {
+	return func(db, tbl, col model.CIStr) (colOffset int, err error) {
+		t, err := is.TableByName(ctx, db, tbl)
+		if err != nil {
+			return 0, errors.NewNoStackErrorf("table '%v.%v' doesn't exist", db, tbl)
+		}
+		for i, tblCol := range t.Cols() {
+			if tblCol.Name.L == col.L {
+				return i, nil
+			}
+		}
+		return 0, errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
+	}
+}
+
+// queryPlanCost returns the plan cost of this node, which is mainly for the Index Advisor.
+func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) {
+	nodeW := resolve.NewNodeW(stmt)
+	plan, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return 0, err
+	}
+	pp, ok := plan.(base.PhysicalPlan)
+	if !ok {
+		return 0, errors.Errorf("plan is not a physical plan: %T", plan)
+	}
+	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
+	indexadvisor.QueryPlanCostHook = queryPlanCost
 	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
 		return domain.GetDomain(sctx).BindHandle()
 	}

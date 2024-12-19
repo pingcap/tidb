@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -510,6 +511,9 @@ func BenchmarkExtractColumns(b *testing.B) {
 	}
 	b.ReportAllocs()
 }
+func (m *MockExpr) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return nil
+}
 
 func BenchmarkExprFromSchema(b *testing.B) {
 	conditions := []Expression{
@@ -536,6 +540,10 @@ type MockExpr struct {
 	i   any
 }
 
+func (m *MockExpr) SafeToShareAcrossSession() bool {
+	return false
+}
+
 func (m *MockExpr) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
@@ -558,7 +566,8 @@ func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return nil
 }
 
-func (m *MockExpr) StringWithCtx(ParamValues) string { return "" }
+func (m *MockExpr) StringWithCtx(ParamValues, string) string { return "" }
+
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
 }
@@ -604,8 +613,24 @@ func (m *MockExpr) EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSO
 	}
 	return types.BinaryJSON{}, m.i == nil, m.err
 }
-func (m *MockExpr) GetType(_ EvalContext) *types.FieldType            { return m.t }
-func (m *MockExpr) Clone() Expression                                 { return nil }
+func (m *MockExpr) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (val types.VectorFloat32, isNull bool, err error) {
+	if x, ok := m.i.(types.VectorFloat32); ok {
+		return x, false, m.err
+	}
+	return types.ZeroVectorFloat32, m.i == nil, m.err
+}
+func (m *MockExpr) GetType(_ EvalContext) *types.FieldType { return m.t }
+
+func (m *MockExpr) Clone() Expression {
+	cloned := new(MockExpr)
+	cloned.i = m.i
+	cloned.err = m.err
+	if m.t != nil {
+		cloned.t = m.t.Clone()
+	}
+	return cloned
+}
+
 func (m *MockExpr) Equal(ctx EvalContext, e Expression) bool          { return false }
 func (m *MockExpr) IsCorrelated() bool                                { return false }
 func (m *MockExpr) ConstLevel() ConstLevel                            { return ConstNone }
@@ -630,6 +655,8 @@ func (m *MockExpr) Coercibility() Coercibility                          { return
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
 func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""
@@ -642,3 +669,5 @@ func (m *MockExpr) MemoryUsage() (sum int64) {
 func (m *MockExpr) Traverse(action TraverseAction) Expression {
 	return action.Transform(m)
 }
+func (m *MockExpr) Hash64(_ base.Hasher) {}
+func (m *MockExpr) Equals(_ any) bool    { return false }

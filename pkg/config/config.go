@@ -98,16 +98,13 @@ const (
 	// EnvVarKeyspaceName is the system env name for keyspace name.
 	EnvVarKeyspaceName = "KEYSPACE_NAME"
 	// MaxTokenLimit is the max token limit value.
-	MaxTokenLimit = 1024 * 1024
+	MaxTokenLimit  = 1024 * 1024
+	DefSchemaLease = 45 * time.Second
+	UnavailableIP  = "<nil>"
 )
 
 // Valid config maps
 var (
-	ValidStorage = map[string]bool{
-		"mocktikv": true,
-		"tikv":     true,
-		"unistore": true,
-	}
 	// CheckTableBeforeDrop enable to execute `admin check table` before `drop table`.
 	CheckTableBeforeDrop = false
 	// checkBeforeDropLDFlag is a go build flag.
@@ -173,18 +170,18 @@ var (
 
 // Config contains configuration options.
 type Config struct {
-	Host             string `toml:"host" json:"host"`
-	AdvertiseAddress string `toml:"advertise-address" json:"advertise-address"`
-	Port             uint   `toml:"port" json:"port"`
-	Cors             string `toml:"cors" json:"cors"`
-	Store            string `toml:"store" json:"store"`
-	Path             string `toml:"path" json:"path"`
-	Socket           string `toml:"socket" json:"socket"`
-	Lease            string `toml:"lease" json:"lease"`
-	SplitTable       bool   `toml:"split-table" json:"split-table"`
-	TokenLimit       uint   `toml:"token-limit" json:"token-limit"`
-	TempDir          string `toml:"temp-dir" json:"temp-dir"`
-	TempStoragePath  string `toml:"tmp-storage-path" json:"tmp-storage-path"`
+	Host             string    `toml:"host" json:"host"`
+	AdvertiseAddress string    `toml:"advertise-address" json:"advertise-address"`
+	Port             uint      `toml:"port" json:"port"`
+	Cors             string    `toml:"cors" json:"cors"`
+	Store            StoreType `toml:"store" json:"store"`
+	Path             string    `toml:"path" json:"path"`
+	Socket           string    `toml:"socket" json:"socket"`
+	Lease            string    `toml:"lease" json:"lease"`
+	SplitTable       bool      `toml:"split-table" json:"split-table"`
+	TokenLimit       uint      `toml:"token-limit" json:"token-limit"`
+	TempDir          string    `toml:"temp-dir" json:"temp-dir"`
+	TempStoragePath  string    `toml:"tmp-storage-path" json:"tmp-storage-path"`
 	// TempStorageQuota describe the temporary storage Quota during query exector when TiDBEnableTmpStorageOnOOM is enabled
 	// If the quota exceed the capacity of the TempStoragePath, the tidb-server would exit with fatal error
 	TempStorageQuota           int64                   `toml:"tmp-storage-quota" json:"tmp-storage-quota"` // Bytes
@@ -204,7 +201,6 @@ type Config struct {
 	ProxyProtocol              ProxyProtocol           `toml:"proxy-protocol" json:"proxy-protocol"`
 	PDClient                   tikvcfg.PDClient        `toml:"pd-client" json:"pd-client"`
 	TiKVClient                 tikvcfg.TiKVClient      `toml:"tikv-client" json:"tikv-client"`
-	Binlog                     Binlog                  `toml:"binlog" json:"binlog"`
 	CompatibleKillQuery        bool                    `toml:"compatible-kill-query" json:"compatible-kill-query"`
 	PessimisticTxn             PessimisticTxn          `toml:"pessimistic-txn" json:"pessimistic-txn"`
 	MaxIndexLength             int                     `toml:"max-index-length" json:"max-index-length"`
@@ -551,9 +547,10 @@ type Instance struct {
 	PluginDir                  string     `toml:"plugin_dir" json:"plugin_dir"`
 	PluginLoad                 string     `toml:"plugin_load" json:"plugin_load"`
 	// MaxConnections is the maximum permitted number of simultaneous client connections.
-	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
-	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
-	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	MaxConnections       uint32     `toml:"max_connections" json:"max_connections"`
+	TiDBEnableDDL        AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
+	TiDBEnableStatsOwner AtomicBool `toml:"tidb_enable_stats_owner" json:"tidb_enable_stats_owner"`
+	TiDBRCReadCheckTS    bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
 	// TiDBServiceScope indicates the role for tidb for distributed task framework.
 	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 }
@@ -711,22 +708,21 @@ type Performance struct {
 	TCPNoDelay          bool    `toml:"tcp-no-delay" json:"tcp-no-delay"`
 	CrossJoin           bool    `toml:"cross-join" json:"cross-join"`
 	DistinctAggPushDown bool    `toml:"distinct-agg-push-down" json:"distinct-agg-push-down"`
-	// Whether enable projection push down for coprocessors (both tikv & tiflash), default false.
-	ProjectionPushDown bool   `toml:"projection-push-down" json:"projection-push-down"`
-	MaxTxnTTL          uint64 `toml:"max-txn-ttl" json:"max-txn-ttl"`
+	MaxTxnTTL           uint64  `toml:"max-txn-ttl" json:"max-txn-ttl"`
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
 	// Deprecated: this config will not have any effect
-	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
-	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
-	GOGC                              int    `toml:"gogc" json:"gogc"`
-	EnforceMPP                        bool   `toml:"enforce-mpp" json:"enforce-mpp"`
-	StatsLoadConcurrency              int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
-	StatsLoadQueueSize                uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
-	AnalyzePartitionConcurrencyQuota  uint   `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
-	PlanReplayerDumpWorkerConcurrency uint   `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
-	EnableStatsCacheMemQuota          bool   `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
+	IndexUsageSyncLease  string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
+	PlanReplayerGCLease  string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
+	GOGC                 int    `toml:"gogc" json:"gogc"`
+	EnforceMPP           bool   `toml:"enforce-mpp" json:"enforce-mpp"`
+	StatsLoadConcurrency int    `toml:"stats-load-concurrency" json:"stats-load-concurrency"`
+	StatsLoadQueueSize   uint   `toml:"stats-load-queue-size" json:"stats-load-queue-size"`
+	// Deprecated: this config has been deprecated. It has no effect.
+	AnalyzePartitionConcurrencyQuota  uint `toml:"analyze-partition-concurrency-quota" json:"analyze-partition-concurrency-quota"`
+	PlanReplayerDumpWorkerConcurrency uint `toml:"plan-replayer-dump-worker-concurrency" json:"plan-replayer-dump-worker-concurrency"`
+	EnableStatsCacheMemQuota          bool `toml:"enable-stats-cache-mem-quota" json:"enable-stats-cache-mem-quota"`
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -754,6 +750,9 @@ type Performance struct {
 
 	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
+
+	// Deprecated: this config will not have any effect
+	ProjectionPushDown bool `toml:"projection-push-down" json:"projection-push-down"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -808,19 +807,6 @@ type ProxyProtocol struct {
 	// PROXY protocol header process fallback-able.
 	// If set to true and not send PROXY protocol header, connection will return connection's client IP.
 	Fallbackable bool `toml:"fallbackable" json:"fallbackable"`
-}
-
-// Binlog is the config for binlog.
-type Binlog struct {
-	Enable bool `toml:"enable" json:"enable"`
-	// If IgnoreError is true, when writing binlog meets error, TiDB would
-	// ignore the error.
-	IgnoreError  bool   `toml:"ignore-error" json:"ignore-error"`
-	WriteTimeout string `toml:"write-timeout" json:"write-timeout"`
-	// Use socket file to write binlog, for compatible with kafka version tidb-binlog.
-	BinlogSocket string `toml:"binlog-socket" json:"binlog-socket"`
-	// The strategy for sending binlog to pump, value can be "range" or "hash" now.
-	Strategy string `toml:"strategy" json:"strategy"`
 }
 
 // PessimisticTxn is the config for pessimistic transaction.
@@ -907,11 +893,11 @@ var defaultConf = Config{
 	Port:                         DefPort,
 	Socket:                       "/tmp/tidb-{Port}.sock",
 	Cors:                         "",
-	Store:                        "unistore",
+	Store:                        StoreTypeUniStore,
 	Path:                         "/tmp/tidb",
 	RunDDL:                       true,
 	SplitTable:                   true,
-	Lease:                        "45s",
+	Lease:                        DefSchemaLease.String(),
 	TokenLimit:                   1000,
 	OOMUseTmpStorage:             true,
 	TempDir:                      DefTempDir,
@@ -975,6 +961,7 @@ var defaultConf = Config{
 		PluginLoad:                  "",
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
+		TiDBEnableStatsOwner:        *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
 		TiDBServiceScope:            "",
 	},
@@ -1006,7 +993,7 @@ var defaultConf = Config{
 		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
 		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
 		DistinctAggPushDown:               false,
-		ProjectionPushDown:                false,
+		ProjectionPushDown:                true,
 		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
 		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
@@ -1043,10 +1030,6 @@ var defaultConf = Config{
 	},
 	PDClient:   defTiKVCfg.PDClient,
 	TiKVClient: defTiKVCfg.TiKVClient,
-	Binlog: Binlog{
-		WriteTimeout: "15s",
-		Strategy:     "range",
-	},
 	Plugin: Plugin{
 		Dir:  "/data/deploy/plugin",
 		Load: "",
@@ -1069,7 +1052,7 @@ var defaultConf = Config{
 		AuthTokenRefreshInterval:    DefAuthTokenRefreshInterval.String(),
 		DisconnectOnExpiredPassword: true,
 	},
-	DeprecateIntegerDisplayWidth:         false,
+	DeprecateIntegerDisplayWidth:         true,
 	EnableEnumLengthLimit:                true,
 	StoresRefreshInterval:                defTiKVCfg.StoresRefreshInterval,
 	EnableForwarding:                     defTiKVCfg.EnableForwarding,
@@ -1334,16 +1317,10 @@ func (c *Config) Valid() error {
 	if c.Security.SkipGrantTable && !hasRootPrivilege() {
 		return fmt.Errorf("TiDB run with skip-grant-table need root privilege")
 	}
-	if !ValidStorage[c.Store] {
-		nameList := make([]string, 0, len(ValidStorage))
-		for k, v := range ValidStorage {
-			if v {
-				nameList = append(nameList, k)
-			}
-		}
-		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, nameList)
+	if !c.Store.Valid() {
+		return fmt.Errorf("invalid store=%s, valid storages=%v", c.Store, StoreTypeList())
 	}
-	if c.Store == "mocktikv" && !c.Instance.TiDBEnableDDL.Load() {
+	if c.Store == StoreTypeMockTiKV && !c.Instance.TiDBEnableDDL.Load() {
 		return fmt.Errorf("can't disable DDL on mocktikv")
 	}
 	if c.MaxIndexLength < DefMaxIndexLength || c.MaxIndexLength > DefMaxOfMaxIndexLength {

@@ -93,13 +93,13 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("insert into tmp_t values (1, 1, 1)")
 	tk.MustExec("insert into tmp_t values (2, 2, 2)")
 
-	// Make sure the fail point works.
-	// With that failpoint, all requests to the TiKV is discard.
-	rs, err := tk1.Exec("select * from normal")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rs, err := tk1.ExecWithContext(ctx, "select * from normal")
 	require.NoError(t, err)
 
 	blocked := make(chan struct{}, 1)
-	ctx, cancelFunc := context.WithCancel(context.Background())
 	done.Add(1)
 	go func() {
 		defer done.Done()
@@ -109,10 +109,10 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	select {
 	case <-blocked:
-		cancelFunc()
+		cancel()
 		require.FailNow(t, "The query should block when the failpoint is enabled.")
 	case <-time.After(200 * time.Millisecond):
-		cancelFunc()
+		cancel()
 	}
 
 	// Check the temporary table do not send request to TiKV.

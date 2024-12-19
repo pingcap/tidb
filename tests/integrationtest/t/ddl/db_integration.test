@@ -392,7 +392,7 @@ alter table t add unique index idx_a(a);
 delete from t where a = 4;
 alter table t add unique index idx_a(a);
 alter table t add unique index idx_ac(a, c);
--- error 1503
+-- error 8264
 alter table t add unique index idx_b(b);
 drop table if exists t;
 

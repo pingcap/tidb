@@ -98,10 +98,6 @@ func (k Key) String() string {
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
-
-	XXXNoUnkeyedLiteral struct{}
-	XXXunrecognized     []byte
-	XXXsizecache        int32
 }
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
@@ -110,7 +106,7 @@ func KeyRangeSliceMemUsage(k []KeyRange) int64 {
 
 	res := sizeofKeyRange * int64(cap(k))
 	for _, m := range k {
-		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey))
 	}
 
 	return res
@@ -312,6 +308,9 @@ func NewCommonHandle(encoded []byte) (*CommonHandle, error) {
 
 // Copy implements the Handle interface.
 func (ch *CommonHandle) Copy() Handle {
+	if ch == nil {
+		return nil
+	}
 	encoded := make([]byte, len(ch.encoded))
 	copy(encoded, ch.encoded)
 	colEndOffsets := make([]uint16, len(ch.colEndOffsets))
@@ -680,9 +679,9 @@ func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v.M {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}
@@ -720,10 +719,13 @@ func (ph PartitionHandle) Copy() Handle {
 
 // Equal implements the Handle interface.
 func (ph PartitionHandle) Equal(h Handle) bool {
+	// Compare pid and handle if both sides are `PartitionHandle`.
 	if ph2, ok := h.(PartitionHandle); ok {
 		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
 	}
-	return false
+
+	// Otherwise, use underlying handle to do comparation.
+	return ph.Handle.Equal(h)
 }
 
 // Compare implements the Handle interface.

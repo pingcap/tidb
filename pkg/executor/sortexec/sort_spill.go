@@ -101,7 +101,7 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 	}
 
 	if t.CheckExceed() && !hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
-		s.GetFallback().Action(t)
+		s.TriggerFallBackAction(t)
 	}
 }
 
@@ -115,10 +115,6 @@ func (s *parallelSortSpillAction) actionImpl(t *memory.Tracker) bool {
 	}
 
 	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() && hasEnoughDataToSpill(s.spillHelper.sortExec.memTracker, t) {
-		// Ideally, all goroutines entering this action should wait for the finish of spill once
-		// spill is triggered(we consider spill is triggered when the `needSpill` has been set).
-		// However, out of some reasons, we have to directly return before the finish of
-		// sort operation executed in spill as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setNeedSpillNoLock()
 		s.spillHelper.bytesConsumed.Store(t.BytesConsumed())
 		s.spillHelper.bytesLimit.Store(t.GetBytesLimit())

@@ -183,7 +183,7 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 		return nil
 	}
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	if err != nil {
 		return nil
 	}
@@ -213,7 +213,7 @@ func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *tes
 	stmt, err := p.ParseOneStmt(createTable, "", "")
 	require.NoError(t, err)
 	sctx := mock.NewContext()
-	tblInfo, err := ddlhelper.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
+	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	require.NoError(t, err)
@@ -563,6 +563,60 @@ func TestPartitionRangeColumnsForExpr(t *testing.T) {
 		{"(a,b,c) = (4,7,4)", partitionRangeOR{{5, 6}}},
 		{"a < 2 and a > 10", partitionRangeOR{}},
 		{"a < 1 and a > 1", partitionRangeOR{}},
+	}
+
+	for _, ca := range cases {
+		expr, err := expression.ParseSimpleExpr(tc.sctx, ca.input, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
+		require.NoError(t, err)
+		result := fullRange(len(lessThan))
+		e := expression.SplitCNFItems(expr)
+		result = partitionRangeForCNFExpr(tc.sctx, e, pruner, result)
+		require.Truef(t, equalPartitionRangeOR(ca.result, result), "unexpected: %v %v != %v", ca.input, ca.result, result)
+	}
+}
+
+func TestPartitionRangeColumnsForExprWithSpecialCollation(t *testing.T) {
+	tc := prepareTestCtx(t, "create table t (a varchar(255) COLLATE utf8mb4_0900_ai_ci, b varchar(255) COLLATE utf8mb4_unicode_ci)", "a,b")
+	lessThan := make([][]*expression.Expression, 0, 6)
+	partDefs := [][]string{
+		{"'i'", "'i'"},
+		{"MAXVALUE", "MAXVALUE"},
+	}
+	for i := range partDefs {
+		l := make([]*expression.Expression, 0, 2)
+		for j := range []int{0, 1} {
+			v := partDefs[i][j]
+			var e *expression.Expression
+			if v == "MAXVALUE" {
+				e = nil // MAXVALUE
+			} else {
+				expr, err := expression.ParseSimpleExpr(tc.sctx, v, expression.WithInputSchemaAndNames(tc.schema, tc.names, nil))
+				require.NoError(t, err)
+				e = &expr
+			}
+			l = append(l, e)
+		}
+		lessThan = append(lessThan, l)
+	}
+	pruner := &rangeColumnsPruner{lessThan, tc.columns[:2]}
+	cases := []struct {
+		input  string
+		result partitionRangeOR
+	}{
+		{"a = 'q'", partitionRangeOR{{1, 2}}},
+		{"a = 'Q'", partitionRangeOR{{1, 2}}},
+		{"a = 'a'", partitionRangeOR{{0, 1}}},
+		{"a = 'A'", partitionRangeOR{{0, 1}}},
+		{"a > 'a'", partitionRangeOR{{0, 2}}},
+		{"a > 'q'", partitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'q'", partitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'Q'", partitionRangeOR{{1, 2}}},
+		{"a = 'i' and b = 'a'", partitionRangeOR{{0, 1}}},
+		{"a = 'i' and b = 'A'", partitionRangeOR{{0, 1}}},
+		{"a = 'i' and b > 'a'", partitionRangeOR{{0, 2}}},
+		{"a = 'i' and b > 'q'", partitionRangeOR{{1, 2}}},
+		{"a = 'i' or a = 'h'", partitionRangeOR{{0, 2}}},
+		{"a = 'h' and a = 'j'", partitionRangeOR{}},
 	}
 
 	for _, ca := range cases {

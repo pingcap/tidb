@@ -114,7 +114,7 @@ func TestTableReaderChunk(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d)", i))
 	}
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("chk"))
 	require.NoError(t, err)
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 10)
@@ -319,7 +319,7 @@ func TestIndexLookUpReaderChunk(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert chk values (%d, %d)", i, i))
 	}
-	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("chk"))
+	tbl, err := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("chk"))
 	require.NoError(t, err)
 	indexStart := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, tbl.Indices()[0].Meta().ID)
 	cluster.SplitKeys(indexStart, indexStart.PrefixNext(), 10)

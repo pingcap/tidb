@@ -15,11 +15,16 @@
 package storage_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/stretchr/testify/require"
 )
 
@@ -62,7 +67,6 @@ func TestGCPartition(t *testing.T) {
 	testKit.MustExec("set @@tidb_analyze_version = 1")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		testKit.MustExec("use test")
-		testKit.MustExec("set @@session.tidb_enable_table_partition=1")
 		testKit.MustExec(`create table t (a bigint(64), b bigint(64), index idx(a, b))
 			    partition by range (a) (
 			    partition p0 values less than (3),
@@ -104,7 +108,8 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
 	h := dom.StatsHandle()
-	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	testKit.MustExec("analyze table t")
 
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
@@ -131,7 +136,8 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
-	require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",
@@ -146,6 +152,7 @@ func TestGCColumnStatsUsage(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t(a int, b int, c int)")
 	testKit.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "a", "b", "c")
 	testKit.MustExec("analyze table t")
 	testKit.MustQuery("select count(*) from mysql.column_stats_usage").Check(testkit.Rows("3"))
 	testKit.MustExec("alter table t drop column a")
@@ -172,4 +179,28 @@ func TestDeleteAnalyzeJobs(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DeleteAnalyzeJobs(time.Now().Add(time.Second)))
 	rows = testKit.MustQuery("show analyze status").Rows()
 	require.Equal(t, 0, len(rows))
+}
+
+func TestExtremCaseOfGC(t *testing.T) {
+	// This case tests that there's no records in mysql.stats_histograms but this table is not deleted in fact.
+	// We should not delete the record in mysql.stats_meta.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t(a int, b int)")
+	testKit.MustExec("insert into t values (1,2),(3,4)")
+	testKit.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.TODO(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tid := tbl.Meta().ID
+	rs := testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 1)
+	rs = testKit.MustQuery("select * from mysql.stats_histograms where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 0)
+	h := dom.StatsHandle()
+	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset", `return(0)`)
+	h.GCStats(dom.InfoSchema(), time.Second*3)
+	rs = testKit.MustQuery("select * from mysql.stats_meta where table_id = ?", tid)
+	require.Len(t, rs.Rows(), 1)
+	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/injectGCStatsLastTSOffset")
 }

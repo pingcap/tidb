@@ -1,0 +1,55 @@
+#!/bin/sh
+
+# Copyright 2024 PingCAP, Inc. Licensed under Apache-2.0.
+
+set -eux
+
+main() {
+    # Call the original run.sh script
+    "$UTILS_DIR/run_br" "$@" $ENCRYPTION_ARGS
+
+    # Check if encryption validation is enabled
+    if [ "${ENABLE_ENCRYPTION_CHECK:-false}" != "true" ]; then
+        echo "Encryption check is disabled. Skipping backup file encryption validation."
+        exit 0
+    fi
+    
+    echo "Starting backup file encryption validation..."
+
+    # Capture the output of the validation command
+    output=$(bin/utils validateBackupFiles --command="$*" --encryption="$ENCRYPTION_ARGS")
+    exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
+        echo "Validation failed. Exiting with status 1."
+        exit 1
+    fi
+
+    # Check if validation is needed
+    # strings are from utils.go
+    if echo "$output" | grep -q "No need to validate"; then
+        echo "Validation not required. Skipping."
+        exit 0
+    fi
+
+    # Check for expected strings in the output
+    if [ -n "$ENCRYPTION_ARGS" ]; then
+        # strings are from utils.go
+        if ! echo "$output" | grep -q "All files in .* are encrypted, as expected with encryption"; then
+            echo "Error: Expected 'All files are encrypted' message not found in output with encryption"
+            exit 1
+        fi
+    else
+        # strings are from utils.go
+        if ! echo "$output" | grep -q "All files in .* are not encrypted, as expected without encryption"; then
+            echo "Error: Expected 'All files are not encrypted' message not found in output without encryption"
+            exit 1
+        fi
+    fi
+
+    echo "Validation completed successfully."
+}
+
+# Execute the main function
+main "$@"
+

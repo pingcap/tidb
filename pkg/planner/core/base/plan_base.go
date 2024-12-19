@@ -19,8 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -31,10 +32,10 @@ import (
 )
 
 // PlanContext is the context for building plan.
-type PlanContext = context.PlanContext
+type PlanContext = planctx.PlanContext
 
 // BuildPBContext is the context for building `*tipb.Executor`.
-type BuildPBContext = context.BuildPBContext
+type BuildPBContext = planctx.BuildPBContext
 
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
@@ -80,11 +81,10 @@ type Plan interface {
 
 	BuildPlanTrace() *tracing.PlanTrace
 
-	// CloneForPlanCache clones this physical plan specially for instance level plan cache.
-	// A cached plan might be shared across multiple sessions, so for safety we have to clone it to make it thread-safe.
-	// Compared with the prior PhysicalPlan.Clone(), CloneForPlanCache() doesn't deep clones all fields instead it only
-	// deep clones fields that might be modified during reusing it and shallow clones all other fields for performance.
-	CloneForPlanCache() (cloned Plan, ok bool)
+	// CloneForPlanCache clones this Plan for Plan Cache.
+	// Compared with Clone, CloneForPlanCache doesn't deep clone every fields, fields with tag
+	// `plan-cache-shallow-clone:"true"` are allowed to be shallow cloned.
+	CloneForPlanCache(newCtx PlanContext) (cloned Plan, ok bool)
 }
 
 // PhysicalPlan is a tree of the physical operators.
@@ -135,7 +135,7 @@ type PhysicalPlan interface {
 	ExplainNormalizedInfo() string
 
 	// Clone clones this physical plan.
-	Clone() (PhysicalPlan, error)
+	Clone(newCtx PlanContext) (PhysicalPlan, error)
 
 	// AppendChildCandidate append child physicalPlan into tracer in order to track each child physicalPlan which can't
 	// be tracked during findBestTask or enumeratePhysicalPlans4Task
@@ -193,6 +193,7 @@ func (c *PlanCounterTp) IsForce() bool {
 // We can do a lot of logical optimizations to it, like predicate push-down and column pruning.
 type LogicalPlan interface {
 	Plan
+	base.HashEquals
 
 	// HashCode encodes a LogicalPlan to fast compare whether a LogicalPlan equals to another.
 	// We use a strict encode method here which ensures there is no conflict.

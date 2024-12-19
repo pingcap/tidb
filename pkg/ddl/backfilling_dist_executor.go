@@ -26,10 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -56,6 +55,7 @@ type BackfillSubTaskMeta struct {
 	RowEnd   []byte `json:"row_end"`
 
 	// Used by global sort write & ingest step.
+	RangeJobKeys   [][]byte `json:"range_job_keys,omitempty"`
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
@@ -99,7 +99,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
 	// we should move this operation out of GetStepExecutor, and put into Init.
-	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -147,23 +147,26 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, hasUnique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(
+		s.BaseTaskExecutor.Ctx(),
+		job.ID, hasUnique,
+		ddlObj.etcdCli,
+		discovery,
+		job.ReorgMeta.ResourceGroupName,
+		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+		job.ReorgMeta.GetMaxWriteSpeedOrDefault(),
+		job.RealStartTS,
+	)
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
-	var unique bool
-	err := job.DecodeArgs(&unique)
-	if err == nil {
-		return unique, nil
-	}
-
-	var uniques []bool
-	err = job.DecodeArgs(&uniques)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	for _, b := range uniques {
-		if b {
+
+	for _, a := range args.IndexArgs {
+		if a.Unique {
 			return true, nil
 		}
 	}
@@ -217,17 +220,6 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
-}
-
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

@@ -24,17 +24,17 @@ import (
 
 func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
 	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
 }
 
 func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2, 16, true)
 
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetStepTwoPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	registerExampleTask(t, c.MockCtrl, testutil.GetStepTwoPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	task = testutil.SubmitAndWaitTask(c.Ctx, t, "key2", "", 1)
 	require.Equal(t, proto.TaskStateReverted, task.State)
 }

@@ -81,7 +81,7 @@ func (a *txnAssert[T]) Check(t testing.TB) {
 	require.Equal(t, a.isolation, txnCtx.Isolation)
 	require.Equal(t, a.isolation != "", txnCtx.IsPessimistic)
 	require.Equal(t, sessVars.CheckAndGetTxnScope(), txnCtx.TxnScope)
-	require.Equal(t, sessVars.ShardAllocateStep, int64(txnCtx.ShardStep))
+	require.Equal(t, sessVars.ShardAllocateStep, int64(sessVars.GetRowIDShardGenerator().GetShardStep()))
 	require.False(t, txnCtx.IsStaleness)
 	require.GreaterOrEqual(t, txnCtx.CreateTime.UnixNano(), a.minStartTime.UnixNano())
 	require.Equal(t, a.inTxn, sessVars.InTxn())

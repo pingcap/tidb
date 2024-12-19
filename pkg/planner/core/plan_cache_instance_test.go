@@ -27,19 +27,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func _put(sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
-	v := &PlanCacheValue{testKey: testKey, memoryUsage: memUsage, matchOpts: &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)}}
-	return pc.Put(sctx, fmt.Sprintf("%v", testKey), v, &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+func _put(pc sessionctx.InstancePlanCache, testKey, memUsage, statsHash int64) (succ bool) {
+	v := &PlanCacheValue{testKey: testKey, Memory: memUsage}
+	return pc.Put(fmt.Sprintf("%v-%v", testKey, statsHash), v, nil)
 }
 
-func _hit(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	v, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+func _hit(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
+	v, ok := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
 	require.True(t, ok)
 	require.Equal(t, v.(*PlanCacheValue).testKey, int64(testKey))
 }
 
-func _miss(t *testing.T, sctx sessionctx.Context, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
-	_, ok := pc.Get(sctx, fmt.Sprintf("%v", testKey), &PlanCacheMatchOpts{StatsVersionHash: uint64(statsHash)})
+func _miss(t *testing.T, pc sessionctx.InstancePlanCache, testKey, statsHash int) {
+	_, ok := pc.Get(fmt.Sprintf("%v-%v", testKey, statsHash), nil)
 	require.False(t, ok)
 }
 
@@ -50,70 +50,73 @@ func TestInstancePlanCacheBasic(t *testing.T) {
 	}()
 
 	pc := NewInstancePlanCache(1000, 1000)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 2, 100, 0)
-	_put(sctx, pc, 3, 100, 0)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
-	_hit(t, sctx, pc, 1, 0)
-	_hit(t, sctx, pc, 2, 0)
-	_hit(t, sctx, pc, 3, 0)
+	_hit(t, pc, 1, 0)
+	_hit(t, pc, 2, 0)
+	_hit(t, pc, 3, 0)
 
 	// exceed the hard limit during Put
 	pc = NewInstancePlanCache(250, 250)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 2, 100, 0)
-	_put(sctx, pc, 3, 100, 0)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
 	require.Equal(t, pc.MemUsage(), int64(200))
-	_hit(t, sctx, pc, 1, 0)
-	_hit(t, sctx, pc, 2, 0)
-	_miss(t, sctx, pc, 3, 0)
+	_hit(t, pc, 1, 0)
+	_hit(t, pc, 2, 0)
+	_miss(t, pc, 3, 0)
 
 	// can't Put 2 same values
 	pc = NewInstancePlanCache(250, 250)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 1, 101, 0)
+	_put(pc, 1, 100, 0)
+	_put(pc, 1, 101, 0)
 	require.Equal(t, pc.MemUsage(), int64(100)) // the second one will be ignored
 
 	// eviction
 	pc = NewInstancePlanCache(320, 500)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 2, 100, 0)
-	_put(sctx, pc, 3, 100, 0)
-	_put(sctx, pc, 4, 100, 0)
-	_put(sctx, pc, 5, 100, 0)
-	_hit(t, sctx, pc, 1, 0) // access 1-3 to refresh their last_used
-	_hit(t, sctx, pc, 2, 0)
-	_hit(t, sctx, pc, 3, 0)
-	require.Equal(t, pc.Evict(), true)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
+	_put(pc, 4, 100, 0)
+	_put(pc, 5, 100, 0)
+	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
+	_hit(t, pc, 2, 0)
+	_hit(t, pc, 3, 0)
+	_, numEvicted := pc.Evict(false)
+	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(300))
-	_hit(t, sctx, pc, 1, 0) // access 1-3 to refresh their last_used
-	_hit(t, sctx, pc, 2, 0)
-	_hit(t, sctx, pc, 3, 0)
-	_miss(t, sctx, pc, 4, 0) // 4-5 have been evicted
-	_miss(t, sctx, pc, 5, 0)
+	_hit(t, pc, 1, 0) // access 1-3 to refresh their last_used
+	_hit(t, pc, 2, 0)
+	_hit(t, pc, 3, 0)
+	_miss(t, pc, 4, 0) // 4-5 have been evicted
+	_miss(t, pc, 5, 0)
 
 	// no need to eviction if mem < softLimit
 	pc = NewInstancePlanCache(320, 500)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 2, 100, 0)
-	_put(sctx, pc, 3, 100, 0)
-	require.Equal(t, pc.Evict(), false)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
+	_, numEvicted = pc.Evict(false)
+	require.Equal(t, numEvicted > 0, false)
 	require.Equal(t, pc.MemUsage(), int64(300))
-	_hit(t, sctx, pc, 1, 0)
-	_hit(t, sctx, pc, 2, 0)
-	_hit(t, sctx, pc, 3, 0)
+	_hit(t, pc, 1, 0)
+	_hit(t, pc, 2, 0)
+	_hit(t, pc, 3, 0)
 
 	// empty head should be dropped after eviction
 	pc = NewInstancePlanCache(1, 500)
-	_put(sctx, pc, 1, 100, 0)
-	_put(sctx, pc, 2, 100, 0)
-	_put(sctx, pc, 3, 100, 0)
+	_put(pc, 1, 100, 0)
+	_put(pc, 2, 100, 0)
+	_put(pc, 3, 100, 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
 	pcImpl := pc.(*instancePlanCache)
 	numHeads := 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
 	require.Equal(t, numHeads, 3)
-	require.Equal(t, pc.Evict(), true)
+	_, numEvicted = pc.Evict(false)
+	require.Equal(t, numEvicted > 0, true)
 	require.Equal(t, pc.MemUsage(), int64(0))
 	numHeads = 0
 	pcImpl.heads.Range(func(k, v any) bool { numHeads++; return true })
@@ -129,58 +132,80 @@ func TestInstancePlanCacheWithMatchOpts(t *testing.T) {
 
 	// same key with different statsHash
 	pc := NewInstancePlanCache(1000, 1000)
-	_put(sctx, pc, 1, 100, 1)
-	_put(sctx, pc, 1, 100, 2)
-	_put(sctx, pc, 1, 100, 3)
-	_hit(t, sctx, pc, 1, 1)
-	_hit(t, sctx, pc, 1, 2)
-	_hit(t, sctx, pc, 1, 3)
-	_miss(t, sctx, pc, 1, 4)
-	_miss(t, sctx, pc, 2, 1)
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3)
+	_hit(t, pc, 1, 1)
+	_hit(t, pc, 1, 2)
+	_hit(t, pc, 1, 3)
+	_miss(t, pc, 1, 4)
+	_miss(t, pc, 2, 1)
 
 	// multiple keys with same statsHash
 	pc = NewInstancePlanCache(1000, 1000)
-	_put(sctx, pc, 1, 100, 1)
-	_put(sctx, pc, 1, 100, 2)
-	_put(sctx, pc, 2, 100, 1)
-	_put(sctx, pc, 2, 100, 2)
-	_hit(t, sctx, pc, 1, 1)
-	_hit(t, sctx, pc, 1, 2)
-	_miss(t, sctx, pc, 1, 3)
-	_hit(t, sctx, pc, 2, 1)
-	_hit(t, sctx, pc, 2, 2)
-	_miss(t, sctx, pc, 2, 3)
-	_miss(t, sctx, pc, 3, 1)
-	_miss(t, sctx, pc, 3, 2)
-	_miss(t, sctx, pc, 3, 3)
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 2, 100, 1)
+	_put(pc, 2, 100, 2)
+	_hit(t, pc, 1, 1)
+	_hit(t, pc, 1, 2)
+	_miss(t, pc, 1, 3)
+	_hit(t, pc, 2, 1)
+	_hit(t, pc, 2, 2)
+	_miss(t, pc, 2, 3)
+	_miss(t, pc, 3, 1)
+	_miss(t, pc, 3, 2)
+	_miss(t, pc, 3, 3)
 
 	// hard limit can take effect in this case
 	pc = NewInstancePlanCache(200, 200)
-	_put(sctx, pc, 1, 100, 1)
-	_put(sctx, pc, 1, 100, 2)
-	_put(sctx, pc, 1, 100, 3) // the third one will be ignored
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3) // the third one will be ignored
 	require.Equal(t, pc.MemUsage(), int64(200))
-	_hit(t, sctx, pc, 1, 1)
-	_hit(t, sctx, pc, 1, 2)
-	_miss(t, sctx, pc, 1, 3)
+	_hit(t, pc, 1, 1)
+	_hit(t, pc, 1, 2)
+	_miss(t, pc, 1, 3)
 
 	// eviction this case
 	pc = NewInstancePlanCache(300, 500)
-	_put(sctx, pc, 1, 100, 1)
-	_put(sctx, pc, 1, 100, 2)
-	_put(sctx, pc, 1, 100, 3)
-	_put(sctx, pc, 1, 100, 4)
-	_put(sctx, pc, 1, 100, 5)
-	_hit(t, sctx, pc, 1, 1) // refresh 1-3's last_used
-	_hit(t, sctx, pc, 1, 2)
-	_hit(t, sctx, pc, 1, 3)
-	require.True(t, pc.Evict())
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3)
+	_put(pc, 1, 100, 4)
+	_put(pc, 1, 100, 5)
+	_hit(t, pc, 1, 1) // refresh 1-3's last_used
+	_hit(t, pc, 1, 2)
+	_hit(t, pc, 1, 3)
+	_, numEvicted := pc.Evict(false)
+	require.True(t, numEvicted > 0)
 	require.Equal(t, pc.MemUsage(), int64(300))
-	_hit(t, sctx, pc, 1, 1)
-	_hit(t, sctx, pc, 1, 2)
-	_hit(t, sctx, pc, 1, 3)
-	_miss(t, sctx, pc, 1, 4)
-	_miss(t, sctx, pc, 1, 5)
+	_hit(t, pc, 1, 1)
+	_hit(t, pc, 1, 2)
+	_hit(t, pc, 1, 3)
+	_miss(t, pc, 1, 4)
+	_miss(t, pc, 1, 5)
+}
+
+func TestInstancePlanCacheEvictAll(t *testing.T) {
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	sctx.GetSessionVars().PlanCacheInvalidationOnFreshStats = true
+
+	// same key with different statsHash
+	pc := NewInstancePlanCache(1000, 1000)
+	_put(pc, 1, 100, 1)
+	_put(pc, 1, 100, 2)
+	_put(pc, 1, 100, 3)
+	_, numEvicted := pc.Evict(true)
+	require.Equal(t, 3, numEvicted)
+	_miss(t, pc, 1, 1)
+	_miss(t, pc, 1, 2)
+	_miss(t, pc, 1, 3)
+	require.Equal(t, pc.MemUsage(), int64(0))
+	require.Equal(t, pc.Size(), int64(0))
 }
 
 func TestInstancePlanCacheConcurrentRead(t *testing.T) {
@@ -195,7 +220,7 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 	for k := 0; k < 100; k++ {
 		for statsHash := 0; statsHash < 100; statsHash++ {
 			if rand.Intn(10) < 7 {
-				_put(sctx, pc, int64(k), 1, int64(statsHash))
+				_put(pc, int64(k), 1, int64(statsHash))
 				flag[k][statsHash] = true
 			}
 		}
@@ -209,9 +234,9 @@ func TestInstancePlanCacheConcurrentRead(t *testing.T) {
 			for i := 0; i < 10000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash] {
-					_hit(t, sctx, pc, k, statsHash)
+					_hit(t, pc, k, statsHash)
 				} else {
-					_miss(t, sctx, pc, k, statsHash)
+					_miss(t, pc, k, statsHash)
 				}
 				time.Sleep(time.Nanosecond * 10)
 			}
@@ -235,7 +260,7 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < 1000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
-				if _put(sctx, pc, int64(k), 1, int64(statsHash)) {
+				if _put(pc, int64(k), 1, int64(statsHash)) {
 					flag[k][statsHash].Store(true)
 				}
 				time.Sleep(time.Nanosecond * 10)
@@ -249,7 +274,7 @@ func TestInstancePlanCacheConcurrentWriteRead(t *testing.T) {
 			for i := 0; i < 2000; i++ {
 				k, statsHash := rand.Intn(100), rand.Intn(100)
 				if flag[k][statsHash].Load() {
-					_hit(t, sctx, pc, k, statsHash)
+					_hit(t, pc, k, statsHash)
 				}
 				time.Sleep(time.Nanosecond * 5)
 			}

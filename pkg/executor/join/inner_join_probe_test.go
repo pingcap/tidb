@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -196,10 +196,56 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 	}
 }
 
+// copy data from src to dst, the caller should ensure that src.NumCols() >= dst.NumCols()
+func copySelectedRows(src *chunk.Chunk, dst *chunk.Chunk, selected []bool) (bool, error) {
+	if src.NumRows() == 0 {
+		return false, nil
+	}
+	if src.Sel() != nil || dst.Sel() != nil {
+		return false, errors.New("copy with sel")
+	}
+	if src.NumCols() == 0 {
+		numSelected := 0
+		for _, s := range selected {
+			if s {
+				numSelected++
+			}
+		}
+		dst.SetNumVirtualRows(dst.GetNumVirtualRows() + numSelected)
+		return numSelected > 0, nil
+	}
+
+	oldLen := dst.NumRows()
+	for j := 0; j < src.NumCols(); j++ {
+		if j >= dst.NumCols() {
+			break
+		}
+		srcCol := src.Column(j)
+		dstCol := dst.Column(j)
+		chunk.CopySelectedRows(dstCol, srcCol, selected)
+	}
+	numSelected := dst.NumRows() - oldLen
+	dst.SetNumVirtualRows(dst.GetNumVirtualRows() + numSelected)
+	return numSelected > 0, nil
+}
+
 func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex []int, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, rightAsBuildSide bool, leftUsed []int, rightUsed []int,
 	leftUsedByOtherCondition []int, rightUsedByOtherCondition []int, leftFilter expression.CNFExprs, rightFilter expression.CNFExprs,
-	otherCondition expression.CNFExprs, partitionNumber int, joinType plannercore.JoinType, inputRowNumber int) {
+	otherCondition expression.CNFExprs, partitionNumber int, joinType logicalop.JoinType, inputRowNumber int) {
+	// leftUsed/rightUsed is nil, it means select all columns
+	if leftUsed == nil {
+		leftUsed = make([]int, 0)
+		for index := range leftTypes {
+			leftUsed = append(leftUsed, index)
+		}
+	}
+	if rightUsed == nil {
+		rightUsed = make([]int, 0)
+		for index := range rightTypes {
+			rightUsed = append(rightUsed, index)
+		}
+	}
 	buildKeyIndex, probeKeyIndex := leftKeyIndex, rightKeyIndex
 	buildKeyTypes, probeKeyTypes := leftKeyTypes, rightKeyTypes
 	buildTypes, probeTypes := leftTypes, rightTypes
@@ -214,29 +260,29 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		buildUsed = rightUsed
 		buildUsedByOtherCondition = rightUsedByOtherCondition
 		buildFilter, probeFilter = rightFilter, leftFilter
-		if joinType == plannercore.RightOuterJoin {
+		if joinType == logicalop.RightOuterJoin {
 			needUsedFlag = true
 		}
 	} else {
 		switch joinType {
-		case plannercore.LeftOuterJoin, plannercore.SemiJoin, plannercore.AntiSemiJoin:
+		case logicalop.LeftOuterJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
 			needUsedFlag = true
-		case plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+		case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 			require.NoError(t, errors.New("left semi/anti join does not support use left as build side"))
 		}
 	}
 	switch joinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
 		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
-	case plannercore.LeftOuterJoin:
-		require.Equal(t, 0, len(rightFilter), "inner join does not support right filter")
-	case plannercore.RightOuterJoin:
-		require.Equal(t, 0, len(leftFilter), "inner join does not support left filter")
-	case plannercore.SemiJoin, plannercore.AntiSemiJoin:
+	case logicalop.LeftOuterJoin:
+		require.Equal(t, 0, len(rightFilter), "left outer join does not support right filter")
+	case logicalop.RightOuterJoin:
+		require.Equal(t, 0, len(leftFilter), "right outer join does not support left filter")
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		require.Equal(t, 0, len(leftFilter), "semi/anti join does not support left filter")
 		require.Equal(t, 0, len(rightFilter), "semi/anti join does not support right filter")
-	case plannercore.LeftOuterSemiJoin, plannercore.AntiLeftOuterSemiJoin:
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		require.Equal(t, 0, len(rightFilter), "left outer semi/anti join does not support right filter")
 	}
 	joinedTypes := make([]*types.FieldType, 0, len(leftTypes)+len(rightTypes))
@@ -245,15 +291,18 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	resultTypes := make([]*types.FieldType, 0, len(leftUsed)+len(rightUsed))
 	for _, colIndex := range leftUsed {
 		resultTypes = append(resultTypes, leftTypes[colIndex].Clone())
-		if joinType == plannercore.RightOuterJoin {
+		if joinType == logicalop.RightOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
 	for _, colIndex := range rightUsed {
 		resultTypes = append(resultTypes, rightTypes[colIndex].Clone())
-		if joinType == plannercore.LeftOuterJoin {
+		if joinType == logicalop.LeftOuterJoin {
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
+	}
+	if joinType == logicalop.LeftOuterSemiJoin {
+		resultTypes = append(resultTypes, types.NewFieldType(mysql.TypeTiny))
 	}
 
 	meta := newTableMeta(buildKeyIndex, buildTypes, buildKeyTypes, probeKeyTypes, buildUsedByOtherCondition, buildUsed, needUsedFlag)
@@ -262,7 +311,6 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		BuildFilter:           buildFilter,
 		ProbeFilter:           probeFilter,
 		OtherCondition:        otherCondition,
-		PartitionNumber:       partitionNumber,
 		BuildKeyTypes:         buildKeyTypes,
 		ProbeKeyTypes:         probeKeyTypes,
 		RightAsBuildSide:      rightAsBuildSide,
@@ -274,6 +322,10 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	hashJoinCtx.SessCtx = mock.NewContext()
 	hashJoinCtx.JoinType = joinType
 	hashJoinCtx.Concurrency = uint(partitionNumber)
+	hashJoinCtx.SetupPartitionInfo()
+	// update the partition number
+	partitionNumber = int(hashJoinCtx.partitionNumber)
+	hashJoinCtx.spillHelper = newHashJoinSpillHelper(nil, partitionNumber, nil)
 	hashJoinCtx.initHashTableContext()
 	joinProbe := NewJoinProbe(hashJoinCtx, 0, joinType, probeKeyIndex, joinedTypes, probeKeyTypes, rightAsBuildSide)
 	buildSchema := &expression.Schema{}
@@ -289,7 +341,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			break
 		}
 	}
-	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, partitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
+	builder := createRowTableBuilder(buildKeyIndex, buildKeyTypes, hashJoinCtx.partitionNumber, hasNullableKey, buildFilter != nil, joinProbe.NeedScanRowTable())
 	chunkNumber := 3
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
@@ -302,18 +354,27 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		}
 	}
 	// check if build column can be inserted to probe column directly
-	for i := 0; i < len(buildTypes); i++ {
+	for i := 0; i < min(len(buildTypes), len(probeTypes)); i++ {
 		buildLength := chunk.GetFixedLen(buildTypes[i])
 		probeLength := chunk.GetFixedLen(probeTypes[i])
 		require.Equal(t, buildLength, probeLength, "build type and probe type is not compatible")
 	}
 	for i := 0; i < chunkNumber; i++ {
-		buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
-		probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
-		// copy some build data to probe side, to make sure there is some matched rows
-		_, err := chunk.CopySelectedJoinRowsDirect(buildChunks[i], selected, probeChunk)
-		probeChunks = append(probeChunks, probeChunk)
-		require.NoError(t, err)
+		if len(buildTypes) >= len(probeTypes) {
+			buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
+			probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
+			// copy some build data to probe side, to make sure there is some matched rows
+			_, err := copySelectedRows(buildChunks[i], probeChunk, selected)
+			require.NoError(t, err)
+			probeChunks = append(probeChunks, probeChunk)
+		} else {
+			probeChunks = append(probeChunks, testutil.GenRandomChunks(probeTypes, inputRowNumber))
+			buildChunk := testutil.GenRandomChunks(buildTypes, inputRowNumber*2/3)
+			// copy some build data to probe side, to make sure there is some matched rows
+			_, err := copySelectedRows(probeChunks[i], buildChunk, selected)
+			require.NoError(t, err)
+			buildChunks = append(buildChunks, buildChunk)
+		}
 	}
 
 	if withSel {
@@ -342,10 +403,10 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	}
 	builder.appendRemainingRowLocations(0, hashJoinCtx.hashTableContext)
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
-	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.hashTableMeta, hashJoinCtx.PartitionNumber)
+	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.partitionNumber, nil)
 	// build hash table
 	for i := 0; i < partitionNumber; i++ {
-		hashJoinCtx.hashTableContext.hashTable.buildHashTableForTest(i, 0, len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments))
+		hashJoinCtx.hashTableContext.build(&buildTask{partitionIdx: i, segStartIdx: 0, segEndIdx: len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments)})
 	}
 	// probe
 	resultChunks := make([]*chunk.Chunk, 0)
@@ -364,6 +425,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			}
 		}
 	}
+
 	if joinProbe.NeedScanRowTable() {
 		joinProbes := make([]ProbeV2, 0, hashJoinCtx.Concurrency)
 		for i := uint(0); i < hashJoinCtx.Concurrency; i++ {
@@ -387,13 +449,29 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	checkVirtualRows(t, resultChunks)
 
 	switch joinType {
-	case plannercore.InnerJoin:
+	case logicalop.InnerJoin:
 		expectedChunks := genInnerJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes,
 			leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
-	case plannercore.LeftOuterJoin:
+	case logicalop.LeftOuterJoin:
 		expectedChunks := genLeftOuterJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
 			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.RightOuterJoin:
+		expectedChunks := genRightOuterJoinResult(t, hashJoinCtx.SessCtx, rightFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.LeftOuterSemiJoin:
+		expectedChunks := genLeftOuterSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.SemiJoin:
+		expectedChunks := genSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.AntiSemiJoin:
+		expectedChunks := genAntiSemiJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:
 		require.NoError(t, errors.New("not supported join type"))
@@ -428,14 +506,16 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
 	rTypes := []*types.FieldType{intTp, stringTp, uintTp, stringTp, tinyTp}
+	rTypes = append(rTypes, retTypes...)
 	rTypes1 := []*types.FieldType{uintTp, stringTp, intTp, stringTp, tinyTp}
+	rTypes1 = append(rTypes1, rTypes1...)
 
 	rightAsBuildSide := []bool{true, false}
-	partitionNumber := 3
+	partitionNumber := 4
 
 	testCases := []testCase{
 		// normal case
-		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{0, 1, 2, 3}, nil, nil, nil},
+		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, nil, nil, nil, nil, nil},
 		// rightUsed is empty
 		{[]int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, []int{0, 1, 2, 3}, []int{}, nil, nil, nil},
 		// leftUsed is empty
@@ -454,9 +534,9 @@ func TestInnerJoinProbeBasic(t *testing.T) {
 		// inner join does not have left/right Filter
 		for _, rightAsBuild := range rightAsBuildSide {
 			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, tc.leftKeyTypes, tc.rightKeyTypes, tc.leftTypes, tc.rightTypes, rightAsBuild, tc.leftUsed,
-				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin, 200)
+				tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 			testJoinProbe(t, false, tc.leftKeyIndex, tc.rightKeyIndex, toNullableTypes(tc.leftKeyTypes), toNullableTypes(tc.rightKeyTypes),
-				toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), rightAsBuild, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, plannercore.InnerJoin, 200)
+				toNullableTypes(tc.leftTypes), toNullableTypes(tc.rightTypes), rightAsBuild, tc.leftUsed, tc.rightUsed, tc.leftUsedByOtherCondition, tc.rightUsedByOtherCondition, nil, nil, tc.otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 		}
 	}
 }
@@ -508,14 +588,15 @@ func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
 	lUsed := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17}
 	rUsed := lUsed
 	rightAsBuildSide := []bool{true, false}
+	partitionNumber := 4
 
 	// single key
 	for i := 0; i < len(lTypes); i++ {
 		for _, rightAsBuild := range rightAsBuildSide {
 			lKeyTypes := []*types.FieldType{lTypes[i]}
 			rKeyTypes := []*types.FieldType{rTypes[i]}
-			testJoinProbe(t, false, []int{i}, []int{i}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-			testJoinProbe(t, false, []int{i}, []int{i}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+			testJoinProbe(t, false, []int{i}, []int{i}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
+			testJoinProbe(t, false, []int{i}, []int{i}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
 		}
 	}
 	// composed key
@@ -523,29 +604,29 @@ func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
 	for _, rightAsBuild := range rightAsBuildSide {
 		lKeyTypes := []*types.FieldType{intTp, uintTp}
 		rKeyTypes := []*types.FieldType{intTp, uintTp}
-		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 2}, []int{1, 2}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
 	}
 	// variable size, inlined
 	for _, rightAsBuild := range rightAsBuildSide {
 		lKeyTypes := []*types.FieldType{intTp, binaryStringTp}
 		rKeyTypes := []*types.FieldType{intTp, binaryStringTp}
-		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 17}, []int{1, 17}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
 	}
 	// fixed size, not inlined
 	for _, rightAsBuild := range rightAsBuildSide {
 		lKeyTypes := []*types.FieldType{intTp, datetimeTp}
 		rKeyTypes := []*types.FieldType{intTp, datetimeTp}
-		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 13}, []int{1, 13}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
 	}
 	// variable size, not inlined
 	for _, rightAsBuild := range rightAsBuildSide {
 		lKeyTypes := []*types.FieldType{intTp, decimalTp}
 		rKeyTypes := []*types.FieldType{intTp, decimalTp}
-		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
-		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, 3, plannercore.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, lKeyTypes, rKeyTypes, lTypes, rTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
+		testJoinProbe(t, false, []int{1, 14}, []int{1, 14}, toNullableTypes(lKeyTypes), toNullableTypes(rKeyTypes), nullableLTypes, nullableRTypes, rightAsBuild, lUsed, rUsed, nil, nil, nil, nil, nil, partitionNumber, logicalop.InnerJoin, 100)
 	}
 }
 
@@ -561,6 +642,7 @@ func TestInnerJoinProbeOtherCondition(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -570,11 +652,13 @@ func TestInnerJoinProbeOtherCondition(t *testing.T) {
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 	rightAsBuildSide := []bool{true, false}
+	partitionNumber := 4
 
 	for _, rightAsBuild := range rightAsBuildSide {
-		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
-		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
-		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, 3, plannercore.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
+		testJoinProbe(t, false, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, nil, nil, []int{1}, []int{3}, nil, nil, otherCondition, partitionNumber, logicalop.InnerJoin, 200)
 	}
 }
 
@@ -592,6 +676,7 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 
 	lTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
 	rTypes := []*types.FieldType{intTp, intTp, stringTp, uintTp, stringTp}
+	rTypes = append(rTypes, rTypes...)
 
 	tinyTp := types.NewFieldType(mysql.TypeTiny)
 	a := &expression.Column{Index: 1, RetType: nullableIntTp}
@@ -601,14 +686,16 @@ func TestInnerJoinProbeWithSel(t *testing.T) {
 	otherCondition := make(expression.CNFExprs, 0)
 	otherCondition = append(otherCondition, sf)
 	otherConditions := []expression.CNFExprs{otherCondition, nil}
+	partitionNumber := 4
 
 	rightAsBuildSide := []bool{true, false}
 
 	for _, rightAsBuild := range rightAsBuildSide {
 		for _, oc := range otherConditions {
-			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, 3, plannercore.InnerJoin, 500)
-			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, oc, 3, plannercore.InnerJoin, 500)
-			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, 3, plannercore.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{intTp}, []*types.FieldType{intTp}, lTypes, rTypes, rightAsBuild, []int{}, []int{}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, []int{1, 2, 4}, []int{0}, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
+			testJoinProbe(t, true, []int{0}, []int{0}, []*types.FieldType{nullableIntTp}, []*types.FieldType{nullableIntTp}, toNullableTypes(lTypes), toNullableTypes(rTypes), rightAsBuild, nil, nil, []int{1}, []int{3}, nil, nil, oc, partitionNumber, logicalop.InnerJoin, 500)
 		}
 	}
 }

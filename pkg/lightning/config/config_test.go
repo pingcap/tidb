@@ -1039,6 +1039,20 @@ func TestAdjustDiskQuota(t *testing.T) {
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
 }
 
+func TestAdjustLogicalImportPrepStmt(t *testing.T) {
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, false, cfg.TikvImporter.LogicalImportPrepStmt)
+
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, true, cfg.TikvImporter.LogicalImportPrepStmt)
+}
+
 func TestAdjustConflictStrategy(t *testing.T) {
 	cfg := NewConfig()
 	assignMinimalLegalValue(cfg)

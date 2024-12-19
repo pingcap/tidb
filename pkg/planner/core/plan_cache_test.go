@@ -26,11 +26,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -65,18 +66,35 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		require.NoError(t, err)
 		stmt := stmts[0]
 		ret := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmt, plannercore.WithPreprocessorReturn(ret))
+		nodeW := resolve.NewNodeW(stmt)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err)
-		p, _, err := planner.Optimize(context.TODO(), ctx, stmt, ret.InfoSchema)
+		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, ret.InfoSchema)
 		require.NoError(t, err)
 		return plannercore.ToString(p)
 	}
-
+	defer func() {
+		tk.MustExec("set session tidb_redact_log=MARKER")
+	}()
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -91,11 +109,12 @@ func TestNonPreparedPlanCacheInformationSchema(t *testing.T) {
 
 	stmt, err := p.ParseOneStmt("select avg(a),avg(b),avg(c) from t", "", "")
 	require.NoError(t, err)
-	err = plannercore.Preprocess(context.Background(), tk.Session(), stmt, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
+	nodeW := resolve.NewNodeW(stmt)
+	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
-	_, _, err = planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+	_, _, err = planner.Optimize(context.TODO(), tk.Session(), nodeW, is)
 	require.NoError(t, err) // no error
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 }
@@ -258,12 +277,22 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Contains(t, rows[6][4], "range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, 40, 50, 60)]")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_11(Probe) 37.46 root  ",
+		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -394,30 +423,6 @@ func TestIssue49736(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 force plan-cache: may use risky cached plan: limit count is too large`))
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
-func TestIssue49736Partition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`prepare st from 'select * from t where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustExec(`set @a=1`)
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
-	tk.MustExec(`prepare st from 'select * from t where a=?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
-	tk.MustExec(`set @a=1`)
-	tk.MustExec(`execute st using @a`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -1126,9 +1131,10 @@ func TestNonPreparedPlanCachePanic(t *testing.T) {
 		stmtNode, err := s.ParseOneStmt(sql, "", "")
 		require.NoError(t, err)
 		preprocessorReturn := &plannercore.PreprocessorReturn{}
-		err = plannercore.Preprocess(context.Background(), ctx, stmtNode, plannercore.WithPreprocessorReturn(preprocessorReturn))
+		nodeW := resolve.NewNodeW(stmtNode)
+		err = plannercore.Preprocess(context.Background(), ctx, nodeW, plannercore.WithPreprocessorReturn(preprocessorReturn))
 		require.NoError(t, err)
-		_, _, err = planner.Optimize(context.TODO(), ctx, stmtNode, preprocessorReturn.InfoSchema)
+		_, _, err = planner.Optimize(context.TODO(), ctx, nodeW, preprocessorReturn.InfoSchema)
 		require.NoError(t, err) // not panic
 	}
 }
@@ -1586,244 +1592,6 @@ func BenchmarkNonPreparedPlanCacheDML(b *testing.B) {
 	}
 }
 
-func TestPreparedPlanCachePartitions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec(`create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 3`)
-	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
-	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
-	// Same partition works, due to pruning is not affected
-	tk.MustExec(`set @a=4`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	// Different partition needs code changes
-	tk.MustExec(`set @a=2`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 b"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec(`prepare stmt2 from 'select b,a from t where a = ?;'`)
-	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute stmt2 using @a`).Check(testkit.Rows("a 1"))
-	tk.MustExec(`set @a=3`)
-	tk.MustQuery(`execute stmt2 using @a`).Check(testkit.Rows("c 3"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec(`drop table t`)
-
-	tk.MustExec(`create table t (a int primary key, b varchar(255), c varchar(255), key (b)) partition by range (a) (partition pNeg values less than (0), partition p0 values less than (1000000), partition p1M values less than (2000000))`)
-	tk.MustExec(`insert into t values (-10, -10, -10), (0, 0, 0), (-1, NULL, NULL), (1000, 1000, 1000), (1000000, 1000000, 1000000), (1500000, 1500000, 1500000), (1999999, 1999999, 1999999)`)
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`prepare stmt3 from 'select a,c,b from t where a = ?'`)
-	tk.MustExec(`set @a=2000000`)
-	// This should use TableDual
-	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:dual", "handle:2000000"})
-	tk.MustExec(`set @a=1999999`)
-	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkProcess = tk.Session().ShowProcess()
-	ps = []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"Point_Get", "partition:p1M", "handle:1999999"})
-	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-
-	tk.MustExec(`prepare stmt4 from 'select a,c,b from t where a IN (?,?,?)'`)
-	tk.MustExec(`set @a=1999999,@b=0,@c=-1`)
-	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-}
-
-func TestPreparedPlanCachePartitionIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (b varchar(255), a int primary key nonclustered, key (b)) partition by key(a) partitions 3`)
-	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
-	tk.MustExec(`analyze table t`)
-	tk.MustExec(`prepare stmt from 'select * from t where a IN (?,?,?)'`)
-	tk.MustExec(`set @a=1,@b=3,@c=4`)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{
-		{"IndexLookUp_7"},
-		{"├─IndexRangeScan_5(Build)"},
-		{"└─TableRowIDScan_6(Probe)"}})
-	tk.MustExec(`set @a=2,@b=5,@c=4`)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-}
-
-func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (b varchar(255), a int primary key nonclustered, key (b)) partition by key(a) partitions 3`)
-	// [Batch]PointGet does not use the plan cache,
-	// since it is already using the fast path!
-	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
-	tk.MustExec(`analyze table t`)
-	tk.MustQuery(`explain format='plan_cache' select * from t where a IN (2,1,4,1,1,5,5)`).Check(testkit.Rows(""+
-		"IndexLookUp_7 4.00 root partition:p1,p2 ",
-		"├─IndexRangeScan_5(Build) 4.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
-		"└─TableRowIDScan_6(Probe) 4.00 cop[tikv] table:t keep order:false"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a IN (2,1,4,1,1,5,5)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a IN (1,3,4)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a IN (1,3,4)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a IN (2,5,4,2,5,5,1)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a IN (1,2,3,4,5,5,1)`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "BC 3", "abc 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select count(*) from t partition (p0)`).Check(testkit.Rows("0"))
-	tk.MustQuery(`select count(*) from t partition (p1)`).Check(testkit.Rows("5"))
-	tk.MustQuery(`select * from t partition (p2)`).Check(testkit.Rows("Ab 1"))
-
-	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
-	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
-	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
-	tk.MustExec(`insert into tk select a, b from t`)
-	tk.MustExec(`analyze table tk`)
-	tk.MustQuery(`explain format='plan_cache' select * from tk where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:tk, partition:p1, index:PRIMARY(a) "))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	// PointGet will use Fast Plan, so no Plan Cache, even for Key Partitioned tables.
-	tk.MustQuery(`select * from tk where a = 2`).Check(testkit.Rows("2 abc"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-}
-
-func TestFixControl33031(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
-
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t`)
-	tk.MustExec(`CREATE TABLE t (a int primary key, b varchar(255), key (b)) PARTITION BY HASH (a) partitions 5`)
-	tk.MustExec(`insert into t values(0,0),(1,1),(2,2),(3,3),(4,4)`)
-	tk.MustExec(`insert into t select a + 5, b + 5 from t`)
-	tk.MustExec(`analyze table t`)
-
-	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
-	tk.MustExec(`set @a = 2`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @a = 3`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("3 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @@tidb_opt_fix_control = "33031:ON"`)
-	tk.MustExec(`set @a = 1`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached Point Get plan"))
-	tk.MustExec(`set @@tidb_opt_fix_control = "33031:OFF"`)
-	tk.MustExec(`set @a = 2`)
-	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`deallocate prepare stmt`)
-
-	tk.MustExec(`prepare stmt from 'select * from t where a IN (?,?)'`)
-	tk.MustExec(`set @a = 2, @b = 5`)
-	tk.MustQuery(`execute stmt using @a, @b`).Sort().Check(testkit.Rows("2 2", "5 5"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @a = 3, @b = 0`)
-	tk.MustQuery(`execute stmt using @a, @b`).Sort().Check(testkit.Rows("0 0", "3 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @@tidb_opt_fix_control = "33031:ON"`)
-	tk.MustExec(`set @a = 1, @b = 2`)
-	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("1 1", "2 2"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, Fix33031 fix-control set and partitioned table in cached Batch Point Get plan"))
-	tk.MustExec(`set @@tidb_opt_fix_control = "33031:OFF"`)
-	tk.MustExec(`set @a = 2, @b = 3`)
-	tk.MustQuery(`execute stmt using @a, @b`).Check(testkit.Rows("2 2", "3 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-}
-
-func TestPlanCachePartitionDuplicates(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int unique key, b int) partition by range (a) (
-			partition p0 values less than (10000),
-			partition p1 values less than (20000),
-			partition p2 values less than (30000),
-			partition p3 values less than (40000))`)
-	tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7)`)
-	tk.MustExec(`insert into t select a + 10000, b + 10000 from t`)
-	tk.MustExec(`insert into t select a + 20000, b + 20000 from t`)
-	tk.MustExec(`analyze table t`)
-	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
-	tk.MustExec(`prepare stmt from 'select * from t use index(a) where a in (?,?,?)'`)
-	tk.MustExec(`set @a0 = 1, @a1 = 10001, @a2 = 2`)
-	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("1 1", "10001 10001", "2 2"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustExec(`set @a0 = 3, @a1 = 20001, @a2 = 50000`)
-	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20001 20001", "3 3"))
-	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
-	tk.MustExec(`set @a0 = 30003, @a1 = 20002, @a2 = 4`)
-	tk.MustQuery(`execute stmt using @a0, @a1, @a2`).Sort().Check(testkit.Rows("20002 20002", "30003 30003", "4 4"))
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkExplain := testkit.NewTestKit(t, store)
-	tkExplain.MustExec(`use test`)
-	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0}, [][]any{{"Batch_Point_Get_1"}})
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range, IndexValue length diff"))
-}
-
-func TestPreparedStmtIndexLookup(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, unique key (a))
-partition by hash (a) partitions 3`)
-
-	for i := 0; i < 100; i++ {
-		tk.MustExec("insert into t values (?, ?)", i, i)
-	}
-	tk.MustExec("analyze table t")
-	tk.MustExec(`set tidb_partition_prune_mode = 'static'`)
-	tk.MustQuery(`select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Sort().Check(testkit.Rows("1", "10"))
-	tk.MustQuery(`explain format='brief' select b from t where a = 1 or a = 10 or a = 10 or a = 999999`).Check(testkit.Rows(""+
-		"PartitionUnion 6.00 root  ",
-		"├─Projection 3.00 root  test.t.b",
-		"│ └─Batch_Point_Get 3.00 root table:t, partition:p0, index:a(a) keep order:false, desc:false",
-		"└─Projection 3.00 root  test.t.b",
-		"  └─Batch_Point_Get 3.00 root table:t, partition:p1, index:a(a) keep order:false, desc:false"))
-	tk.MustExec(`prepare stmt from 'select b from t where a = 1 or a = 10 or a = 10 or a = 999999'`)
-	tk.MustQuery(`execute stmt`)
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tkProcess := tk.Session().ShowProcess()
-	ps := []*util.ProcessInfo{tkProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"PartitionUnion", "Batch_Point_Get", "partition:p0", "partition:p1"})
-	tk.MustQuery(`execute stmt`)
-	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
-}
-
 func TestIndexRange(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1882,4 +1650,48 @@ func TestPlanCacheDirtyTables(t *testing.T) {
 			tk.MustExec(`drop table t1, t2`)
 		}
 	}
+}
+
+func TestInstancePlanCacheAcrossSession(t *testing.T) {
+	ctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyEnableInstancePlanCache{}, true)
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk1.MustExec(`use test`)
+	tk1.MustExec(`create table t (a int)`)
+	tk1.MustExec(`insert into t values (1), (2), (3), (4), (5)`)
+	tk1.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk1.MustExecWithContext(ctx, `set @a=2`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`))
+	tk1.MustExecWithContext(ctx, `set @a=3`)
+	tk1.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`))
+	tk1.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	// session2 can share session1's cached plan
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExecWithContext(ctx, `use test`)
+	tk2.MustExecWithContext(ctx, `prepare st from 'select a from t where a < ?'`)
+	tk2.MustExecWithContext(ctx, `set @a=4`)
+	tk2.MustQueryWithContext(ctx, `execute st using @a`).Sort().Check(testkit.Rows(`1`, `2`, `3`))
+	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestIssue54652(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set autocommit=on`)
+	tk.MustQuery(`select @@autocommit`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @pk=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where pk=? for update'`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`begin`)
+	tk.MustExec(`execute st using @pk`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
+	tk.MustExec(`commit`)
 }

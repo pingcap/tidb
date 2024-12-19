@@ -43,7 +43,7 @@ var (
 
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
 
-	// Metrics for ddl_worker.go.
+	// Metrics for job_worker.go.
 	WorkerNotifyDDLJob      = "notify_job"
 	WorkerAddDDLJob         = "add_job"
 	WorkerRunDDLJob         = "run_job"

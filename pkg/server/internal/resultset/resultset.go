@@ -38,6 +38,7 @@ type ResultSet interface {
 	FieldTypes() []*types.FieldType
 	SetPreparedStmt(stmt *core.PlanCacheStmt)
 	Finish() error
+	TryDetach() (ResultSet, bool, error)
 }
 
 var _ ResultSet = &tidbResultSet{}
@@ -141,4 +142,23 @@ func (trs *tidbResultSet) FieldTypes() []*types.FieldType {
 // SetPreparedStmt implements ResultSet.SetPreparedStmt interface.
 func (trs *tidbResultSet) SetPreparedStmt(stmt *core.PlanCacheStmt) {
 	trs.preparedStmt = stmt
+}
+
+// TryDetach creates a new `ResultSet` which doesn't depend on the current session context.
+func (trs *tidbResultSet) TryDetach() (ResultSet, bool, error) {
+	detachableRecordSet, ok := trs.recordSet.(sqlexec.DetachableRecordSet)
+	if !ok {
+		return nil, false, nil
+	}
+
+	recordSet, detached, err := detachableRecordSet.TryDetach()
+	if !detached || err != nil {
+		return nil, detached, err
+	}
+
+	return &tidbResultSet{
+		recordSet:    recordSet,
+		preparedStmt: trs.preparedStmt,
+		columns:      trs.columns,
+	}, true, nil
 }

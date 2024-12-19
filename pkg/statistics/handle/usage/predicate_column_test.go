@@ -15,6 +15,7 @@
 package usage_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -46,7 +47,7 @@ func TestCleanupPredicateColumns(t *testing.T) {
 	tk.MustExec("alter table t drop column b")
 	// Get table ID.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	columns, err := h.GetPredicateColumns(tbl.Meta().ID)
 	require.NoError(t, err)

@@ -18,7 +18,9 @@ import (
 	"fmt"
 	"unsafe"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -28,7 +30,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// NewOne stands for a number 1.
+var _ base.HashEquals = &Constant{}
+
+// NewOne stands for an unsigned number 1.
 func NewOne() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
@@ -40,10 +44,32 @@ func NewOne() *Constant {
 	}
 }
 
-// NewZero stands for a number 0.
+// NewSignedOne stands for a signed number 1.
+func NewSignedOne() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
+	retT.SetFlen(1)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(1),
+		RetType: retT,
+	}
+}
+
+// NewZero stands for an unsigned number 0.
 func NewZero() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.AddFlag(mysql.UnsignedFlag) // shrink range to avoid integral promotion
+	retT.SetFlen(1)
+	retT.SetDecimal(0)
+	return &Constant{
+		Value:   types.NewDatum(0),
+		RetType: retT,
+	}
+}
+
+// NewSignedZero stands for a signed number 0.
+func NewSignedZero() *Constant {
+	retT := types.NewFieldType(mysql.TypeTiny)
 	retT.SetFlen(1)
 	retT.SetDecimal(0)
 	return &Constant{
@@ -116,7 +142,7 @@ func NewNullWithFieldType(fieldType *types.FieldType) *Constant {
 // Constant stands for a constant value.
 type Constant struct {
 	Value   types.Datum
-	RetType *types.FieldType
+	RetType *types.FieldType `plan-cache-clone:"shallow"`
 	// DeferredExpr holds deferred function in PlanCache cached plan.
 	// it's only used to represent non-deterministic functions(see expression.DeferredFunctions)
 	// in PlanCache cached plan, so let them can be evaluated until cached item be used.
@@ -134,29 +160,53 @@ type ParamMarker struct {
 	order int
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (c *Constant) SafeToShareAcrossSession() bool {
+	if c.DeferredExpr != nil {
+		return c.DeferredExpr.SafeToShareAcrossSession()
+	}
+	return true
+}
+
 // GetUserVar returns the corresponding user variable presented in the `EXECUTE` statement or `COM_EXECUTE` command.
 func (d *ParamMarker) GetUserVar(ctx ParamValues) (types.Datum, error) {
 	return ctx.GetParamValue(d.order)
 }
 
 // StringWithCtx implements Expression interface.
-func (c *Constant) StringWithCtx(ctx ParamValues) string {
+func (c *Constant) StringWithCtx(ctx ParamValues, redact string) string {
+	v := c.Value
 	if c.ParamMarker != nil {
 		dt, err := c.ParamMarker.GetUserVar(ctx)
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			return "?"
 		}
-		c.Value.SetValue(dt.GetValue(), c.RetType)
+		v = dt
 	} else if c.DeferredExpr != nil {
-		return c.DeferredExpr.StringWithCtx(ctx)
+		return c.DeferredExpr.StringWithCtx(ctx, redact)
 	}
-	return fmt.Sprintf("%v", c.Value.GetValue())
+	if redact == perrors.RedactLogDisable {
+		return v.TruncatedStringify()
+	} else if redact == perrors.RedactLogMarker {
+		return fmt.Sprintf("‹%s›", v.TruncatedStringify())
+	}
+	return "?"
 }
 
 // Clone implements Expression interface.
 func (c *Constant) Clone() Expression {
 	con := *c
+	if c.ParamMarker != nil {
+		con.ParamMarker = &ParamMarker{order: c.ParamMarker.order}
+	}
+	if c.DeferredExpr != nil {
+		con.DeferredExpr = c.DeferredExpr.Clone()
+	}
+	if c.hashcode != nil {
+		con.hashcode = make([]byte, len(c.hashcode))
+		copy(con.hashcode, c.hashcode)
+	}
 	return &con
 }
 
@@ -234,6 +284,14 @@ func (c *Constant) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chun
 	return c.DeferredExpr.VecEvalJSON(ctx, input, result)
 }
 
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (c *Constant) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	if c.DeferredExpr == nil {
+		return genVecFromConstExpr(ctx, c, types.ETVectorFloat32, input, result)
+	}
+	return c.DeferredExpr.VecEvalVectorFloat32(ctx, input, result)
+}
+
 func (c *Constant) getLazyDatum(ctx EvalContext, row chunk.Row) (dt types.Datum, isLazy bool, err error) {
 	if c.ParamMarker != nil {
 		val, err := c.ParamMarker.GetUserVar(ctx)
@@ -262,8 +320,7 @@ func (c *Constant) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 			return c.Value, err
 		}
 		if dt.IsNull() {
-			c.Value.SetNull()
-			return c.Value, nil
+			return dt, nil
 		}
 		if c.DeferredExpr != nil {
 			if dt.Kind() != types.KindMysqlDecimal {
@@ -417,6 +474,21 @@ func (c *Constant) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, b
 	return dt.GetMysqlJSON(), false, nil
 }
 
+// EvalVectorFloat32 returns VectorFloat32 representation of Constant.
+func (c *Constant) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	dt, lazy, err := c.getLazyDatum(ctx, row)
+	if err != nil {
+		return types.ZeroVectorFloat32, false, err
+	}
+	if !lazy {
+		dt = c.Value
+	}
+	if c.GetType(ctx).GetType() == mysql.TypeNull || dt.IsNull() {
+		return types.ZeroVectorFloat32, true, nil
+	}
+	return dt.GetVectorFloat32(), false, nil
+}
+
 // Equal implements Expression interface.
 func (c *Constant) Equal(ctx EvalContext, b Expression) bool {
 	y, ok := b.(*Constant)
@@ -461,6 +533,48 @@ func (c *Constant) HashCode() []byte {
 // CanonicalHashCode implements Expression interface.
 func (c *Constant) CanonicalHashCode() []byte {
 	return c.getHashCode(true)
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (c *Constant) Hash64(h base.Hasher) {
+	if c.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		c.RetType.Hash64(h)
+	}
+	c.collationInfo.Hash64(h)
+	if c.DeferredExpr != nil {
+		c.DeferredExpr.Hash64(h)
+		return
+	}
+	if c.ParamMarker != nil {
+		h.HashByte(parameterFlag)
+		h.HashInt64(int64(c.ParamMarker.order))
+		return
+	}
+	intest.Assert(c.DeferredExpr == nil && c.ParamMarker == nil)
+	h.HashByte(constantFlag)
+	c.Value.Hash64(h)
+}
+
+// Equals implements HashEquals.<1st> interface.
+func (c *Constant) Equals(other any) bool {
+	c2, ok := other.(*Constant)
+	if !ok {
+		return false
+	}
+	if c == nil {
+		return c2 == nil
+	}
+	if c2 == nil {
+		return false
+	}
+	ok = c.RetType == nil && c2.RetType == nil || c.RetType != nil && c2.RetType != nil && c.RetType.Equals(c2.RetType)
+	ok = ok && c.collationInfo.Equals(c2.collationInfo)
+	ok = ok && (c.DeferredExpr == nil && c2.DeferredExpr == nil || c.DeferredExpr != nil && c2.DeferredExpr != nil && c.DeferredExpr.Equals(c2.DeferredExpr))
+	ok = ok && (c.ParamMarker == nil && c2.ParamMarker == nil || c.ParamMarker != nil && c2.ParamMarker != nil && c.ParamMarker.order == c2.ParamMarker.order)
+	return ok && c.Value.Equals(c2.Value)
 }
 
 func (c *Constant) getHashCode(canonical bool) []byte {

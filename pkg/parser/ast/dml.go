@@ -277,14 +277,16 @@ type TableName struct {
 	Schema model.CIStr
 	Name   model.CIStr
 
-	DBInfo    *model.DBInfo
-	TableInfo *model.TableInfo
-
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
+	// IsAlias is true if this table name is an alias.
+	//  sometime, we need to distinguish the table name is an alias or not.
+	//   for example ```delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id```
+	//   ```tt1``` is a alias name. so we need to set IsAlias to true and restore the table name without database name.
+	IsAlias bool
 }
 
 func (*TableName) resultSet() {}
@@ -296,7 +298,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 		if n.Schema.String() != "" {
 			ctx.WriteName(n.Schema.String())
 			ctx.WritePlain(".")
-		} else if ctx.DefaultDB != "" {
+		} else if ctx.DefaultDB != "" && !n.IsAlias {
 			// Try CTE, for a CTE table name, we shouldn't write the database name.
 			if !ctx.IsCTETableName(n.Name.L) {
 				ctx.WriteName(ctx.DefaultDB)
@@ -1276,7 +1278,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SQL_CALC_FOUND_ROWS ")
 		}
 
-		if n.TableHints != nil && len(n.TableHints) != 0 {
+		if len(n.TableHints) != 0 {
 			ctx.WritePlain("/*+ ")
 			for i, tableHint := range n.TableHints {
 				if i != 0 {
@@ -1475,7 +1477,7 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 		n.With = node.(*WithClause)
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		newHints := make([]*TableOptimizerHint, len(n.TableHints))
 		for i, hint := range n.TableHints {
 			node, ok := hint.Accept(v)
@@ -2312,7 +2314,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("INSERT ")
 	}
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2549,7 +2551,7 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("DELETE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -2801,7 +2803,7 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("UPDATE ")
 
-	if n.TableHints != nil && len(n.TableHints) != 0 {
+	if len(n.TableHints) != 0 {
 		ctx.WritePlain("/*+ ")
 		for i, tableHint := range n.TableHints {
 			if i != 0 {
@@ -3029,8 +3031,6 @@ const (
 	ShowErrors
 	ShowBindings
 	ShowBindingCacheStatus
-	ShowPumpStatus
-	ShowDrainerStatus
 	ShowOpenTables
 	ShowAnalyzeStatus
 	ShowRegions
@@ -3393,10 +3393,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDINGS")
 		case ShowBindingCacheStatus:
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
-		case ShowPumpStatus:
-			ctx.WriteKeyWord("PUMP STATUS")
-		case ShowDrainerStatus:
-			ctx.WriteKeyWord("DRAINER STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
 		case ShowRegions:
@@ -3844,6 +3840,8 @@ type SplitRegionStmt struct {
 }
 
 type SplitOption struct {
+	stmtNode
+
 	Lower      []ExprNode
 	Upper      []ExprNode
 	Num        int64
@@ -3903,29 +3901,13 @@ func (n *SplitRegionStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Table = node.(*TableName)
-	for i, val := range n.SplitOpt.Lower {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitOpt.Lower[i] = node.(ExprNode)
-	}
-	for i, val := range n.SplitOpt.Upper {
-		node, ok := val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitOpt.Upper[i] = node.(ExprNode)
-	}
 
-	for i, list := range n.SplitOpt.ValueLists {
-		for j, val := range list {
-			node, ok := val.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.SplitOpt.ValueLists[i][j] = node.(ExprNode)
+	if n.SplitOpt != nil {
+		node, ok := n.SplitOpt.Accept(v)
+		if !ok {
+			return n, false
 		}
+		n.SplitOpt = node.(*SplitOption)
 	}
 	return v.Leave(n)
 }
@@ -3976,6 +3958,41 @@ func (n *SplitOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *SplitOption) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*SplitOption)
+
+	for i, val := range n.Lower {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Lower[i] = node.(ExprNode)
+	}
+	for i, val := range n.Upper {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Upper[i] = node.(ExprNode)
+	}
+
+	for i, list := range n.ValueLists {
+		for j, val := range list {
+			node, ok := val.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.ValueLists[i][j] = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
 }
 
 type FulltextSearchModifier int

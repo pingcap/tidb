@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -36,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -149,7 +152,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	}()
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
-	lease := domain.GetDomain(tk.Session()).DDL().GetLease()
+	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)
 
 	// Make sure executing insert statement is failed when server is invalid.
@@ -339,11 +342,12 @@ func TestDoDDLJobQuit(t *testing.T) {
 	require.NoError(t, err)
 	defer se.Close()
 
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop")) }()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/storeCloseInLoop", func() {
+		_ = dom.DDL().Stop()
+	})
 
 	// this DDL call will enter deadloop before this fix
-	err = dom.DDL().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
+	err = dom.DDLExecutor().CreateSchema(se, &ast.CreateDatabaseStmt{Name: model.NewCIStr("testschema")})
 	require.Equal(t, "context canceled", err.Error())
 }
 
@@ -575,24 +579,24 @@ func TestMatchIdentity(t *testing.T) {
 
 	// The MySQL matching rule is most specific to least specific.
 	// So if I log in from 192.168.1.1 I should match that entry always.
-	identity, err := tk.Session().MatchIdentity("useridentity", "192.168.1.1")
+	identity, err := tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "192.168.1.1", identity.Hostname)
 
 	// If I log in from localhost, I should match localhost
-	identity, err = tk.Session().MatchIdentity("useridentity", "localhost")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "localhost")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
 
 	// If I log in from 192.168.1.2 I should match wildcard.
-	identity, err = tk.Session().MatchIdentity("useridentity", "192.168.1.2")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "192.168.1.2")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "%", identity.Hostname)
 
-	identity, err = tk.Session().MatchIdentity("useridentity", "127.0.0.1")
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", "127.0.0.1")
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	require.Equal(t, "localhost", identity.Hostname)
@@ -602,7 +606,7 @@ func TestMatchIdentity(t *testing.T) {
 	// entry in the privileges table (by reverse lookup).
 	ips, err := net.LookupHost("example.com")
 	require.NoError(t, err)
-	identity, err = tk.Session().MatchIdentity("useridentity", ips[0])
+	identity, err = tk.Session().MatchIdentity(context.Background(), "useridentity", ips[0])
 	require.NoError(t, err)
 	require.Equal(t, "useridentity", identity.Username)
 	// FIXME: we *should* match example.com instead
@@ -889,6 +893,78 @@ DROP USER root;
 	require.Equal(t, 1, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestBootstrapSQLWithExtension(t *testing.T) {
+	authChecks := []*extension.AuthPlugin{{
+		Name: "my_auth_plugin",
+		AuthenticateUser: func(request extension.AuthenticateRequest) error {
+			return nil
+		},
+		ValidateAuthString: func(pwdHash string) bool {
+			return pwdHash != ""
+		},
+		GenerateAuthString: func(pwd string) (string, bool) {
+			return pwd, pwd != ""
+		},
+		RequiredClientSidePlugin: mysql.AuthNativePassword,
+	}}
+
+	require.NoError(t, extension.Register(
+		"extension_authentication_plugin",
+		extension.WithCustomAuthPlugins(authChecks),
+		extension.WithCustomSysVariables([]*variable.SysVar{
+			{
+				Scope:          variable.ScopeGlobal,
+				Name:           "extension_authentication_plugin",
+				Value:          mysql.AuthNativePassword,
+				Type:           variable.TypeEnum,
+				PossibleValues: []string{authChecks[0].Name},
+			},
+		}),
+	))
+	require.NoError(t, extension.Setup())
+	ext, err := extension.GetExtensions()
+	require.NoError(t, err)
+
+	sqlFile, err := os.CreateTemp("", "TestBootstrapSQLWithExtension.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := sqlFile.Name()
+		err = sqlFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Create a user with the custom auth plugin.
+	_, err = sqlFile.WriteString(`CREATE USER myuser IDENTIFIED WITH my_auth_plugin BY 'password';`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	se.SetExtensions(ext.NewSessionExtensions())
+	ctx := context.Background()
+	// 'myuser' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'myuser'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "myuser", row.GetString(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }

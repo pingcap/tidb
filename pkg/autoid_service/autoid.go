@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	autoid1 "github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -63,7 +62,7 @@ type autoIDValue struct {
 }
 
 func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, dbID, tblID int64, isUnsigned bool,
-	n uint64, increment, offset int64) (min int64, max int64, err error) {
+	n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if uint64(offset-1) > uint64(alloc.base) {
 		if err := alloc.rebase4Unsigned(ctx, store, dbID, tblID, uint64(offset-1)); err != nil {
@@ -81,7 +80,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
@@ -98,7 +97,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := int64(mathutil.Min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
+			tmpStep := int64(min(math.MaxUint64-uint64(newBase), uint64(nextStep)))
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return errAutoincReadFailed
@@ -122,17 +121,17 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 			zap.Int64("to end", newEnd))
 		alloc.end = newEnd
 	}
-	min = alloc.base
+	minv = alloc.base
 	// Use uint64 n directly.
 	alloc.base = int64(uint64(alloc.base) + uint64(n1))
-	return min, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 	store kv.Storage,
 	dbID, tblID int64,
 	isUnsigned bool,
-	n uint64, increment, offset int64) (min int64, max int64, err error) {
+	n uint64, increment, offset int64) (minv, maxv int64, err error) {
 	// Check offset rebase if necessary.
 	if offset-1 > alloc.base {
 		if err := alloc.rebase4Signed(ctx, store, dbID, tblID, offset-1); err != nil {
@@ -156,7 +155,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			newBase, err1 = idAcc.Get()
 			if err1 != nil {
@@ -174,7 +173,7 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			if nextStep < n1 {
 				nextStep = n1
 			}
-			tmpStep := mathutil.Min(math.MaxInt64-newBase, nextStep)
+			tmpStep := min(math.MaxInt64-newBase, nextStep)
 			// The global rest is not enough for alloc.
 			if tmpStep < n1 {
 				return errAutoincReadFailed
@@ -198,9 +197,9 @@ func (alloc *autoIDValue) alloc4Signed(ctx context.Context,
 			zap.Int64("to end", newEnd))
 		alloc.end = newEnd
 	}
-	min = alloc.base
+	minv = alloc.base
 	alloc.base += n1
-	return min, alloc.base, nil
+	return minv, alloc.base, nil
 }
 
 func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
@@ -222,15 +221,15 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
 		}
 		oldValue = currentEnd
 		uCurrentEnd := uint64(currentEnd)
-		newBase = mathutil.Max(uCurrentEnd, requiredBase)
-		newEnd = mathutil.Min(math.MaxUint64-uint64(batch), newBase) + uint64(batch)
+		newBase = max(uCurrentEnd, requiredBase)
+		newEnd = min(math.MaxUint64-uint64(batch), newBase) + uint64(batch)
 		_, err1 = idAcc.Inc(int64(newEnd - uCurrentEnd))
 		return err1
 	})
@@ -264,14 +263,14 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 	startTime := time.Now()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1
 		}
 		oldValue = currentEnd
-		newBase = mathutil.Max(currentEnd, requiredBase)
-		newEnd = mathutil.Min(math.MaxInt64-batch, newBase) + batch
+		newBase = max(currentEnd, requiredBase)
+		newEnd = min(math.MaxInt64-batch, newBase) + batch
 		_, err1 = idAcc.Inc(newEnd - currentEnd)
 		return err1
 	})
@@ -380,8 +379,8 @@ func MockForTest(store kv.Storage) autoid.AutoIDAllocClient {
 
 // Close closes the Service and clean up resource.
 func (s *Service) Close() {
-	if s.leaderShip != nil && s.leaderShip.IsOwner() {
-		s.leaderShip.Cancel()
+	if s.leaderShip != nil {
+		s.leaderShip.Close()
 	}
 }
 
@@ -483,7 +482,7 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		var currentEnd int64
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 		err := kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-			idAcc := meta.NewMeta(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
+			idAcc := meta.NewMutator(txn).GetAutoIDAccessors(req.DbID, req.TblID).IncrementID(model.TableInfoVersion5)
 			var err1 error
 			currentEnd, err1 = idAcc.Get()
 			if err1 != nil {
@@ -502,20 +501,20 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		}, nil
 	}
 
-	var min, max int64
+	var minv, maxv int64
 	var err error
 	if req.IsUnsigned {
-		min, max, err = val.alloc4Unsigned(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
+		minv, maxv, err = val.alloc4Unsigned(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
 	} else {
-		min, max, err = val.alloc4Signed(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
+		minv, maxv, err = val.alloc4Signed(ctx, s.store, req.DbID, req.TblID, req.IsUnsigned, req.N, req.Increment, req.Offset)
 	}
 
 	if err != nil {
 		return &autoid.AutoIDResponse{Errmsg: []byte(err.Error())}, nil
 	}
 	return &autoid.AutoIDResponse{
-		Min: min,
-		Max: max,
+		Min: minv,
+		Max: maxv,
 	}, nil
 }
 
@@ -523,7 +522,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	var oldValue int64
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		idAcc := meta.NewMeta(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
+		idAcc := meta.NewMutator(txn).GetAutoIDAccessors(dbID, tblID).IncrementID(model.TableInfoVersion5)
 		currentEnd, err1 := idAcc.Get()
 		if err1 != nil {
 			return err1

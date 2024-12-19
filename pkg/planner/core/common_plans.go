@@ -24,10 +24,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
@@ -95,7 +98,7 @@ type CheckTable struct {
 type RecoverIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -103,7 +106,7 @@ type RecoverIndex struct {
 type CleanupIndex struct {
 	baseSchemaProducer
 
-	Table     *ast.TableName
+	Table     *resolve.TableNameW
 	IndexName string
 }
 
@@ -121,7 +124,7 @@ type CheckIndexRange struct {
 type ChecksumTable struct {
 	baseSchemaProducer
 
-	Tables []*ast.TableName
+	Tables []*resolve.TableNameW
 }
 
 // CancelDDLJobs represents a cancel DDL jobs plan.
@@ -143,6 +146,35 @@ type ResumeDDLJobs struct {
 	baseSchemaProducer
 
 	JobIDs []int64
+}
+
+const (
+	// AlterDDLJobThread alter reorg worker count
+	AlterDDLJobThread = "thread"
+	// AlterDDLJobBatchSize alter reorg batch size
+	AlterDDLJobBatchSize = "batch_size"
+	// AlterDDLJobMaxWriteSpeed alter reorg max write speed
+	AlterDDLJobMaxWriteSpeed = "max_write_speed"
+)
+
+var allowedAlterDDLJobParams = map[string]struct{}{
+	AlterDDLJobThread:        {},
+	AlterDDLJobBatchSize:     {},
+	AlterDDLJobMaxWriteSpeed: {},
+}
+
+// AlterDDLJobOpt represents alter ddl job option.
+type AlterDDLJobOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// AlterDDLJob is the plan of admin alter ddl job
+type AlterDDLJob struct {
+	baseSchemaProducer
+
+	JobID   int64
+	Options []*AlterDDLJobOpt
 }
 
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
@@ -236,6 +268,16 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
+// RecommendIndexPlan represents a plan for recommend index stmt.
+type RecommendIndexPlan struct {
+	baseSchemaProducer
+
+	Action   string
+	SQL      string
+	AdviseID int64
+	Options  []ast.RecommendIndexOption
+}
+
 // SQLBindOpType repreents the SQL bind type
 type SQLBindOpType int
 
@@ -248,8 +290,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
@@ -261,13 +301,21 @@ const (
 )
 
 // SQLBindPlan represents a plan for SQL bind.
+// One SQLBindPlan can be either global or session, and can only contain one type of operation, but can contain multiple
+// operations of that type.
 type SQLBindPlan struct {
 	baseSchemaProducer
 
-	SQLBindOp    SQLBindOpType
+	IsGlobal  bool
+	SQLBindOp SQLBindOpType
+	Details   []*SQLBindOpDetail
+}
+
+// SQLBindOpDetail represents the detail of an operation on a single binding.
+// Different SQLBindOpType use different fields in this struct.
+type SQLBindOpDetail struct {
 	NormdOrigSQL string
 	BindSQL      string
-	IsGlobal     bool
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -291,6 +339,8 @@ type Simple struct {
 
 	// StaleTxnStartTS is the StartTS that is used to build a staleness transaction by 'START TRANSACTION READ ONLY' statement.
 	StaleTxnStartTS uint64
+
+	ResolveCtx *resolve.Context
 }
 
 // MemoryUsage return the memory usage of Simple
@@ -307,7 +357,7 @@ func (s *Simple) MemoryUsage() (sum int64) {
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
-	basePhysicalPlan
+	physicalop.BasePhysicalPlan
 	Inner Simple
 }
 
@@ -317,16 +367,22 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.basePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
 	return
 }
 
 // InsertGeneratedColumns is for completing generated columns in Insert.
 // We resolve generation expressions in plan, and eval those in executor.
 type InsertGeneratedColumns struct {
-	Columns      []*ast.ColumnName
 	Exprs        []expression.Expression
 	OnDuplicates []*expression.Assignment
+}
+
+func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
+	return InsertGeneratedColumns{
+		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
+		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
+	}
 }
 
 // MemoryUsage return the memory usage of InsertGeneratedColumns
@@ -334,7 +390,7 @@ func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
 	if i == nil {
 		return
 	}
-	sum = size.SizeOfSlice*3 + int64(cap(i.Columns)+cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
+	sum = size.SizeOfSlice*3 + int64(cap(i.OnDuplicates))*size.SizeOfPointer + int64(cap(i.Exprs))*size.SizeOfInterface
 
 	for _, expr := range i.Exprs {
 		sum += expr.MemoryUsage()
@@ -349,21 +405,22 @@ func (i *InsertGeneratedColumns) MemoryUsage() (sum int64) {
 type Insert struct {
 	baseSchemaProducer
 
-	Table         table.Table
-	tableSchema   *expression.Schema
-	tableColNames types.NameSlice
-	Columns       []*ast.ColumnName
+	Table         table.Table        `plan-cache-clone:"shallow"`
+	tableSchema   *expression.Schema `plan-cache-clone:"shallow"`
+	tableColNames types.NameSlice    `plan-cache-clone:"shallow"`
+	Columns       []*ast.ColumnName  `plan-cache-clone:"shallow"`
 	Lists         [][]expression.Expression
 
 	OnDuplicate        []*expression.Assignment
-	Schema4OnDuplicate *expression.Schema
-	names4OnDuplicate  types.NameSlice
+	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
+	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
 	GenCols InsertGeneratedColumns
 
 	SelectPlan base.PhysicalPlan
 
 	IsReplace bool
+	IgnoreErr bool
 
 	// NeedFillDefaultValue is true when expr in value list reference other column.
 	NeedFillDefaultValue bool
@@ -372,8 +429,8 @@ type Insert struct {
 
 	RowLen int
 
-	FKChecks   []*FKCheck
-	FKCascades []*FKCascade
+	FKChecks   []*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades []*FKCascade `plan-cache-clone:"must-nil"`
 }
 
 // MemoryUsage return the memory usage of Insert
@@ -425,20 +482,25 @@ type Update struct {
 
 	AllAssignmentsAreConstant bool
 
+	IgnoreError bool
+
 	VirtualAssignmentsOffset int
 
 	SelectPlan base.PhysicalPlan
 
-	TblColPosInfos TblColPosInfoSlice
+	// TblColPosInfos is for multi-table update statement.
+	// It records the column position of each related table.
+	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
 
-	tblID2Table map[int64]table.Table
+	// tblID2Table stores related tables' info of this Update statement.
+	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
 
-	FKChecks   map[int64][]*FKCheck
-	FKCascades map[int64][]*FKCascade
+	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
 }
 
 // MemoryUsage return the memory usage of Update
@@ -477,10 +539,12 @@ type Delete struct {
 
 	SelectPlan base.PhysicalPlan
 
-	TblColPosInfos TblColPosInfoSlice
+	TblColPosInfos TblColPosInfoSlice `plan-cache-clone:"shallow"`
 
-	FKChecks   map[int64][]*FKCheck
-	FKCascades map[int64][]*FKCascade
+	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
+	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	IgnoreErr bool
 }
 
 // MemoryUsage return the memory usage of Delete
@@ -514,7 +578,7 @@ type V2AnalyzeOptions struct {
 	PhyTableID  int64
 	RawOpts     map[ast.AnalyzeOptionType]uint64
 	FilledOpts  map[ast.AnalyzeOptionType]uint64
-	ColChoice   model.ColumnChoice
+	ColChoice   pmodel.ColumnChoice
 	ColumnList  []*model.ColumnInfo
 	IsPartition bool
 }
@@ -524,6 +588,7 @@ type AnalyzeColumnsTask struct {
 	HandleCols       util.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
+	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
 	AnalyzeInfo
@@ -555,7 +620,7 @@ type LoadData struct {
 	OnDuplicate ast.OnDuplicateKeyHandlingType
 	Path        string
 	Format      *string
-	Table       *ast.TableName
+	Table       *resolve.TableNameW
 	Charset     *string
 	Columns     []*ast.ColumnName
 	FieldsInfo  *ast.FieldsClause
@@ -580,7 +645,7 @@ type LoadDataOpt struct {
 type ImportInto struct {
 	baseSchemaProducer
 
-	Table              *ast.TableName
+	Table              *resolve.TableNameW
 	ColumnAssignments  []*ast.Assignment
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Path               string
@@ -629,15 +694,12 @@ type PlanReplayer struct {
 	PlanDigest string
 }
 
-// IndexAdvise represents a index advise plan.
-type IndexAdvise struct {
+// Traffic represents a traffic plan.
+type Traffic struct {
 	baseSchemaProducer
-
-	IsLocal     bool
-	Path        string
-	MaxMinutes  uint64
-	MaxIndexNum *ast.MaxIndexNumClause
-	LineFieldsInfo
+	OpType  ast.TrafficOpType
+	Options []*ast.TrafficOption
+	Dir     string
 }
 
 // SplitRegion represents a split regions plan.
@@ -645,7 +707,7 @@ type SplitRegion struct {
 	baseSchemaProducer
 
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 	IndexInfo      *model.IndexInfo
 	Lower          []types.Datum
 	Upper          []types.Datum
@@ -667,7 +729,7 @@ type CompactTable struct {
 
 	ReplicaKind    ast.CompactReplicaKind
 	TableInfo      *model.TableInfo
-	PartitionNames []model.CIStr
+	PartitionNames []pmodel.CIStr
 }
 
 // DDL represents a DDL statement plan.
@@ -781,6 +843,9 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 		TargetPlan: plan,
 		Format:     types.ExplainFormatROW,
 		Analyze:    false,
+	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
 	}
 	if err := explain.RenderResult(); err != nil {
 		return rows

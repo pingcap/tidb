@@ -11,6 +11,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 )
 
@@ -203,14 +204,14 @@ func TestEncryptAndDecrypt(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, originalData, encryptData)
 
-			decryptData, err := Decrypt(encryptData, &cipher, iv)
+			decryptData, err := utils.Decrypt(encryptData, &cipher, iv)
 			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 		} else {
 			require.NoError(t, err)
 			require.NotEqual(t, originalData, encryptData)
 
-			decryptData, err := Decrypt(encryptData, &cipher, iv)
+			decryptData, err := utils.Decrypt(encryptData, &cipher, iv)
 			require.NoError(t, err)
 			require.Equal(t, decryptData, originalData)
 
@@ -218,7 +219,7 @@ func TestEncryptAndDecrypt(t *testing.T) {
 				CipherType: v.method,
 				CipherKey:  []byte(v.wrongKey),
 			}
-			decryptData, err = Decrypt(encryptData, &wrongCipher, iv)
+			decryptData, err = utils.Decrypt(encryptData, &wrongCipher, iv)
 			if len(v.rightKey) != len(v.wrongKey) {
 				require.Error(t, err)
 			} else {

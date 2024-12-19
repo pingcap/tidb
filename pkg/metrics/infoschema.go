@@ -25,6 +25,12 @@ var (
 	InfoSchemaV2CacheMemUsage prometheus.Gauge
 	// InfoSchemaV2CacheMemLimit records the memory limit of infoschema v2 cache.
 	InfoSchemaV2CacheMemLimit prometheus.Gauge
+	// TableByNameDuration records the duration of TableByName API for infoschema v2.
+	TableByNameDuration *prometheus.HistogramVec
+	// TableByNameHitDuration is TableByNameDuration with label type "hit"
+	TableByNameHitDuration prometheus.Observer
+	// TableByNameMissDuration is TableByNameDuration with label type "miss"
+	TableByNameMissDuration prometheus.Observer
 )
 
 // InitInfoSchemaV2Metrics intializes infoschema v2 related metrics.
@@ -50,4 +56,16 @@ func InitInfoSchemaV2Metrics() {
 			Name:      "infoschema_v2_cache_limit",
 			Help:      "infoschema cache v2 limit",
 		})
+
+	TableByNameDuration = NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "infoschema",
+			Name:      "table_by_name_duration_nanoseconds",
+			Help:      "infoschema v2 TableByName API duration",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 30), // 1us ~ 1,000,000us
+		}, []string{LblType})
+
+	TableByNameHitDuration = TableByNameDuration.WithLabelValues("hit")
+	TableByNameMissDuration = TableByNameDuration.WithLabelValues("miss")
 }

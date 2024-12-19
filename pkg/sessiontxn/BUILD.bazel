@@ -35,6 +35,7 @@ go_test(
         "//pkg/expression",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/sessionctx",

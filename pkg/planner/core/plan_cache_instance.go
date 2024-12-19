@@ -15,6 +15,7 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -52,8 +53,10 @@ type instancePCNode struct {
 type instancePlanCache struct {
 	heads   sync.Map
 	totCost atomic.Int64
+	totPlan atomic.Int64
 
 	evictMutex   sync.Mutex
+	inEvict      atomic.Bool
 	softMemLimit atomic.Int64
 	hardMemLimit atomic.Int64
 }
@@ -74,23 +77,21 @@ func (pc *instancePlanCache) getHead(key string, create bool) *instancePCNode {
 	return nil
 }
 
-// Get gets the cached value according to key and opts.
-func (pc *instancePlanCache) Get(sctx sessionctx.Context, key string, opts any) (value any, ok bool) {
+// Get gets the cached value according to key and paramTypes.
+func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool) {
 	headNode := pc.getHead(key, false)
 	if headNode == nil { // cache miss
 		return nil, false
 	}
-	return pc.getPlanFromList(sctx, headNode, opts)
+	return pc.getPlanFromList(headNode, paramTypes)
 }
 
-func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *instancePCNode, opts any) (any, bool) {
+func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		var matchOpts *PlanCacheMatchOpts
-		if opts != nil {
-			matchOpts = opts.(*PlanCacheMatchOpts)
-		}
-		if matchCachedPlan(sctx, node.value, matchOpts) { // v.Plan is read-only, no need to lock
-			node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
+		if checkTypesCompatibility4PC(node.value.ParamTypes, paramTypes) { // v.Plan is read-only, no need to lock
+			if !pc.inEvict.Load() {
+				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
+			}
 			return node.value, true
 		}
 	}
@@ -99,7 +100,10 @@ func (*instancePlanCache) getPlanFromList(sctx sessionctx.Context, headNode *ins
 
 // Put puts the key and values into the cache.
 // Due to some thread-safety issues, this Put operation might fail, use the returned succ to indicate it.
-func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opts any) (succ bool) {
+func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) {
+	if pc.inEvict.Load() {
+		return // do nothing if eviction is in progress
+	}
 	vMem := value.(*PlanCacheValue).MemoryUsage()
 	if vMem+pc.totCost.Load() > pc.hardMemLimit.Load() {
 		return // do nothing if it exceeds the hard limit
@@ -108,8 +112,11 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 	if headNode == nil {
 		return false // for safety
 	}
-	if _, ok := pc.getPlanFromList(sctx, headNode, opts); ok {
+	if _, ok := pc.getPlanFromList(headNode, paramTypes); ok {
 		return // some other thread has inserted the same plan before
+	}
+	if pc.inEvict.Load() {
+		return // do nothing if eviction is in progress
 	}
 
 	firstNode := headNode.next.Load()
@@ -117,8 +124,20 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 	currNode.next.Store(firstNode)
 	if headNode.next.CompareAndSwap(firstNode, currNode) { // if failed, some other thread has updated this node,
 		pc.totCost.Add(vMem) // then skip this Put and wait for the next time.
+		pc.totPlan.Add(1)
 		succ = true
 	}
+	return
+}
+
+// All returns all cached values.
+// All returned values are read-only, don't modify them.
+func (pc *instancePlanCache) All() (values []any) {
+	values = make([]any, 0, pc.Size())
+	pc.foreach(func(_, this *instancePCNode) bool {
+		values = append(values, this.value)
+		return false
+	})
 	return
 }
 
@@ -126,23 +145,34 @@ func (pc *instancePlanCache) Put(sctx sessionctx.Context, key string, value, opt
 // step 1: iterate all values to collect their last_used
 // step 2: estimate an eviction threshold time based on all last_used values
 // step 3: iterate all values again and evict qualified values
-func (pc *instancePlanCache) Evict() (evicted bool) {
+func (pc *instancePlanCache) Evict(evictAll bool) (detailInfo string, numEvicted int) {
 	pc.evictMutex.Lock() // make sure only one thread to trigger eviction for safety
 	defer pc.evictMutex.Unlock()
-	if pc.totCost.Load() < pc.softMemLimit.Load() {
-		return // do nothing
+	pc.inEvict.Store(true)
+	defer pc.inEvict.Store(false)
+	currentTot, softLimit := pc.totCost.Load(), pc.softMemLimit.Load()
+	if !evictAll && currentTot < softLimit {
+		detailInfo = fmt.Sprintf("memory usage is below the soft limit, currentTot: %v, softLimit: %v", currentTot, softLimit)
+		return
 	}
 	lastUsedTimes := make([]time.Time, 0, 64)
 	pc.foreach(func(_, this *instancePCNode) bool { // step 1
 		lastUsedTimes = append(lastUsedTimes, this.lastUsed.Load())
 		return false
 	})
-	threshold := pc.calcEvictionThreshold(lastUsedTimes) // step 2
-	pc.foreach(func(prev, this *instancePCNode) bool {   // step 3
+	var threshold time.Time
+	if evictAll {
+		threshold = time.Now().Add(time.Hour * 24) // a future time
+	} else {
+		threshold = pc.calcEvictionThreshold(lastUsedTimes) // step 2
+	}
+	detailInfo = fmt.Sprintf("evict threshold: %v", threshold)
+	pc.foreach(func(prev, this *instancePCNode) bool { // step 3
 		if !this.lastUsed.Load().After(threshold) { // if lastUsed<=threshold, evict this value
 			if prev.next.CompareAndSwap(this, this.next.Load()) { // have to use CAS since
 				pc.totCost.Sub(this.value.MemoryUsage()) //  it might have been updated by other thread
-				evicted = true
+				pc.totPlan.Sub(1)
+				numEvicted++
 				return true
 			}
 		}
@@ -162,6 +192,11 @@ func (pc *instancePlanCache) Evict() (evicted bool) {
 // MemUsage returns the memory usage of this plan cache.
 func (pc *instancePlanCache) MemUsage() int64 {
 	return pc.totCost.Load()
+}
+
+// Size returns the number of plans in this plan cache.
+func (pc *instancePlanCache) Size() int64 {
+	return pc.totPlan.Load()
 }
 
 func (pc *instancePlanCache) calcEvictionThreshold(lastUsedTimes []time.Time) (t time.Time) {
@@ -220,4 +255,15 @@ func (*instancePlanCache) createNode(value any) *instancePCNode {
 	}
 	node.lastUsed.Store(time.Now())
 	return node
+}
+
+// GetLimits gets the memory limit of this plan cache.
+func (pc *instancePlanCache) GetLimits() (softLimit, hardLimit int64) {
+	return pc.softMemLimit.Load(), pc.hardMemLimit.Load()
+}
+
+// SetLimits sets the memory limit of this plan cache.
+func (pc *instancePlanCache) SetLimits(softLimit, hardLimit int64) {
+	pc.softMemLimit.Store(softLimit)
+	pc.hardMemLimit.Store(hardLimit)
 }

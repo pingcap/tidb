@@ -73,7 +73,7 @@ func TestCompareFunctionWithRefine(t *testing.T) {
 	for _, test := range tests {
 		f, err := ParseSimpleExpr(ctx, test.exprStr, WithTableInfo("", tblInfo))
 		require.NoError(t, err)
-		require.Equal(t, test.result, f.StringWithCtx(ctx))
+		require.Equal(t, test.result, f.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 }
 
@@ -426,4 +426,17 @@ func TestIssue46475(t *testing.T) {
 	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
 	require.NoError(t, err)
 	require.Equal(t, f.GetType(ctx).GetType(), mysql.TypeDate)
+}
+
+func TestRefineArgsWithNullableColumn(t *testing.T) {
+	ctx := createContext(t)
+	uint64Const := primitiveValsToConstants(ctx, []any{uint64(9223372036854775808)})[0]
+	int64Column := &Column{RetType: types.NewFieldType(mysql.TypeLonglong)}
+
+	f := funcs[ast.EQ].(*compareFunctionClass)
+	require.NotNil(t, f)
+
+	args := f.refineArgsByUnsignedFlag(ctx, []Expression{uint64Const, int64Column})
+	require.Equal(t, uint64Const, args[0])
+	require.Equal(t, int64Column, args[1])
 }

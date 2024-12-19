@@ -16,13 +16,12 @@ package executor
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -224,7 +223,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			}
 			uniqueKeys = append(uniqueKeys, &keyValueWithDupInfo{
 				newKey: key,
-				dupErr: kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
+				dupErr: kv.GenKeyExistsErr(colStrVals, v.TableMeta().Name.String()+"."+v.Meta().Name.String()),
 			})
 		}
 	}
@@ -281,7 +280,7 @@ func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction,
 	}
 
 	cols := t.WritableCols()
-	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx, t.Meta(), handle, cols, oldValue)
+	oldRow, oldRowMap, err := tables.DecodeRawRowData(sctx.GetExprCtx(), t.Meta(), handle, cols, oldValue)
 	if err != nil {
 		return nil, err
 	}

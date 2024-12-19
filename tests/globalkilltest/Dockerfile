@@ -17,7 +17,7 @@ FROM rockylinux:9
 RUN dnf update -y && dnf groupinstall 'Development Tools' -y
 RUN dnf install procps-ng mysql -y
 
-ENV GOLANG_VERSION 1.21.12
+ENV GOLANG_VERSION 1.21.13
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /go

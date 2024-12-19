@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,9 +75,9 @@ func (e *baseGroupConcat4String) handleTruncateError(ctx AggFuncUpdateContext) (
 
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
 		if !tc.Flags().TruncateAsWarning() {
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(ctx))
+			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
 		}
-		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(ctx)))
+		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable)))
 	}
 	return nil
 }

@@ -150,8 +150,8 @@ func (ts *TiDBStatement) Reset() error {
 	}
 	ts.hasActiveCursor = false
 
-	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
-		ts.rs.GetRowContainerReader().Close()
+	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
+		ts.rs.GetRowIterator().Close()
 	}
 	ts.rs = nil
 
@@ -173,8 +173,8 @@ func (ts *TiDBStatement) Reset() error {
 
 // Close implements PreparedStatement Close method.
 func (ts *TiDBStatement) Close() error {
-	if ts.rs != nil && ts.rs.GetRowContainerReader() != nil {
-		ts.rs.GetRowContainerReader().Close()
+	if ts.rs != nil && ts.rs.GetRowIterator() != nil {
+		ts.rs.GetRowIterator().Close()
 	}
 
 	if ts.rowContainer != nil {
@@ -200,7 +200,7 @@ func (ts *TiDBStatement) Close() error {
 			if !ok {
 				return errors.Errorf("invalid PlanCacheStmt type")
 			}
-			cacheKey, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
+			cacheKey, _, _, _, err := core.NewPlanCacheKey(ts.ctx, preparedObj)
 			if err != nil {
 				return err
 			}

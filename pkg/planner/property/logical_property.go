@@ -14,9 +14,7 @@
 
 package property
 
-import (
-	"github.com/pingcap/tidb/pkg/expression"
-)
+import "github.com/pingcap/tidb/pkg/expression"
 
 // LogicalProperty stands for logical properties such as schema of expression,
 // or statistics of columns in schema for output of Group.
@@ -25,6 +23,11 @@ type LogicalProperty struct {
 	Stats     *StatsInfo
 	Schema    *expression.Schema
 	MaxOneRow bool
+}
+
+// NewLogicalProp returns a new empty LogicalProperty.
+func NewLogicalProp() *LogicalProperty {
+	return &LogicalProperty{}
 }
 
 // todo: ScalarProperty: usedColumns in current scalar expr, null reject, cor-related, subq contained and so on

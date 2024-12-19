@@ -359,9 +359,8 @@ func (s *StmtSummary) GetMoreThanCntBindableStmt(cnt int64) []*stmtsummary.Binda
 						PlanHint:  record.PlanHint,
 						Charset:   record.Charset,
 						Collation: record.Collation,
-						Users:     make(map[string]struct{}),
+						Users:     maps.Clone(record.AuthUsers),
 					}
-					maps.Copy(stmt.Users, record.AuthUsers)
 
 					// If it is SQL command prepare / execute, the ssElement.sampleSQL
 					// is `execute ...`, we should get the original select query.

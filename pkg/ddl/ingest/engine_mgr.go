@@ -17,13 +17,13 @@ package ingest
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // Register implements BackendCtx.
-func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *model.TableInfo) ([]Engine, error) {
+func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]Engine, error) {
 	ret := make([]Engine, 0, len(indexIDs))
 
 	for _, indexID := range indexIDs {
@@ -60,7 +60,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 
 	for i, indexID := range indexIDs {
-		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tblInfo.Name.L, int32(indexID))
+		openedEngine, err := mgr.OpenEngine(bc.ctx, cfg, tbl.Meta().Name.L, int32(indexID))
 		if err != nil {
 			logutil.Logger(bc.ctx).Warn(LitErrCreateEngineFail,
 				zap.Int64("job ID", bc.jobID),
@@ -68,7 +68,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 				zap.Error(err))
 
 			for _, e := range openedEngines {
-				e.Clean()
+				e.Close(true)
 			}
 			return nil, errors.Trace(err)
 		}
@@ -79,7 +79,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 			indexID,
 			uniques[i],
 			cfg,
-			bc.cfg,
 			openedEngine,
 			openedEngine.GetEngineUUID(),
 			bc.memRoot,
@@ -92,7 +91,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 		bc.engines[indexID] = ei
 	}
 	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
-	bc.tblInfo = tblInfo
+	bc.tbl = tbl
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
 		zap.Int64s("index IDs", indexIDs),
@@ -101,19 +100,45 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tblInfo *mod
 	return ret, nil
 }
 
-// UnregisterEngines implements BackendCtx.
-func (bc *litBackendCtx) UnregisterEngines() {
+// UnregisterOpt controls the behavior of backend context unregistering.
+type UnregisterOpt int
+
+const (
+	// OptCloseEngines only closes engines, it does not clean up sort path data.
+	OptCloseEngines UnregisterOpt = 1 << iota
+	// OptCleanData cleans up local sort dir data.
+	OptCleanData
+	// OptCheckDup checks if there is duplicate entry for unique indexes.
+	OptCheckDup
+)
+
+// FinishAndUnregisterEngines implements BackendCtx.
+func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	bc.unregisterMu.Lock()
 	defer bc.unregisterMu.Unlock()
 
 	if len(bc.engines) == 0 {
-		return
+		return nil
 	}
 	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
-		ei.Clean()
+		ei.Close(opt&OptCleanData != 0)
 	}
+
+	if opt&OptCheckDup != 0 {
+		for _, ei := range bc.engines {
+			if ei.unique {
+				err := bc.collectRemoteDuplicateRows(ei.indexID, bc.tbl)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
+	}
+
 	bc.engines = make(map[int64]*engineInfo, 10)
 
 	bc.memRoot.Release(numIdx * structSizeEngineInfo)
+
+	return nil
 }

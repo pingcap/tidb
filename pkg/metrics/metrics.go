@@ -117,8 +117,8 @@ func InitMetrics() {
 // RegisterMetrics registers the metrics which are ONLY used in TiDB server.
 func RegisterMetrics() {
 	// use new go collector
-	prometheus.DefaultRegisterer.Unregister(prometheus.NewGoCollector())
-	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollections(collectors.GoRuntimeMetricsCollection | collectors.GoRuntimeMemStatsCollection)))
+	prometheus.DefaultRegisterer.Unregister(collectors.NewGoCollector())
+	prometheus.MustRegister(collectors.NewGoCollector(collectors.WithGoCollectorRuntimeMetrics(collectors.MetricsGC, collectors.MetricsMemory, collectors.MetricsScheduler)))
 
 	prometheus.MustRegister(AutoAnalyzeCounter)
 	prometheus.MustRegister(AutoAnalyzeHistogram)
@@ -168,9 +168,12 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanCacheMissCounter)
 	prometheus.MustRegister(PlanCacheInstanceMemoryUsage)
 	prometheus.MustRegister(PlanCacheInstancePlanNumCounter)
+	prometheus.MustRegister(PlanCacheProcessDuration)
 	prometheus.MustRegister(PseudoEstimation)
 	prometheus.MustRegister(PacketIOCounter)
 	prometheus.MustRegister(QueryDurationHistogram)
+	prometheus.MustRegister(QueryRPCHistogram)
+	prometheus.MustRegister(QueryProcessedKeyHistogram)
 	prometheus.MustRegister(QueryTotalCounter)
 	prometheus.MustRegister(AffectedRowsCounter)
 	prometheus.MustRegister(SchemaLeaseErrorCounter)
@@ -284,12 +287,14 @@ func RegisterMetrics() {
 	prometheus.MustRegister(InfoSchemaV2CacheCounter)
 	prometheus.MustRegister(InfoSchemaV2CacheMemUsage)
 	prometheus.MustRegister(InfoSchemaV2CacheMemLimit)
+	prometheus.MustRegister(TableByNameDuration)
 
 	prometheus.MustRegister(BindingCacheHitCounter)
 	prometheus.MustRegister(BindingCacheMissCounter)
 	prometheus.MustRegister(BindingCacheMemUsage)
 	prometheus.MustRegister(BindingCacheMemLimit)
 	prometheus.MustRegister(BindingCacheNumBindings)
+	prometheus.MustRegister(InternalSessions)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

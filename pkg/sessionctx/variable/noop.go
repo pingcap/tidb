@@ -547,7 +547,7 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: "report_port", Value: "3306"},
 	{Scope: ScopeGlobal | ScopeSession, Name: ShowOldTemporals, Value: Off, Type: TypeBool},
 	{Scope: ScopeGlobal, Name: "query_cache_limit", Value: "1048576"},
-	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "134217728"},
+	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "4294967296"},
 	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_enable", Value: ""},
 	{Scope: ScopeNone, Name: "date_format", Value: "%Y-%m-%d"},

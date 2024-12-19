@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/executor/internal/exec",
-        "//pkg/parser/ast",
+        "//pkg/planner/core/resolve",
         "//pkg/session/cursor",
         "//pkg/util",
         "//pkg/util/chunk",
@@ -25,11 +25,13 @@ go_test(
     timeout = "short",
     srcs = ["integration_test.go"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
+        "//pkg/parser/mysql",
         "//pkg/session/cursor",
         "//pkg/testkit",
         "//pkg/util/sqlexec",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
     ],

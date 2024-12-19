@@ -34,7 +34,7 @@ type mockLogicalJoin struct {
 	logicalop.LogicalSchemaProducer
 	involvedNodeSet int
 	statsMap        map[int]*property.StatsInfo
-	JoinType        JoinType
+	JoinType        logicalop.JoinType
 }
 
 func (mj mockLogicalJoin) init(ctx base.PlanContext) *mockLogicalJoin {
@@ -50,8 +50,8 @@ func (mj *mockLogicalJoin) RecursiveDeriveStats(_ [][]*expression.Column) (*prop
 	return mj.statsMap[mj.involvedNodeSet], nil
 }
 
-func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
-	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType JoinType) base.LogicalPlan {
+func newMockJoin(ctx base.PlanContext, statsMap map[int]*property.StatsInfo) func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
+	return func(lChild, rChild base.LogicalPlan, _ []*expression.ScalarFunction, _, _, _ []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan {
 		retJoin := mockLogicalJoin{}.init(ctx)
 		retJoin.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 		retJoin.statsMap = statsMap
@@ -137,7 +137,7 @@ func makeStatsMapForTPCHQ5() map[int]*property.StatsInfo {
 }
 
 func newDataSource(ctx base.PlanContext, name string, count int) base.LogicalPlan {
-	ds := DataSource{}.Init(ctx, 0)
+	ds := logicalop.DataSource{}.Init(ctx, 0)
 	tan := model.NewCIStr(name)
 	ds.TableAsName = &tan
 	ds.SetSchema(expression.NewSchema())
@@ -155,7 +155,7 @@ func planToString(plan base.LogicalPlan) string {
 	switch x := plan.(type) {
 	case *mockLogicalJoin:
 		return fmt.Sprintf("MockJoin{%v, %v}", planToString(x.Children()[0]), planToString(x.Children()[1]))
-	case *DataSource:
+	case *logicalop.DataSource:
 		return x.TableAsName.L
 	}
 	return ""

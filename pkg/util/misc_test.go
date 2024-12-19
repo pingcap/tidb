@@ -17,13 +17,13 @@ package util
 import (
 	"bytes"
 	"crypto/x509/pkix"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -156,7 +156,7 @@ func TestBasicFuncRandomBuf(t *testing.T) {
 func TestToPB(t *testing.T) {
 	column := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -166,7 +166,7 @@ func TestToPB(t *testing.T) {
 
 	column2 := &model.ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("c"),
+		Name:         pmodel.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -174,8 +174,8 @@ func TestToPB(t *testing.T) {
 	}
 	column2.SetCollate("utf8mb4_bin")
 
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false).String())
-	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false)[0].String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnToProto(column, false, false).String())
+	assert.Equal(t, "column_id:1 collation:-45 columnLen:-1 decimal:-1 ", ColumnsToProto([]*model.ColumnInfo{column, column2}, false, false, false)[0].String())
 }
 
 func TestComposeURL(t *testing.T) {
@@ -186,30 +186,4 @@ func TestComposeURL(t *testing.T) {
 	assert.Equal(t, ComposeURL("https://httpserver.example.com", "/api/test"), "https://httpserver.example.com/api/test")
 	assert.Equal(t, ComposeURL("http://server.example.com", ""), "http://server.example.com")
 	assert.Equal(t, ComposeURL("https://server.example.com", ""), "https://server.example.com")
-}
-
-func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
-	for i, item := range items {
-		assert.Equal(t, <-ch, item, "the %d-th item doesn't match", i)
-	}
-	select {
-	case item, ok := <-ch:
-		assert.False(t, ok, "channel not closed: more item %v", item)
-	case <-time.After(50 * time.Microsecond):
-		t.Fatal("channel not closed: blocked")
-	}
-}
-
-func TestChannelMap(t *testing.T) {
-	ch := make(chan int, 4)
-	ch <- 1
-	ch <- 2
-	ch <- 3
-
-	tableCh := ChanMap(ch, func(i int) string {
-		return fmt.Sprintf("table%d", i)
-	})
-	close(ch)
-
-	assertChannel(t, tableCh, "table1", "table2", "table3")
 }

@@ -60,25 +60,26 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/privilege/conn"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	servererr "github.com/pingcap/tidb/pkg/server/err"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/server/internal"
@@ -397,6 +398,7 @@ func closeConn(cc *clientConn) error {
 				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
 			}
 		}
+
 		// Close statements and session
 		// At first, it'll decrese the count of connections in the resource group, update the corresponding gauge.
 		// Then it'll close the statements and session, which release advisory locks, row locks, etc.
@@ -405,6 +407,8 @@ func closeConn(cc *clientConn) error {
 			metrics.ConnGauge.WithLabelValues(resourceGroupName).Dec()
 
 			err = ctx.Close()
+		} else {
+			metrics.ConnGauge.WithLabelValues(resourcegroup.DefaultResourceGroupName).Dec()
 		}
 	})
 	return err
@@ -845,12 +849,12 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		return nil, err
 	}
 	// Find the identity of the user based on username and peer host.
-	identity, err := cc.ctx.MatchIdentity(cc.user, host)
+	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
 	if err != nil {
 		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	// Get the plugin for the identity.
-	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	userplugin, err := cc.ctx.AuthPluginForUser(ctx, identity)
 	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
@@ -1123,15 +1127,20 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
-		// Should check InTxn() to avoid execute `begin` stmt.
+		// It should be CAS before checking the `inShutdownMode` to avoid the following scenario:
+		// 1. The connection checks the `inShutdownMode` and it's false.
+		// 2. The server sets the `inShutdownMode` to true. The `DrainClients` process ignores this connection
+		//   because the connection is in the `connStatusReading` status.
+		// 3. The connection changes its status to `connStatusDispatching` and starts to execute the command.
+		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
+			return
+		}
+
+		// Should check InTxn() to avoid execute `begin` stmt and allow executing statements in the not committed txn.
 		if cc.server.inShutdownMode.Load() {
 			if !cc.ctx.GetSessionVars().InTxn() {
 				return
 			}
-		}
-
-		if !cc.CompareAndSwapStatus(connStatusReading, connStatusDispatching) {
-			return
 		}
 
 		startTime := time.Now()
@@ -1249,19 +1258,12 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		sqlType = stmtType
 	}
 
-	switch sqlType {
-	case "Insert":
-		server_metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
-	case "Replace":
-		server_metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
-	case "Delete":
-		server_metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
-	case "Update":
-		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
-	}
-
 	for _, dbName := range session.GetDBNames(vars) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryRPCHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().RequestCount))
+		if vars.StmtCtx.GetExecDetails().ScanDetail != nil {
+			metrics.QueryProcessedKeyHistogram.WithLabelValues(sqlType, dbName).Observe(float64(vars.StmtCtx.GetExecDetails().ScanDetail.ProcessedKeys))
+		}
 	}
 }
 
@@ -1297,7 +1299,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cmd := data[0]
 	data = data[1:]
 	if topsqlstate.TopSQLEnabled() {
-		defer pprof.SetGoroutineLabels(ctx)
+		rawCtx := ctx
+		defer pprof.SetGoroutineLabels(rawCtx)
+		sqlID := cc.ctx.GetSessionVars().SQLCPUUsages.AllocNewSQLID()
+		ctx = topsql.AttachAndRegisterProcessInfo(ctx, cc.connectionID, sqlID)
 	}
 	if variable.EnablePProfSQLCPU.Load() {
 		label := getLastStmtInConn{cc}.PProfLabel()
@@ -1337,6 +1342,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
 	vars.SQLKiller.Reset()
+	vars.SQLCPUUsages.ResetCPUTimes()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
@@ -1384,7 +1390,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeStats(ctx)
 	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
-		return cc.writeOK(ctx)
+		if cc.server.health.Load() {
+			return cc.writeOK(ctx)
+		}
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
@@ -1640,31 +1649,6 @@ func (cc *clientConn) handleLoadStats(ctx context.Context, loadStatsInfo *execut
 		return nil
 	}
 	return loadStatsInfo.Update(data)
-}
-
-// handleIndexAdvise does the index advise work and returns the advise result for index.
-func (cc *clientConn) handleIndexAdvise(ctx context.Context, indexAdviseInfo *executor.IndexAdviseInfo) error {
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if indexAdviseInfo == nil {
-		return errors.New("Index Advise: info is empty")
-	}
-
-	data, err := cc.getDataFromPath(ctx, indexAdviseInfo.Path)
-	if err != nil {
-		return err
-	}
-	if len(data) == 0 {
-		return errors.New("Index Advise: infile is empty")
-	}
-
-	if err := indexAdviseInfo.GetIndexAdvice(data); err != nil {
-		return err
-	}
-
-	// TODO: Write the rss []ResultSet. It will be done in another PR.
-	return nil
 }
 
 func (cc *clientConn) handlePlanReplayerLoad(ctx context.Context, planReplayerLoadInfo *executor.PlanReplayerLoadInfo) error {
@@ -1924,11 +1908,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			return nil, nil
 		}
 		// TODO: the preprocess is run twice, we should find some way to avoid do it again.
-		if err = plannercore.Preprocess(ctx, cc.getCtx(), stmt); err != nil {
+		nodeW := resolve.NewNodeW(stmt)
+		if err = plannercore.Preprocess(ctx, cc.getCtx(), nodeW); err != nil {
 			// error might happen, see https://github.com/pingcap/tidb/issues/39664
 			return nil, nil
 		}
-		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), stmt)
+		p := plannercore.TryFastPlan(cc.ctx.Session.GetPlanCtx(), nodeW)
 		pointPlans[i] = p
 		if p == nil {
 			continue
@@ -2193,16 +2178,6 @@ func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) 
 		}
 	}
 
-	indexAdvise := cc.ctx.Value(executor.IndexAdviseVarKey)
-	if indexAdvise != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.IndexAdviseVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleIndexAdvise(ctx, indexAdvise.(*executor.IndexAdviseInfo)); err != nil {
-			return handled, err
-		}
-	}
-
 	planReplayerLoad := cc.ctx.Value(executor.PlanReplayerLoadVarKey)
 	if planReplayerLoad != nil {
 		handled = true
@@ -2435,10 +2410,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 		start = time.Now()
 	}
 
-	iter := rs.GetRowContainerReader()
+	iter := rs.GetRowIterator()
 	// send the rows to the client according to fetchSize.
-	for i := 0; i < fetchSize && iter.Current() != iter.End(); i++ {
-		row := iter.Current()
+	for i := 0; i < fetchSize && iter.Current(ctx) != iter.End(); i++ {
+		row := iter.Current(ctx)
 
 		data = data[0:4]
 		data, err = column.DumpBinaryRow(data, rs.Columns(), row, cc.rsEncoder)
@@ -2449,7 +2424,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 			return err
 		}
 
-		iter.Next()
+		iter.Next(ctx)
 	}
 	if iter.Error() != nil {
 		return iter.Error()
@@ -2457,7 +2432,7 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 
 	// tell the client COM_STMT_FETCH has finished by setting proper serverStatus,
 	// and close ResultSet.
-	if iter.Current() == iter.End() {
+	if iter.Current(ctx) == iter.End() {
 		serverStatus &^= mysql.ServerStatusCursorExists
 		serverStatus |= mysql.ServerStatusLastRowSend
 	}
@@ -2575,7 +2550,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
-	if !cc.ctx.AuthWithoutVerification(user) {
+	if !cc.ctx.AuthWithoutVerification(ctx, user) {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB

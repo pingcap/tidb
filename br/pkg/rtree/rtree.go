@@ -9,7 +9,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
@@ -20,7 +19,6 @@ type Range struct {
 	StartKey []byte
 	EndKey   []byte
 	Files    []*backuppb.File
-	Size     uint64
 }
 
 // BytesAndKeys returns total bytes and keys in a range.
@@ -85,8 +83,64 @@ func (rg *Range) Less(than btree.Item) bool {
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
+// RangeStats represents a restore merge result.
+type RangeStats struct {
+	Range
+	Size  uint64
+	Count uint64
+}
+
+// Less impls btree.Item.
+func (rg *RangeStats) Less(ta *RangeStats) bool {
+	// rg.StartKey < than.StartKey
+	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
+}
+
+type RangeStatsTree struct {
+	*btree.BTreeG[*RangeStats]
+}
+
+func NewRangeStatsTree() RangeStatsTree {
+	return RangeStatsTree{
+		BTreeG: btree.NewG[*RangeStats](32, (*RangeStats).Less),
+	}
+}
+
+// InsertRange inserts ranges into the range tree.
+// It returns a non-nil range if there are soe overlapped ranges.
+func (rangeTree *RangeStatsTree) InsertRange(rg *Range, rangeSize, rangeCount uint64) *RangeStats {
+	out, _ := rangeTree.ReplaceOrInsert(&RangeStats{
+		Range: *rg,
+		Size:  rangeSize,
+		Count: rangeCount,
+	})
+	return out
+}
+
+// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
+func (rangeTree *RangeStatsTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []RangeStats {
+	var mergeTargetIndex int = -1
+	sortedRanges := make([]RangeStats, 0, rangeTree.Len())
+	rangeTree.Ascend(func(rg *RangeStats) bool {
+		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
+			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
+			mergeTargetIndex += 1
+			sortedRanges = append(sortedRanges, *rg)
+		} else {
+			// need to merge from rg to sortedRages[mergeTargetIndex]
+			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
+			sortedRanges[mergeTargetIndex].Size += rg.Size
+			sortedRanges[mergeTargetIndex].Count += rg.Count
+			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
+		}
+
+		return true
+	})
+	return sortedRanges
+}
+
 // NeedsMerge checks whether two ranges needs to be merged.
-func NeedsMerge(left, right *Range, splitSizeBytes, splitKeyCount uint64) bool {
+func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) bool {
 	leftBytes, leftKeys := left.BytesAndKeys()
 	rightBytes, rightKeys := right.BytesAndKeys()
 	if rightBytes == 0 {
@@ -98,8 +152,8 @@ func NeedsMerge(left, right *Range, splitSizeBytes, splitKeyCount uint64) bool {
 	if leftKeys+rightKeys > splitKeyCount {
 		return false
 	}
-	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(kv.Key(left.StartKey))
-	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(kv.Key(right.StartKey))
+	tableID1, indexID1, isRecord1, err1 := tablecodec.DecodeKeyHead(left.StartKey)
+	tableID2, indexID2, isRecord2, err2 := tablecodec.DecodeKeyHead(right.StartKey)
 
 	// Failed to decode the file key head... can this happen?
 	if err1 != nil || err2 != nil {
@@ -217,41 +271,6 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 	return out.(*Range)
 }
 
-// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
-func (rangeTree *RangeTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []Range {
-	var mergeTargetIndex int = -1
-	sortedRanges := make([]Range, 0, rangeTree.Len())
-	rangeTree.Ascend(func(item btree.Item) bool {
-		rg := item.(*Range)
-		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
-			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged
-			mergeTargetIndex += 1
-			sortedRanges = append(sortedRanges, *rg)
-		} else {
-			// need to merge from rg to sortedRages[mergeTargetIndex]
-			sortedRanges[mergeTargetIndex].EndKey = rg.EndKey
-			sortedRanges[mergeTargetIndex].Size += rg.Size
-			sortedRanges[mergeTargetIndex].Files = append(sortedRanges[mergeTargetIndex].Files, rg.Files...)
-		}
-
-		return true
-	})
-	return sortedRanges
-}
-
-// GetSortedRanges collects and returns sorted ranges.
-func (rangeTree *RangeTree) GetSortedRanges() []Range {
-	sortedRanges := make([]Range, 0, rangeTree.Len())
-	rangeTree.Ascend(func(rg btree.Item) bool {
-		if rg == nil {
-			return false
-		}
-		sortedRanges = append(sortedRanges, *rg.(*Range))
-		return true
-	})
-	return sortedRanges
-}
-
 // GetIncompleteRange returns missing range covered by startKey and endKey.
 func (rangeTree *RangeTree) GetIncompleteRange(
 	startKey, endKey []byte,
@@ -315,8 +334,7 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
 
-	incompleteItemCount int
-	completeCallBack    func()
+	completeCallBack func()
 }
 
 // NewProgressRangeTree returns an empty range tree.
@@ -324,8 +342,7 @@ func NewProgressRangeTree() ProgressRangeTree {
 	return ProgressRangeTree{
 		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
 
-		incompleteItemCount: 0,
-		completeCallBack:    func() {},
+		completeCallBack: func() {},
 	}
 }
 
@@ -359,7 +376,6 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 			redact.Key(pr.Origin.StartKey), redact.Key(overlap.Origin.StartKey), redact.Key(overlap.Origin.EndKey))
 	}
 	rangeTree.ReplaceOrInsert(pr)
-	rangeTree.incompleteItemCount += 1
 	return nil
 }
 
@@ -387,7 +403,8 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 }
 
 func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
-	incompleteRanges := make([]Range, 0, 2*(rangeTree.Len()+1))
+	// about 64 MB memory if there are 1 million ranges
+	incompleteRanges := make([]Range, 0, rangeTree.Len())
 	rangeTree.Ascend(func(item *ProgressRange) bool {
 		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
 		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
@@ -396,7 +413,6 @@ func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
 		if len(incomplete) == 0 {
 			if !item.Complete {
 				item.Complete = true
-				rangeTree.incompleteItemCount -= 1
 				rangeTree.completeCallBack()
 			}
 			return true

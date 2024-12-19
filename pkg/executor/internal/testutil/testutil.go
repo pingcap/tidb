@@ -48,7 +48,15 @@ type MockDataSourceParameters struct {
 	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
 	Orders      []bool
-	Rows        int
+
+	// Sometimes, user wants to manually provide test data
+	// and he can save provided test data at here.
+	Datums [][]any
+
+	Nulls [][]bool
+
+	Rows   int
+	HasSel bool
 }
 
 // MockDataSource mocks data source
@@ -73,6 +81,11 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 		ndv = mds.P.Ndvs[col]
 	}
 	results = make([]any, 0, rows)
+
+	// ndv > 0: generate n rows with random value with `nvd` distinct value
+	// ndv == 0: generate n rows with random value
+	// ndv == -1: generate n rows with value provided by user and with `nvd` distinct value
+	// ndv == -2: use rows provided by user
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -83,21 +96,37 @@ func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 				results = append(results, mds.P.GenDataFunc(i, typ))
 			}
 		}
+	} else if ndv == -2 {
+		// Use data provided by user
+		if mds.P.Datums[col] == nil {
+			panic("need to provide data")
+		}
+
+		results = mds.P.Datums[col]
 	} else {
-		datumSet := make(map[string]bool, ndv)
-		datums := make([]any, 0, ndv)
-		for len(datums) < ndv {
-			d := mds.RandDatum(typ)
-			str := fmt.Sprintf("%v", d)
-			if datumSet[str] {
-				continue
+		// Use nvd base data provided by user
+		datums := make([]any, 0, max(ndv, 0))
+		if ndv == -1 {
+			if mds.P.Datums[col] == nil {
+				panic("need to provide data")
 			}
-			datumSet[str] = true
-			datums = append(datums, d)
+
+			datums = mds.P.Datums[col]
+		} else {
+			datumSet := make(map[string]bool, ndv)
+			for len(datums) < ndv {
+				d := mds.RandDatum(typ)
+				str := fmt.Sprintf("%v", d)
+				if datumSet[str] {
+					continue
+				}
+				datumSet[str] = true
+				datums = append(datums, d)
+			}
 		}
 
 		for i := 0; i < rows; i++ {
-			val, err := rand.Int(rand.Reader, big.NewInt(int64(ndv)))
+			val, err := rand.Int(rand.Reader, big.NewInt(int64(len(datums))))
 			if err != nil {
 				panic("Fail to generate int number")
 			}
@@ -242,8 +271,9 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		Chunks:       nil,
 	}
 	rTypes := exec.RetTypes(m)
-	colData := make([][]any, len(rTypes))
-	for i := 0; i < len(rTypes); i++ {
+	colNum := len(rTypes)
+	colData := make([][]any, colNum)
+	for i := 0; i < colNum; i++ {
 		colData[i] = m.GenColDatums(i)
 	}
 
@@ -252,10 +282,26 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		m.GenData[i] = chunk.NewChunkWithCapacity(exec.RetTypes(m), m.MaxChunkSize())
 	}
 
+	nulls := opt.Nulls
+	if nulls == nil {
+		nulls = make([][]bool, colNum)
+		for i := range colNum {
+			nulls[i] = make([]bool, m.P.Rows)
+			for j := range m.P.Rows {
+				nulls[i][j] = false
+			}
+		}
+	}
+
 	for i := 0; i < m.P.Rows; i++ {
 		idx := i / m.MaxChunkSize()
 		retTypes := exec.RetTypes(m)
-		for colIdx := 0; colIdx < len(rTypes); colIdx++ {
+		for colIdx := 0; colIdx < colNum; colIdx++ {
+			if nulls[colIdx][i] {
+				m.GenData[idx].AppendNull(colIdx)
+				continue
+			}
+
 			switch retTypes[colIdx].GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				m.GenData[idx].AppendInt64(colIdx, colData[colIdx][i].(int64))
@@ -272,6 +318,18 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 			}
 		}
 	}
+
+	if opt.HasSel {
+		for _, chk := range m.GenData {
+			rowNum := chk.NumRows()
+			sel := make([]int, 0, rowNum/2)
+			for i := mathrand.Int31n(2); int(i) < rowNum; i += 2 {
+				sel = append(sel, int(i))
+			}
+			chk.SetSel(sel)
+		}
+	}
+
 	return m
 }
 

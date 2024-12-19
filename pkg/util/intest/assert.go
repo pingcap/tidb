@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build intest
+//go:build intest || enableassert
 
 package intest
 
@@ -21,23 +21,26 @@ import (
 	"reflect"
 )
 
+// EnableAssert checks if the assert function should work.
+const EnableAssert = true
+
 // Assert asserts a condition is true
 func Assert(cond bool, msgAndArgs ...any) {
-	if InTest && !cond {
+	if EnableAssert && !cond {
 		doPanic("", msgAndArgs...)
 	}
 }
 
 // AssertNoError asserts an error is nil
 func AssertNoError(err error, msgAndArgs ...any) {
-	if InTest && err != nil {
+	if EnableAssert && err != nil {
 		doPanic(fmt.Sprintf("error is not nil: %+v", err), msgAndArgs...)
 	}
 }
 
 // AssertNotNil asserts an object is not nil
 func AssertNotNil(obj any, msgAndArgs ...any) {
-	if InTest {
+	if EnableAssert {
 		Assert(obj != nil, msgAndArgs...)
 		value := reflect.ValueOf(obj)
 		switch value.Kind() {
@@ -49,7 +52,7 @@ func AssertNotNil(obj any, msgAndArgs ...any) {
 
 // AssertFunc asserts a function condition
 func AssertFunc(fn func() bool, msgAndArgs ...any) {
-	if InTest {
+	if EnableAssert {
 		Assert(fn != nil, msgAndArgs...)
 		Assert(fn(), msgAndArgs...)
 	}

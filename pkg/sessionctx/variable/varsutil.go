@@ -409,14 +409,26 @@ func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
 	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dKiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 10, fmt.Sprintf("%dKiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dMiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 20, fmt.Sprintf("%dMiB", byteSize)
 	}
 	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
 	}
+	if n, err := fmt.Sscanf(s, "%dGiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 30, fmt.Sprintf("%dGiB", byteSize)
+	}
 	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
+	}
+	if n, err := fmt.Sscanf(s, "%dTiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
+		return byteSize << 40, fmt.Sprintf("%dTiB", byteSize)
 	}
 	return 0, ""
 }
@@ -495,6 +507,16 @@ func switchDDL(on bool) error {
 		return EnableDDL()
 	} else if !on && DisableDDL != nil {
 		return DisableDDL()
+	}
+	return nil
+}
+
+// switchStats turns on/off stats owner in an instance
+func switchStats(on bool) error {
+	if on && EnableStatsOwner != nil {
+		return EnableStatsOwner()
+	} else if !on && DisableStatsOwner != nil {
+		return DisableStatsOwner()
 	}
 	return nil
 }
@@ -590,12 +612,21 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 	return skipTypes
 }
 
+var (
+	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
+	// it is lower than this value.
+	SchemaCacheSizeLowerBound uint64 = 64 * units.MiB
+	// SchemaCacheSizeLowerBoundStr is the string representation of
+	// SchemaCacheSizeLowerBound.
+	SchemaCacheSizeLowerBoundStr = "64MB"
+)
+
 func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
-		if err == nil && byteSize > 0 && byteSize < (512*units.MiB) {
+		if err == nil && byteSize > 0 && byteSize < SchemaCacheSizeLowerBound {
 			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
-			byteSize = 512 * units.MiB
-			normalizedStr = "512MB"
+			byteSize = SchemaCacheSizeLowerBound
+			normalizedStr = SchemaCacheSizeLowerBoundStr
 		}
 		if err == nil && byteSize > math.MaxInt64 {
 			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSchemaCacheSize, originalValue))
