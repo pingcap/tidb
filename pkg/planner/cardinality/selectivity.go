@@ -1097,6 +1097,36 @@ func outOfRangeEQSelectivity(sctx planctx.PlanContext, ndv, realtimeRowCount, co
 	return selectivity
 }
 
+// outOfRangeFullNDV estimates the number of qualified rows when the topN represents all NDV values
+// and the searched value does not appear in the topN
+func outOfRangeFullNDV(ndv, origRowCount, notNullCount, realtimeRowCount, increaseFactor float64, modifyCount int64) (result float64) {
+	// If the table hasn't been modified, it's safe to return 0.
+	if modifyCount == 0 {
+		return 0
+	}
+	// Calculate "newly added rows" using original row count. We do NOT use notNullCount here
+	// because that can always be less than realtimeRowCount if NULLs exist
+	newRows := realtimeRowCount - origRowCount
+	// If the original row count is zero - take the min of original row count and realtimeRowCount
+	if notNullCount <= 0 {
+		notNullCount = min(origRowCount, realtimeRowCount)
+	}
+	// If realtimeRowCount has reduced below the original, we can't determine if there has been a
+	// combination of inserts/updates/deletes or only deletes - any out of range estimate is unreliable
+	if newRows < 0 {
+		newRows = min(notNullCount, realtimeRowCount)
+	}
+	// if no NDV - derive an NDV using sqrt
+	if ndv <= 0 {
+		ndv = math.Sqrt(max(notNullCount, realtimeRowCount))
+	} else {
+		// We need to increase the ndv by increaseFactor because the estimate will be increased by
+		// the caller of the function
+		ndv *= increaseFactor
+	}
+	return max(1, newRows/ndv)
+}
+
 // crossValidationSelectivity gets the selectivity of multi-column equal conditions by cross validation.
 func crossValidationSelectivity(
 	sctx planctx.PlanContext,

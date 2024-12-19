@@ -310,12 +310,8 @@ const (
 	AesEncrypt               = "aes_encrypt"
 	Compress                 = "compress"
 	Decode                   = "decode"
-	DesDecrypt               = "des_decrypt"
-	DesEncrypt               = "des_encrypt"
 	Encode                   = "encode"
-	Encrypt                  = "encrypt"
 	MD5                      = "md5"
-	OldPassword              = "old_password"
 	PasswordFunc             = "password_func"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
@@ -372,9 +368,6 @@ const (
 	TiDBEncodeRecordKey = "tidb_encode_record_key"
 	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
-
-	// MVCC information fetching function.
-	GetMvccInfo = "get_mvcc_info"
 
 	// Sequence function.
 	NextVal = "nextval"
