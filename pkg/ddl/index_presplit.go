@@ -40,8 +40,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO(tangenta): support global index.
-// Wrap the job.Query to with special comments.
 func preSplitIndexRegions(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -118,6 +116,17 @@ func getSplitIdxKeysFromValueList(
 	if pi == nil {
 		destKeys = make([][]byte, 0, len(byRows)+1)
 		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
+	}
+
+	if idxInfo.Global {
+		var idxTblID int64
+		if pi.NewTableID != 0 && idxInfo.State != model.StatePublic {
+			idxTblID = pi.NewTableID
+		} else {
+			idxTblID = tblInfo.ID
+		}
+		destKeys = make([][]byte, 0, len(byRows)+1)
+		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, idxTblID, byRows, destKeys)
 	}
 
 	destKeys = make([][]byte, 0, (len(byRows)+1)*len(pi.Definitions))

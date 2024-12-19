@@ -213,6 +213,15 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	checkSplitKeys(tablecodec.TempIndexPrefix|3, 12, true)
 	tk.MustExec("drop index idx on t;")
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
+	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
+	tk.MustExec("create table t (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("alter table t add unique index p_a (a) global pre_split_regions = (by (5), (15));")
+	checkSplitKeys(tablecodec.TempIndexPrefix|1, 2, true)
 }
 
 func TestAddIndexPresplitFunctional(t *testing.T) {
