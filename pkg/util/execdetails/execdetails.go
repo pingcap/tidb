@@ -907,7 +907,7 @@ func (crs *CopRuntimeStats) String() string {
 	}
 
 	procTimes := crs.stats.procTimes
-	totalTasks := len(crs.stats.procTimes.values)
+	totalTasks := crs.stats.procTimes.size
 	isTiFlashCop := crs.storeType == kv.TiFlash
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
@@ -938,7 +938,7 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString(", loops:")
 			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
 			printTiFlashSpecificInfo()
-		} else if totalTasks > 1 {
+		} else {
 			buf.WriteString(crs.storeType.Name())
 			buf.WriteString("_task:{proc max:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())))
@@ -1625,20 +1625,6 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		return nil
-	}
-	return copStats
-}
-
-// GetOrCreateCopStats gets the CopRuntimeStats specified by planID, if not exists a new one will be created.
-func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType kv.StoreType) *CopRuntimeStats {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	copStats, ok := e.copStats[planID]
-	if !ok {
-		copStats = &CopRuntimeStats{
-			storeType: storeType,
-		}
-		e.copStats[planID] = copStats
 	}
 	return copStats
 }
