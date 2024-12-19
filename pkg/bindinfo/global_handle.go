@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,7 +47,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
+	MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindings Bindings)
@@ -63,12 +62,6 @@ type GlobalBindingHandle interface {
 	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
 	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
 
-	// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindingCache.
-	AddInvalidGlobalBinding(invalidBinding Binding)
-
-	// DropInvalidGlobalBinding executes the drop Bindings tasks.
-	DropInvalidGlobalBinding()
-
 	// Methods for load and clear global sql bindings.
 
 	// Reset is to reset the BindHandle and clean old info.
@@ -82,9 +75,6 @@ type GlobalBindingHandle interface {
 
 	// Methods for memory control.
 
-	// Size returns the size of bind info cache.
-	Size() int
-
 	// SetBindingCacheCapacity reset the capacity for the bindingCache.
 	SetBindingCacheCapacity(capacity int64)
 
@@ -94,17 +84,6 @@ type GlobalBindingHandle interface {
 	// GetMemCapacity returns the memory capacity for the bind cache.
 	GetMemCapacity() (memCapacity int64)
 
-	// Clear resets the bind handle. It is only used for test.
-	Clear()
-
-	// FlushGlobalBindings flushes the Bindings in temp maps to storage and loads them into cache.
-	FlushGlobalBindings() error
-
-	// Methods for Auto Capture.
-
-	// CaptureBaselines is used to automatically capture plan baselines.
-	CaptureBaselines()
-
 	variable.Statistics
 }
 
@@ -112,15 +91,11 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool util.SessionPool
 
-	fuzzyBindingCache atomic.Value
+	crossDBBindingCache atomic.Value
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
-
-	// invalidBindings indicates the invalid bindings found during querying.
-	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
-	invalidBindings *invalidBindingCache
 
 	// syncBindingSingleflight is used to synchronize the execution of `LoadFromStorageToCache` method.
 	syncBindingSingleflight singleflight.Group
@@ -156,20 +131,19 @@ func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() FuzzyBindingCache {
-	return h.fuzzyBindingCache.Load().(FuzzyBindingCache)
+func (h *globalBindingHandle) getCache() CrossDBBindingCache {
+	return h.crossDBBindingCache.Load().(CrossDBBindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
+func (h *globalBindingHandle) setCache(c CrossDBBindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
-	h.fuzzyBindingCache.Store(c)
+	h.crossDBBindingCache.Store(c)
 }
 
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
-	h.invalidBindings = newInvalidBindingCache()
-	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
+	h.setCache(newCrossDBBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -185,11 +159,11 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache FuzzyBindingCache
+	var newCache CrossDBBindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
+		newCache = newCrossDBBindingCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -215,7 +189,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
 			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
-			metrics.BindingCacheNumBindings.Set(float64(h.Size()))
+			metrics.BindingCacheNumBindings.Set(float64(len(h.getCache().GetAllBindings())))
 		}()
 
 		for _, row := range rows {
@@ -436,71 +410,9 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 	return err
 }
 
-// invalidBindingCache is used to store invalid bindings temporarily.
-type invalidBindingCache struct {
-	mu sync.RWMutex
-	m  map[string]Binding // key: sqlDigest
-}
-
-func newInvalidBindingCache() *invalidBindingCache {
-	return &invalidBindingCache{
-		m: make(map[string]Binding),
-	}
-}
-
-func (c *invalidBindingCache) add(binding Binding) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.m[binding.SQLDigest] = binding
-}
-
-func (c *invalidBindingCache) getAll() Bindings {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	bindings := make(Bindings, 0, len(c.m))
-	for _, binding := range c.m {
-		bindings = append(bindings, binding)
-	}
-	return bindings
-}
-
-func (c *invalidBindingCache) reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.m = make(map[string]Binding)
-}
-
-// DropInvalidGlobalBinding executes the drop Bindings tasks.
-func (h *globalBindingHandle) DropInvalidGlobalBinding() {
-	defer func() {
-		if err := h.LoadFromStorageToCache(false); err != nil {
-			logutil.BindLogger().Warn("drop invalid global binding error", zap.Error(err))
-		}
-	}()
-
-	invalidBindings := h.invalidBindings.getAll()
-	h.invalidBindings.reset()
-	for _, invalidBinding := range invalidBindings {
-		if _, err := h.dropGlobalBinding([]string{invalidBinding.SQLDigest}); err != nil {
-			logutil.BindLogger().Debug("flush bind record failed", zap.Error(err))
-		}
-	}
-}
-
-// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindings.
-func (h *globalBindingHandle) AddInvalidGlobalBinding(invalidBinding Binding) {
-	h.invalidBindings.add(invalidBinding)
-}
-
-// Size returns the size of bind info cache.
-func (h *globalBindingHandle) Size() int {
-	size := len(h.getCache().GetAllBindings())
-	return size
-}
-
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	return h.getCache().MatchingBinding(sctx, noDBDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
@@ -660,19 +572,6 @@ func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
 
 func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, true
-}
-
-// Clear resets the bind handle. It is only used for test.
-func (h *globalBindingHandle) Clear() {
-	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
-	h.setLastUpdateTime(types.ZeroTimestamp)
-	h.invalidBindings.reset()
-}
-
-// FlushGlobalBindings flushes the Bindings in temp maps to storage and loads them into cache.
-func (h *globalBindingHandle) FlushGlobalBindings() error {
-	h.DropInvalidGlobalBinding()
-	return h.LoadFromStorageToCache(false)
 }
 
 func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {

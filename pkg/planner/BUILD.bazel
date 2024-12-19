@@ -10,7 +10,6 @@ go_library(
         "//pkg/domain",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/planner/cascades/old",

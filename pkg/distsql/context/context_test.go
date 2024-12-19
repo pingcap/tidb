@@ -89,6 +89,7 @@ func TestContextDetach(t *testing.T) {
 		ReplicaClosestReadThreshold: 1,
 		ConnectionID:                1,
 		SessionAlias:                "c",
+		TryCopLiteWorker:            1,
 	}
 
 	obj.AppendWarning(errors.New("test warning"))

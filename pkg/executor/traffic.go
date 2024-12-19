@@ -16,17 +16,22 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -38,6 +43,20 @@ type tiproxyAddrKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
 
+type trafficJob struct {
+	Instance  string `json:"-"` // not passed from TiProxy
+	Type      string `json:"type"`
+	Status    string `json:"status"`
+	StartTime string `json:"start_time"`
+	EndTime   string `json:"end_time,omitempty"`
+	Progress  string `json:"progress"`
+	Err       string `json:"error,omitempty"`
+}
+
+const (
+	startTimeKey = "start-time"
+)
+
 // TrafficCaptureExec sends capture traffic requests to TiProxy.
 type TrafficCaptureExec struct {
 	exec.BaseExecutor
@@ -46,8 +65,10 @@ type TrafficCaptureExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TrafficCaptureExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	form := getForm(e.Args)
-	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/capture")
+	_, err := request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/capture")
+	return err
 }
 
 // TrafficReplayExec sends replay traffic requests to TiProxy.
@@ -58,8 +79,10 @@ type TrafficReplayExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TrafficReplayExec) Next(ctx context.Context, _ *chunk.Chunk) error {
+	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	form := getForm(e.Args)
-	return request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/replay")
+	_, err := request(ctx, e.BaseExecutor, strings.NewReader(form), http.MethodPost, "api/traffic/replay")
+	return err
 }
 
 // TrafficCancelExec sends cancel traffic job requests to TiProxy.
@@ -69,39 +92,92 @@ type TrafficCancelExec struct {
 
 // Next implements the Executor Next interface.
 func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return request(ctx, e.BaseExecutor, nil, http.MethodPost, "api/traffic/cancel")
+	_, err := request(ctx, e.BaseExecutor, nil, http.MethodPost, "api/traffic/cancel")
+	return err
 }
 
 // TrafficShowExec sends show traffic job requests to TiProxy.
 type TrafficShowExec struct {
 	exec.BaseExecutor
+	jobs   []trafficJob
+	cursor int
 }
 
-// Next implements the Executor Next interface.
-func (e *TrafficShowExec) Next(ctx context.Context, _ *chunk.Chunk) error {
-	return request(ctx, e.BaseExecutor, nil, http.MethodGet, "api/traffic/show")
-}
-
-func request(ctx context.Context, exec exec.BaseExecutor, reader io.Reader, method, path string) error {
-	addrs, err := getTiProxyAddrs(ctx)
+// Open implements the Executor Open interface.
+func (e *TrafficShowExec) Open(ctx context.Context) error {
+	if err := e.BaseExecutor.Open(ctx); err != nil {
+		return err
+	}
+	resps, err := request(ctx, e.BaseExecutor, nil, http.MethodGet, "api/traffic/show")
 	if err != nil {
 		return err
 	}
+	allJobs := make([]trafficJob, 0, len(resps))
+	for addr, resp := range resps {
+		var jobs []trafficJob
+		if err := json.Unmarshal([]byte(resp), &jobs); err != nil {
+			logutil.Logger(ctx).Error("unmarshal traffic job failed", zap.String("addr", addr), zap.String("jobs", resp), zap.Error(err))
+			return err
+		}
+		for i := range len(jobs) {
+			jobs[i].Instance = addr
+		}
+		allJobs = append(allJobs, jobs...)
+	}
+	sort.Slice(allJobs, func(i, j int) bool {
+		if allJobs[i].StartTime > allJobs[j].StartTime {
+			return true
+		} else if allJobs[i].StartTime < allJobs[j].StartTime {
+			return false
+		}
+		return allJobs[i].Instance < allJobs[j].Instance
+	})
+	e.jobs = allJobs
+	return nil
+}
+
+// Next implements the Executor Next interface.
+func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	batchSize := min(e.MaxChunkSize(), len(e.jobs)-e.cursor)
+	req.GrowAndReset(batchSize)
+	for i := 0; i < batchSize; i++ {
+		job := e.jobs[e.cursor]
+		e.cursor++
+		req.AppendTime(0, parseTime(ctx, e.BaseExecutor, job.StartTime))
+		req.AppendTime(1, parseTime(ctx, e.BaseExecutor, job.EndTime))
+		req.AppendString(2, job.Instance)
+		req.AppendString(3, job.Type)
+		req.AppendString(4, job.Progress)
+		req.AppendString(5, job.Status)
+		req.AppendString(6, job.Err)
+	}
+	return nil
+}
+
+func request(ctx context.Context, exec exec.BaseExecutor, reader io.Reader, method, path string) (map[string]string, error) {
+	addrs, err := getTiProxyAddrs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	resps := make(map[string]string, len(addrs))
 	for _, addr := range addrs {
 		resp, requestErr := requestOne(method, addr, path, reader)
 		if requestErr != nil {
+			// Let's send requests to all the instances even if some fail.
 			exec.Ctx().GetSessionVars().StmtCtx.AppendError(requestErr)
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("method", method),
 				zap.String("path", path), zap.String("addr", addr), zap.String("resp", resp), zap.Error(requestErr))
 			if err == nil {
 				err = requestErr
 			}
+		} else {
+			resps[addr] = resp
 		}
 	}
 	if err == nil {
 		logutil.Logger(ctx).Info("traffic request to tiproxy succeeds", zap.Any("addrs", addrs), zap.String("path", path))
 	}
-	return err
+	return resps, err
 }
 
 func getTiProxyAddrs(ctx context.Context) ([]string, error) {
@@ -156,4 +232,13 @@ func getForm(m map[string]string) string {
 		form.Add(key, value)
 	}
 	return form.Encode()
+}
+
+func parseTime(ctx context.Context, exec exec.BaseExecutor, timeStr string) types.Time {
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		exec.Ctx().GetSessionVars().StmtCtx.AppendError(err)
+		logutil.Logger(ctx).Error("parse time failed", zap.String("time", timeStr), zap.Error(err))
+	}
+	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp)
 }
