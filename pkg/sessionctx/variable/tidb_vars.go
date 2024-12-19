@@ -1223,6 +1223,8 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBEnableLabelSecurity is use to enable or disable label security on TiDB.
+	TiDBEnableLabelSecurity = "tidb_enable_label_security"
 	// TiDBEnableLoginHistory indicates whether tidb need enable the login-history.
 	TiDBEnableLoginHistory = "tidb_enable_login_history"
 	// TiDBLoginHistoryRetainDuration indicates the duration of retaining the record in mysql.log_history.
@@ -1586,6 +1588,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBEnableLabelSecurity                        = false
 	DefTiDBEnableLoginHistory                         = false
 	DefTiDBLoginHistoryRetainDuration                 = time.Hour * 24 * 90 // default 90 days.
 	DefStoredProgramCacheSize                         = 256
@@ -1714,8 +1717,10 @@ var (
 	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
-	SchemaCacheSize            = atomic.NewUint64(DefTiDBSchemaCacheSize)
-	SchemaCacheSizeOriginText  = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
+	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	EnableLabelSecurity       = atomic.NewBool(DefTiDBEnableLabelSecurity)
+
 	EnableLoginHistory         = atomic.NewBool(DefTiDBEnableLoginHistory)
 	LoginHistoryRetainDuration = atomic.NewDuration(DefTiDBLoginHistoryRetainDuration)
 	StoredProgramCacheSize     = atomic.NewInt64(DefStoredProgramCacheSize)

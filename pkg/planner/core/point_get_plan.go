@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -892,6 +893,13 @@ func TryFastPlan(ctx base.PlanContext, node *resolve.NodeW) (p base.Plan) {
 	if checkStableResultMode(ctx) || fixcontrol.GetBoolWithDefault(ctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix52592, false) {
 		// the rule of stabilizing results has not taken effect yet, so cannot generate a plan here in this mode
 		// or Fix52592 is turn on to disable fast path for select, update and delete
+		return nil
+	}
+
+	// If use label security, it will add label_access filter to select the right rows.
+	// It can't use FastPlan any more.
+	// todo: It should check whether the table has been binded a label policy.
+	if variable.EnableLabelSecurity.Load() {
 		return nil
 	}
 

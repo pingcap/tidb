@@ -739,6 +739,7 @@ json_storage_size
 json_type
 json_unquote
 json_valid
+label_accessible
 last_day
 last_insert_id
 lastval

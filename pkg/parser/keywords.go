@@ -433,6 +433,7 @@ var Keywords = []KeywordsType{
 	{"LAST", false, "unreserved"},
 	{"LASTVAL", false, "unreserved"},
 	{"LAST_BACKUP", false, "unreserved"},
+	{"LBAC", false, "unreserved"},
 	{"LESS", false, "unreserved"},
 	{"LEVEL", false, "unreserved"},
 	{"LIST", false, "unreserved"},

@@ -203,6 +203,7 @@ const (
 	FromBase64      = "from_base64"
 	InsertFunc      = "insert_func"
 	Instr           = "instr"
+	LabelAceesible  = "label_accessible"
 	Lcase           = "lcase"
 	Left            = "left"
 	Length          = "length"

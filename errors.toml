@@ -2031,6 +2031,11 @@ error = '''
 Unknown background task name '%-.192s'
 '''
 
+["executor:8800"]
+error = '''
+This row has a unaccessible label, row label [%s], user lbael [%s]
+'''
+
 ["expression:1139"]
 error = '''
 Got error '%-.64s' from regexp

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -74,6 +75,9 @@ type UpdateExec struct {
 	fkCascades map[int64][]*FKCascadeExec
 
 	IgnoreError bool
+	PolicyName  string // The label policy name binded to this table.
+	UserLabel   string // The label binded to current user.
+	LabelColumn string // The column name of this table used to store label value.
 }
 
 // prepare `handles`, `tableUpdatable`, `changed` to avoid re-computations.
@@ -276,6 +280,7 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	fields := exec.RetTypes(e.Children(0))
 	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
+	labelColPos := e.getLabelColumnPos()
 	globalRowIdx := 0
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	if !e.allAssignmentsAreConstant {
@@ -323,6 +328,15 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
+			if labelColPos != -1 {
+				res, err := IsLabelAccessible(e.Ctx().GetExprCtx(), datumRow[labelColPos], types.NewDatum(e.UserLabel))
+				if err != nil {
+					return 0, err
+				}
+				if !res {
+					return 0, exeerrors.ErrRowLabelUnAccessible.GenWithStackByArgs(datumRow[labelColPos].GetString(), e.UserLabel)
+				}
+			}
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
 				return 0, err
@@ -356,6 +370,24 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
 	return totalNumRows, nil
+}
+
+func (e *UpdateExec) getLabelColumnPos() int {
+	if len(e.LabelColumn) == 0 {
+		return -1
+	}
+
+	for _, tbl := range e.tblID2table {
+		for i, col := range tbl.Cols() {
+			if col.Name.L == e.LabelColumn {
+				return i
+			}
+		}
+		// Label security only takes effect for singe table update statements.
+		break
+	}
+
+	return -1
 }
 
 func (e *UpdateExec) handleErr(colName model.CIStr, col *table.Column, rowIdx int, err error) error {

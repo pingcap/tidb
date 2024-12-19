@@ -2475,6 +2475,7 @@ const (
 	AdminShowBDRRole
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
+	AdminLBACEnable
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.

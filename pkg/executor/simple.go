@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -2928,7 +2929,110 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminSetBDRRole(s)
 	case ast.AdminUnsetBDRRole:
 		return e.executeAdminUnsetBDRRole()
+	case ast.AdminLBACEnable:
+		return e.executeAdminLBACEnable(s)
 	}
+	return nil
+}
+
+// clearSysSession close the session does not return the session.
+// Since the environment variables in the session are changed, the session object is not returned.
+func clearSysSession(ctx context.Context, sctx sessionctx.Context) {
+	if sctx == nil {
+		return
+	}
+	_, _ = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "rollback")
+	sctx.(pools.Resource).Close()
+}
+
+func (e *SimpleExec) executeAdminLBACEnable(s *ast.AdminStmt) error {
+	sysSession, err := e.GetSysSession()
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	defer clearSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+	defer func() {
+		if err == nil {
+			return
+		}
+		// In fact, we need only execute dropLabelSecuritySchema, but TiDB currently can't
+		// drop the procedures in the schema when we drop the schema.
+		// TODO: remove all drop sqls execept dropLabelSecuritySchema.
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreatePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropPolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropLevel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropCompart)
+		sqlExecutor.ExecuteInternal(internalCtx, dropCreateGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropGroup)
+		sqlExecutor.ExecuteInternal(internalCtx, dropSetUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropDropUserLabel)
+		sqlExecutor.ExecuteInternal(internalCtx, dropApplyTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropRemoveTablePolicy)
+		sqlExecutor.ExecuteInternal(internalCtx, dropLabelSecuritySchema)
+	}()
+
+	sqlMod, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.SQLModeVar)
+	if !ok {
+		return errors.New("unknown system var " + variable.SQLModeVar)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.SQLModeVar, sqlMod)
+	chs, ok := e.Ctx().GetSessionVars().GetSystemVar(variable.CharacterSetClient)
+	if !ok {
+		return errors.New("unknown system var " + variable.CharacterSetClient)
+	}
+	sysSession.GetSessionVars().SetSystemVar(variable.CharacterSetClient, chs)
+
+	// Create schema LABELSECURITY_SCHEMA
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLabelSecuritySchema); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createPolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropPolicy); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createLevel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropLevel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, createCompart); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropCompart); err != nil {
+		return err
+	}
+
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, createGroup); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropGroup); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, setUserLabel); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, dropUserLabel); err != nil {
+		return err
+	}
+
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, applyTablePolicy); err != nil {
+		return err
+	}
+	if _, err = sqlExecutor.ExecuteInternal(internalCtx, removeTablePolicy); err != nil {
+		return err
+	}
+
 	return nil
 }
 

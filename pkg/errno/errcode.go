@@ -1160,6 +1160,9 @@ const (
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
 
+	// Enterprise Edit errors.
+	ErrRowLabelUnAccessible = 8800
+
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
 	ErrTiKVServerTimeout         = 9002

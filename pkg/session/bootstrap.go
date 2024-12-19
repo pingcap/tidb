@@ -815,6 +815,42 @@ const (
 		KEY Grantor (Grantor)
 	  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='Procedure privileges'`
 
+	// CreateLSPolicies is used to create table tidb_ls_policies.
+	CreateLSPolicies = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_policies(
+		policy_name varchar(64) NOT NULL,
+		label_column varchar(64) NOT NULL,
+		PRIMARY KEY(policy_name)
+	);`
+
+	// CreateLSTables is used to create table tidb_ls_tables.
+	CreateLSTables = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_tables(
+		policy_name varchar(64) NOT NULL,
+		schema_name varchar(64) NOT NULL COLLATE utf8mb4_general_ci,
+		table_name varchar(64) NOT NULL COLLATE utf8mb4_general_ci,
+		table_options enum('READ_CONTROL','WRITE_CONTROL'),
+		PRIMARY KEY(policy_name),
+		UNIQUE KEY(schema_name, table_name)
+	) CHARSET=utf8mb4;`
+
+	// CreateLSUsers is used to create table tidb_ls_users.
+	CreateLSUsers = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_users(
+		policy_name varchar(64) NOT NULL,
+		user_name varchar(64) NOT NULL,
+		label_value varchar(64) NOT NULL,
+		PRIMARY KEY(policy_name, user_name)
+	);`
+
+	// CreateLSElements is used to create mysql.tidb_ls_elements.
+	CreateLSElements = `CREATE TABLE IF NOT EXISTS mysql.tidb_ls_elements (
+		policy_name varchar(64) NOT NULL,
+		element_type enum('level','compartment','group') NOT NULL,
+		element_id int,
+		element_name varchar(64),
+		element_comment varchar(128),
+		Primary key(policy_name, element_type, element_name),
+		Unique key(policy_name, element_type, element_id)
+	);`
+
 	// CreateWhitelistTableSQL is the SQL statement to create whitelist table.
 	CreateWhitelistTableSQL = `CREATE TABLE IF NOT EXISTS mysql.whitelist (
 		id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -3450,7 +3486,10 @@ func upgradeToEEVer5(s sessiontypes.Session, ver int64) {
 	if ver >= eeversion5 {
 		return
 	}
-	// TODO
+	doReentrantDDL(s, CreateLSPolicies)
+	doReentrantDDL(s, CreateLSTables)
+	doReentrantDDL(s, CreateLSUsers)
+	doReentrantDDL(s, CreateLSElements)
 }
 
 func upgradeToEEVer6(s sessiontypes.Session, ver int64) {
@@ -3667,6 +3706,11 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateRouteTable)
 	// Create routine privilege table mysql.procs_priv
 	mustExecute(s, CreateProcsPriv)
+	// Create label security tables
+	mustExecute(s, CreateLSPolicies)
+	mustExecute(s, CreateLSTables)
+	mustExecute(s, CreateLSUsers)
+	mustExecute(s, CreateLSElements)
 	// create runaway_watch
 	mustExecute(s, CreateRunawayWatchTable)
 	// create runaway_queries

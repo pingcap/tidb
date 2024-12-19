@@ -96,7 +96,10 @@ type InsertValues struct {
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
 
-	ignoreErr bool
+	ignoreErr   bool
+	PolicyName  string // The label policy name binded to this table.
+	UserLabel   string // The label binded to current user.
+	LabelColumn string // The column name of this table used to store label value.
 }
 
 type defaultVal struct {
@@ -653,6 +656,32 @@ func (e *InsertValues) fillColValue(
 	return datum, nil
 }
 
+// IsLabelAccessible checks whether the row associated by `dt0` is accessible
+// by current user which has a label `dt1`.
+// param `dt0`: the row label to be checked.
+// param `dt1`: the label of current user.
+func IsLabelAccessible(ctx expression.BuildContext, rowLbl types.Datum, userLbl types.Datum) (bool, error) {
+	tp := types.NewFieldType(mysql.TypeLong)
+	// TODO: take account of collation.
+	// TODO: what's the difference of TypeVarchar and TypeVarString.
+	arg0 := &expression.Constant{Value: rowLbl, RetType: types.NewFieldType(mysql.TypeVarchar)}
+	arg1 := &expression.Constant{Value: userLbl, RetType: types.NewFieldType(mysql.TypeVarchar)}
+	la, err := expression.NewFunction(ctx, ast.LabelAceesible, tp, []expression.Expression{arg0, arg1}...)
+	if err != nil {
+		return false, err
+	}
+	val, isNull, err := la.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		return false, err
+	}
+
+	if val == 0 || isNull {
+		return false, nil
+	}
+
+	return true, nil
+}
+
 // fillRow fills generated columns, auto_increment column and empty column.
 // For NOT NULL column, it will return error or use zero value based on sql_mode.
 // When lazyFillAutoID is true, fill row will lazily handle auto increment datum for lazy batch allocation.
@@ -670,6 +699,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		col.ColumnInfo.Offset = len(tCols)
 		tCols = append(tCols, col)
 	}
+	labelEvaluated := false
 	rowCntInLoadData := uint64(0)
 	if e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt {
 		rowCntInLoadData = e.rowCount
@@ -689,6 +719,19 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
 					return nil, err
 				}
+			}
+			if variable.EnableLabelSecurity.Load() &&
+				!labelEvaluated &&
+				len(e.LabelColumn) > 0 &&
+				c.Name.L == e.LabelColumn {
+				res, err := IsLabelAccessible(e.Ctx().GetExprCtx(), row[i], types.NewDatum(e.UserLabel))
+				if err != nil {
+					return nil, err
+				}
+				if !res {
+					return nil, exeerrors.ErrRowLabelUnAccessible.GenWithStackByArgs(row[i].GetString(), e.UserLabel)
+				}
+				labelEvaluated = true
 			}
 		}
 	}

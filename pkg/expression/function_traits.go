@@ -288,4 +288,5 @@ var booleanFunctions = map[string]struct{}{
 	ast.JSONSchemaValid:    {},
 	ast.JSONValid:          {},
 	ast.RegexpLike:         {},
+	ast.LabelAceesible:     {},
 }

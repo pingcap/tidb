@@ -1647,6 +1647,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		if err != nil {
 			return nil, err
 		}
+	case ast.AdminLBACEnable:
+		ret = &Simple{Statement: as}
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -4138,6 +4140,12 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	err = insertPlan.buildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
+	if err != nil {
+		return nil, err
+	}
+
+	err = b.buildLabelSecurityInfo(insertPlan, tn)
+
 	return insertPlan, err
 }
 

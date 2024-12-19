@@ -78,6 +78,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -3871,6 +3873,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	b.allNames = append(b.allNames, p.OutputNames())
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
+	err = b.buildLabelSecurityFilterOfSelect(sel)
+	if err != nil {
+		return nil, err
+	}
+
 	if sel.Where != nil {
 		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
@@ -5628,7 +5635,56 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.PartitionedTable = b.partitionedTable
 	updt.tblID2Table = tblID2table
 	err = updt.buildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
+	if err != nil {
+		return nil, err
+	}
+	// Label security takes effect currently when updating single table.
+	// TODO: When updateing multi-tables, label security takes effect.
+	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
+	tableList := ExtractTableList(nodeW, false)
+	if len(tableList) == 1 {
+		err = b.buildLabelSecurityInfo(updt, tableList[0])
+	}
 	return updt, err
+}
+
+func (b *PlanBuilder) buildLabelSecurityInfo(targetPlan base.Plan, tn *ast.TableName) error {
+	if !variable.EnableLabelSecurity.Load() {
+		return nil
+	}
+
+	currentUser := b.ctx.GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	// User with SuperPriv can see all rows.
+	if currentUser == nil ||
+		(checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)) {
+		return nil
+	}
+
+	policyName, userLabel, labelColumn, err := b.getUserLabelAndTablePolicy(
+		currentUser.Username,
+		tn.Schema.L,
+		tn.Name.L)
+
+	if err != nil {
+		return err
+	}
+
+	switch p := targetPlan.(type) {
+	case *Update:
+		p.PolicyName = policyName
+		p.UserLabel = userLabel
+		p.LabelColumn = labelColumn
+	case *Insert:
+		p.PolicyName = policyName
+		p.UserLabel = userLabel
+		p.LabelColumn = labelColumn
+	default:
+		return errors.New("build label security failed, it's a unsported login plan")
+	}
+
+	return nil
 }
 
 // GetUpdateColumnsInfo get the update columns info.
@@ -5946,6 +6002,11 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	}
 	oldSchema := p.Schema()
 	oldLen := oldSchema.Len()
+
+	err = b.buildLabelSecurityFilterOfDelete(ds)
+	if err != nil {
+		return nil, err
+	}
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
@@ -7099,6 +7160,38 @@ func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
+// extractCurrentBlockTableList extras the tables from join tables in current query block.
+// It doesn't extract the tables from subqueries.
+func extractCurrentBlockTableList(node ast.ResultSetNode, input []tableNameWrapper, asName bool) []tableNameWrapper {
+	if node == nil {
+		return input
+	}
+
+	switch x := node.(type) {
+	case *ast.Join:
+		input = extractCurrentBlockTableList(x.Left, input, asName)
+		input = extractCurrentBlockTableList(x.Right, input, asName)
+	case *ast.TableSource:
+		if s, ok := x.Source.(*ast.TableName); ok {
+			if x.AsName.L != "" && asName {
+				tbWrap := tableNameWrapper{
+					tbName:   s,
+					AsName:   x.AsName,
+					hasAlias: true,
+				}
+				input = append(input, tbWrap)
+			} else {
+				tbWrap := tableNameWrapper{
+					tbName: s,
+				}
+				input = append(input, tbWrap)
+			}
+		}
+	}
+
+	return input
+}
+
 func collectTableName(node ast.ResultSetNode, updatableName *map[string]bool, info *map[string]*ast.TableName) {
 	switch x := node.(type) {
 	case *ast.Join:
@@ -7503,4 +7596,226 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.CleanHashCode()
 	}
 	return res
+}
+
+func makeExprNode(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
+	exprStr = "select " + exprStr
+	stmts, _, err := p.ParseSQL(exprStr)
+	if err != nil {
+		return nil, util2.SyntaxWarn(err)
+	}
+	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
+	return fields[0].Expr, nil
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilterOfSelect(sel *ast.SelectStmt) error {
+	if !variable.EnableLabelSecurity.Load() ||
+		sel.From == nil {
+		return nil
+	}
+	return b.buildLabelSecurityFilter(sel, sel.From.TableRefs)
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilterOfDelete(del *ast.DeleteStmt) error {
+	if !variable.EnableLabelSecurity.Load() ||
+		del.TableRefs == nil {
+		return nil
+	}
+	return b.buildLabelSecurityFilter(del, del.TableRefs.TableRefs)
+}
+
+func (b *PlanBuilder) buildLabelSecurityFilter(dmlStmtNode ast.DMLNode, joinTables *ast.Join) error {
+	// How to use Username and AuthUsername?
+	// Do we need consider the hostname?
+	currentUser := b.ctx.GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(b.ctx)
+	activeRoles := b.ctx.GetSessionVars().ActiveRoles
+	// User with SuperPriv can see all rows.
+	if currentUser == nil ||
+		(checker != nil && checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv)) {
+		return nil
+	}
+
+	tableList := make([]tableNameWrapper, 0, 2)
+	if joinTables != nil {
+		tableList = extractCurrentBlockTableList(joinTables, tableList, true)
+	}
+
+	addedWhere := ""
+	for i, tbl := range tableList {
+		// todo: userLabel only need to be geted once.
+		// todo: maybe we should use only one system table to store label security info, in order to reduce rpc.
+		policyName, userLabel, labelColumn, err := b.getUserLabelAndTablePolicy(currentUser.Username, tbl.tbName.Schema.L, tbl.tbName.Name.L)
+		if err != nil {
+			return err
+		}
+		// If there is no label policy binded to this table, skip this table.
+		if len(policyName) == 0 {
+			continue
+		}
+		// The label policy is not applied.
+		if len(labelColumn) == 0 {
+			continue
+		}
+
+		if i != 0 {
+			addedWhere = addedWhere + " AND"
+		}
+		if len(userLabel) == 0 {
+			// If current user has no labels, it can access the data in this table.
+			addedWhere = addedWhere + " FALSE"
+			break
+		}
+
+		fullFieldName := ""
+		if tbl.hasAlias {
+			fullFieldName = tbl.AsName.O + "." + labelColumn
+		} else {
+			fullFieldName = tbl.tbName.Schema.L + "." + tbl.tbName.Name.L + "." + labelColumn
+		}
+
+		addedWhere = addedWhere + " label_accessible(" + fullFieldName + ", " + "'" + userLabel + "')"
+	}
+
+	if len(addedWhere) > 0 {
+		newWhere, err := makeExprNode(parser.New(), addedWhere)
+		if err != nil {
+			return err
+		}
+		switch x := dmlStmtNode.(type) {
+		case *ast.SelectStmt:
+			addExprNodeWithLogicAnd(&x.Where, newWhere)
+		case *ast.DeleteStmt:
+			addExprNodeWithLogicAnd(&x.Where, newWhere)
+		default:
+			return errors.New("build label security failed, it is a unsupported DMLNode")
+		}
+	}
+	return nil
+}
+
+func addExprNodeWithLogicAnd(origExpr *ast.ExprNode, addedExpr ast.ExprNode) {
+	if *origExpr == nil {
+		*origExpr = addedExpr
+		return
+	}
+
+	*origExpr = &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: *origExpr, R: addedExpr}
+}
+
+// getTableLabelPolicy gets the user security label and the security policy binded to table.
+// first return value: PolicyName
+// second return value: user security label
+// third return value: column name that this column stores the row label.
+func (b *PlanBuilder) getUserLabelAndTablePolicy(userName string, dbName string,
+	tableName string) (string, string, string, error) {
+	sysSession, err := b.getSysSession()
+	if err != nil {
+		return "", "", "", err
+	}
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLabeSecurity)
+	defer b.releaseSysSession(internalCtx, sysSession)
+	sqlExecutor := sysSession.(sqlexec.SQLExecutor)
+
+	// begin a pessimistic transaction.
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "BEGIN PESSIMISTIC"); err != nil {
+		return "", "", "", err
+	}
+
+	// get the policy name binded to this table
+	policyName, err := getTableLabelPolicy(internalCtx, sqlExecutor, dbName, tableName)
+	if policyName == "" || err != nil {
+		return "", "", "", err
+	}
+
+	// get the security label for this user.
+	userLabel, err := getUserSecuriyLabel(internalCtx, sqlExecutor, policyName, userName)
+	if err != nil {
+		return policyName, "", "", err
+	}
+
+	labelColumn, err := getLabelColumnName(internalCtx, sqlExecutor, policyName)
+	if err != nil {
+		return policyName, userLabel, "", err
+	}
+	if len(labelColumn) == 0 {
+		logutil.BgLogger().Warn("label security policy is not applied to table",
+			zap.String("DBName", dbName), zap.String("tableName", tableName))
+	}
+
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
+		return policyName, userLabel, labelColumn, err
+	}
+
+	return policyName, userLabel, labelColumn, nil
+}
+
+func getTableLabelPolicy(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	dbName string, tableName string) (string, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select policy_name from mysql.tidb_ls_tables where schema_name = %? and table_name = %?", dbName, tableName)
+	sqlGetPolicy := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetPolicy)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	// todo: Do we need check the row count is 1?
+	policyName := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return policyName, err
+}
+
+func getUserSecuriyLabel(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	policyName string, userName string) (string, error) {
+	// Get the security label binded to this user from mysql.tidb_ls_users.
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "select label_value from mysql.tidb_ls_users where policy_name = %?  AND user_name = %?", policyName, userName)
+	sqlGetUserLabel := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetUserLabel)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	userLabel := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return userLabel, err
+}
+
+// getLabelColumnName gets the name of the column which stores row labels.
+func getLabelColumnName(internalCtx context.Context,
+	sqlExecutor sqlexec.SQLExecutor,
+	policyName string) (string, error) {
+	// Get the security label binded to this user from mysql.tidb_ls_users.
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, "SELECT label_column FROM mysql.tidb_ls_policies WHERE policy_name = %? ", policyName)
+	sqlGetLabelColumn := sql.String()
+	recordSet, err := sqlExecutor.ExecuteInternal(internalCtx, sqlGetLabelColumn)
+	if err != nil {
+		return "", err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(internalCtx, req)
+	if req.NumRows() == 0 || err != nil {
+		recordSet.Close()
+		return "", err
+	}
+	labelColumn := req.GetRow(0).GetString(0)
+	err = recordSet.Close()
+
+	return labelColumn, err
 }
