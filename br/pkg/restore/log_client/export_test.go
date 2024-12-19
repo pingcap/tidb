@@ -61,18 +61,18 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 	return m.physical.Item
 }
 
-func (rc *LogClient) TEST_saveIDMap(
+func (lc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {
-	return rc.saveIDMap(ctx, sr)
+	return lc.saveIDMap(ctx, sr)
 }
 
-func (rc *LogClient) TEST_initSchemasMap(
+func (lc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.initSchemasMap(ctx, restoreTS)
+	return lc.initSchemasMap(ctx, restoreTS)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.

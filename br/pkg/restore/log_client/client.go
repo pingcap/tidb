@@ -229,28 +229,28 @@ func NewRestoreClient(
 }
 
 // Close a client.
-func (rc *LogClient) Close(ctx context.Context) {
+func (lc *LogClient) Close(ctx context.Context) {
 	defer func() {
-		if rc.logRestoreManager != nil {
-			rc.logRestoreManager.Close(ctx)
+		if lc.logRestoreManager != nil {
+			lc.logRestoreManager.Close(ctx)
 		}
-		if rc.sstRestoreManager != nil {
-			rc.sstRestoreManager.Close(ctx)
+		if lc.sstRestoreManager != nil {
+			lc.sstRestoreManager.Close(ctx)
 		}
 	}()
 
 	// close the connection, and it must be succeed when in SQL mode.
-	if rc.unsafeSession != nil {
-		rc.unsafeSession.Close()
+	if lc.unsafeSession != nil {
+		lc.unsafeSession.Close()
 	}
 
-	if rc.rawKVClient != nil {
-		rc.rawKVClient.Close()
+	if lc.rawKVClient != nil {
+		lc.rawKVClient.Close()
 	}
 	log.Info("Restore client closed")
 }
 
-func (rc *LogClient) RestoreCompactedSstFiles(
+func (lc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 	rules map[int64]*restoreutils.RewriteRules,
@@ -307,14 +307,14 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// where batch processing may lead to increased complexity and potential inefficiencies.
 	// TODO: Future enhancements may explore the feasibility of reintroducing batch restoration
 	// while maintaining optimal performance and resource utilization.
-	err = rc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
+	err = lc.sstRestoreManager.restorer.GoRestore(onProgress, backupFileSets)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return rc.sstRestoreManager.restorer.WaitUntilFinish()
+	return lc.sstRestoreManager.restorer.WaitUntilFinish()
 }
 
-func (rc *LogClient) SetRawKVBatchClient(
+func (lc *LogClient) SetRawKVBatchClient(
 	ctx context.Context,
 	pdAddrs []string,
 	security config.Security,
@@ -324,71 +324,71 @@ func (rc *LogClient) SetRawKVBatchClient(
 		return errors.Trace(err)
 	}
 
-	rc.rawKVClient = rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount)
+	lc.rawKVClient = rawkv.NewRawKVBatchClient(rawkvClient, rawKVBatchCount)
 	return nil
 }
 
-func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
-	rc.cipher = crypter
+func (lc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
+	lc.cipher = crypter
 }
 
-func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
+func (lc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
 	log.Info("upstream cluster id", zap.Uint64("cluster id", upstreamClusterID))
-	rc.upstreamClusterID = upstreamClusterID
+	lc.upstreamClusterID = upstreamClusterID
 }
 
-func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+func (lc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
+	lc.storage, err = storage.New(ctx, backend, opts)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (rc *LogClient) SetCurrentTS(ts uint64) error {
+func (lc *LogClient) SetCurrentTS(ts uint64) error {
 	if ts == 0 {
 		return errors.Errorf("set rewrite ts to an invalid ts: %d", ts)
 	}
-	rc.currentTS = ts
+	lc.currentTS = ts
 	return nil
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
-func (rc *LogClient) GetClusterID(ctx context.Context) uint64 {
-	if rc.clusterID <= 0 {
-		rc.clusterID = rc.pdClient.GetClusterID(ctx)
+func (lc *LogClient) GetClusterID(ctx context.Context) uint64 {
+	if lc.clusterID <= 0 {
+		lc.clusterID = lc.pdClient.GetClusterID(ctx)
 	}
-	return rc.clusterID
+	return lc.clusterID
 }
 
-func (rc *LogClient) GetDomain() *domain.Domain {
-	return rc.dom
+func (lc *LogClient) GetDomain() *domain.Domain {
+	return lc.dom
 }
 
-func (rc *LogClient) CleanUpKVFiles(
+func (lc *LogClient) CleanUpKVFiles(
 	ctx context.Context,
 ) error {
 	// Current we only have v1 prefix.
 	// In the future, we can add more operation for this interface.
-	return rc.logRestoreManager.fileImporter.ClearFiles(ctx, rc.pdClient, "v1")
+	return lc.logRestoreManager.fileImporter.ClearFiles(ctx, lc.pdClient, "v1")
 }
 
 // Init create db connection and domain for storage.
-func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
+func (lc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) error {
 	var err error
-	rc.unsafeSession, err = g.CreateSession(store)
+	lc.unsafeSession, err = g.CreateSession(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// Set SQL mode to None for avoiding SQL compatibility problem
-	err = rc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
+	err = lc.unsafeSession.Execute(ctx, "set @@sql_mode=''")
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	rc.dom, err = g.GetDomain(store)
+	lc.dom, err = g.GetDomain(store)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -396,22 +396,22 @@ func (rc *LogClient) Init(ctx context.Context, g glue.Glue, store kv.Storage) er
 	return nil
 }
 
-func (rc *LogClient) InitClients(
+func (lc *LogClient) InitClients(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
 	createSessionFn func() (glue.Session, error),
 	concurrency uint,
 	concurrencyPerStore uint,
 ) error {
-	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, lc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
 
-	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, len(stores)+1)
-	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
+	metaClient := split.NewClient(lc.pdClient, lc.pdHTTPClient, lc.tlsConf, maxSplitKeysOnce, len(stores)+1)
+	importCli := importclient.NewImportClient(metaClient, lc.tlsConf, lc.keepaliveConf)
 
-	rc.logRestoreManager, err = NewLogRestoreManager(
+	lc.logRestoreManager, err = NewLogRestoreManager(
 		ctx,
 		NewLogFileImporter(metaClient, importCli, backend),
 		concurrency,
@@ -427,15 +427,15 @@ func (rc *LogClient) InitClients(
 	})
 
 	opt := snapclient.NewSnapFileImporterOptions(
-		rc.cipher, metaClient, importCli, backend,
+		lc.cipher, metaClient, importCli, backend,
 		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
-		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
+		ctx, lc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.sstRestoreManager, err = NewSstRestoreManager(
+	lc.sstRestoreManager, err = NewSstRestoreManager(
 		ctx,
 		snapFileImporter,
 		concurrencyPerStore,
@@ -445,14 +445,14 @@ func (rc *LogClient) InitClients(
 	return errors.Trace(err)
 }
 
-func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
+func (lc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	ctx context.Context,
 ) (map[string]struct{}, error) {
 	sstCheckpointSets := make(map[string]struct{})
 
-	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+	if checkpoint.ExistsSstRestoreCheckpoint(ctx, lc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
 		// we need to load the checkpoint data for the following restore
-		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+		execCtx := lc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			sstCheckpointSets[v.Name] = struct{}{}
 		})
@@ -461,7 +461,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, lc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -469,19 +469,19 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	return sstCheckpointSets, nil
 }
 
-func (rc *LogClient) InitCheckpointMetadataForLogRestore(
+func (lc *LogClient) InitCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	startTS, restoredTS uint64,
 	gcRatio string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 ) (string, error) {
-	rc.useCheckpoint = true
+	lc.useCheckpoint = true
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
-	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
+	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, lc.dom) {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, lc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -496,13 +496,13 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 		items = tiflashRecorder.GetItems()
 	}
 	log.Info("save gc ratio into checkpoint metadata",
-		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", rc.currentTS),
+		zap.Uint64("start-ts", startTS), zap.Uint64("restored-ts", restoredTS), zap.Uint64("rewrite-ts", lc.currentTS),
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
-	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, rc.unsafeSession, &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID: rc.upstreamClusterID,
+	if err := checkpoint.SaveCheckpointMetadataForLogRestore(ctx, lc.unsafeSession, &checkpoint.CheckpointMetadataForLogRestore{
+		UpstreamClusterID: lc.upstreamClusterID,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
-		RewriteTS:         rc.currentTS,
+		RewriteTS:         lc.currentTS,
 		GcRatio:           gcRatio,
 		TiFlashItems:      items,
 	}); err != nil {
@@ -512,8 +512,8 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 	return gcRatio, nil
 }
 
-func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
-	ext := stream.MigerationExtension(rc.storage)
+func (lc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, error) {
+	ext := stream.MigerationExtension(lc.storage)
 	migs, err := ext.Load(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -521,12 +521,12 @@ func (rc *LogClient) GetMigrations(ctx context.Context) ([]*backuppb.Migration, 
 	return migs.ListAll(), nil
 }
 
-func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
+func (lc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restoreTS uint64, metadataDownloadBatchSize uint,
 	encryptionManager *encryption.Manager) error {
 	init := LogFileManagerInit{
 		StartTS:   startTS,
 		RestoreTS: restoreTS,
-		Storage:   rc.storage,
+		Storage:   lc.storage,
 
 		MigrationsBuilder: &WithMigrationsBuilder{
 			startTS:    startTS,
@@ -536,7 +536,7 @@ func (rc *LogClient) InstallLogFileManager(ctx context.Context, startTS, restore
 		EncryptionManager:         encryptionManager,
 	}
 	var err error
-	rc.LogFileManager, err = CreateLogFileManager(ctx, init)
+	lc.LogFileManager, err = CreateLogFileManager(ctx, init)
 	if err != nil {
 		return err
 	}
@@ -701,7 +701,7 @@ func ApplyKVFilesWithSingleMethod(
 	return nil
 }
 
-func (rc *LogClient) RestoreKVFiles(
+func (lc *LogClient) RestoreKVFiles(
 	ctx context.Context,
 	rules map[int64]*restoreutils.RewriteRules,
 	logIter LogIter,
@@ -753,7 +753,7 @@ func (rc *LogClient) RestoreKVFiles(
 			skipFile += len(files)
 		} else {
 			applyWg.Add(1)
-			rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+			lc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
 				fileStart := time.Now()
 				defer applyWg.Done()
 				defer func() {
@@ -765,8 +765,8 @@ func (rc *LogClient) RestoreKVFiles(
 						filenames := make([]string, 0, len(files))
 						for _, f := range files {
 							filenames = append(filenames, f.Path+", ")
-							if rc.logRestoreManager.checkpointRunner != nil {
-								if e := checkpoint.AppendRangeForLogRestore(ectx, rc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+							if lc.logRestoreManager.checkpointRunner != nil {
+								if e := checkpoint.AppendRangeForLogRestore(ectx, lc.logRestoreManager.checkpointRunner, f.MetaDataGroupName, rule.NewTableID, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
 									err = errors.Annotate(e, "failed to append checkpoint data")
 									break
 								}
@@ -777,13 +777,13 @@ func (rc *LogClient) RestoreKVFiles(
 					}
 				}()
 
-				return rc.logRestoreManager.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS,
+				return lc.logRestoreManager.fileImporter.ImportKVFiles(ectx, files, rule, lc.shiftStartTS, lc.startTS, lc.restoreTS,
 					supportBatch, cipherInfo, masterKeys)
 			})
 		}
 	}
 
-	rc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() error {
+	lc.logRestoreManager.workerPool.ApplyOnErrorGroup(eg, func() error {
 		if supportBatch {
 			err = ApplyKVFilesWithBatchMethod(ectx, logIter, int(pitrBatchCount), uint64(pitrBatchSize), applyFunc, &applyWg)
 		} else {
@@ -805,18 +805,18 @@ func (rc *LogClient) RestoreKVFiles(
 	return errors.Trace(err)
 }
 
-func (rc *LogClient) initSchemasMap(
+func (lc *LogClient) initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	getPitrIDMapSQL := "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+	execCtx := lc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
 		getPitrIDMapSQL,
 		restoreTS,
-		rc.upstreamClusterID,
+		lc.upstreamClusterID,
 	)
 	if errSQL != nil {
 		return nil, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
@@ -918,7 +918,7 @@ type InitSchemaConfig struct {
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
 
-func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
+func (lc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
 	cipherInfo *backuppb.CipherInfo,
@@ -930,7 +930,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
 			return dbReplaces, nil
 		}
-		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
+		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", lc.startTS)
 	}
 	s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
 	if err != nil {
@@ -942,7 +942,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	}
 	for _, t := range fullBackupTables {
 		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-		newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
+		newDBInfo, exist := lc.dom.InfoSchema().SchemaByName(dbName)
 		if !exist {
 			log.Info("db not existed", zap.String("dbname", dbName.String()))
 			continue
@@ -958,7 +958,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 			// If the db is empty, skip it.
 			continue
 		}
-		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
+		newTableInfo, err := restore.GetTableSchema(lc.GetDomain(), dbName, t.Info.Name)
 		if err != nil {
 			log.Info("table not existed", zap.String("tablename", dbName.String()+"."+t.Info.Name.String()))
 			continue
@@ -976,7 +976,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 
 // InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
 // It is used to rewrite meta kv-event.
-func (rc *LogClient) InitSchemasReplaceForDDL(
+func (lc *LogClient) InitSchemasReplaceForDDL(
 	ctx context.Context,
 	cfg *InitSchemaConfig,
 	cipherInfo *backuppb.CipherInfo,
@@ -994,7 +994,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if !cfg.IsNewTask {
 		log.Info("try to load pitr id maps")
 		needConstructIdMap = false
-		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
+		dbMaps, err = lc.initSchemasMap(ctx, lc.restoreTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1003,14 +1003,14 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
-		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
+		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", lc.startTS))
 		needConstructIdMap = true
-		dbMaps, err = rc.initSchemasMap(ctx, rc.startTS)
+		dbMaps, err = lc.initSchemasMap(ctx, lc.startTS)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		existTiFlashTable := false
-		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
+		lc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
 			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
 				existTiFlashTable = true
 			}
@@ -1024,7 +1024,7 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
+		dbReplaces, err = lc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1050,8 +1050,8 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	}
 
 	rp := stream.NewSchemasReplace(
-		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.RecordDeleteRange)
+		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, lc.currentTS, cfg.TableFilter, lc.GenGlobalID, lc.GenGlobalIDs,
+		lc.RecordDeleteRange)
 	return rp, nil
 }
 
@@ -1069,7 +1069,7 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 }
 
 // RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
-func (rc *LogClient) RestoreMetaKVFiles(
+func (lc *LogClient) RestoreMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
@@ -1111,7 +1111,7 @@ func (rc *LogClient) RestoreMetaKVFiles(
 
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
-		if err := rc.PreConstructAndSaveIDMap(
+		if err := lc.PreConstructAndSaveIDMap(
 			ctx,
 			filesInWriteCF,
 			filesInDefaultCF,
@@ -1132,46 +1132,46 @@ func (rc *LogClient) RestoreMetaKVFiles(
 		schemasReplace,
 		updateStats,
 		progressInc,
-		rc.RestoreBatchMetaKVFiles,
+		lc.RestoreBatchMetaKVFiles,
 	); err != nil {
 		return errors.Trace(err)
 	}
 
 	// Update global schema version and report all of TiDBs.
-	if err := rc.UpdateSchemaVersion(ctx); err != nil {
+	if err := lc.UpdateSchemaVersion(ctx); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // PreConstructAndSaveIDMap constructs id mapping and save it.
-func (rc *LogClient) PreConstructAndSaveIDMap(
+func (lc *LogClient) PreConstructAndSaveIDMap(
 	ctx context.Context,
 	fsInWriteCF, fsInDefaultCF []*backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
 	sr.SetPreConstructMapStatus()
 
-	if err := rc.constructIDMap(ctx, fsInWriteCF, sr); err != nil {
+	if err := lc.constructIDMap(ctx, fsInWriteCF, sr); err != nil {
 		return errors.Trace(err)
 	}
-	if err := rc.constructIDMap(ctx, fsInDefaultCF, sr); err != nil {
+	if err := lc.constructIDMap(ctx, fsInDefaultCF, sr); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err := rc.saveIDMap(ctx, sr); err != nil {
+	if err := lc.saveIDMap(ctx, sr); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (rc *LogClient) constructIDMap(
+func (lc *LogClient) constructIDMap(
 	ctx context.Context,
 	fs []*backuppb.DataFileInfo,
 	sr *stream.SchemasReplace,
 ) error {
 	for _, f := range fs {
-		entries, _, err := rc.ReadAllEntries(ctx, f, math.MaxUint64)
+		entries, _, err := lc.ReadAllEntries(ctx, f, math.MaxUint64)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1275,7 +1275,7 @@ func RestoreMetaKVFilesWithBatchMethod(
 	return nil
 }
 
-func (rc *LogClient) RestoreBatchMetaKVFiles(
+func (lc *LogClient) RestoreBatchMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
@@ -1302,7 +1302,7 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 
 	// read all of entries from files.
 	for _, f := range files {
-		es, nextEs, err := rc.ReadAllEntries(ctx, f, filterTS)
+		es, nextEs, err := lc.ReadAllEntries(ctx, f, filterTS)
 		if err != nil {
 			return nextKvEntries, errors.Trace(err)
 		}
@@ -1317,7 +1317,7 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	})
 
 	// restore these entries with rawPut() method.
-	kvCount, size, err := rc.restoreMetaKvEntries(ctx, schemasReplace, curKvEntries, cf)
+	kvCount, size, err := lc.restoreMetaKvEntries(ctx, schemasReplace, curKvEntries, cf)
 	if err != nil {
 		return nextKvEntries, errors.Trace(err)
 	}
@@ -1331,7 +1331,7 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 	return nextKvEntries, nil
 }
 
-func (rc *LogClient) restoreMetaKvEntries(
+func (lc *LogClient) restoreMetaKvEntries(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 	entries []*KvEntryWithTS,
@@ -1342,7 +1342,7 @@ func (rc *LogClient) restoreMetaKvEntries(
 		size    uint64
 	)
 
-	rc.rawKVClient.SetColumnFamily(columnFamily)
+	lc.rawKVClient.SetColumnFamily(columnFamily)
 
 	for _, entry := range entries {
 		log.Debug("before rewrte entry", zap.Uint64("key-ts", entry.Ts), zap.Int("key-len", len(entry.E.Key)),
@@ -1362,12 +1362,12 @@ func (rc *LogClient) restoreMetaKvEntries(
 		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
 			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
 		})
-		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
+		if err := lc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.Ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
 		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
-			if err := rc.rawKVClient.PutRest(ctx); err != nil {
+			if err := lc.rawKVClient.PutRest(ctx); err != nil {
 				failpoint.Return(0, 0, errors.Trace(err))
 			}
 		})
@@ -1375,13 +1375,13 @@ func (rc *LogClient) restoreMetaKvEntries(
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
 
-	return kvCount, size, rc.rawKVClient.PutRest(ctx)
+	return kvCount, size, lc.rawKVClient.PutRest(ctx)
 }
 
 // GenGlobalID generates a global id by transaction way.
-func (rc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
+func (lc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
 	var id int64
-	storage := rc.GetDomain().Store()
+	storage := lc.GetDomain().Store()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
@@ -1399,9 +1399,9 @@ func (rc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
 }
 
 // GenGlobalIDs generates several global ids by transaction way.
-func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
+func (lc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 	ids := make([]int64, 0)
-	storage := rc.GetDomain().Store()
+	storage := lc.GetDomain().Store()
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(
@@ -1419,8 +1419,8 @@ func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 }
 
 // UpdateSchemaVersion updates schema version by transaction way.
-func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
-	storage := rc.GetDomain().Store()
+func (lc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
+	storage := lc.GetDomain().Store()
 	var schemaVersion int64
 
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
@@ -1455,7 +1455,7 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 	ver := strconv.FormatInt(schemaVersion, 10)
 	if err := ddlutil.PutKVToEtcd(
 		ctx,
-		rc.GetDomain().GetEtcdClient(),
+		lc.GetDomain().GetEtcdClient(),
 		math.MaxInt,
 		ddlutil.DDLGlobalSchemaVersion,
 		ver,
@@ -1468,7 +1468,7 @@ func (rc *LogClient) UpdateSchemaVersion(ctx context.Context) error {
 
 // WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
-func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
+func (lc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
 	compactedIter iter.TryNextor[*backuppb.LogFileSubcompaction],
 	rules map[int64]*restoreutils.RewriteRules,
@@ -1477,7 +1477,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	splitSize uint64,
 	splitKeys int64,
 ) (iter.TryNextor[*backuppb.LogFileSubcompaction], error) {
-	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	client := split.NewClient(lc.pdClient, lc.pdHTTPClient, lc.tlsConf, maxSplitKeysOnce, 3)
 	wrapper := restore.PipelineRestorerWrapper[*backuppb.LogFileSubcompaction]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
@@ -1487,7 +1487,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 
 // WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules.
-func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
+func (lc *LogClient) WrapLogFilesIterWithSplitHelper(
 	ctx context.Context,
 	logIter LogIter,
 	execCtx sqlexec.RestrictedSQLExecutor,
@@ -1496,11 +1496,11 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	splitSize uint64,
 	splitKeys int64,
 ) (LogIter, error) {
-	client := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, 3)
+	client := split.NewClient(lc.pdClient, lc.pdHTTPClient, lc.tlsConf, maxSplitKeysOnce, 3)
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, lc.useCheckpoint, execCtx, rules, updateStatsFn)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1540,14 +1540,14 @@ const (
 	alterTableAddPrimaryFormat     = "ALTER TABLE %%n.%%n ADD PRIMARY KEY (%s) NONCLUSTERED"
 )
 
-func (rc *LogClient) generateRepairIngestIndexSQLs(
+func (lc *LogClient) generateRepairIngestIndexSQLs(
 	ctx context.Context,
 	ingestRecorder *ingestrec.IngestRecorder,
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
-	if rc.useCheckpoint {
-		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+	if lc.useCheckpoint {
+		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, lc.dom) {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, lc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1557,7 +1557,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		}
 	}
 
-	if err := ingestRecorder.UpdateIndexInfo(rc.dom.InfoSchema()); err != nil {
+	if err := ingestRecorder.UpdateIndexInfo(lc.dom.InfoSchema()); err != nil {
 		return sqls, false, errors.Trace(err)
 	}
 	if err := ingestRecorder.Iterate(func(_, indexID int64, info *ingestrec.IngestIndexInfo) error {
@@ -1611,8 +1611,8 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 		return sqls, false, errors.Trace(err)
 	}
 
-	if rc.useCheckpoint && len(sqls) > 0 {
-		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
+	if lc.useCheckpoint && len(sqls) > 0 {
+		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, lc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
 		}); err != nil {
 			return sqls, false, errors.Trace(err)
@@ -1622,13 +1622,13 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 }
 
 // RepairIngestIndex drops the indexes from IngestRecorder and re-add them.
-func (rc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue) error {
-	sqls, fromCheckpoint, err := rc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
+func (lc *LogClient) RepairIngestIndex(ctx context.Context, ingestRecorder *ingestrec.IngestRecorder, g glue.Glue) error {
+	sqls, fromCheckpoint, err := lc.generateRepairIngestIndexSQLs(ctx, ingestRecorder)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	info := rc.dom.InfoSchema()
+	info := lc.dom.InfoSchema()
 	console := glue.GetConsole(g)
 NEXTSQL:
 	for _, sql := range sqls {
@@ -1674,7 +1674,7 @@ NEXTSQL:
 
 			// only when first execution or old index id is not dropped
 			if !fromCheckpoint || oldIndexIDFound {
-				if err := rc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
+				if err := lc.unsafeSession.ExecuteInternal(ctx, alterTableDropIndexSQL, sql.SchemaName.O, sql.TableName.O, sql.IndexName); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -1684,7 +1684,7 @@ NEXTSQL:
 				}
 			})
 			// create the repaired index when first execution or not found it
-			if err := rc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
+			if err := lc.unsafeSession.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
 			}
 			w.Inc()
@@ -1700,45 +1700,45 @@ NEXTSQL:
 	return nil
 }
 
-func (rc *LogClient) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
-	rc.deleteRangeQueryCh <- sql
+func (lc *LogClient) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
+	lc.deleteRangeQueryCh <- sql
 }
 
 // use channel to save the delete-range query to make it thread-safety.
-func (rc *LogClient) RunGCRowsLoader(ctx context.Context) {
-	rc.deleteRangeQueryWaitGroup.Add(1)
+func (lc *LogClient) RunGCRowsLoader(ctx context.Context) {
+	lc.deleteRangeQueryWaitGroup.Add(1)
 
 	go func() {
-		defer rc.deleteRangeQueryWaitGroup.Done()
+		defer lc.deleteRangeQueryWaitGroup.Done()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case query, ok := <-rc.deleteRangeQueryCh:
+			case query, ok := <-lc.deleteRangeQueryCh:
 				if !ok {
 					return
 				}
-				rc.deleteRangeQuery = append(rc.deleteRangeQuery, query)
+				lc.deleteRangeQuery = append(lc.deleteRangeQuery, query)
 			}
 		}
 	}()
 }
 
 // InsertGCRows insert the querys into table `gc_delete_range`
-func (rc *LogClient) InsertGCRows(ctx context.Context) error {
-	close(rc.deleteRangeQueryCh)
-	rc.deleteRangeQueryWaitGroup.Wait()
-	ts, err := restore.GetTSWithRetry(ctx, rc.pdClient)
+func (lc *LogClient) InsertGCRows(ctx context.Context) error {
+	close(lc.deleteRangeQueryCh)
+	lc.deleteRangeQueryWaitGroup.Wait()
+	ts, err := restore.GetTSWithRetry(ctx, lc.pdClient)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	jobIDMap := make(map[int64]int64)
-	for _, query := range rc.deleteRangeQuery {
+	for _, query := range lc.deleteRangeQuery {
 		paramsList := make([]any, 0, len(query.ParamsList)*5)
 		for _, params := range query.ParamsList {
 			newJobID, exists := jobIDMap[params.JobID]
 			if !exists {
-				newJobID, err = rc.GenGlobalID(ctx)
+				newJobID, err = lc.GenGlobalID(ctx)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1757,7 +1757,7 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 			// trim the ',' behind the query.Sql if exists
 			// that's when the rewrite rule of the last table id is not exist
 			sql := strings.TrimSuffix(query.Sql, ",")
-			if err := rc.unsafeSession.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+			if err := lc.unsafeSession.ExecuteInternal(ctx, sql, paramsList...); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1766,16 +1766,16 @@ func (rc *LogClient) InsertGCRows(ctx context.Context) error {
 }
 
 // only for unit test
-func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
-	close(rc.deleteRangeQueryCh)
-	rc.deleteRangeQueryWaitGroup.Wait()
-	return rc.deleteRangeQuery
+func (lc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
+	close(lc.deleteRangeQueryCh)
+	lc.deleteRangeQueryWaitGroup.Wait()
+	return lc.deleteRangeQuery
 }
 
 const PITRIdMapBlockSize int = 524288
 
 // saveIDMap saves the id mapping information.
-func (rc *LogClient) saveIDMap(
+func (lc *LogClient) saveIDMap(
 	ctx context.Context,
 	sr *stream.SchemasReplace,
 ) error {
@@ -1785,7 +1785,7 @@ func (rc *LogClient) saveIDMap(
 		return errors.Trace(err)
 	}
 	// clean the dirty id map at first
-	err = rc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", rc.restoreTS, rc.upstreamClusterID)
+	err = lc.unsafeSession.ExecuteInternal(ctx, "DELETE FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %?;", lc.restoreTS, lc.upstreamClusterID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1795,16 +1795,16 @@ func (rc *LogClient) saveIDMap(
 		if endIdx > len(data) {
 			endIdx = len(data)
 		}
-		err := rc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, rc.restoreTS, rc.upstreamClusterID, segmentId, data[startIdx:endIdx])
+		err := lc.unsafeSession.ExecuteInternal(ctx, replacePitrIDMapSQL, lc.restoreTS, lc.upstreamClusterID, segmentId, data[startIdx:endIdx])
 		if err != nil {
 			return errors.Trace(err)
 		}
 		startIdx = endIdx
 	}
 
-	if rc.useCheckpoint {
+	if lc.useCheckpoint {
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := checkpoint.SaveCheckpointProgress(ctx, rc.unsafeSession, &checkpoint.CheckpointProgress{
+		if err := checkpoint.SaveCheckpointProgress(ctx, lc.unsafeSession, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersist,
 		}); err != nil {
 			return errors.Trace(err)
@@ -1817,13 +1817,13 @@ func (rc *LogClient) saveIDMap(
 // it would print the checksum result into the log, and
 // the auto-test script records them to compare another
 // cluster's checksum.
-func (rc *LogClient) FailpointDoChecksumForLogRestore(
+func (lc *LogClient) FailpointDoChecksumForLogRestore(
 	ctx context.Context,
 	kvClient kv.Client,
 	pdClient pd.Client,
 	rewriteRules map[int64]*restoreutils.RewriteRules,
 ) (finalErr error) {
-	startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
+	startTS, err := restore.GetTSWithRetry(ctx, lc.pdClient)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1854,7 +1854,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 
 	eg, ectx := errgroup.WithContext(ctx)
 	pool := tidbutil.NewWorkerPool(4, "checksum for log restore")
-	infoSchema := rc.GetDomain().InfoSchema()
+	infoSchema := lc.GetDomain().InfoSchema()
 	// downstream id -> upstream id
 	reidRules := make(map[int64]int64)
 	for upstreamID, r := range rewriteRules {
