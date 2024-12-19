@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +50,7 @@ func TestColumnAdd(t *testing.T) {
 	d := dom.DDL()
 	tc := &callback.TestDDLCallback{Do: dom}
 
-	ct := testNewContext(store)
+	ct := testNewContext(t, store)
 	// set up hook
 	var (
 		deleteOnlyTable table.Table
@@ -127,7 +126,7 @@ func TestColumnAdd(t *testing.T) {
 				return
 			}
 			first = false
-			sess := testNewContext(store)
+			sess := testNewContext(t, store)
 			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
 			_, err = writeOnlyTable.AddRecord(sess.GetTableCtx(), types.MakeDatums(10, 10))
@@ -431,10 +430,8 @@ func testCheckJobDone(t *testing.T, store kv.Storage, jobID int64, isAdd bool) {
 	}
 }
 
-func testNewContext(store kv.Storage) sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.Store = store
-	return ctx
+func testNewContext(t *testing.T, store kv.Storage) sessionctx.Context {
+	return testkit.NewSession(t, store)
 }
 
 func TestIssue40135(t *testing.T) {
