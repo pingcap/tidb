@@ -369,9 +369,6 @@ const (
 	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
 
-	// MVCC information fetching function.
-	GetMvccInfo = "get_mvcc_info"
-
 	// Sequence function.
 	NextVal = "nextval"
 	LastVal = "lastval"
