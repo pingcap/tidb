@@ -120,23 +120,6 @@ func (e *GroupExpression) Equals(other any) bool {
 	return true
 }
 
-// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
-	ge := &GroupExpression{
-		group:       nil,
-		Inputs:      inputs,
-		LogicalPlan: lp,
-		hash64:      0,
-		// todo: add rule set length
-		mask: bitset.New(1),
-	}
-	// maintain the parentGE refs.
-	for _, childG := range inputs {
-		childG.addParentGEs(ge)
-	}
-	return ge
-}
-
 // Init initializes the GroupExpression with the given group and hasher.
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)

@@ -16,6 +16,7 @@ package memo
 
 import (
 	"container/list"
+	"github.com/bits-and-blooms/bitset"
 
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -116,12 +117,9 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 	}
 	var (
 		ok        bool
-		h         base2.Hasher
 		groupExpr *GroupExpression
 	)
-	h = mm.GetHasher()
-	groupExpr = NewGroupExpression(lp, childGroups)
-	groupExpr.Init(h)
+	groupExpr = mm.NewGroupExpression(lp, childGroups)
 	groupExpr, ok = mm.InsertGroupExpression(groupExpr, target)
 	if ok && target == nil {
 		// derive logical property for new group.
@@ -200,6 +198,26 @@ func (mm *Memo) ForEachGroup(f func(g *Group) bool) {
 			break
 		}
 	}
+}
+
+// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
+func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
+	ge := &GroupExpression{
+		group:       nil,
+		Inputs:      inputs,
+		LogicalPlan: lp,
+		hash64:      0,
+		// todo: add rule set length
+		mask: bitset.New(1),
+	}
+	// init hasher
+	h := mm.GetHasher()
+	ge.Init(h)
+	// maintain the parentGE refs.
+	for _, childG := range inputs {
+		childG.addParentGEs(ge)
+	}
+	return ge
 }
 
 // mergeGroup will merge two equivalent group together if the following meets.
