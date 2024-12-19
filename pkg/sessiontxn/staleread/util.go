@@ -81,7 +81,7 @@ func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, 
 		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
 		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
 		// So in this case, do an extra check on it.
-		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS)
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS, true)
 		if err != nil {
 			return 0, err
 		}

@@ -55,6 +55,7 @@ go_library(
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_client_go_v2//metrics",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
