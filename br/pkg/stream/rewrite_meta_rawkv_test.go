@@ -3,7 +3,6 @@
 package stream
 
 import (
-	"context"
 	"encoding/hex"
 	"encoding/json"
 	"testing"
@@ -20,13 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var increaseID int64 = 100
-
-func mockGenGenGlobalID(ctx context.Context) (int64, error) {
-	increaseID++
-	return increaseID, nil
-}
-
 func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*DBReplace) *SchemasReplace {
 	if dbMap == nil {
 		dbMap = make(map[UpstreamID]*DBReplace)
@@ -36,12 +28,9 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 	}
 	return NewSchemasReplace(
 		dbMap,
-		true,
 		nil,
 		9527,
 		filter.All(),
-		mockGenGenGlobalID,
-		nil,
 		midr.mockRecordDeleteRange,
 	)
 }
@@ -63,94 +52,32 @@ func produceTableInfoValue(tableName string, tableID int64) ([]byte, error) {
 	return json.Marshal(&tableInfo)
 }
 
-func TestTidySchemaMaps(t *testing.T) {
-	var (
-		dbName, tblName            string       = "db1", "t1"
-		oldDBID                    UpstreamID   = 100
-		newDBID                    DownstreamID = 200
-		oldTblID, oldPID1, oldPID2 UpstreamID   = 101, 102, 103
-		newTblID, newPID1, newPID2 DownstreamID = 201, 202, 203
-	)
-
-	// create table Replace
-	tr := NewTableReplace(tblName, newTblID)
-	tr.PartitionMap[oldPID1] = newPID1
-	tr.PartitionMap[oldPID2] = newPID2
-
-	dr := NewDBReplace(dbName, newDBID)
-	dr.TableMap[oldTblID] = tr
-
-	drs := make(map[UpstreamID]*DBReplace)
-	drs[oldDBID] = dr
-
-	// create schemas replace and test TidySchemaMaps().
-	sr := NewSchemasReplace(drs, true, nil, 0, filter.All(), nil, nil, nil)
-	globalTableIdMap := sr.globalTableIdMap
-	require.Equal(t, len(globalTableIdMap), 3)
-	require.Equal(t, globalTableIdMap[oldTblID], newTblID)
-	require.Equal(t, globalTableIdMap[oldPID1], newPID1)
-	require.Equal(t, globalTableIdMap[oldPID2], newPID2)
-
-	dbMap := sr.TidySchemaMaps()
-	require.Equal(t, len(dbMap), 1)
-	require.Equal(t, dbMap[0].Name, dbName)
-	require.Equal(t, dbMap[0].IdMap.UpstreamId, oldDBID)
-	require.Equal(t, dbMap[0].IdMap.DownstreamId, newDBID)
-
-	tableMap := dbMap[0].Tables
-	require.Equal(t, len(tableMap), 1)
-	require.Equal(t, tableMap[0].Name, tblName)
-	require.Equal(t, tableMap[0].IdMap.UpstreamId, oldTblID)
-	require.Equal(t, tableMap[0].IdMap.DownstreamId, newTblID)
-
-	partitionMap := tableMap[0].Partitions
-	require.Equal(t, len(partitionMap), 2)
-
-	if partitionMap[0].UpstreamId == oldPID1 {
-		require.Equal(t, partitionMap[0].DownstreamId, newPID1)
-		require.Equal(t, partitionMap[1].UpstreamId, oldPID2)
-		require.Equal(t, partitionMap[1].DownstreamId, newPID2)
-	} else {
-		require.Equal(t, partitionMap[0].DownstreamId, newPID2)
-		require.Equal(t, partitionMap[1].UpstreamId, oldPID1)
-		require.Equal(t, partitionMap[1].DownstreamId, newPID1)
-	}
-
-	// test FromSchemaMaps()
-	drs2 := FromSchemaMaps(dbMap)
-	require.Equal(t, drs2, drs)
-}
-
 func TestRewriteKeyForDB(t *testing.T) {
 	var (
-		dbID int64  = 1
-		ts   uint64 = 1234
-		mDbs        = []byte("DBs")
+		dbID   int64  = 1
+		dbName        = "db"
+		ts     uint64 = 1234
+		mDbs          = []byte("DBs")
 	)
 
 	encodedKey := encodeTxnMetaKey(mDbs, meta.DBkey(dbID), ts)
 
-	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil, nil)
+	dbMap := make(map[UpstreamID]*DBReplace)
+	downstreamID := dbID + 100
+	dbMap[dbID] = NewDBReplace(dbName, downstreamID)
 
-	// preConstruct Map information.
-	sr.SetPreConstructMapStatus()
-	newKey, err := sr.rewriteKeyForDB(encodedKey, WriteCF)
-	require.Nil(t, err)
-	require.Nil(t, newKey)
-	require.Equal(t, len(sr.DbMap[dbID].TableMap), 0)
-	downID := sr.DbMap[dbID].DbID
+	// create schemasReplace.
+	sr := MockEmptySchemasReplace(nil, dbMap)
 
 	// set restoreKV status and rewrite it.
-	sr.SetRestoreKVStatus()
-	newKey, err = sr.rewriteKeyForDB(encodedKey, DefaultCF)
+	newKey, err := sr.rewriteKeyForDB(encodedKey, DefaultCF)
 	require.Nil(t, err)
 	decodedKey, err := ParseTxnMetaKeyFrom(newKey)
 	require.Nil(t, err)
 	require.Equal(t, decodedKey.Ts, ts)
 	newDBID, err := meta.ParseDBKey(decodedKey.Field)
 	require.Nil(t, err)
-	require.Equal(t, newDBID, downID)
+	require.Equal(t, newDBID, downstreamID)
 
 	// rewrite it again, and get the same result.
 	newKey, err = sr.rewriteKeyForDB(encodedKey, WriteCF)
@@ -160,7 +87,7 @@ func TestRewriteKeyForDB(t *testing.T) {
 	require.Equal(t, decodedKey.Ts, sr.RewriteTS)
 	newDBID, err = meta.ParseDBKey(decodedKey.Field)
 	require.Nil(t, err)
-	require.Equal(t, newDBID, downID)
+	require.Equal(t, newDBID, downstreamID)
 }
 
 func TestRewriteDBInfo(t *testing.T) {
@@ -173,31 +100,20 @@ func TestRewriteDBInfo(t *testing.T) {
 	value, err := produceDBInfoValue(dbName, dbID)
 	require.Nil(t, err)
 
+	dbMap := make(map[UpstreamID]*DBReplace)
+	dbMap[dbID] = NewDBReplace(dbName, dbID+100)
+
 	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil, nil)
-
-	// rewrite it directly without preConstruct Map, it will get failed result.
-	sr.SetRestoreKVStatus()
-	_, err = sr.rewriteDBInfo(value)
-	require.Error(t, err)
-
-	// ConstructMap status.
-	sr.SetPreConstructMapStatus()
-	newValue, err := sr.rewriteDBInfo(value)
-	require.Nil(t, err)
-	require.Nil(t, newValue)
-	dr := sr.DbMap[dbID]
-	require.Equal(t, dr.Name, dbName)
+	sr := MockEmptySchemasReplace(nil, dbMap)
 
 	// set restoreKV status and rewrite it.
-	sr.SetRestoreKVStatus()
-	newValue, err = sr.rewriteDBInfo(value)
+	newValue, err := sr.rewriteDBInfo(value)
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &DBInfo)
 	require.Nil(t, err)
 	require.Equal(t, DBInfo.ID, sr.DbMap[dbID].DbID)
 
-	// rewrite agagin, and get the same result.
+	// rewrite again, and get the same result.
 	newId := sr.DbMap[dbID].DbID
 	newValue, err = sr.rewriteDBInfo(value)
 	require.Nil(t, err)
@@ -209,9 +125,11 @@ func TestRewriteDBInfo(t *testing.T) {
 
 func TestRewriteKeyForTable(t *testing.T) {
 	var (
-		dbID    int64  = 1
-		tableID int64  = 57
-		ts      uint64 = 400036290571534337
+		dbID      int64  = 1
+		dbName           = "db"
+		tableID   int64  = 57
+		tableName        = "table"
+		ts        uint64 = 400036290571534337
 	)
 	cases := []struct {
 		encodeTableFn func(int64) []byte
@@ -241,22 +159,18 @@ func TestRewriteKeyForTable(t *testing.T) {
 
 	for _, ca := range cases {
 		encodedKey := encodeTxnMetaKey(meta.DBkey(dbID), ca.encodeTableFn(tableID), ts)
-		// create schemasReplace.
-		sr := MockEmptySchemasReplace(nil, nil)
 
-		// set preConstruct status and construct map information.
-		sr.SetPreConstructMapStatus()
-		newKey, err := sr.rewriteKeyForTable(encodedKey, WriteCF, ca.decodeTableFn, ca.encodeTableFn)
-		require.Nil(t, err)
-		require.Nil(t, newKey)
-		require.Equal(t, len(sr.DbMap), 1)
-		require.Equal(t, len(sr.DbMap[dbID].TableMap), 1)
-		downStreamDbID := sr.DbMap[dbID].DbID
-		downStreamTblID := sr.DbMap[dbID].TableMap[tableID].TableID
+		dbMap := make(map[UpstreamID]*DBReplace)
+		downStreamDbID := dbID + 100
+		dbMap[dbID] = NewDBReplace(dbName, downStreamDbID)
+		downStreamTblID := tableID + 100
+		dbMap[dbID].TableMap[tableID] = NewTableReplace(tableName, downStreamTblID)
+
+		// create schemasReplace.
+		sr := MockEmptySchemasReplace(nil, dbMap)
 
 		// set restoreKV status and rewrite it.
-		sr.SetRestoreKVStatus()
-		newKey, err = sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
+		newKey, err := sr.rewriteKeyForTable(encodedKey, DefaultCF, ca.decodeTableFn, ca.encodeTableFn)
 		require.Nil(t, err)
 		decodedKey, err := ParseTxnMetaKeyFrom(newKey)
 		require.Nil(t, err)
@@ -288,6 +202,7 @@ func TestRewriteKeyForTable(t *testing.T) {
 func TestRewriteTableInfo(t *testing.T) {
 	var (
 		dbId      int64 = 40
+		dbName          = "db"
 		tableID   int64 = 100
 		tableName       = "t1"
 		tableInfo model.TableInfo
@@ -296,8 +211,12 @@ func TestRewriteTableInfo(t *testing.T) {
 	value, err := produceTableInfoValue(tableName, tableID)
 	require.Nil(t, err)
 
+	dbMap := make(map[UpstreamID]*DBReplace)
+	dbMap[dbId] = NewDBReplace(dbName, dbId+100)
+	dbMap[dbId].TableMap[tableID] = NewTableReplace(tableName, tableID+100)
+
 	// create schemasReplace.
-	sr := MockEmptySchemasReplace(nil, nil)
+	sr := MockEmptySchemasReplace(nil, dbMap)
 	tableCount := 0
 	sr.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		tableCount++
@@ -306,20 +225,8 @@ func TestRewriteTableInfo(t *testing.T) {
 		}
 	}
 
-	// rewrite it directly without preConstruct Map, it will get failed result.
-	sr.SetRestoreKVStatus()
-	_, err = sr.rewriteTableInfo(value, dbId)
-	require.Error(t, err)
-
-	// ConstructMap status.
-	sr.SetPreConstructMapStatus()
-	newValue, err := sr.rewriteTableInfo(value, dbId)
-	require.Nil(t, err)
-	require.Nil(t, newValue)
-
 	// set restoreKV status, rewrite it.
-	sr.SetRestoreKVStatus()
-	newValue, err = sr.rewriteTableInfo(value, dbId)
+	newValue, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
@@ -340,6 +247,7 @@ func TestRewriteTableInfo(t *testing.T) {
 func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	var (
 		dbId      int64 = 40
+		dbName          = "db"
 		tableID   int64 = 100
 		pt1ID     int64 = 101
 		pt2ID     int64 = 102
@@ -374,16 +282,22 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	value, err := json.Marshal(&tbl)
 	require.Nil(t, err)
 
-	// create schemasReplace, and preConstructMap.
-	sr := MockEmptySchemasReplace(nil, nil)
-	sr.SetPreConstructMapStatus()
-	newValue, err := sr.rewriteTableInfo(value, dbId)
-	require.Nil(t, err)
-	require.Nil(t, newValue)
+	dbMap := make(map[UpstreamID]*DBReplace)
+	dbMap[dbId] = NewDBReplace(dbName, dbId+100)
+	dbMap[dbId].TableMap[tableID] = NewTableReplace(tableName, tableID+100)
+	dbMap[dbId].TableMap[tableID].PartitionMap[pt1ID] = pt1ID + 100
+	dbMap[dbId].TableMap[tableID].PartitionMap[pt2ID] = pt2ID + 100
+
+	sr := NewSchemasReplace(
+		dbMap,
+		nil,
+		0,
+		filter.All(),
+		nil,
+	)
 
 	// set restoreKV status, and rewrite it.
-	sr.SetRestoreKVStatus()
-	newValue, err = sr.rewriteTableInfo(value, dbId)
+	newValue, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 	err = json.Unmarshal(newValue, &tableInfo)
 	require.Nil(t, err)
@@ -488,26 +402,28 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	dbMap[dbID2] = NewDBReplace(db2.Name.O, dbID2+100)
 	dbMap[dbID2].TableMap[tableID2] = NewTableReplace(t2.Name.O, tableID2+100)
 
-	sr := NewSchemasReplace(
-		dbMap,
-		true,
-		nil,
-		0,
-		filter.All(),
-		mockGenGenGlobalID,
-		nil,
-		nil,
-	)
-	sr.SetRestoreKVStatus()
-	//exchange partition, t1 parition0 with the t2
+	tc := NewTableMappingManager(dbMap, mockGenGenGlobalID)
+
+	//exchange partition, t1 partition0 with the t2
 	t1Copy := t1.Clone()
 	t2Copy := t2.Clone()
 	t1Copy.Partition.Definitions[0].ID = tableID2
 	t2Copy.ID = pt1ID
-
-	// rewrite partition table
 	value, err := json.Marshal(&t1Copy)
 	require.Nil(t, err)
+
+	err = tc.parseTableValueAndUpdateIdMapping(dbID1, value)
+	require.Nil(t, err)
+
+	sr := NewSchemasReplace(
+		tc.DbReplaceMap,
+		nil,
+		0,
+		filter.All(),
+		nil,
+	)
+
+	// rewrite partition table
 	value, err = sr.rewriteTableInfo(value, dbID1)
 	require.Nil(t, err)
 	err = json.Unmarshal(value, &tableInfo)
@@ -519,6 +435,8 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// rewrite no partition table
 	value, err = json.Marshal(&t2Copy)
 	require.Nil(t, err)
+	err = tc.parseTableValueAndUpdateIdMapping(dbID2, value)
+	require.Nil(t, err)
 	value, err = sr.rewriteTableInfo(value, dbID2)
 	require.Nil(t, err)
 	err = json.Unmarshal(value, &tableInfo)
@@ -529,6 +447,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	var (
 		dbId      int64 = 40
+		dbName          = "db"
 		tableID   int64 = 100
 		colID     int64 = 1000
 		colName         = "t"
@@ -556,18 +475,15 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	value, err := json.Marshal(&tbl)
 	require.Nil(t, err)
 
-	// create empty schemasReplace
-	sr := MockEmptySchemasReplace(nil, nil)
+	dbMap := make(map[UpstreamID]*DBReplace)
+	dbMap[dbId] = NewDBReplace(dbName, dbId+100)
+	dbMap[dbId].TableMap[tableID] = NewTableReplace(tableName, tableID+100)
 
-	// preConsutruct Map information.
-	sr.SetPreConstructMapStatus()
-	newValue, err := sr.rewriteTableInfo(value, dbId)
-	require.Nil(t, err)
-	require.Nil(t, newValue)
+	// create empty schemasReplace
+	sr := MockEmptySchemasReplace(nil, dbMap)
 
 	// set restoreKV status and rewrite it.
-	sr.SetRestoreKVStatus()
-	newValue, err = sr.rewriteTableInfo(value, dbId)
+	newValue, err := sr.rewriteTableInfo(value, dbId)
 	require.Nil(t, err)
 
 	err = json.Unmarshal(newValue, &tableInfo)
@@ -579,18 +495,6 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
 	require.Equal(t, int(ast.TimeUnitDay), tableInfo.TTLInfo.IntervalTimeUnit)
 	require.False(t, tableInfo.TTLInfo.Enable)
-}
-
-func TestIsPreConsturctMapStatus(t *testing.T) {
-	// create empty schemasReplace
-	sr := MockEmptySchemasReplace(nil, nil)
-	sr.SetPreConstructMapStatus()
-	require.True(t, sr.IsPreConsturctMapStatus())
-	require.False(t, sr.IsRestoreKVStatus())
-
-	sr.SetRestoreKVStatus()
-	require.False(t, sr.IsPreConsturctMapStatus())
-	require.True(t, sr.IsRestoreKVStatus())
 }
 
 // db:70->80 -
