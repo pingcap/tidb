@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"runtime/pprof"
 	"syscall"
 
 	"github.com/pingcap/tidb/lightning/pkg/server"
@@ -29,9 +30,31 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
+	go func() {
+		http.ListenAndServe("0.0.0.0:8899", nil)
+	}()
+
+	// Create a memory profile file
+	f, err := os.Create("mem.pprof")
+	if err != nil {
+		fmt.Println("Failed to create memory profile file:", err)
+		return
+	}
+	defer f.Close()
+
+	// Start the memory profile
+	if err := pprof.StartCPUProfile(f); err != nil {
+		fmt.Println("Failed to start memory profile:", err)
+		return
+	}
+	defer pprof.StopCPUProfile()
+
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	logToFile := globalCfg.App.File != "" && globalCfg.App.File != "-"
 	if logToFile {
@@ -75,7 +98,7 @@ func main() {
 		}
 	}
 
-	err := app.GoServe()
+	err = app.GoServe()
 	if err != nil {
 		logger.Error("failed to start HTTP server", zap.Error(err))
 		fmt.Fprintln(os.Stderr, "failed to start HTTP server:", err)

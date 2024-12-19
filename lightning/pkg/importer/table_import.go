@@ -801,7 +801,9 @@ ChunkLoop:
 
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// To avoid OOM during file opening, we update the waterline before reading.
+			// To avoid OOM during file opening,
+			// we have to ensure that we have enough memory budget before reading.
+			// Here we use the maximum memory usage we have ever seen as the memory usage estimation.
 			memLimiter.Acquire(maxMemoryUsage)
 			pp := cr.parser.(*mydump.ParquetParser)
 			if _, err := pp.ReadRows(64); err != nil {
