@@ -118,6 +118,12 @@ func TestCheckRequirements(t *testing.T) {
 	_, err = conn.Execute(ctx, "insert into test.t values(1)")
 	require.NoError(t, err)
 	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataPreCheckFailed)
+
+	// disable precheck, should pass
+	c.DisablePrecheck = true
+	require.NoError(t, c.CheckRequirements(ctx, conn))
+	c.DisablePrecheck = false // revert back
+
 	// table not exists
 	_, err = conn.Execute(ctx, "drop table if exists test.t")
 	require.NoError(t, err)
