@@ -75,7 +75,8 @@ const (
 const minBatchDdlSize = 1
 
 type SnapClient struct {
-	restorer      restore.SstRestorer
+	restorer restore.SstRestorer
+	// Use a closure to lazy load checkpoint runner
 	getRestorerFn func(*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
