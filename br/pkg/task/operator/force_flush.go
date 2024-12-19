@@ -42,9 +42,13 @@ func RunForceFlush(ctx context.Context, cfg *ForceFlushConfig) error {
 		return err
 	}
 	eg, ectx := errgroup.WithContext(ctx)
+	log.Info("About to start force flushing.", zap.Stringer("stores-pattern", cfg.StoresPattern))
 	for _, s := range tikvs {
 		s := s
-		log.Info("Starting force flush TiKV.", zap.Uint64("store", s.GetId()))
+		if !cfg.StoresPattern.MatchString(s.Address) {
+			log.Info("Skipping not matched TiKV.", zap.Uint64("store", s.GetId()), zap.String("addr", s.Address))
+		}
+		log.Info("Starting force flush TiKV.", zap.Uint64("store", s.GetId()), zap.String("addr", s.Address))
 		eg.Go(func() error {
 			var logBackupCli logbackup.LogBackupClient
 			err := stores.WithConn(ectx, s.GetId(), func(cc *grpc.ClientConn) {
