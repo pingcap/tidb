@@ -26,8 +26,11 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util",
+<<<<<<< HEAD
         "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
+=======
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_opencensus_go//stats/view",

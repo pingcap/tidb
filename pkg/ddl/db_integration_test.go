@@ -52,7 +52,11 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/mock"
+=======
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	"github.com/stretchr/testify/require"
 )
 
@@ -526,11 +530,10 @@ func TestChangingTableCharset(t *testing.T) {
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		ctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), ctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 
@@ -772,11 +775,10 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tblInfo.Charset = "UTF8MB4"
 
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 		require.True(t, ok)
@@ -1425,11 +1427,10 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 		require.True(t, ok)
