@@ -72,9 +72,10 @@ go_test(
     embed = [":backup"],
     flaky = True,
     race = "on",
-    shard_count = 13,
+    shard_count = 10,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/errors",
         "//br/pkg/gluetidb",
         "//br/pkg/metautil",
         "//br/pkg/mock",
@@ -91,6 +92,8 @@ go_test(
         "//pkg/util/codec",
         "//pkg/util/table-filter",
         "@com_github_golang_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",
@@ -103,5 +106,6 @@ go_test(
         "@io_opencensus_go//stats/view",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_multierr//:multierr",
     ],
 )
