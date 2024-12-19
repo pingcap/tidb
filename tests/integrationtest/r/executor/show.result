@@ -652,12 +652,9 @@ dayofyear
 decode
 default_func
 degrees
-des_decrypt
-des_encrypt
 div
 elt
 encode
-encrypt
 eq
 exp
 export_set
@@ -774,7 +771,6 @@ now
 nulleq
 oct
 octet_length
-old_password
 or
 ord
 password_func
