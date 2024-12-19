@@ -497,7 +497,7 @@ func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.Runti
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && copStats.ReqStats == nil) {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCCount() == 0)) {
 		return
 	}
 
@@ -537,7 +537,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			return err
 		}
 	}
-	// todo move this into close stmt.
 	if copStats.TimeDetail.ProcessTime > 0 {
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}

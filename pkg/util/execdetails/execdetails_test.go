@@ -15,10 +15,6 @@
 package execdetails
 
 import (
-	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/kvproto/pkg/sharedbytes"
-	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -232,16 +228,8 @@ func TestCopRuntimeStats(t *testing.T) {
 		"scan_detail: {total_process_keys: 10, total_process_keys_size: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
 	require.Equal(t, expected, cop.String())
 
-	copStats := cop.stats
-	require.NotNil(t, copStats)
-
-	newCopStats := &basicCopRuntimeStats{
-		rows:    20,
-		loop:    1,
-		consume: int64(time.Second),
-	}
-	copStats.Merge(newCopStats)
-	require.Equal(t, "time:1s, loops:4", copStats.String())
+	require.NotNil(t, cop.stats)
+	require.Equal(t, "time:3ns, loops:3", cop.stats.String())
 	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetCopStats(aggID).String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
@@ -253,12 +241,10 @@ func TestCopRuntimeStats(t *testing.T) {
 	cop.scanDetail.RocksdbKeySkippedCount = 0
 	cop.scanDetail.RocksdbBlockReadCount = 0
 	// Print all fields even though the value of some fields is 0.
-	str := "tikv_task:{proc max:1s, min:1ns, avg: 333.3ms, p80:1s, p95:1s, iters:4, tasks:3}, " +
-		"scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
+	str := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
-
-	zeroScanDetail := util.ScanDetail{}
 	require.Equal(t, "", zeroScanDetail.String())
+	require.Equal(t, "", zeroTimeDetail.String())
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
@@ -279,7 +265,6 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil)
 	stats.RecordCopStats(tableScanID, kv.TiFlash, scanDetail, util.TimeDetail{}, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
@@ -565,32 +550,4 @@ func TestCopRuntimeStats2(t *testing.T) {
 		"total_kv_read_wall_time: 5.03s, tikv_wall_time: 50.3s}"
 	require.Equal(t, expected, cop.String())
 	require.Equal(t, expected, cop.String())
-}
-
-func BenchmarkRPCRuntimeStats(b *testing.B) {
-	details := make([]*kvrpcpb.ExecDetails, 1000)
-	for i := 0; i < b.N; i++ {
-		details[i%len(details)] = getStats()
-		if i%10 == 0 {
-			runtime.GC()
-		}
-	}
-	//time.Sleep(time.Second)
-}
-
-func getStats() *kvrpcpb.ExecDetails {
-	resp := buildResp()
-	detail := resp.ExecDetails
-	//resp.ExecDetails = nil
-	return detail
-}
-
-func buildResp() *coprocessor.Response {
-	resp := new(coprocessor.Response)
-	resp.Data = make(sharedbytes.SharedBytes, 0, 1024*64)
-	resp.ExecDetails = &kvrpcpb.ExecDetails{
-		TimeDetail: &kvrpcpb.TimeDetail{},
-		ScanDetail: &kvrpcpb.ScanDetail{},
-	}
-	return resp
 }

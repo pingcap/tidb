@@ -77,8 +77,9 @@ type CopExecDetails struct {
 	BackoffSleep  map[string]time.Duration
 	BackoffTimes  map[string]int
 	CalleeAddress string
-	ScanDetail    *util.ScanDetail
-	TimeDetail    util.TimeDetail
+	// todo: avoid allocate in heap
+	ScanDetail *util.ScanDetail
+	TimeDetail util.TimeDetail
 }
 
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
@@ -461,7 +462,8 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 
 // MergeTimeDetail merges time details into self.
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
-	s.execDetails.TimeDetail.Merge(&timeDetail)
+	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
+	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.
@@ -584,11 +586,7 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 }
 
 type basicCopRuntimeStats struct {
-	// executor's Next() called times.
-	loop int32
-	// executor consume time, including open, next, and close time.
-	consume int64
-	// executor return row count.
+	loop      int32
 	rows      int64
 	threads   int32
 	procTimes Percentile[Duration]
@@ -727,7 +725,7 @@ func (p *Percentile[valueType]) Sum() float64 {
 func (e *basicCopRuntimeStats) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	buf.WriteString("time:")
-	buf.WriteString(FormatDuration(time.Duration(e.consume)))
+	buf.WriteString(FormatDuration(time.Duration(e.procTimes.sumVal)))
 	buf.WriteString(", loops:")
 	buf.WriteString(strconv.Itoa(int(e.loop)))
 	if e.tiflashStats != nil {
@@ -749,7 +747,6 @@ func (e *basicCopRuntimeStats) String() string {
 func (e *basicCopRuntimeStats) Clone() RuntimeStats {
 	stats := &basicCopRuntimeStats{
 		loop:      e.loop,
-		consume:   e.consume,
 		rows:      e.rows,
 		threads:   e.threads,
 		procTimes: e.procTimes,
@@ -770,12 +767,9 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 		return
 	}
 	e.loop += tmp.loop
-	e.consume += tmp.consume
 	e.rows += tmp.rows
 	e.threads += tmp.threads
-	if tmp.procTimes.Size() == 0 {
-		e.procTimes.Add(Duration(tmp.consume))
-	} else {
+	if tmp.procTimes.Size() > 0 {
 		e.procTimes.MergePercentile(&tmp.procTimes)
 	}
 	if tmp.tiflashStats != nil {
@@ -790,7 +784,6 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 // mergeExecSummary likes Merge, but it merges ExecutorExecutionSummary directly.
 func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionSummary) {
 	e.loop += (int32(*summary.NumIterations))
-	e.consume += (int64(*summary.TimeProcessedNs))
 	e.rows += (int64(*summary.NumProducedRows))
 	e.threads += int32(summary.GetConcurrency())
 	e.procTimes.Add(Duration(int64(*summary.TimeProcessedNs)))
@@ -885,7 +878,6 @@ type CopRuntimeStats struct {
 	scanDetail util.ScanDetail
 	timeDetail util.TimeDetail
 	storeType  kv.StoreType
-	sync.Mutex
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -895,11 +887,11 @@ func (crs *CopRuntimeStats) GetActRows() int64 {
 
 // GetTasks return total tasks of CopRuntimeStats
 func (crs *CopRuntimeStats) GetTasks() int32 {
-	return int32(len(crs.stats.procTimes.values))
+	return int32(crs.stats.procTimes.size)
 }
 
-var emptyScanDetail = util.ScanDetail{}
-var emptyTimeDetail = util.TimeDetail{}
+var zeroScanDetail = util.ScanDetail{}
+var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
 	if crs.stats == nil {
@@ -907,7 +899,7 @@ func (crs *CopRuntimeStats) String() string {
 	}
 
 	procTimes := crs.stats.procTimes
-	totalTasks := crs.stats.procTimes.size
+	totalTasks := procTimes.size
 	isTiFlashCop := crs.storeType == kv.TiFlash
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
@@ -945,7 +937,7 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString(", min:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())))
 			buf.WriteString(", avg: ")
-			buf.WriteString(FormatDuration(time.Duration(crs.stats.consume / int64(totalTasks))))
+			buf.WriteString(FormatDuration(time.Duration(int64(procTimes.Sum()) / int64(totalTasks))))
 			buf.WriteString(", p80:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.8))))
 			buf.WriteString(", p95:")
@@ -958,14 +950,14 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 	if !isTiFlashCop {
-		if crs.scanDetail != emptyScanDetail {
+		if crs.scanDetail != zeroScanDetail {
 			detail := crs.scanDetail.String()
 			if detail != "" {
 				buf.WriteString(", ")
 				buf.WriteString(detail)
 			}
 		}
-		if crs.timeDetail != emptyTimeDetail {
+		if crs.timeDetail != zeroTimeDetail {
 			timeDetailStr := crs.timeDetail.String()
 			if timeDetailStr != "" {
 				buf.WriteString(", ")
@@ -1627,6 +1619,17 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 		return nil
 	}
 	return copStats
+}
+
+// GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
+func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok || copStats.stats == nil {
+		return 0, 0
+	}
+	return copStats.GetTasks(), copStats.GetActRows()
 }
 
 func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int, bool) {
