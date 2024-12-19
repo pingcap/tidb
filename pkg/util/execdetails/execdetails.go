@@ -882,21 +882,10 @@ type CopRuntimeStats struct {
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
 	stats      *basicCopRuntimeStats
-	scanDetail *util.ScanDetail
-	timeDetail *util.TimeDetail
+	scanDetail util.ScanDetail
+	timeDetail util.TimeDetail
 	storeType  kv.StoreType
 	sync.Mutex
-}
-
-// RecordOneCopTask records a specific cop tasks's execution detail.
-func (crs *CopRuntimeStats) RecordOneCopTask(address string, summary *tipb.ExecutorExecutionSummary) {
-	crs.Lock()
-	defer crs.Unlock()
-
-	if crs.stats == nil {
-		crs.stats = &basicCopRuntimeStats{}
-	}
-	crs.stats.mergeExecSummary(summary)
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -909,36 +898,34 @@ func (crs *CopRuntimeStats) GetTasks() int32 {
 	return int32(len(crs.stats.procTimes.values))
 }
 
+var emptyScanDetail = util.ScanDetail{}
+var emptyTimeDetail = util.TimeDetail{}
+
 func (crs *CopRuntimeStats) String() string {
 	if crs.stats == nil {
 		return ""
 	}
 
 	procTimes := crs.stats.procTimes
-	totalTime := time.Duration(crs.stats.consume)
 	totalTasks := len(crs.stats.procTimes.values)
-	totalLoops := crs.stats.loop
-	totalThreads := crs.stats.threads
-	totalTiFlashScanContext := crs.stats.tiflashStats.scanContext
-	totalTiFlashWaitSummary := crs.stats.tiflashStats.waitSummary
-	avgTime := time.Duration(totalTime.Nanoseconds() / int64(totalTasks))
 	isTiFlashCop := crs.storeType == kv.TiFlash
-
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
 	{
 		printTiFlashSpecificInfo := func() {
 			if isTiFlashCop {
 				buf.WriteString(", ")
 				buf.WriteString("threads:")
-				buf.WriteString(strconv.Itoa(int(totalThreads)))
+				buf.WriteString(strconv.Itoa(int(crs.stats.threads)))
 				buf.WriteString("}")
-				if !totalTiFlashWaitSummary.CanBeIgnored() {
-					buf.WriteString(", ")
-					buf.WriteString(totalTiFlashWaitSummary.String())
-				}
-				if !totalTiFlashScanContext.Empty() {
-					buf.WriteString(", ")
-					buf.WriteString(totalTiFlashScanContext.String())
+				if crs.stats.tiflashStats != nil {
+					if !crs.stats.tiflashStats.waitSummary.CanBeIgnored() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.waitSummary.String())
+					}
+					if !crs.stats.tiflashStats.scanContext.Empty() {
+						buf.WriteString(", ")
+						buf.WriteString(crs.stats.tiflashStats.scanContext.String())
+					}
 				}
 			} else {
 				buf.WriteString("}")
@@ -949,36 +936,36 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString("_task:{time:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0))))
 			buf.WriteString(", loops:")
-			buf.WriteString(strconv.Itoa(int(totalLoops)))
+			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
 			printTiFlashSpecificInfo()
-		} else {
+		} else if totalTasks > 1 {
 			buf.WriteString(crs.storeType.Name())
 			buf.WriteString("_task:{proc max:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())))
 			buf.WriteString(", min:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMin().GetFloat64())))
 			buf.WriteString(", avg: ")
-			buf.WriteString(FormatDuration(avgTime))
+			buf.WriteString(FormatDuration(time.Duration(crs.stats.consume / int64(totalTasks))))
 			buf.WriteString(", p80:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.8))))
 			buf.WriteString(", p95:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetPercentile(0.95))))
 			buf.WriteString(", iters:")
-			buf.WriteString(strconv.Itoa(int(totalLoops)))
+			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
 			buf.WriteString(", tasks:")
-			buf.WriteString(strconv.Itoa(int(totalTasks)))
+			buf.WriteString(strconv.Itoa(totalTasks))
 			printTiFlashSpecificInfo()
 		}
 	}
 	if !isTiFlashCop {
-		if crs.scanDetail != nil {
+		if crs.scanDetail != emptyScanDetail {
 			detail := crs.scanDetail.String()
 			if detail != "" {
 				buf.WriteString(", ")
 				buf.WriteString(detail)
 			}
 		}
-		if crs.timeDetail != nil {
+		if crs.timeDetail != emptyTimeDetail {
 			timeDetailStr := crs.timeDetail.String()
 			if timeDetailStr != "" {
 				buf.WriteString(", ")
@@ -1649,9 +1636,7 @@ func (e *RuntimeStatsColl) GetOrCreateCopStats(planID int, storeType kv.StoreTyp
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		copStats = &CopRuntimeStats{
-			scanDetail: &util.ScanDetail{},
-			timeDetail: &util.TimeDetail{},
-			storeType:  storeType,
+			storeType: storeType,
 		}
 		e.copStats[planID] = copStats
 	}
@@ -1669,29 +1654,24 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 }
 
 // RecordOneCopTask records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, address string, scan *util.ScanDetail, time *util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
+func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
 	if !ok {
 		copStats = &CopRuntimeStats{
-			storeType: storeType,
+			timeDetail: time,
+			storeType:  storeType,
+		}
+		if scan != nil {
+			copStats.scanDetail = *scan
 		}
 		e.copStats[planID] = copStats
-	}
-	if scan != nil {
-		if copStats.scanDetail == nil {
-			copStats.scanDetail = scan
-		} else {
+	} else {
+		if scan != nil {
 			copStats.scanDetail.Merge(scan)
 		}
-	}
-	if time != nil {
-		if copStats.timeDetail == nil {
-			copStats.timeDetail = time
-		} else {
-			copStats.timeDetail.Merge(time)
-		}
+		copStats.timeDetail.Merge(&time)
 	}
 	if summary != nil {
 		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
@@ -1714,8 +1694,26 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 	}
 	return planID
 }
-
-func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time *util.TimeDetail) {
+func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, summary *tipb.ExecutorExecutionSummary) int {
+	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
+	// summary, use it overwrite the planID
+	if id, valid := getPlanIDFromExecutionSummary(summary); valid {
+		planID = id
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		copStats = &CopRuntimeStats{
+			storeType: storeType,
+		}
+		e.copStats[planID] = copStats
+	}
+	if copStats.stats == nil {
+		copStats.stats = &basicCopRuntimeStats{}
+	}
+	copStats.stats.mergeExecSummary(summary)
+	return planID
 }
 
 // ExistsRootStats checks if the planID exists in the rootStats collection.
