@@ -364,10 +364,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
 					return err
 				}
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -559,14 +559,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
-			planID := r.copPlanIDs[i]
 			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
 				summary = detail
 			}
+			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
