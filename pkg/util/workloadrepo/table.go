@@ -128,12 +128,16 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 		if tbl.tableType == metadataTable {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "BEGIN_TIME", now)
+			if err := generatePartitionDef(sb, "BEGIN_TIME", now); err != nil {
+				return err
+			}
 			createStmt = sb.String()
 		} else {
 			sb := &strings.Builder{}
 			fmt.Fprint(sb, createStmt)
-			generatePartitionDef(sb, "TS", now)
+			if err := generatePartitionDef(sb, "TS", now); err != nil {
+				return err
+			}
 			createStmt = sb.String()
 		}
 

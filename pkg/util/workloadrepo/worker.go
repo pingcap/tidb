@@ -355,7 +355,7 @@ func (w *worker) start() error {
 	}
 
 	if w.etcdClient == nil {
-		return errors.New("etcd client required for workload repository")
+		return errUnsupportedEtcdRequired.GenWithStackByArgs()
 	}
 
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
