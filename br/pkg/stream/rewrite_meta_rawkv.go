@@ -646,7 +646,6 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				// The value in default-cf that can Decode() need restore.
 				return nil, nil
 			}
-
 			return nil, sr.restoreFromHistory(job)
 		}
 		return nil, nil
@@ -699,6 +698,10 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 	}
 
 	return sr.tryRecordIngestIndex(job)
+}
+
+func (sr *SchemasReplace) GetDBReplaceMap() map[UpstreamID]*DBReplace {
+	return sr.DbMap
 }
 
 type DelRangeParams struct {

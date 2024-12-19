@@ -1459,7 +1459,7 @@ func restoreStream(
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc, needDiffSchemaReload(cfg))
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
@@ -1962,4 +1962,8 @@ func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) err
 	}
 	log.Info("reloading schema finished", zap.Duration("timeTaken", time.Since(reloadStart)))
 	return nil
+}
+
+func needDiffSchemaReload(cfg *RestoreConfig) bool {
+	return cfg.ExplicitFilter
 }

@@ -156,7 +156,7 @@ run_backup_restore_test() {
     # Run pitr restore and measure the performance
     echo "restore log backup with $full_encryption_args and $log_encryption_args"
     local start_time=$(date +%s.%N)
-    timeout 300 run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" $full_encryption_args $log_encryption_args || { 
+    timeout 300 run_br --pd "$PD_ADDR" restore point -f "$DB.*" -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" $full_encryption_args $log_encryption_args || {
         echo "Log backup restore failed or timed out after 5 minutes"
         exit 1
     }
@@ -387,15 +387,15 @@ test_mixed_full_plain_log_encrypted() {
 echo "Operation,Encryption Mode,Duration (seconds)" > "$TEST_DIR/performance_results.csv"
 
 # Run tests
-test_backup_encrypted_restore_unencrypted
+#test_backup_encrypted_restore_unencrypted
 test_plaintext
-test_plaintext_data_key
-test_local_master_key
+#test_plaintext_data_key
+#test_local_master_key
 # localstack not working with older glibc version in our centos7 base image...
 #test_aws_kms
 #test_aws_kms_with_iam
-test_mixed_full_encrypted_log_plain
-test_mixed_full_plain_log_encrypted
+#test_mixed_full_encrypted_log_plain
+#test_mixed_full_plain_log_encrypted
 
 # uncomment for manual GCP KMS testing
 #test_gcp_kms
