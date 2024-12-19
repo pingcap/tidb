@@ -1997,7 +1997,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
-	execdetails.ExecDetails
+	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool

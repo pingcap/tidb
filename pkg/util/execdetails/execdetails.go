@@ -72,6 +72,15 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
+type CopExecDetails struct {
+	BackoffTime   time.Duration
+	BackoffSleep  map[string]time.Duration
+	BackoffTimes  map[string]int
+	CalleeAddress string
+	ScanDetail    *util.ScanDetail
+	TimeDetail    util.TimeDetail
+}
+
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
 const MaxDetailsNumsForOneQuery = 1000
 
@@ -416,6 +425,28 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 	}
 }
 
+func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime time.Duration) {
+	if details == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if details != nil {
+		s.execDetails.CopTime += copTime
+		s.execDetails.BackoffTime += details.BackoffTime
+		s.execDetails.RequestCount++
+		s.mergeScanDetail(details.ScanDetail)
+		s.mergeTimeDetail(details.TimeDetail)
+		detail := &DetailsNeedP90{
+			BackoffSleep:  details.BackoffSleep,
+			BackoffTimes:  details.BackoffTimes,
+			CalleeAddress: details.CalleeAddress,
+			TimeDetail:    details.TimeDetail,
+		}
+		s.detailsSummary.Merge(detail)
+	}
+}
+
 // mergeScanDetail merges scan details into self.
 func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 	// Currently TiFlash cop task does not fill scanDetail, so need to skip it if scanDetail is nil
@@ -430,8 +461,7 @@ func (s *SyncExecDetails) mergeScanDetail(scanDetail *util.ScanDetail) {
 
 // MergeTimeDetail merges time details into self.
 func (s *SyncExecDetails) mergeTimeDetail(timeDetail util.TimeDetail) {
-	s.execDetails.TimeDetail.ProcessTime += timeDetail.ProcessTime
-	s.execDetails.TimeDetail.WaitTime += timeDetail.WaitTime
+	s.execDetails.TimeDetail.Merge(&timeDetail)
 }
 
 // MergeLockKeysExecDetails merges lock keys execution details into self.

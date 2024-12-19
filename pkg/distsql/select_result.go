@@ -364,11 +364,10 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
 					return err
 				}
-				copStats.CopTime = duration
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -614,7 +613,7 @@ func (r *selectResult) Close() error {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
 			for _, copStats := range unconsumedCopStats {
 				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 			}
 		}
 	}
