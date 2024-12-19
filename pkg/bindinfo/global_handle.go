@@ -84,11 +84,6 @@ type GlobalBindingHandle interface {
 	// GetMemCapacity returns the memory capacity for the bind cache.
 	GetMemCapacity() (memCapacity int64)
 
-	// Methods for Auto Capture.
-
-	// CaptureBaselines is used to automatically capture plan baselines.
-	CaptureBaselines()
-
 	variable.Statistics
 }
 
