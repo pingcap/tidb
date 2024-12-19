@@ -128,11 +128,18 @@ func getPartColumnsForHashPartition(ctx sessionctx.Context, hashExpr expression.
 	columns []*expression.Column, names types.NameSlice) ([]*expression.Column, []int) {
 	partCols := expression.ExtractColumns(hashExpr)
 	colLen := make([]int, 0, len(partCols))
+	retCols := make([]*expression.Column, 0, len(partCols))
+	filled := make(map[int64]struct{})
 	for i := 0; i < len(partCols); i++ {
-		partCols[i].Index = i
-		colLen = append(colLen, types.UnspecifiedLength)
+		// Deal with same columns.
+		if _, done := filled[partCols[i].UniqueID]; !done {
+			partCols[i].Index = len(filled)
+			filled[partCols[i].UniqueID] = struct{}{}
+			colLen = append(colLen, types.UnspecifiedLength)
+			retCols = append(retCols, partCols[i])
+		}
 	}
-	return partCols, colLen
+	return retCols, colLen
 }
 
 func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
@@ -238,6 +245,30 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 			used = []int{FullRange}
 			break
 		}
+<<<<<<< HEAD:planner/core/rule_partition_processor.go
+=======
+
+		// The code below is for the range `r` is a point.
+		if len(r.HighVal) != len(partCols) {
+			used = []int{FullRange}
+			break
+		}
+		vals := make([]types.Datum, 0, len(partCols))
+		vals = append(vals, r.HighVal...)
+		pos, isNull, err := hashExpr.EvalInt(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(vals).ToRow())
+		if err != nil {
+			// If we failed to get the point position, we can just skip and ignore it.
+			continue
+		}
+		if isNull {
+			pos = 0
+		}
+		idx := mathutil.Abs(pos % int64(pi.Num))
+		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+			continue
+		}
+		used = append(used, int(idx))
+>>>>>>> 15d25e03fd5 (planner: fix hash partition prune with `is null` condition (#58383)):pkg/planner/core/rule_partition_processor.go
 	}
 	return used, detachedResult.RemainedConds, nil
 }
