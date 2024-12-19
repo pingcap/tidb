@@ -148,11 +148,18 @@ func generateHashPartitionExpr(ctx base.PlanContext, pi *model.PartitionInfo, co
 func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expression.Column, []int) {
 	partCols := expression.ExtractColumns(hashExpr)
 	colLen := make([]int, 0, len(partCols))
+	retCols := make([]*expression.Column, 0, len(partCols))
+	filled := make(map[int64]struct{})
 	for i := 0; i < len(partCols); i++ {
-		partCols[i].Index = i
-		colLen = append(colLen, types.UnspecifiedLength)
+		// Deal with same columns.
+		if _, done := filled[partCols[i].UniqueID]; !done {
+			partCols[i].Index = len(filled)
+			filled[partCols[i].UniqueID] = struct{}{}
+			colLen = append(colLen, types.UnspecifiedLength)
+			retCols = append(retCols, partCols[i])
+		}
 	}
-	return partCols, colLen
+	return retCols, colLen
 }
 
 func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
@@ -248,9 +255,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 			break
 		}
 
-		// It's the range is a point condition.
-		// If len(r.HighVal) != len(partCols), we couldn't caculate the result of `hashExpr(r.HighVal...)`
-		// TODO: now we can't prune partition table such as `partition by hash(a + a + b)`.
+		// The code below is for the range `r` is a point.
 		if len(r.HighVal) != len(partCols) {
 			used = []int{FullRange}
 			break

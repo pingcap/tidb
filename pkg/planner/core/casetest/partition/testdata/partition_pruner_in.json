@@ -32,7 +32,8 @@
       "explain format = 'brief' select * from t9",
       "explain format = 'brief' select * from t10 where a between 0 AND 15218001646226433652",
       "explain format = 'brief' select * from t11 where a is null",
-      "explain format = 'brief' select * from t11 where a is null and b = 2"
+      "explain format = 'brief' select * from t11 where a is null and b = 2",
+      "explain format = 'brief' select * from t11 where a = 1 and b = 2"
     ]
   },
   {
