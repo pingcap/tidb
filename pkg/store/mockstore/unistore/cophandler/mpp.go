@@ -384,6 +384,7 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	e.baseMPPExec.children = []mppExec{leftCh, rightCh}
 	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
 		for _, tp := range rightCh.getFieldTypes() {
 			tp.DelFlag(mysql.NotNullFlag)

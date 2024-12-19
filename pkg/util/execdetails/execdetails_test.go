@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -205,10 +206,10 @@ func TestCopRuntimeStats(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.8", mockExecutorExecutionSummary(1, 1, 1))
-	stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
-	stats.RecordOneCopTask(aggID, "tikv", "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
-	stats.RecordOneCopTask(aggID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
+	stats.RecordOneCopTask(tableScanID, kv.TiKV, "8.8.8.8", mockExecutorExecutionSummary(1, 1, 1))
+	stats.RecordOneCopTask(tableScanID, kv.TiKV, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
+	stats.RecordOneCopTask(aggID, kv.TiKV, "8.8.8.8", mockExecutorExecutionSummary(3, 3, 3))
+	stats.RecordOneCopTask(aggID, kv.TiKV, "8.8.8.9", mockExecutorExecutionSummary(4, 4, 4))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 15,
 		ProcessedKeys:             10,
@@ -219,10 +220,10 @@ func TestCopRuntimeStats(t *testing.T) {
 		RocksdbBlockReadCount:     20,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+	stats.RecordScanDetail(tableScanID, kv.TiKV, scanDetail)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
-	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
+	cop := stats.GetOrCreateCopStats(tableScanID, kv.TiKV)
 	expected := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +
 		"scan_detail: {total_process_keys: 10, total_process_keys_size: 10, total_keys: 15, rocksdb: {delete_skipped_count: 5, key_skipped_count: 1, block: {cache_hit_count: 10, read_count: 20, read_byte: 100 Bytes}}}"
 	require.Equal(t, expected, cop.String())
@@ -235,7 +236,7 @@ func TestCopRuntimeStats(t *testing.T) {
 	newCopStats.Record(time.Second, 10)
 	copStats.Merge(newCopStats)
 	require.Equal(t, "time:1s, loops:2", copStats.String())
-	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, "tikv").String())
+	require.Equal(t, "tikv_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2}", stats.GetOrCreateCopStats(aggID, kv.TiKV).String())
 
 	rootStats := stats.GetRootStats(tableReaderID)
 	require.NotNil(t, rootStats)
@@ -259,10 +260,10 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 	tableScanID := 1
 	aggID := 2
 	tableReaderID := 3
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 8192, 0, 15, 200, 40, 10, 4, 1, 100, 50, 30000000, 20000000, 10000000, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(tableScanID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 20000000, 10000000, 5000000, "tablescan_"+strconv.Itoa(tableScanID)))
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 12000, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
-	stats.RecordOneCopTask(aggID, "tiflash", "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 8192, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(tableScanID, kv.TiFlash, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(1, 1, 1, 1, 8192, 0, 15, 200, 40, 10, 4, 1, 100, 50, 30000000, 20000000, 10000000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(tableScanID, kv.TiFlash, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(2, 2, 2, 1, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 20000000, 10000000, 5000000, "tablescan_"+strconv.Itoa(tableScanID)))
+	stats.RecordOneCopTask(aggID, kv.TiFlash, "8.8.8.8", mockExecutorExecutionSummaryForTiFlash(3, 3, 3, 1, 12000, 6000, 60, 1000, 20, 5, 1, 0, 20, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
+	stats.RecordOneCopTask(aggID, kv.TiFlash, "8.8.8.9", mockExecutorExecutionSummaryForTiFlash(4, 4, 4, 1, 8192, 80000, 40, 2000, 30, 1, 1, 0, 0, 0, 0, 0, 0, "aggregation_"+strconv.Itoa(aggID)))
 	scanDetail := &util.ScanDetail{
 		TotalKeys:                 10,
 		ProcessedKeys:             10,
@@ -272,7 +273,7 @@ func TestCopRuntimeStatsForTiFlash(t *testing.T) {
 		RocksdbBlockReadCount:     10,
 		RocksdbBlockReadByte:      100,
 	}
-	stats.RecordScanDetail(tableScanID, "tiflash", scanDetail)
+	stats.RecordScanDetail(tableScanID, kv.TiFlash, scanDetail)
 	require.True(t, stats.ExistsCopStats(tableScanID))
 
 	cop := stats.GetOrCreateCopStats(tableScanID, "tiflash")
@@ -545,14 +546,14 @@ func TestCopRuntimeStats2(t *testing.T) {
 		KvReadWallTime:   5 * time.Millisecond,
 		TotalRPCWallTime: 50 * time.Millisecond,
 	}
-	stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
+	stats.RecordScanDetail(tableScanID, kv.TiKV, scanDetail)
 	for range 1005 {
-		stats.RecordOneCopTask(tableScanID, "tikv", "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
-		stats.RecordScanDetail(tableScanID, "tikv", scanDetail)
-		stats.RecordTimeDetail(tableScanID, "tikv", timeDetail)
+		stats.RecordOneCopTask(tableScanID, kv.TiKV, "8.8.8.9", mockExecutorExecutionSummary(2, 2, 2))
+		stats.RecordScanDetail(tableScanID, kv.TiKV, scanDetail)
+		stats.RecordTimeDetail(tableScanID, kv.TiKV, timeDetail)
 	}
 
-	cop := stats.GetOrCreateCopStats(tableScanID, "tikv")
+	cop := stats.GetOrCreateCopStats(tableScanID, kv.TiKV)
 	expected := "tikv_task:{proc max:0s, min:0s, avg: 2ns, p80:2ns, p95:2ns, iters:2010, tasks:1005}, " +
 		"scan_detail: {total_process_keys: 10060, total_process_keys_size: 10060, total_keys: 15090, " +
 		"rocksdb: {delete_skipped_count: 5030, key_skipped_count: 1006, " +

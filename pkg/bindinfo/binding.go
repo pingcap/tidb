@@ -39,12 +39,8 @@ const (
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
-	// Invalid is the bind info's invalid status.
-	Invalid = "invalid"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
-	// Capture indicates the binding is captured by TiDB automatically.
-	Capture = "capture"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest

@@ -38,16 +38,13 @@ type StepExecutor interface {
 	// subtask as failed, to trigger task failure.
 	Init(context.Context) error
 	// RunSubtask is used to run the subtask.
+	// The subtask meta can be updated in place, if no error returned, the subtask
+	// meta will be updated in the task table.
 	RunSubtask(ctx context.Context, subtask *proto.Subtask) error
 
 	// RealtimeSummary returns the realtime summary of the running subtask by this executor.
 	RealtimeSummary() *SubtaskSummary
 
-	// OnFinished is used to handle the subtask when it is finished.
-	// The subtask meta can be updated in place. only when OnFinished returns no
-	// err, a subtask can be marked as 'success', if it returns error, the subtask
-	// might be completely rerun, so don't put code that's prone to error in it.
-	OnFinished(ctx context.Context, subtask *proto.Subtask) error
 	// Cleanup is used to clean up the environment for this step.
 	// the returned error will not affect task/subtask state, it's only logged,
 	// so don't put code that's prone to error in it.
@@ -70,6 +67,8 @@ type StepExecFrameworkInfo interface {
 	// interfaces, the implementation of other interface must embed
 	// StepExecFrameworkInfo.
 	restricted()
+	// GetStep returns the step.
+	GetStep() proto.Step
 	// GetResource returns the expected resource of this step executor.
 	GetResource() *proto.StepResource
 }
@@ -77,21 +76,29 @@ type StepExecFrameworkInfo interface {
 var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
 
 type frameworkInfo struct {
+	step     proto.Step
 	resource *proto.StepResource
 }
 
 func (*frameworkInfo) restricted() {}
+
+func (f *frameworkInfo) GetStep() proto.Step {
+	return f.step
+}
 
 func (f *frameworkInfo) GetResource() *proto.StepResource {
 	return f.resource
 }
 
 // SetFrameworkInfo sets the framework info for the StepExecutor.
-func SetFrameworkInfo(exec StepExecutor, resource *proto.StepResource) {
+func SetFrameworkInfo(exec StepExecutor, step proto.Step, resource *proto.StepResource) {
 	if exec == nil {
 		return
 	}
-	toInject := &frameworkInfo{resource: resource}
+	toInject := &frameworkInfo{
+		step:     step,
+		resource: resource,
+	}
 	// use reflection to set the framework info
 	e := reflect.ValueOf(exec)
 	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {

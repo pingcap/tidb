@@ -43,6 +43,7 @@ go_test(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",

@@ -144,7 +144,7 @@ func TestIssue22307(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1);")
 
 	var checkErr1, checkErr2 error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -175,7 +175,7 @@ func TestAddExpressionIndexRollback(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -387,7 +387,7 @@ func TestDDLJobErrorCount(t *testing.T) {
 	}()
 
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID = job.ID
 	})
 
@@ -519,7 +519,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	var rs []sqlexec.RecordSet
 
 	// Test when cancelling cannot be retried and adding index succeeds.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
 			defer func() {
@@ -539,7 +539,7 @@ func TestCancelJobWriteConflict(t *testing.T) {
 
 	// Test when cancelling is retried only once and adding index is cancelled in the end.
 	var jobID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
@@ -932,7 +932,7 @@ func TestDDLBlockedCreateView(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -954,7 +954,7 @@ func TestHashPartitionAddColumn(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int) partition by hash(a) partitions 4")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -975,7 +975,7 @@ func TestSetInvalidDefaultValueAfterModifyColumn(t *testing.T) {
 	var wg sync.WaitGroup
 	var checkErr error
 	one := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteOnly {
 			return
 		}
@@ -1014,7 +1014,7 @@ func TestMDLTruncateTable(t *testing.T) {
 	var timetk3 time.Time
 
 	one := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if one {
 			return
 		}
@@ -1056,7 +1056,7 @@ func TestTruncateTableAndSchemaDependence(t *testing.T) {
 	var timetk3 time.Time
 
 	first := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if first || job.Type != model.ActionTruncateTable {
 			return
 		}
@@ -1090,7 +1090,7 @@ func TestInsertIgnore(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("INSERT INTO t VALUES (-18585,'aaa',1), (-18585,'0',1), (-18585,'1',1), (-18585,'duplicatevalue',1);")

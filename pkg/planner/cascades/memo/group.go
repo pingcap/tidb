@@ -17,12 +17,13 @@ package memo
 import (
 	"container/list"
 	"fmt"
-	"strconv"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/zyedidia/generic/hashmap"
 )
 
 var _ base.HashEquals = &Group{}
@@ -41,7 +42,7 @@ type Group struct {
 	Operand2FirstExpr map[pattern.Operand]*list.Element
 
 	// hash2GroupExpr is used to de-duplication in the list.
-	hash2GroupExpr map[uint64]*list.Element
+	hash2GroupExpr *hashmap.Map[*GroupExpression, *list.Element]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
@@ -74,22 +75,13 @@ func (g *Group) Equals(other any) bool {
 
 // ******************************************* end of HashEqual methods *******************************************
 
-// Exists checks whether a Group expression existed in a Group.
-func (g *Group) Exists(e *GroupExpression) bool {
-	one, ok := g.hash2GroupExpr[e.GetHash64()]
-	if !ok {
-		return false
-	}
-	return one.Value.(*GroupExpression).Equals(e)
-}
-
 // Insert adds a GroupExpression to the Group.
 func (g *Group) Insert(e *GroupExpression) bool {
 	if e == nil {
 		return false
 	}
 	// GroupExpressions hash should be initialized within Init(xxx) method.
-	if g.Exists(e) {
+	if _, ok := g.hash2GroupExpr.Get(e); ok {
 		return false
 	}
 	operand := pattern.GetOperand(e.LogicalPlan)
@@ -103,7 +95,7 @@ func (g *Group) Insert(e *GroupExpression) bool {
 		newEquiv = g.logicalExpressions.PushBack(e)
 		g.Operand2FirstExpr[operand] = newEquiv
 	}
-	g.hash2GroupExpr[e.GetHash64()] = newEquiv
+	g.hash2GroupExpr.Put(e, newEquiv)
 	e.group = g
 	return true
 }
@@ -127,18 +119,64 @@ func (g *Group) GetFirstElem(operand pattern.Operand) *list.Element {
 	return g.Operand2FirstExpr[operand]
 }
 
+// HasLogicalProperty check whether current group has the logical property.
+func (g *Group) HasLogicalProperty() bool {
+	return g.logicalProp != nil
+}
+
+// GetLogicalProperty return this group's logical property.
+func (g *Group) GetLogicalProperty() *property.LogicalProperty {
+	intest.Assert(g.logicalProp != nil)
+	return g.logicalProp
+}
+
+// SetLogicalProperty set this group's logical property.
+func (g *Group) SetLogicalProperty(prop *property.LogicalProperty) {
+	g.logicalProp = prop
+}
+
+// IsExplored returns whether this group is explored.
+func (g *Group) IsExplored() bool {
+	return g.explored
+}
+
+// SetExplored set the group as tagged as explored.
+func (g *Group) SetExplored() {
+	g.explored = true
+}
+
 // String implements fmt.Stringer interface.
 func (g *Group) String(w util.StrBufferWriter) {
-	w.WriteString(fmt.Sprintf("inputs:%s", strconv.Itoa(int(g.groupID))))
+	w.WriteString(fmt.Sprintf("GID:%d", int(g.groupID)))
+}
+
+// ForEachGE traverse the inside group expression with f call on them each.
+func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
+	var next bool
+	for elem := g.logicalExpressions.Front(); elem != nil; elem = elem.Next() {
+		expr := elem.Value.(*GroupExpression)
+		next = f(expr)
+		if !next {
+			break
+		}
+	}
 }
 
 // NewGroup creates a new Group with given logical prop.
 func NewGroup(prop *property.LogicalProperty) *Group {
 	g := &Group{
 		logicalExpressions: list.New(),
-		hash2GroupExpr:     make(map[uint64]*list.Element),
 		Operand2FirstExpr:  make(map[pattern.Operand]*list.Element),
 		logicalProp:        prop,
+		hash2GroupExpr: hashmap.New[*GroupExpression, *list.Element](
+			4,
+			func(a, b *GroupExpression) bool {
+				return a.Equals(b)
+			},
+			func(t *GroupExpression) uint64 {
+				return t.GetHash64()
+			},
+		),
 	}
 	return g
 }

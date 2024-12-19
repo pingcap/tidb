@@ -107,6 +107,7 @@ fi
 # PITR restore
 echo "run pitr"
 run_sql "DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint;"
+run_sql "DROP DATABASE __TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint;"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
 
 check_result

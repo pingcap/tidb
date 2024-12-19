@@ -511,7 +511,7 @@ func TestReorgPartitionConcurrent(t *testing.T) {
 	defer close(wait)
 
 	currState := model.StateNone
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			(job.SchemaState == model.StateDeleteOnly ||
 				job.SchemaState == model.StateWriteOnly ||
@@ -741,7 +741,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 
 	// Test insert of duplicate key during copy phase
 	injected := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait
@@ -778,7 +778,7 @@ func TestReorgPartitionFailConcurrent(t *testing.T) {
 
 	// Test reorg of duplicate key
 	prevState := model.StateNone
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition &&
 			job.SchemaState == model.StateWriteReorganization &&
 			job.SnapshotVer == 0 &&
@@ -876,7 +876,7 @@ func TestReorgPartitionFailInject(t *testing.T) {
 	defer close(wait)
 
 	injected := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization && !injected {
 			injected = true
 			<-wait

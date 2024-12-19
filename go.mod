@@ -87,13 +87,13 @@ require (
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
 	github.com/pingcap/kvproto v0.0.0-20241120022153-92b0414aeed8
-	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20241105053214-f91fdb81a69e
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/client_model v0.6.1
-	github.com/prometheus/common v0.57.0
+	github.com/prometheus/common v0.61.0
 	github.com/prometheus/prometheus v0.50.1
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robfig/cron/v3 v3.0.1
@@ -118,6 +118,7 @@ require (
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.6.3-0.20240520233950-75e935fc3e17
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
+	github.com/zyedidia/generic v1.2.1
 	go.etcd.io/etcd/api/v3 v3.5.12
 	go.etcd.io/etcd/client/pkg/v3 v3.5.12
 	go.etcd.io/etcd/client/v3 v3.5.12
@@ -131,14 +132,14 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.31.0
-	golang.org/x/oauth2 v0.23.0
-	golang.org/x/sync v0.9.0
-	golang.org/x/sys v0.27.0
-	golang.org/x/term v0.26.0
-	golang.org/x/text v0.20.0
+	golang.org/x/net v0.32.0
+	golang.org/x/oauth2 v0.24.0
+	golang.org/x/sync v0.10.0
+	golang.org/x/sys v0.28.0
+	golang.org/x/term v0.27.0
+	golang.org/x/text v0.21.0
 	golang.org/x/time v0.7.0
-	golang.org/x/tools v0.27.0
+	golang.org/x/tools v0.28.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
@@ -168,6 +169,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
+	github.com/segmentio/fasthash v1.0.3 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 )
 
@@ -298,14 +300,14 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.29.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20241108190413-2d47ceb2692f // indirect
 	golang.org/x/mod v0.22.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
-	google.golang.org/protobuf v1.34.2
+	google.golang.org/protobuf v1.35.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

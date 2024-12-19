@@ -384,7 +384,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
@@ -3108,7 +3108,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}
