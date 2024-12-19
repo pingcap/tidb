@@ -45,9 +45,6 @@ type columnStatsUsageCollector struct {
 	colMap map[int64]map[model.TableItemID]struct{}
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
-	// previously we pass down the parent operator's colum group info down to datasource to call for group ndv maintenance bottom-up. for now
-	// we collect this kind of "signal" in the columnStatsUsageCollector as well as stats, which will make derive stats interface more clear.
-	tableID2ColGroups map[int64][][]*expression.Column
 
 	// visitedPhysTblIDs all ds.PhysicalTableID that have been visited.
 	// It's always collected, even collectHistNeededColumns is not set.
@@ -71,7 +68,6 @@ func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *col
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
 		tblID2PartitionIDs: make(map[int64][]int64),
-		tableID2ColGroups:  make(map[int64][][]*expression.Column),
 	}
 	collector.predicateCols = make(map[model.TableItemID]bool)
 	collector.colMap = make(map[int64]map[model.TableItemID]struct{})
@@ -159,10 +155,9 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		}
 		if inTable {
 			// only store the right col group in this table.
-			c.tableID2ColGroups[tblID] = append(c.tableID2ColGroups[tblID], group)
+			ds.AskedColumnGroup = append(ds.AskedColumnGroup, group)
 		}
 	}
-	ds.AskedColumnGroup = c.tableID2ColGroups[tblID]
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
 }
