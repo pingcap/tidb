@@ -881,7 +881,13 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
-	if fixValue && ContainHeavyFunction(p.ByItems[0].Expr) {
+	byItemIndex := make([]int, 0)
+	for i, byItem := range p.ByItems {
+		if ContainHeavyFunction(byItem.Expr) {
+			byItemIndex = append(byItemIndex, i)
+		}
+	}
+	if fixValue && len(byItemIndex) > 0 {
 		x, err := p.Clone(p.SCtx())
 		if err != nil {
 			return nil, nil
@@ -928,12 +934,25 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 			bottomProjExprs = append(bottomProjExprs, newCol)
 		}
-		bottomProjExprs = append(bottomProjExprs, newGlobalTopN.ByItems[0].Expr)
-		distanceCol := &expression.Column{
-			UniqueID: newGlobalTopN.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  newGlobalTopN.ByItems[0].Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+		type DistanceColItem struct {
+			Index       int
+			DistanceCol *expression.Column
 		}
-		bottomProjSchemaCols = append(bottomProjSchemaCols, distanceCol)
+		distanceCols := make([]DistanceColItem, 0)
+		for _, idx := range byItemIndex {
+			bottomProjExprs = append(bottomProjExprs, newGlobalTopN.ByItems[idx].Expr)
+			distanceCol := &expression.Column{
+				UniqueID: newGlobalTopN.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  newGlobalTopN.ByItems[idx].Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+			}
+			distanceCols = append(distanceCols, DistanceColItem{
+				Index:       idx,
+				DistanceCol: distanceCol,
+			})
+		}
+		for _, dis := range distanceCols {
+			bottomProjSchemaCols = append(bottomProjSchemaCols, dis.DistanceCol)
+		}
 
 		bottomProj := PhysicalProjection{
 			Exprs: bottomProjExprs,
@@ -947,9 +966,14 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 			Count:       newCount,
 		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 		// mppTask's topN
-		topN.ByItems[0].Expr = distanceCol
+		for _, expr := range distanceCols {
+			topN.ByItems[expr.Index].Expr = expr.DistanceCol
+		}
+
 		// rootTask's topn, need reuse the distance col
-		newGlobalTopN.ByItems[0].Expr = distanceCol
+		for _, expr := range distanceCols {
+			newGlobalTopN.ByItems[expr.Index].Expr = expr.DistanceCol
+		}
 		topN.SetChildren(bottomProj)
 
 		return topN, newGlobalTopN
