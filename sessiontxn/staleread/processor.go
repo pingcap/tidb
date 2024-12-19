@@ -285,7 +285,11 @@ func parseAndValidateAsOf(ctx context.Context, sctx sessionctx.Context, asOf *as
 		return 0, err
 	}
 
+<<<<<<< HEAD:sessiontxn/staleread/processor.go
 	if err = sessionctx.ValidateStaleReadTS(ctx, sctx, ts); err != nil {
+=======
+	if err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), ts, true); err != nil {
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/sessiontxn/staleread/processor.go
 		return 0, err
 	}
 

@@ -90,10 +90,18 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.4-0.20241125064444-5f59e4e34c62
 	github.com/tikv/pd/client v0.0.0-20230904040343-947701a32c05
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tidwall/btree v1.7.0
+	github.com/tikv/client-go/v2 v2.0.8-0.20241209094930-06d7f4b9233b
+	github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31
+	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:ddl/db_integration_test.go
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -54,6 +55,35 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+=======
+	_ "github.com/pingcap/tidb/pkg/autoid_service"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/schematracker"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/db_integration_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -830,11 +860,10 @@ func TestChangingTableCharset(t *testing.T) {
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		ctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), ctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 
@@ -1076,11 +1105,10 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tblInfo.Charset = "UTF8MB4"
 
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 		require.True(t, ok)
@@ -1918,11 +1946,10 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMeta(txn)
 		require.True(t, ok)

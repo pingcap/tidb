@@ -3399,7 +3399,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD:planner/core/planbuilder.go
 			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+=======
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/planner/core/planbuilder.go
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3413,7 +3417,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD:planner/core/planbuilder.go
 			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx, startTS); err != nil {
+=======
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/planner/core/planbuilder.go
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS

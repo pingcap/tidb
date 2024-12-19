@@ -55,8 +55,13 @@ func TestIndexChange(t *testing.T) {
 		if job.SchemaState == prevState {
 			return
 		}
+<<<<<<< HEAD:ddl/index_change_test.go
 		jobID = job.ID
 		ctx1 := testNewContext(store)
+=======
+		jobID.Store(job.ID)
+		ctx1 := testNewContext(t, store)
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/ddl/index_change_test.go
 		prevState = job.SchemaState
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
@@ -105,7 +110,7 @@ func TestIndexChange(t *testing.T) {
 		require.NoError(t, dom.Reload())
 		tbl, exist := dom.InfoSchema().TableByID(job.TableID)
 		require.True(t, exist)
-		ctx1 := testNewContext(store)
+		ctx1 := testNewContext(t, store)
 		switch job.SchemaState {
 		case model.StateWriteOnly:
 			writeOnlyTable = tbl

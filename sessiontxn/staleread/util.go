@@ -77,8 +77,25 @@ func CalculateTsWithReadStaleness(sctx sessionctx.Context, readStaleness time.Du
 		return 0, err
 	}
 	tsVal := nowVal.Add(readStaleness)
+<<<<<<< HEAD:sessiontxn/staleread/util.go
 	minTsVal := expression.GetMinSafeTime(sctx)
 	return oracle.GoTimeToTS(expression.CalAppropriateTime(tsVal, nowVal, minTsVal)), nil
+=======
+	sc := sctx.GetSessionVars().StmtCtx
+	minSafeTSVal := expression.GetStmtMinSafeTime(sc, sctx.GetStore(), sc.TimeZone())
+	calculatedTime := expression.CalAppropriateTime(tsVal, nowVal, minSafeTSVal)
+	readTS := oracle.GoTimeToTS(calculatedTime)
+	if calculatedTime.After(minSafeTSVal) {
+		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
+		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
+		// So in this case, do an extra check on it.
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS, true)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return readTS, nil
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/sessiontxn/staleread/util.go
 }
 
 // IsStmtStaleness indicates whether the current statement is staleness or not
