@@ -227,8 +227,16 @@
       {
         "SQL": "explain format = 'brief' select * from t11 where a is null and b = 2",
         "Result": [
-          "TableReader 0.01 root partition:all data:Selection",
+          "TableReader 0.01 root partition:p0 data:Selection",
           "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.b, 2), isnull(test_partition.t11.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a = 1 and b = 2",
+        "Result": [
+          "TableReader 0.01 root partition:p0 data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.a, 1), eq(test_partition.t11.b, 2)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
         ]
       }
