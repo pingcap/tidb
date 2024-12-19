@@ -612,6 +612,7 @@ func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWra
 	var sql bytes.Buffer
 	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
 	for i, jobW := range jobWs {
+		jobW.SubmitTime = time.Now()
 		jobW.FillArgsWithSubJobs()
 		b, err := jobW.Encode(true)
 		if err != nil {

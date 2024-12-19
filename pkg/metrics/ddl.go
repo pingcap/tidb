@@ -67,10 +67,12 @@ var (
 	DDLWaitSchemaSynced     = "wait_schema_synced"
 	DDLIncrSchemaVerOpHist  prometheus.Observer
 	DDLLockSchemaVerOpHist  prometheus.Observer
-	DDLAsyncNotifyOpHist    prometheus.Observer
 	DDLRunJobOpHist         prometheus.Observer
 	DDLHandleJobDoneOpHist  prometheus.Observer
 	DDLTransitOneStepOpHist prometheus.Observer
+	DDLScheduleJobHist      prometheus.Observer
+	DDLLockVerDurationHist  prometheus.Observer
+	DDLCleanMDLInfoHist     prometheus.Observer
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -200,10 +202,12 @@ func InitDDLMetrics() {
 	// is a short time window, so we don't need to add label for DDL type.
 	DDLIncrSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("incr_schema_ver", "*", "*")
 	DDLLockSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("lock_schema_ver", "*", "*")
-	DDLAsyncNotifyOpHist = DDLWorkerHistogram.WithLabelValues("async_notify", "*", "*")
 	DDLRunJobOpHist = DDLWorkerHistogram.WithLabelValues("run_job", "*", "*")
 	DDLHandleJobDoneOpHist = DDLWorkerHistogram.WithLabelValues("handle_job_done", "*", "*")
 	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
+	DDLScheduleJobHist = DDLWorkerHistogram.WithLabelValues("schedule_job", "*", "*")
+	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
+	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
 }
 
 // Label constants.

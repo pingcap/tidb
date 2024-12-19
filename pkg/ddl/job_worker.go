@@ -103,7 +103,8 @@ type jobContext struct {
 	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
-	oldDDLCtx *ddlCtx
+	oldDDLCtx     *ddlCtx
+	lockStartTime time.Time
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -575,13 +576,13 @@ func (w *worker) transitOneJobStep(
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
 	if job.IsCancelled() {
-		defer jobCtx.unlockSchemaVersion(job.ID)
+		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
@@ -601,19 +602,19 @@ func (w *worker) transitOneJobStep(
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.workCtx)
-	jobCtx.unlockSchemaVersion(job.ID)
+	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return 0, err
 	}

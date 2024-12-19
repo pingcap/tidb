@@ -392,8 +392,8 @@ func newSchemaVersionManager(store kv.Storage) *schemaVersionManager {
 	}
 }
 
-func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion int64, err error) {
-	err = sv.lockSchemaVersion(job.ID)
+func (sv *schemaVersionManager) setSchemaVersion(jobCtx *jobContext, job *model.Job) (schemaVersion int64, err error) {
+	err = sv.lockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
@@ -413,7 +413,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 }
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
-func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
+func (sv *schemaVersionManager) lockSchemaVersion(jobCtx *jobContext, jobID int64) error {
 	ownerID := sv.lockOwner.Load()
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
 	// if they are the same job.
@@ -423,17 +423,19 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 		defer func() {
 			metrics.DDLLockSchemaVerOpHist.Observe(time.Since(start).Seconds())
 		}()
+		jobCtx.lockStartTime = time.Now()
 		sv.lockOwner.Store(jobID)
 	}
 	return nil
 }
 
 // unlockSchemaVersion releases the lock.
-func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
+func (sv *schemaVersionManager) unlockSchemaVersion(jobCtx *jobContext, jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
+		metrics.DDLLockVerDurationHist.Observe(time.Since(jobCtx.lockStartTime).Seconds())
 	}
 }
 
@@ -589,10 +591,6 @@ const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
 // give up notify and log it.
 // subJobID is used to identify the sub job in a merged ddl, such as create tables, should pass noSubJob(-1) if not a merged ddl.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
-	start := time.Now()
-	defer func() {
-		metrics.DDLAsyncNotifyOpHist.Observe(time.Since(start).Seconds())
-	}()
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather
 	// than be notified.

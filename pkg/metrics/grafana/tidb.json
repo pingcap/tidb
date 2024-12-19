@@ -14776,7 +14776,8 @@
               "expr": "histogram_quantile(0.99, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}} -p99",
+              "legendFormat": "{{type}} - p99",
+              "hide": true,
               "range": true,
               "refId": "A",
               "step": 10
@@ -14892,6 +14893,7 @@
               "intervalFactor": 2,
               "legendFormat": "{{type}}-{{action}}-{{result}} - p99",
               "range": true,
+              "hide": true,
               "refId": "A"
             },
             {
@@ -14994,12 +14996,13 @@
               "intervalFactor": 2,
               "legendFormat": "{{type}}-{{result}} - p99",
               "range": true,
+              "hide": true,
               "refId": "A"
             },
             {
               "editorMode": "code",
               "expr": "histogram_quantile(.99, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, result))",
-              "hide": false,
+              "hide": true,
               "legendFormat": "update_self_ver-{{result}} - p99",
               "range": true,
               "refId": "B"

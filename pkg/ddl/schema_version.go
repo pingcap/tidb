@@ -311,7 +311,7 @@ func SetSchemaDiffForMultiInfos(diff *model.SchemaDiff, multiInfos ...schemaIDAn
 
 // updateSchemaVersion increments the schema version by 1 and sets SchemaDiff.
 func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schemaIDAndTableInfo) (int64, error) {
-	schemaVersion, err := jobCtx.setSchemaVersion(job)
+	schemaVersion, err := jobCtx.setSchemaVersion(jobCtx, job)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
