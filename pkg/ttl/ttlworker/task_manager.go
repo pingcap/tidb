@@ -257,7 +257,7 @@ func (m *taskManager) resizeWorkers(workers []worker, count int, factory func() 
 func (m *taskManager) handleScanFinishedTask() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
-		logger := logutil.Logger(m.ctx).With(zap.Int64("tableID", result.task.tbl.ID), zap.String("jobID", result.task.JobID), zap.Int64("scanID", result.task.ScanID))
+		logger := result.task.taskLogger(logutil.Logger(m.ctx))
 		if result.err != nil {
 			logger = logger.With(zap.Error(result.err))
 		}
@@ -309,6 +309,15 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
+	if len(tasks) == 0 {
+		return
+	}
+
+	err = m.infoSchemaCache.Update(se)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to update infoSchemaCache", zap.Error(err))
+		return
+	}
 loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(
@@ -495,7 +504,7 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 	for _, task := range m.runningTasks {
 		err := m.taskHeartbeatOrResignOwner(ctx, se, now, task, false)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to update task heart beat", zap.Error(err), zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
+			task.taskLogger(logutil.Logger(m.ctx)).Warn("fail to update task heart beat", zap.Error(err))
 		}
 	}
 }
@@ -656,32 +665,30 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 	ownRunningTask := make([]*runningScanTask, 0, len(m.runningTasks))
 
 	for _, task := range m.runningTasks {
-		logger := logutil.Logger(m.ctx).With(zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
-
 		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
-
+		l := logutil.Logger(m.ctx)
 		timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 		rows, err := se.ExecuteSQL(timeoutCtx, sql, args...)
 		cancel()
 		if err != nil {
-			logger.Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			task.taskLogger(l).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
 			task.cancel()
 			continue
 		}
 		if len(rows) == 0 {
-			logger.Warn("didn't find task")
+			task.taskLogger(l).Warn("didn't find task")
 			task.cancel()
 			continue
 		}
 		t, err := cache.RowToTTLTask(se, rows[0])
 		if err != nil {
-			logger.Warn("fail to get task", zap.Error(err))
+			task.taskLogger(l).Warn("fail to get task", zap.Error(err))
 			task.cancel()
 			continue
 		}
 
 		if t.OwnerID != m.id {
-			logger.Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
+			task.taskLogger(l).Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
 			task.cancel()
 			continue
 		}
@@ -778,19 +785,13 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		return false
 	}
 
-	logger = logger.With(
-		zap.String("jobID", t.JobID),
-		zap.Int64("scanID", t.ScanID),
-		zap.String("table", t.tbl.Name.O),
-	)
-
 	totalRows := t.statistics.TotalRows.Load()
 	errRows := t.statistics.ErrorRows.Load()
 	successRows := t.statistics.SuccessRows.Load()
 	processedRows := successRows + errRows
 	if processedRows == totalRows {
 		// All rows are processed.
-		logger.Info(
+		t.taskLogger(logger).Info(
 			"will mark TTL task finished because all scanned rows are processed",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
@@ -802,7 +803,7 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 	if processedRows > totalRows {
 		// All rows are processed but processed rows are more than total rows.
 		// We still think it is finished.
-		logger.Warn(
+		t.taskLogger(logger).Warn(
 			"will mark TTL task finished but processed rows are more than total rows",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
@@ -815,7 +816,7 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		// If the scan task is finished and not all rows are processed, we should wait a certain time to report the task.
 		// After a certain time, if the rows are still not processed, we need to mark the task finished anyway to make
 		// sure the TTL job does not hang.
-		logger.Info(
+		t.taskLogger(logger).Info(
 			"will mark TTL task finished because timeout for waiting all scanned rows processed after scan task done",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),

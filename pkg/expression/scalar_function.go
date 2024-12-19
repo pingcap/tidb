@@ -16,7 +16,6 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
@@ -134,8 +133,9 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // StringWithCtx implements Expression interface.
 func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
+	buffer.WriteString(sf.FuncName.L)
+	buffer.WriteByte('(')
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {

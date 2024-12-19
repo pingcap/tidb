@@ -364,13 +364,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		responseErr(err)
-		return
-	}
-
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now().In(tz)) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -545,7 +539,7 @@ j:
 		for _, r := range rows {
 			task, err := cache.RowToTTLTask(se, r)
 			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err))
+				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", job.id))
 				continue j
 			}
 			allTasks = append(allTasks, task)
@@ -556,14 +550,19 @@ j:
 		}
 
 		if allFinished {
-			logutil.Logger(m.ctx).Info("job has finished", zap.String("jobID", job.id))
+			logger := logutil.Logger(m.ctx).With(
+				zap.String("jobID", job.id),
+				zap.Int64("tableID", job.tbl.ID),
+				zap.String("table", job.tbl.FullName()),
+			)
+			logger.Info("job has finished")
 			summary, err := summarizeTaskResult(allTasks)
 			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+				logger.Info("fail to summarize job", zap.Error(err))
 			}
 			err = job.finish(se, se.Now(), summary)
 			if err != nil {
-				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				logger.Warn("fail to finish job", zap.Error(err))
 				continue
 			}
 			m.removeJob(job)
@@ -573,22 +572,19 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
 	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
 	// when the heart beat is not sent
 	for _, table := range jobTables {
-		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
+		logger := logutil.Logger(m.ctx).With(
+			zap.Int64("tableID", table.ID),
+			zap.String("table", table.FullName()),
+		)
+		logger.Info("try lock new job")
 		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
-			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+			logger.Warn("failed to lock heartbeat timeout job", zap.Error(err))
 		}
 	}
 
@@ -606,15 +602,19 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	if cancelJobs {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info(fmt.Sprintf("cancel job because %s", cancelReason), zap.String("jobID", job.id))
-
+				logger := logutil.Logger(m.ctx).With(
+					zap.String("jobID", job.id),
+					zap.Int64("tableID", job.tbl.ID),
+					zap.String("table", job.tbl.FullName()),
+				)
+				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
 				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
-					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+					logger.Warn("fail to summarize job", zap.Error(err))
 				}
 				err = job.finish(se, now, summary)
 				if err != nil {
-					logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+					logger.Warn("fail to finish job", zap.Error(err))
 					continue
 				}
 				m.removeJob(job)
@@ -631,14 +631,19 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		}
 
 		// when the job is locked, it can be found in `infoSchemaCache`. Therefore, it must have been dropped.
-		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
+		logger := logutil.Logger(m.ctx).With(
+			zap.String("jobID", job.id),
+			zap.Int64("tableID", job.tbl.ID),
+			zap.String("table", job.tbl.FullName()),
+		)
+		logger.Info("cancel job because the table has been dropped or it's no longer TTL table")
 		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+			logger.Warn("fail to summarize job", zap.Error(err))
 		}
 		err = job.finish(se, now, summary)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+			logger.Warn("fail to finish job", zap.Error(err))
 			continue
 		}
 		m.removeJob(job)
@@ -706,7 +711,12 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 
 		interval, err := table.TTLInfo.GetJobInterval()
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("illegal job interval", zap.Error(err))
+			logutil.Logger(m.ctx).Warn(
+				"illegal job interval",
+				zap.Error(err),
+				zap.Int64("tableID", table.ID),
+				zap.String("table", table.FullName()),
+			)
 			return false
 		}
 		return startTime.Add(interval).Before(now)
@@ -729,7 +739,13 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 			hbTimeout = interval
 		}
 		if hbTime.Add(hbTimeout).Before(now) {
-			logutil.Logger(m.ctx).Info("task heartbeat has stopped", zap.Int64("tableID", table.ID), zap.Time("hbTime", hbTime), zap.Time("now", now))
+			logutil.Logger(m.ctx).Info("job heartbeat has stopped",
+				zap.String("jobID", tableStatus.CurrentJobID),
+				zap.Int64("tableID", table.ID),
+				zap.String("table", table.FullName()),
+				zap.Time("hbTime", hbTime),
+				zap.Time("now", now),
+			)
 			return true
 		}
 		return false
@@ -873,10 +889,16 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 		return nil, err
 	}
 
+	logger := logutil.Logger(m.ctx).With(
+		zap.String("jobID", id),
+		zap.Int64("tableID", table.ID),
+		zap.String("table", table.FullName()),
+	)
+
 	// job is created, notify every scan managers to fetch new tasks
 	err = m.notificationCli.Notify(m.ctx, scanTaskNotificationType, id)
 	if err != nil {
-		logutil.Logger(m.ctx).Warn("fail to trigger scan tasks", zap.Error(err))
+		logger.Warn("fail to trigger scan tasks", zap.Error(err))
 	}
 
 	job := &ttlJob{
@@ -892,7 +914,7 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 		status: cache.JobStatusRunning,
 	}
 
-	logutil.Logger(m.ctx).Info("append new running job", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
+	logger.Info("append new running job")
 	m.appendJob(job)
 
 	return job, nil
@@ -903,14 +925,23 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 	for _, job := range m.localJobs() {
 		err := m.updateHeartBeatForJob(ctx, se, now, job)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to update heartbeat for job", zap.Error(err), zap.String("jobID", job.id))
+			logutil.Logger(m.ctx).Warn("fail to update heartbeat for job",
+				zap.Error(err),
+				zap.String("jobID", job.id),
+				zap.Int64("tableID", job.tbl.ID),
+				zap.String("table", job.tbl.FullName()),
+			)
 		}
 	}
 }
 
 func (m *JobManager) updateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
 	if job.createTime.Add(ttlJobTimeout).Before(now) {
-		logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
+		logutil.Logger(m.ctx).Info("job is timeout",
+			zap.String("jobID", job.id),
+			zap.Int64("tableID", job.tbl.ID),
+			zap.String("table", job.tbl.FullName()),
+		)
 		summary, err := summarizeErr(errors.New("job is timeout"))
 		if err != nil {
 			return errors.Wrapf(err, "fail to summarize job")

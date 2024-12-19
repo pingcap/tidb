@@ -1150,7 +1150,7 @@ func (b *executorBuilder) buildTraffic(traffic *plannercore.Traffic) exec.Execut
 	switch traffic.OpType {
 	case ast.TrafficOpCapture:
 		exec := &TrafficCaptureExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, traffic.Schema(), traffic.ID()),
 			Args: map[string]string{
 				"output": traffic.Dir,
 			},
@@ -1168,7 +1168,7 @@ func (b *executorBuilder) buildTraffic(traffic *plannercore.Traffic) exec.Execut
 		return exec
 	case ast.TrafficOpReplay:
 		exec := &TrafficReplayExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, traffic.Schema(), traffic.ID()),
 			Args: map[string]string{
 				"input": traffic.Dir,
 			},
@@ -1192,11 +1192,11 @@ func (b *executorBuilder) buildTraffic(traffic *plannercore.Traffic) exec.Execut
 		return exec
 	case ast.TrafficOpCancel:
 		return &TrafficCancelExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, traffic.Schema(), traffic.ID()),
 		}
 	case ast.TrafficOpShow:
 		return &TrafficShowExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
+			BaseExecutor: exec.NewBaseExecutor(b.ctx, traffic.Schema(), traffic.ID()),
 		}
 	}
 	// impossible here

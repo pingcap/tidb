@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
@@ -210,7 +211,7 @@ func TestLoadHist(t *testing.T) {
 	testKit.MustExec("create table t (c1 varchar(12), c2 char(12))")
 	do := dom
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	rowCount := 10
 	for i := 0; i < rowCount; i++ {
@@ -246,7 +247,7 @@ func TestLoadHist(t *testing.T) {
 	})
 	// Add column c3, we only update c3.
 	testKit.MustExec("alter table t add column c3 int")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1176,7 +1177,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
 		tk.MustExec("set @@session.tidb_analyze_version = 2")
 		h := dom.StatsHandle()
-		err := h.HandleDDLEvent(<-h.DDLEventCh())
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
@@ -1304,7 +1305,8 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a))")
 	h := dom.StatsHandle()
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()

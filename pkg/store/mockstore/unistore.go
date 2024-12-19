@@ -50,5 +50,5 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		}
 	}
 
-	return mockstorage.NewMockStorage(kvstore)
+	return mockstorage.NewMockStorage(kvstore, opts.keyspaceMeta)
 }

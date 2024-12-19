@@ -594,6 +594,10 @@ func splitByColon(line string) (fields []string, values []string) {
 			fields = append(fields, line[start:current])
 			parseKey = false
 			current += 2 // bypass ": "
+			if current >= lineLength {
+				// last empty value
+				values = append(values, "")
+			}
 		} else {
 			start = current
 			if current < lineLength && (line[current] == '{' || line[current] == '[') {
@@ -607,6 +611,13 @@ func splitByColon(line string) (fields []string, values []string) {
 				for current < lineLength && line[current] != ' ' {
 					current++
 				}
+				// Meet empty value cases: "Key: Key:"
+				if current > 0 && line[current-1] == ':' {
+					values = append(values, "")
+					current = start
+					parseKey = true
+					continue
+				}
 			}
 			values = append(values, line[start:min(current, len(line))])
 			parseKey = true
@@ -614,6 +625,10 @@ func splitByColon(line string) (fields []string, values []string) {
 	}
 	if len(errMsg) > 0 {
 		logutil.BgLogger().Warn("slow query parse slow log error", zap.String("Error", errMsg), zap.String("Log", line))
+		return nil, nil
+	}
+	if len(fields) != len(values) {
+		logutil.BgLogger().Warn("slow query parse slow log error", zap.Int("field_count", len(fields)), zap.Int("value_count", len(values)), zap.String("Log", line))
 		return nil, nil
 	}
 	return fields, values

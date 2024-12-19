@@ -680,7 +680,7 @@ func TestAddColumn(t *testing.T) {
 
 	checkOK := false
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if checkOK {
 			return
 		}
@@ -740,7 +740,7 @@ func TestAddColumns(t *testing.T) {
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -803,7 +803,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	var hookErr error
 	var mu sync.Mutex
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -858,7 +858,7 @@ func TestDropColumns(t *testing.T) {
 	var hookErr error
 	var mu sync.Mutex
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		mu.Lock()
 		defer mu.Unlock()
 		if checkOK {
@@ -903,7 +903,7 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	tk2.MustExec("use test")
 	tk.MustExec("CREATE TABLE t (`col1` bigint(20) DEFAULT 1,`col2` float,UNIQUE KEY `key1` (`col1`))")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}
@@ -912,7 +912,7 @@ func TestWriteDataWriteOnlyMode(t *testing.T) {
 	})
 	tk.MustExec("alter table t change column `col1` `col1` varchar(20)")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateWriteOnly {
 			return
 		}

@@ -43,16 +43,17 @@ type mockStorage struct {
 }
 
 // NewMockStorage wraps tikv.KVStore as kv.Storage.
-func NewMockStorage(tikvStore *tikv.KVStore) (kv.Storage, error) {
+func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMeta) (kv.Storage, error) {
 	coprConfig := config.DefaultConfig().TiKVClient.CoprCache
 	coprStore, err := copr.NewStore(tikvStore, &coprConfig)
 	if err != nil {
 		return nil, err
 	}
 	return &mockStorage{
-		KVStore:  tikvStore,
-		Store:    coprStore,
-		memCache: kv.NewCacheDB(),
+		KVStore:      tikvStore,
+		Store:        coprStore,
+		memCache:     kv.NewCacheDB(),
+		keyspaceMeta: keyspaceMeta,
 	}, nil
 }
 

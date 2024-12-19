@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -65,7 +66,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
-	runtimeStatsColl.GetOrCreateCopStats(planID, "test-store").RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
+	runtimeStatsColl.GetOrCreateCopStats(planID, kv.TiKV).RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,

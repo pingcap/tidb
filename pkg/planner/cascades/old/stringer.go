@@ -74,9 +74,9 @@ func groupToString(ctx expression.EvalContext, g *memo.Group, idMap map[*memo.Gr
 	groupLine := bytes.NewBufferString("")
 	fmt.Fprintf(groupLine, "Group#%d Schema:[%s]", idMap[g], strings.Join(colStrs, ","))
 
-	if len(g.Prop.Schema.Keys) > 0 {
-		ukStrs := make([]string, 0, len(schema.Keys))
-		for _, key := range schema.Keys {
+	if len(g.Prop.Schema.PKOrUK) > 0 {
+		ukStrs := make([]string, 0, len(schema.PKOrUK))
+		for _, key := range schema.PKOrUK {
 			ukColStrs := make([]string, 0, len(key))
 			for _, col := range key {
 				ukColStrs = append(ukColStrs, col.StringWithCtx(ctx, errors.RedactLogDisable))

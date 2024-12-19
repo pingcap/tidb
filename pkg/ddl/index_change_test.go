@@ -51,7 +51,7 @@ func TestIndexChange(t *testing.T) {
 		writeOnlyTable  table.Table
 		publicTable     table.Table
 	)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex || job.TableName != "t" {
 			return
 		}
@@ -96,7 +96,7 @@ func TestIndexChange(t *testing.T) {
 
 	prevState = model.StateNone
 	var noneTable table.Table
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		jobID.Store(job.ID)
 		if job.SchemaState == prevState {
 			return

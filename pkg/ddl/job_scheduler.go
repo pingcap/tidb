@@ -552,7 +552,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
 func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
-	failpoint.InjectCall("beforeRunOneJobStep")
+	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
@@ -596,7 +596,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		}
 	})
 
-	failpoint.InjectCall("beforeWaitSchemaChanged", job, schemaVer)
+	failpoint.InjectCall("beforeWaitSchemaSynced", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -606,7 +606,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	s.cleanMDLInfo(job, ownerID)
 	jobCtx.removeUnSynced(job.ID)
 
-	failpoint.InjectCall("onJobUpdated", job)
+	failpoint.InjectCall("afterWaitSchemaSynced", job)
 	return nil
 }
 

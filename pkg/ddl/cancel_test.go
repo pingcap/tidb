@@ -287,14 +287,14 @@ func TestCancelVariousJobs(t *testing.T) {
 	}
 
 	resetHook := func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 	registerHook := func(onJobRunBefore bool) {
 		if onJobRunBefore {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
 		} else {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hookFunc)
 		}
 	}
 
@@ -357,7 +357,7 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1)")
 
 	var testCancelState model.SchemaState
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}

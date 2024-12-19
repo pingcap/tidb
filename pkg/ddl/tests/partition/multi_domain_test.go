@@ -870,7 +870,7 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 		<-hookChan
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
 	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
 	alterChan := make(chan error)
 	go func() {
 		err := tkDDLOwner.ExecToErr(alterSQL)
