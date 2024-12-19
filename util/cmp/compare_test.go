@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+<<<<<<< HEAD:util/cmp/compare_test.go
 func TestCompare(t *testing.T) {
 	require.Equal(t, -1, Compare(1, 2))
 	require.Equal(t, 1, Compare(2, 1))
@@ -28,4 +29,12 @@ func TestCompare(t *testing.T) {
 	require.Equal(t, -1, Compare("a", "b"))
 	require.Equal(t, 1, Compare("b", "a"))
 	require.Zero(t, Compare("a", "a"))
+=======
+// NewContext creates a new mocked sessionctx.Context.
+// This function should only be used for testing.
+// Avoid using this when you are in a context with a `kv.Storage` instance, especially when you are going to access
+// the data in it. Consider using testkit.NewSession(t, store) instead when possible.
+func NewContext() *Context {
+	return newContext()
+>>>>>>> 0bf3e019002 (*: Update client-go and verify all read ts (#58054)):pkg/util/mock/fortest.go
 }
