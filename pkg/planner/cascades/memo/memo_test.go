@@ -15,8 +15,6 @@
 package memo
 
 import (
-	"container/list"
-	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -24,17 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
-
-func Test1(t *testing.T) {
-	hash2ParentGroupExpr := map[uint64][]*GroupExpression{}
-	GE := &GroupExpression{hash64: 1}
-	hash2ParentGroupExpr[1] = append(hash2ParentGroupExpr[1], GE)
-	fmt.Println(hash2ParentGroupExpr)
-
-	l := list.New()
-	elem := l.PushBack(GE)
-	l.Remove(elem)
-}
 
 func TestMemo(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))

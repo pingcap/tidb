@@ -16,8 +16,8 @@ package memo
 
 import (
 	"container/list"
-	"github.com/bits-and-blooms/bitset"
 
+	"github.com/bits-and-blooms/bitset"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
