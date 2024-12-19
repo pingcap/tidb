@@ -239,8 +239,9 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx PlanContext,
 			break
 		}
 
-		// TODO: now we can't process condition such as
-		// `partition by hash(a + a + b)`, when accompanied by specific conditions like `where a = 1 and b = 2`.
+		// It's the range is a point condition.
+		// If len(r.HighVal) != len(partCols), we couldn't caculate the result of `hashExpr(r.HighVal...)`
+		// TODO: now we can't prune partition table such as `partition by hash(a + a + b)`.
 		if len(r.HighVal) != len(partCols) {
 			used = []int{FullRange}
 			break
