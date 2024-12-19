@@ -14627,17 +14627,121 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
+          "description": "executed DDL jobs per second",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 11
+          },
+          "hiddenSeries": false,
+          "id": 190,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": false,
+            "max": true,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "{{ type }}",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "format": "time_series",
+              "intervalFactor": 1,
+              "legendFormat": "total",
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "OPS",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB DDL duration statistics",
           "editable": true,
           "error": false,
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "grid": {},
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 12
+            "w": 12,
+            "x": 12,
+            "y": 11
           },
+          "hiddenSeries": false,
           "id": 9,
           "legend": {
             "alignAsTable": true,
@@ -14654,7 +14758,11 @@
           "linewidth": 2,
           "links": [],
           "nullPointMode": "null as zero",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14664,10 +14772,12 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type))",
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}} -p99",
+              "range": true,
               "refId": "A",
               "step": 10
             },
@@ -14678,13 +14788,21 @@
               "legendFormat": "add index worker",
               "refId": "B",
               "step": 10
+            },
+            {
+              "editorMode": "code",
+              "expr": "rate(tidb_ddl_handle_job_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]) / rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "hide": false,
+              "legendFormat": "{{type}} -avg",
+              "range": true,
+              "refId": "C"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Duration 95",
+          "title": "Execute Duration",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -14702,24 +14820,18 @@
           "yaxes": [
             {
               "format": "s",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14728,33 +14840,43 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
+          "description": "TiDB worker duration by type, action, results",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 12
+            "w": 12,
+            "x": 0,
+            "y": 18
           },
-          "id": 63,
+          "hiddenSeries": false,
+          "id": 56,
           "legend": {
             "alignAsTable": true,
             "avg": false,
-            "current": true,
+            "current": false,
             "hideEmpty": true,
             "hideZero": true,
-            "max": true,
+            "max": false,
             "min": false,
             "rightSide": true,
             "show": true,
             "total": false,
-            "values": true
+            "values": false
           },
           "lines": true,
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14764,18 +14886,28 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_ddl_add_index_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "editorMode": "code",
+              "expr": "histogram_quantile(0.99, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type, action, result))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{type}}",
+              "legendFormat": "{{type}}-{{action}}-{{result}} - p99",
+              "range": true,
               "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(increase(tidb_ddl_worker_operation_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, action, result)/sum(increase(tidb_ddl_worker_operation_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type, action, result)",
+              "hide": false,
+              "legendFormat": "{{type}}-{{action}}-{{result}} - avg",
+              "range": true,
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Backfill Data Rate",
+          "title": "Job Worker Operations Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14791,25 +14923,237 @@
           },
           "yaxes": [
             {
-              "format": "none",
-              "label": null,
+              "format": "s",
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Sync schema version operations duration",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 18
+          },
+          "hiddenSeries": false,
+          "id": 65,
+          "legend": {
+            "alignAsTable": true,
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "links": [],
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(.99, sum(rate(tidb_ddl_owner_handle_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, type, result))",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}-{{result}} - p99",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "histogram_quantile(.99, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, result))",
+              "hide": false,
+              "legendFormat": "update_self_ver-{{result}} - p99",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "editorMode": "code",
+              "expr": "rate(tidb_ddl_owner_handle_syncer_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]) / rate(tidb_ddl_owner_handle_syncer_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "hide": false,
+              "legendFormat": "{{type}} - {{result}} - avg",
+              "range": true,
+              "refId": "C"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(tidb_ddl_update_self_ver_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (result) / sum(rate(tidb_ddl_update_self_ver_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (result)",
+              "hide": false,
+              "legendFormat": "update_self_ver-{{result}} - avg",
+              "range": true,
+              "refId": "D"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Sync Schema Version Operations Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "DDL system table operations duration",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 0,
+            "y": 25
+          },
+          "hiddenSeries": false,
+          "id": 264,
+          "legend": {
+            "alignAsTable": true,
+            "avg": true,
+            "current": true,
+            "max": false,
+            "min": false,
+            "rightSide": true,
+            "show": true,
+            "total": false,
+            "values": true
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_job_table_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", }[1m])) by (le, type))",
+              "format": "time_series",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "{{type}}-95",
+              "queryType": "randomWalk",
+              "refId": "A"
+            },
+            {
+              "editorMode": "code",
+              "expr": "sum(rate(tidb_ddl_job_table_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type) / sum(rate(tidb_ddl_job_table_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "hide": false,
+              "legendFormat": "{{type}} - avg",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "System Table Operations Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "logBase": 1,
+              "show": true
+            },
+            {
+              "format": "short",
+              "logBase": 1,
+              "show": false
+            }
+          ],
+          "yaxis": {
+            "align": false
           }
         },
         {
@@ -14819,13 +15163,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB ddl request in queue",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 12
+            "w": 12,
+            "x": 12,
+            "y": 25
           },
+          "hiddenSeries": false,
           "id": 62,
           "legend": {
             "alignAsTable": true,
@@ -14844,7 +15194,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -14865,7 +15219,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Waiting Jobs Count",
+          "title": "Waiting Job Count",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14882,24 +15236,18 @@
           "yaxes": [
             {
               "format": "none",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -14908,17 +15256,23 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB different ddl worker numbers",
+          "description": "current count of the running DDL jobs",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 19
+            "y": 32
           },
-          "id": 55,
+          "hiddenSeries": false,
+          "id": 265,
           "legend": {
-            "alignAsTable": true,
+            "alignAsTable": false,
             "avg": false,
             "current": false,
             "max": false,
@@ -14932,8 +15286,12 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
-          "pointradius": 5,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -14942,10 +15300,12 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "increase(tidb_ddl_worker_operation_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "exemplar": true,
+              "expr": "tidb_ddl_running_job_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{instance}}-{{type}}",
+              "interval": "",
+              "intervalFactor": 1,
+              "legendFormat": "{{ type }}",
               "refId": "A"
             }
           ],
@@ -14953,7 +15313,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL META OPM",
+          "title": "Running Job Count By Worker Pool",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -14970,114 +15330,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB worker duration by type, action, results",
-          "fill": 0,
-          "gridPos": {
-            "h": 7,
-            "w": 12,
-            "x": 12,
-            "y": 19
-          },
-          "id": 56,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "hideEmpty": true,
-            "hideZero": true,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(0.99, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, type, action, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{action}}-{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "DDL Worker Duration 99",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": "0",
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15087,13 +15350,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB ddl schema syncer statistics, including init, start, watch, clear function call time cost",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 0,
-            "y": 26
+            "w": 12,
+            "x": 12,
+            "y": 32
           },
+          "hiddenSeries": false,
           "id": 64,
           "legend": {
             "alignAsTable": true,
@@ -15110,7 +15379,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -15148,24 +15421,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15174,196 +15440,28 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB ddl owner time operations on etcd duration statistics ",
+          "description": "TiDB different ddl worker numbers",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
             "h": 7,
-            "w": 8,
-            "x": 8,
-            "y": 26
-          },
-          "id": 65,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_owner_handle_syncer_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, type, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{type}}-{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "Owner Handle Syncer Duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "TiDB schema syncer version update time duration",
-          "fill": 0,
-          "gridPos": {
-            "h": 7,
-            "w": 8,
-            "x": 16,
-            "y": 26
-          },
-          "id": 66,
-          "legend": {
-            "alignAsTable": true,
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "rightSide": true,
-            "show": true,
-            "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "links": [],
-          "nullPointMode": "null",
-          "percentage": false,
-          "pointradius": 5,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "expr": "histogram_quantile(1, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (le, result))",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "{{result}}",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "Update Self Version Duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "executed DDL jobs per minute",
-          "fill": 0,
-          "gridPos": {
-            "h": 8,
             "w": 12,
             "x": 0,
-            "y": 33
+            "y": 39
           },
-          "id": 190,
+          "hiddenSeries": false,
+          "id": 55,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
             "current": false,
             "max": false,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
             "values": false
@@ -15372,8 +15470,12 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
-          "pointradius": 2,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -15382,25 +15484,18 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
+              "expr": "increase(tidb_ddl_worker_operation_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
               "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "{{ type }}",
+              "intervalFactor": 2,
+              "legendFormat": "{{instance}}-{{type}}",
               "refId": "A"
-            },
-            {
-              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
-              "format": "time_series",
-              "intervalFactor": 1,
-              "legendFormat": "total",
-              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL OPM",
+          "title": "DDL META OPM",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15417,24 +15512,17 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15444,13 +15532,19 @@
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "TiDB DDL backfill progress in percentage. The value is [0,100]",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
           "fill": 0,
+          "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 12,
-            "y": 33
+            "y": 39
           },
+          "hiddenSeries": false,
           "id": 192,
           "legend": {
             "alignAsTable": true,
@@ -15467,8 +15561,11 @@
           "linewidth": 1,
           "links": [],
           "nullPointMode": "null",
-          "options": {},
+          "options": {
+            "alertThreshold": true
+          },
           "percentage": false,
+          "pluginVersion": "7.5.17",
           "pointradius": 2,
           "points": false,
           "renderer": "flot",
@@ -15496,7 +15593,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL backfill progress in percentage",
+          "title": "Backfill Progress In Percentage",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15513,24 +15610,18 @@
           "yaxes": [
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
               "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15539,7 +15630,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "DDL job table duration",
+          "description": "Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -15547,121 +15638,25 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 8,
+            "h": 7,
             "w": 12,
             "x": 0,
-            "y": 40
+            "y": 46
           },
           "hiddenSeries": false,
-          "id": 264,
+          "id": 63,
           "legend": {
+            "alignAsTable": true,
             "avg": false,
-            "current": false,
-            "max": false,
+            "current": true,
+            "hideEmpty": true,
+            "hideZero": true,
+            "max": true,
             "min": false,
+            "rightSide": true,
             "show": true,
             "total": false,
-            "values": false
-          },
-          "lines": true,
-          "linewidth": 1,
-          "nullPointMode": "null",
-          "options": {
-            "alertThreshold": true
-          },
-          "percentage": false,
-          "pluginVersion": "7.5.11",
-          "pointradius": 2,
-          "points": false,
-          "renderer": "flot",
-          "seriesOverrides": [],
-          "spaceLength": 10,
-          "stack": false,
-          "steppedLine": false,
-          "targets": [
-            {
-              "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_ddl_job_table_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", }[1m])) by (le, type))",
-              "format": "time_series",
-              "hide": false,
-              "interval": "",
-              "legendFormat": "{{type}}-95",
-              "queryType": "randomWalk",
-              "refId": "A"
-            }
-          ],
-          "thresholds": [],
-          "timeFrom": null,
-          "timeRegions": [],
-          "timeShift": null,
-          "title": "DDL job table duration",
-          "tooltip": {
-            "shared": true,
-            "sort": 0,
-            "value_type": "individual"
-          },
-          "type": "graph",
-          "xaxis": {
-            "buckets": null,
-            "mode": "time",
-            "name": null,
-            "show": true,
-            "values": []
-          },
-          "yaxes": [
-            {
-              "$$hashKey": "object:629",
-              "format": "s",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": true
-            },
-            {
-              "$$hashKey": "object:630",
-              "format": "short",
-              "label": null,
-              "logBase": 1,
-              "max": null,
-              "min": null,
-              "show": false
-            }
-          ],
-          "yaxis": {
-            "align": false,
-            "alignLevel": null
-          }
-        },
-        {
-          "aliasColors": {},
-          "bars": false,
-          "dashLength": 10,
-          "dashes": false,
-          "datasource": "${DS_TEST-CLUSTER}",
-          "description": "current count of the running DDL jobs",
-          "fieldConfig": {
-            "defaults": {},
-            "overrides": []
-          },
-          "fill": 0,
-          "fillGradient": 0,
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 40
-          },
-          "hiddenSeries": false,
-          "id": 265,
-          "legend": {
-            "avg": false,
-            "current": false,
-            "max": false,
-            "min": false,
-            "show": true,
-            "total": false,
-            "values": false
+            "values": true
           },
           "lines": true,
           "linewidth": 1,
@@ -15671,8 +15666,8 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "7.5.11",
-          "pointradius": 2,
+          "pluginVersion": "7.5.17",
+          "pointradius": 5,
           "points": false,
           "renderer": "flot",
           "seriesOverrides": [],
@@ -15681,12 +15676,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "exemplar": true,
-              "expr": "tidb_ddl_running_job_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(rate(tidb_ddl_add_index_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "format": "time_series",
-              "interval": "",
-              "intervalFactor": 1,
-              "legendFormat": "{{ type }}",
+              "intervalFactor": 2,
+              "legendFormat": "{{type}}",
               "refId": "A"
             }
           ],
@@ -15694,7 +15687,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "DDL Running Job Cnt",
+          "title": "Backfill Data Rate",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -15710,25 +15703,19 @@
           },
           "yaxes": [
             {
-              "format": "short",
-              "label": null,
+              "format": "none",
               "logBase": 1,
-              "max": null,
-              "min": null,
+              "min": "0",
               "show": true
             },
             {
               "format": "short",
-              "label": null,
               "logBase": 1,
-              "max": null,
-              "min": null,
               "show": true
             }
           ],
           "yaxis": {
-            "align": false,
-            "alignLevel": null
+            "align": false
           }
         },
         {
@@ -15747,10 +15734,10 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 6,
+            "h": 7,
             "w": 12,
-            "x": 0,
-            "y": 48
+            "x": 12,
+            "y": 46
           },
           "hiddenSeries": false,
           "id": 23763572001,
@@ -15762,7 +15749,7 @@
             "hideZero": false,
             "max": false,
             "min": false,
-            "rightSide": false,
+            "rightSide": true,
             "show": true,
             "total": false,
             "values": false
@@ -15775,7 +15762,7 @@
             "alertThreshold": true
           },
           "percentage": false,
-          "pluginVersion": "8.5.27",
+          "pluginVersion": "7.5.17",
           "pointradius": 5,
           "points": false,
           "renderer": "flot",
@@ -15829,13 +15816,11 @@
           },
           "yaxes": [
             {
-              "$$hashKey": "object:598",
               "format": "MiBs",
               "logBase": 2,
               "show": true
             },
             {
-              "$$hashKey": "object:599",
               "format": "short",
               "logBase": 1,
               "show": true
@@ -15846,7 +15831,6 @@
           }
         }
       ],
-      "repeat": null,
       "title": "DDL",
       "type": "row"
     },

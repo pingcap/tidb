@@ -351,11 +351,6 @@ func JobNeedGC(job *model.Job) bool {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
-	startTime := time.Now()
-	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}()
-
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -475,7 +470,7 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 	start := time.Now()
 	defer func() {
-		metrics.HandleJobDoneOpHist.Observe(time.Since(start).Seconds())
+		metrics.DDLHandleJobDoneOpHist.Observe(time.Since(start).Seconds())
 	}()
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
@@ -571,7 +566,7 @@ func (w *worker) transitOneJobStep(
 
 	start := time.Now()
 	defer func() {
-		metrics.RunOneStepOpHist.Observe(time.Since(start).Seconds())
+		metrics.DDLTransitOneStepOpHist.Observe(time.Since(start).Seconds())
 	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
@@ -796,7 +791,7 @@ func (w *worker) runOneJobStep(
 		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues("process_one_step", job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
 	if job.IsCancelling() {

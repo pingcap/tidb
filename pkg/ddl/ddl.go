@@ -407,7 +407,7 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion 
 		return err
 	})
 	defer func() {
-		metrics.IncrSchemaVersionOpHist.Observe(time.Since(start).Seconds())
+		metrics.DDLIncrSchemaVerOpHist.Observe(time.Since(start).Seconds())
 	}()
 	return schemaVersion, err
 }
@@ -421,7 +421,7 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 		start := time.Now()
 		sv.schemaVersionMu.Lock()
 		defer func() {
-			metrics.LockSchemaVersionOpHist.Observe(time.Since(start).Seconds())
+			metrics.DDLLockSchemaVerOpHist.Observe(time.Since(start).Seconds())
 		}()
 		sv.lockOwner.Store(jobID)
 	}
@@ -591,7 +591,7 @@ const noSubJob int64 = -1 // noSubJob indicates the event is not a merged ddl.
 func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *model.Job, subJobID int64, sctx *sess.Session) error {
 	start := time.Now()
 	defer func() {
-		metrics.AsyncNotifyOpHist.Observe(time.Since(start).Seconds())
+		metrics.DDLAsyncNotifyOpHist.Observe(time.Since(start).Seconds())
 	}()
 	// skip notify for system databases, system databases are expected to change at
 	// bootstrap and other nodes can also handle the changing in its bootstrap rather

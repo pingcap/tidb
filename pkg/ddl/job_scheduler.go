@@ -478,7 +478,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	s.wg.Run(func() {
 		start := time.Now()
 		defer func() {
-			metrics.RunJobOpHist.Observe(time.Since(start).Seconds())
+			metrics.DDLRunJobOpHist.Observe(time.Since(start).Seconds())
 		}()
 		defer func() {
 			r := recover()
