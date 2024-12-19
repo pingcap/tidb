@@ -1468,8 +1468,7 @@ func TestReplaceLog(t *testing.T) {
 	tk.MustExec(`create table testLog (a int not null primary key, b int unique key);`)
 
 	// Make some dangling index.
-	ctx := mock.NewContext()
-	ctx.Store = store
+	ctx := testkit.NewSession(t, store)
 	is := domain.InfoSchema()
 	dbName := model.NewCIStr("test")
 	tblName := model.NewCIStr("testLog")

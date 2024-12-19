@@ -167,7 +167,7 @@ func TestColumnBasic(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
@@ -611,7 +611,7 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 }
 
 func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue interface{}, dom *domain.Domain, store kv.Storage, columnCnt int) {
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	switch state {
 	case model.StateNone:
 		checkNoneColumn(t, ctx, tableID, handle, newCol, columnValue, dom)
@@ -655,7 +655,7 @@ func TestAddColumn(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -728,7 +728,7 @@ func TestAddColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -791,7 +791,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -852,7 +852,7 @@ func TestDropColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
 
