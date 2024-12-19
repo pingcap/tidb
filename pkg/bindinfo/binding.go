@@ -68,7 +68,7 @@ type Binding struct {
 	SQLDigest  string
 	PlanDigest string
 
-	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
 }
 
@@ -144,7 +144,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isFuzzyBinding(bindingStmt)
+	isFuzzy := isCrossDBBinding(bindingStmt)
 	if isFuzzy {
 		dbName = "*" // ues '*' for universal bindings
 	}

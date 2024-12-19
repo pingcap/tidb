@@ -419,7 +419,6 @@ var noopSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: "delayed_queue_size", Value: "1000"},
 	{Scope: ScopeNone, Name: "innodb_read_only", Value: "0"},
-	{Scope: ScopeNone, Name: "datetime_format", Value: "%Y-%m-%d %H:%i:%s"},
 	{Scope: ScopeGlobal, Name: "log_syslog", Value: ""},
 	{Scope: ScopeGlobal | ScopeSession, Name: "transaction_alloc_block_size", Value: "8192"},
 	{Scope: ScopeGlobal, Name: "innodb_large_prefix", Type: TypeBool, Value: On},
@@ -446,7 +445,6 @@ var noopSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(SecureAuth, originalValue)
 	}},
-	{Scope: ScopeNone, Name: "max_tmp_tables", Value: "32"},
 	{Scope: ScopeGlobal, Name: InnodbRandomReadAhead, Value: Off, Type: TypeBool, AutoConvertNegativeBool: true},
 	{
 		Scope:                   ScopeGlobal | ScopeSession,
@@ -550,7 +548,6 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_size", Value: "4294967296"},
 	{Scope: ScopeGlobal, Name: InnodbAdaptiveFlushing, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
 	{Scope: ScopeGlobal, Name: "innodb_monitor_enable", Value: ""},
-	{Scope: ScopeNone, Name: "date_format", Value: "%Y-%m-%d"},
 	{Scope: ScopeGlobal, Name: "innodb_buffer_pool_filename", Value: "ib_buffer_pool"},
 	{Scope: ScopeGlobal, Name: "slow_launch_time", Value: "2"},
 	{Scope: ScopeGlobal | ScopeSession, Name: "ndb_use_transactions", Value: ""},
