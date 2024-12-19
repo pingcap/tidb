@@ -511,11 +511,20 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			label = metrics.LblAddIndex
 		}
-		idxNames := getIdxNamesFromArgs(reorgInfo.jobCtx.jobArgs)
+		idxNames := ""
+		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.Error(err))
+		} else {
+			idxNames = getIdxNamesFromArgs(args)
+		}
 		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
 		colName := ""
-		if args, ok := reorgInfo.jobCtx.jobArgs.(*model.ModifyColumnArgs); ok {
+		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyColumnArgs", zap.Error(err))
+		} else {
 			colName = args.OldColumnName.O
 		}
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)

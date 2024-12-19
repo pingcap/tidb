@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/prometheus/client_golang/prometheus"
@@ -197,24 +196,18 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}
 
 	colOrIdxName := ""
-	switch label {
-	case metrics.LblAddIdxRate:
-		fallthrough
-	case metrics.LblMergeTmpIdxRate:
-		colOrIdxName = getIdxNamesFromArgs(rInfo.jobCtx.jobArgs)
-	case metrics.LblUpdateColRate:
-		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
-		colOrIdxName = oldCol.Name.String()
-
-	// partition scenarios, just leave the colOrIdxName empty
-	case metrics.LblReorgPartitionRate:
-	case metrics.LblCleanupIdxRate:
-
-	default:
-		if intest.InTest {
-			panic("Handle the new added label")
+	switch rInfo.Job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		args, err := model.GetModifyIndexArgs(rInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
 		} else {
-			logutil.DDLLogger().Error("unknow label", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
+			colOrIdxName = getIdxNamesFromArgs(args)
+		}
+	case model.ActionModifyColumn:
+		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
+		if oldCol != nil {
+			colOrIdxName = oldCol.Name.String()
 		}
 	}
 
@@ -234,16 +227,13 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 	}, nil
 }
 
-func getIdxNamesFromArgs(jobArgs model.JobArgs) string {
-	args, ok := jobArgs.(*model.ModifyIndexArgs)
+func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
 	var sb strings.Builder
-	if ok {
-		for i, idx := range args.IndexArgs {
-			if i > 0 {
-				sb.WriteString("+")
-			}
-			sb.WriteString(idx.IndexName.O)
+	for i, idx := range args.IndexArgs {
+		if i > 0 {
+			sb.WriteString("+")
 		}
+		sb.WriteString(idx.IndexName.O)
 	}
 	return sb.String()
 }

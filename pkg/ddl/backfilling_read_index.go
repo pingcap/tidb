@@ -225,14 +225,14 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	d := r.d
 	indexIDs := make([]int64, 0, len(r.indexes))
 	uniques := make([]bool, 0, len(r.indexes))
-	var indexNames strings.Builder
+	var idxNames strings.Builder
 	for _, index := range r.indexes {
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
-		if indexNames.Len() > 0 {
-			indexNames.WriteByte('+')
+		if idxNames.Len() > 0 {
+			idxNames.WriteByte('+')
 		}
-		indexNames.WriteString(index.Name.O)
+		idxNames.WriteString(index.Name.O)
 	}
 	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
@@ -242,7 +242,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, indexNames.String())
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
