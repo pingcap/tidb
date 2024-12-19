@@ -227,6 +227,6 @@ func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupE
 // 3: this two GEs has the same operator info.
 // from the 3 above, we could say this two group expression are equivalent,
 // and their groups are equivalent as well from the equivalent transitive rule.
-func (mm *Memo) mergeGroup(src, dst *Group) {
+func (mm *Memo) mergeGroup(_, _ *Group) {
 	// todo: in next pull request
 }
