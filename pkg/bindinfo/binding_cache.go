@@ -48,76 +48,76 @@ var GetBindingReturnNilAlways = stringutil.StringerStr("getBindingReturnNilAlway
 // LoadBindingNothing is only for test
 var LoadBindingNothing = stringutil.StringerStr("LoadBindingNothing")
 
-// FuzzyBindingCache is based on BindingCache, and provide some more advanced features, like
-// fuzzy matching, loading binding if cache miss automatically (TODO).
-type FuzzyBindingCache interface {
-	// FuzzyMatchingBinding supports fuzzy matching on bindings.
-	FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (bindings Binding, isMatched bool)
+// CrossDBBindingCache is based on BindingCache, and provide some more advanced features, like
+// cross-db matching, loading binding if cache miss automatically (TODO).
+type CrossDBBindingCache interface {
+	// MatchingBinding supports cross-db matching on bindings.
+	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (bindings Binding, isMatched bool)
 
 	// Copy copies this cache.
-	Copy() (c FuzzyBindingCache, err error)
+	Copy() (c CrossDBBindingCache, err error)
 
 	BindingCache
 }
 
-type fuzzyBindingCache struct {
+type crossDBBindingCache struct {
 	BindingCache
 
 	mu sync.RWMutex
 
-	// fuzzy2SQLDigests is used to support fuzzy matching.
-	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
+	// noDBDigest2SQLDigest is used to support cross-db matching.
+	// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
 	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
-	fuzzy2SQLDigests map[string][]string // fuzzyDigest --> sqlDigests
+	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
 
-	sql2FuzzyDigest map[string]string // sqlDigest --> fuzzyDigest
+	sqlDigest2noDBDigest map[string]string // sqlDigest --> noDBDigest
 
 	// loadBindingFromStorageFunc is used to load binding from storage if cache miss.
 	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)
 }
 
-func newFuzzyBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, string) (Bindings, error)) FuzzyBindingCache {
-	return &fuzzyBindingCache{
+func newCrossDBBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, string) (Bindings, error)) CrossDBBindingCache {
+	return &crossDBBindingCache{
 		BindingCache:               newBindCache(),
-		fuzzy2SQLDigests:           make(map[string][]string),
-		sql2FuzzyDigest:            make(map[string]string),
+		noDBDigest2SQLDigest:       make(map[string][]string),
+		sqlDigest2noDBDigest:       make(map[string]string),
 		loadBindingFromStorageFunc: loadBindingFromStorageFunc,
 	}
 }
 
-func (fbc *fuzzyBindingCache) shouldMetric() bool {
-	return fbc.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
+func (cc *crossDBBindingCache) shouldMetric() bool {
+	return cc.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
 }
 
-func (fbc *fuzzyBindingCache) FuzzyMatchingBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	matchedBinding, isMatched, missingSQLDigest := fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
+func (cc *crossDBBindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	matchedBinding, isMatched, missingSQLDigest := cc.getFromMemory(sctx, noDBDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
-		if fbc.shouldMetric() && isMatched {
+		if cc.shouldMetric() && isMatched {
 			metrics.BindingCacheHitCounter.Inc()
 		}
 		return
 	}
-	if fbc.shouldMetric() {
+	if cc.shouldMetric() {
 		metrics.BindingCacheMissCounter.Inc()
 	}
-	if fbc.loadBindingFromStorageFunc == nil {
+	if cc.loadBindingFromStorageFunc == nil {
 		return
 	}
-	fbc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
-	matchedBinding, isMatched, _ = fbc.getFromMemory(sctx, fuzzyDigest, tableNames)
+	cc.loadFromStore(sctx, missingSQLDigest) // loadFromStore's SetBinding has a Mutex inside, so it's safe to call it without lock
+	matchedBinding, isMatched, _ = cc.getFromMemory(sctx, noDBDigest, tableNames)
 	return
 }
 
-func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
-	fbc.mu.RLock()
-	defer fbc.mu.RUnlock()
-	bindingCache := fbc.BindingCache
+func (cc *crossDBBindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+	bindingCache := cc.BindingCache
 	if bindingCache.Size() == 0 {
 		return
 	}
 	leastWildcards := len(tableNames) + 1
-	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, sqlDigest := range fbc.fuzzy2SQLDigests[fuzzyDigest] {
+	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, sqlDigest := range cc.noDBDigest2SQLDigest[noDBDigest] {
 		bindings := bindingCache.GetBinding(sqlDigest)
 		if intest.InTest {
 			if sctx.Value(GetBindingReturnNil) != nil {
@@ -131,9 +131,9 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 		}
 		if bindings != nil {
 			for _, binding := range bindings {
-				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
-					continue // fuzzy binding is disabled, skip this binding
+				numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+				if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
+					continue // cross-db binding is disabled, skip this binding
 				}
 				if matched && numWildcards < leastWildcards {
 					matchedBinding = binding
@@ -149,7 +149,7 @@ func (fbc *fuzzyBindingCache) getFromMemory(sctx sessionctx.Context, fuzzyDigest
 	return matchedBinding, isMatched, missingSQLDigest
 }
 
-func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
+func (cc *crossDBBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest []string) {
 	if intest.InTest && sctx.Value(LoadBindingNothing) != nil {
 		return
 	}
@@ -159,7 +159,7 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 
 	for _, sqlDigest := range missingSQLDigest {
 		start := time.Now()
-		bindings, err := fbc.loadBindingFromStorageFunc(sctx, sqlDigest)
+		bindings, err := cc.loadBindingFromStorageFunc(sctx, sqlDigest)
 		if err != nil {
 			logutil.BindLogger().Warn("failed to load binding from storage",
 				zap.String("sqlDigest", sqlDigest),
@@ -169,10 +169,10 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 			continue
 		}
 		// put binding into the cache
-		oldBinding := fbc.GetBinding(sqlDigest)
+		oldBinding := cc.GetBinding(sqlDigest)
 		newBindings := removeDeletedBindings(merge(oldBinding, bindings))
 		if len(newBindings) > 0 {
-			err = fbc.SetBinding(sqlDigest, newBindings)
+			err = cc.SetBinding(sqlDigest, newBindings)
 			if err != nil {
 				// When the memory capacity of bing_cache is not enough,
 				// there will be some memory-related errors in multiple places.
@@ -183,72 +183,72 @@ func (fbc *fuzzyBindingCache) loadFromStore(sctx sessionctx.Context, missingSQLD
 	}
 }
 
-func (fbc *fuzzyBindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
-	fbc.mu.Lock()
-	defer fbc.mu.Unlock()
+func (cc *crossDBBindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
 
-	// prepare fuzzy digests for all bindings
-	fuzzyDigests := make([]string, 0, len(bindings))
+	// prepare noDBDigests for all bindings
+	noDBDigests := make([]string, 0, len(bindings))
 	p := parser.New()
 	for _, binding := range bindings {
 		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 		if err != nil {
 			return err
 		}
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		fuzzyDigests = append(fuzzyDigests, fuzzyDigest)
+		_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+		noDBDigests = append(noDBDigests, noDBDigest)
 	}
 
 	for i, binding := range bindings {
-		fbc.fuzzy2SQLDigests[fuzzyDigests[i]] = append(fbc.fuzzy2SQLDigests[fuzzyDigests[i]], binding.SQLDigest)
-		fbc.sql2FuzzyDigest[binding.SQLDigest] = fuzzyDigests[i]
+		cc.noDBDigest2SQLDigest[noDBDigests[i]] = append(cc.noDBDigest2SQLDigest[noDBDigests[i]], binding.SQLDigest)
+		cc.sqlDigest2noDBDigest[binding.SQLDigest] = noDBDigests[i]
 	}
-	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with fuzzy2SQLDigests and
-	// sql2FuzzyDigest, but it's acceptable, just return cache-miss in that case.
-	return fbc.BindingCache.SetBinding(sqlDigest, bindings)
+	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
+	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
+	return cc.BindingCache.SetBinding(sqlDigest, bindings)
 }
 
-func (fbc *fuzzyBindingCache) RemoveBinding(sqlDigest string) {
-	fbc.mu.Lock()
-	defer fbc.mu.Unlock()
-	fuzzyDigest, ok := fbc.sql2FuzzyDigest[sqlDigest]
+func (cc *crossDBBindingCache) RemoveBinding(sqlDigest string) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	noDBDigest, ok := cc.sqlDigest2noDBDigest[sqlDigest]
 	if !ok {
 		return
 	}
-	digestList := fbc.fuzzy2SQLDigests[fuzzyDigest]
+	digestList := cc.noDBDigest2SQLDigest[noDBDigest]
 	for i := range digestList { // remove sqlDigest from this list
 		if digestList[i] == sqlDigest {
 			digestList = append(digestList[:i], digestList[i+1:]...)
 			break
 		}
 	}
-	fbc.fuzzy2SQLDigests[fuzzyDigest] = digestList
-	delete(fbc.sql2FuzzyDigest, sqlDigest)
-	fbc.BindingCache.RemoveBinding(sqlDigest)
+	cc.noDBDigest2SQLDigest[noDBDigest] = digestList
+	delete(cc.sqlDigest2noDBDigest, sqlDigest)
+	cc.BindingCache.RemoveBinding(sqlDigest)
 }
 
-func (fbc *fuzzyBindingCache) Copy() (c FuzzyBindingCache, err error) {
-	fbc.mu.RLock()
-	defer fbc.mu.RUnlock()
-	bc, err := fbc.BindingCache.CopyBindingCache()
+func (cc *crossDBBindingCache) Copy() (c CrossDBBindingCache, err error) {
+	cc.mu.RLock()
+	defer cc.mu.RUnlock()
+	bc, err := cc.BindingCache.CopyBindingCache()
 	if err != nil {
 		return nil, err
 	}
-	sql2FuzzyDigest := make(map[string]string, len(fbc.sql2FuzzyDigest))
-	for k, v := range fbc.sql2FuzzyDigest {
-		sql2FuzzyDigest[k] = v
+	sql2noDBDigest := make(map[string]string, len(cc.sqlDigest2noDBDigest))
+	for k, v := range cc.sqlDigest2noDBDigest {
+		sql2noDBDigest[k] = v
 	}
-	fuzzy2SQLDigests := make(map[string][]string, len(fbc.fuzzy2SQLDigests))
-	for k, list := range fbc.fuzzy2SQLDigests {
+	noDBDigest2SQLDigest := make(map[string][]string, len(cc.noDBDigest2SQLDigest))
+	for k, list := range cc.noDBDigest2SQLDigest {
 		newList := make([]string, len(list))
 		copy(newList, list)
-		fuzzy2SQLDigests[k] = newList
+		noDBDigest2SQLDigest[k] = newList
 	}
-	return &fuzzyBindingCache{
+	return &crossDBBindingCache{
 		BindingCache:               bc,
-		fuzzy2SQLDigests:           fuzzy2SQLDigests,
-		sql2FuzzyDigest:            sql2FuzzyDigest,
-		loadBindingFromStorageFunc: fbc.loadBindingFromStorageFunc,
+		noDBDigest2SQLDigest:       noDBDigest2SQLDigest,
+		sqlDigest2noDBDigest:       sql2noDBDigest,
+		loadBindingFromStorageFunc: cc.loadBindingFromStorageFunc,
 	}, nil
 }
 
