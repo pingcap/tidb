@@ -621,7 +621,7 @@ check-bazel-prepare:
 
 .PHONY: bazel_test
 bazel_test: failpoint-enable bazel_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) test -k $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
