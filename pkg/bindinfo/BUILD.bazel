@@ -53,7 +53,7 @@ go_test(
     srcs = [
         "binding_cache_test.go",
         "binding_match_test.go",
-        "fuzzy_binding_test.go",
+        "cross_db_binding_test.go",
         "global_handle_test.go",
         "main_test.go",
         "optimize_test.go",
