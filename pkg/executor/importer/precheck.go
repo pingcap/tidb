@@ -69,8 +69,11 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
 		}
 	}
-	if err := e.checkTableEmpty(ctx, conn); err != nil {
-		return err
+	// only for poc
+	if !e.DisablePrecheck {
+		if err := e.checkTableEmpty(ctx, conn); err != nil {
+			return err
+		}
 	}
 	if !e.DisablePrecheck {
 		if err := e.checkCDCPiTRTasks(ctx); err != nil {
