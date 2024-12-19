@@ -167,7 +167,7 @@ func TestColumnBasic(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 
@@ -213,6 +213,8 @@ func TestColumnBasic(t *testing.T) {
 	require.Equal(t, i, num)
 
 	h, err := tbl.AddRecord(ctx.GetTableCtx(), txn, types.MakeDatums(11, 12, 13, 14))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
 	require.NoError(t, err)
 	_, err = newTxn(ctx)
 	require.NoError(t, err)
@@ -379,7 +381,9 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -401,7 +405,9 @@ func checkDeleteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, 
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 	i = 0
 	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
@@ -441,7 +447,9 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -463,7 +471,10 @@ func checkWriteOnlyColumn(t *testing.T, ctx sessionctx.Context, tableID int64, h
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -501,7 +512,9 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 	newRow := types.MakeDatums(int64(11), int64(22), int64(33))
 	newHandle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{row, newRow}
@@ -524,7 +537,9 @@ func checkReorganizationColumn(t *testing.T, ctx sessionctx.Context, tableID int
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, newHandle, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -567,7 +582,9 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	}
 	handle, err := tbl.AddRecord(ctx.GetTableCtx(), txn, newRow)
 	require.NoError(t, err)
-	_, err = newTxn(ctx)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	rows := [][]types.Datum{updatedRow, newRow}
@@ -587,8 +604,10 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 
 	err = tbl.RemoveRecord(ctx.GetTableCtx(), txn, handle, newRow)
 	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 
-	_, err = newTxn(ctx)
+	txn, err = newTxn(ctx)
 	require.NoError(t, err)
 
 	i = 0
@@ -605,7 +624,7 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 }
 
 func checkAddColumn(t *testing.T, state model.SchemaState, tableID int64, handle kv.Handle, newCol *table.Column, oldRow []types.Datum, columnValue any, dom *domain.Domain, store kv.Storage, columnCnt int) {
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	switch state {
 	case model.StateNone:
 		checkNoneColumn(t, ctx, tableID, handle, newCol, columnValue, dom)
@@ -647,7 +666,7 @@ func TestAddColumn(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -712,7 +731,7 @@ func TestAddColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 	oldRow := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -769,7 +788,7 @@ func TestDropColumnInColumnTest(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	colName := "c4"
 	defaultColValue := int64(4)
 	row := types.MakeDatums(int64(1), int64(2), int64(3))
@@ -823,7 +842,7 @@ func TestDropColumns(t *testing.T) {
 	tableID = int64(tableIDi)
 	tbl := testGetTable(t, dom, tableID)
 
-	ctx := testNewContext(store)
+	ctx := testNewContext(t, store)
 	txn, err := newTxn(ctx)
 	require.NoError(t, err)
 
