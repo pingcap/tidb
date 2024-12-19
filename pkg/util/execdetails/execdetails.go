@@ -783,7 +783,6 @@ func (e *basicCopRuntimeStats) mergeExecSummary(summary *tipb.ExecutorExecutionS
 			mvccInputRows:             tiflashScanContext.GetMvccInputRows(),
 			mvccInputBytes:            tiflashScanContext.GetMvccInputBytes(),
 			mvccOutputRows:            tiflashScanContext.GetMvccOutputRows(),
-			lmSkipRows:                tiflashScanContext.GetLmSkipRows(),
 			totalBuildBitmapMs:        tiflashScanContext.GetTotalBuildBitmapMs(),
 			totalBuildInputStreamMs:   tiflashScanContext.GetTotalBuildInputstreamMs(),
 			staleReadRegions:          tiflashScanContext.GetStaleReadRegions(),
