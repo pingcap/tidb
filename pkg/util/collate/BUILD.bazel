@@ -19,6 +19,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/collate",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errno",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -100,7 +101,7 @@ func (ts *TiDBStatement) Execute(ctx context.Context, args []expression.Expressi
 // AppendParam implements PreparedStatement AppendParam method.
 func (ts *TiDBStatement) AppendParam(paramID int, data []byte) error {
 	if paramID >= len(ts.boundParams) {
-		return mysql.NewErr(mysql.ErrWrongArguments, "stmt_send_longdata")
+		return mysql.NewErr(errno.ErrWrongArguments, "stmt_send_longdata")
 	}
 	// If len(data) is 0, append an empty byte slice to the end to distinguish no data and no parameter.
 	if len(data) == 0 {

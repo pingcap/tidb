@@ -15,17 +15,17 @@
 package privileges
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // error definitions.
 var (
-	errInvalidPrivilegeType                               = dbterror.ClassPrivilege.NewStd(mysql.ErrInvalidPrivilegeType)
-	ErrNonexistingGrant                                   = dbterror.ClassPrivilege.NewStd(mysql.ErrNonexistingGrant)
-	errLoadPrivilege                                      = dbterror.ClassPrivilege.NewStd(mysql.ErrLoadPrivilege)
-	ErrAccessDenied                                       = dbterror.ClassPrivilege.NewStd(mysql.ErrAccessDenied)
-	errAccountHasBeenLocked                               = dbterror.ClassPrivilege.NewStd(mysql.ErrAccountHasBeenLocked)
-	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(mysql.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
-	ErrMustChangePasswordLogin                            = dbterror.ClassPrivilege.NewStd(mysql.ErrMustChangePasswordLogin)
+	errInvalidPrivilegeType                               = dbterror.ClassPrivilege.NewStd(errno.ErrInvalidPrivilegeType)
+	ErrNonexistingGrant                                   = dbterror.ClassPrivilege.NewStd(errno.ErrNonexistingGrant)
+	errLoadPrivilege                                      = dbterror.ClassPrivilege.NewStd(errno.ErrLoadPrivilege)
+	ErrAccessDenied                                       = dbterror.ClassPrivilege.NewStd(errno.ErrAccessDenied)
+	errAccountHasBeenLocked                               = dbterror.ClassPrivilege.NewStd(errno.ErrAccountHasBeenLocked)
+	ErUserAccessDeniedForUserAccountBlockedByPasswordLock = dbterror.ClassPrivilege.NewStd(errno.ErUserAccessDeniedForUserAccountBlockedByPasswordLock)
+	ErrMustChangePasswordLogin                            = dbterror.ClassPrivilege.NewStd(errno.ErrMustChangePasswordLogin)
 )

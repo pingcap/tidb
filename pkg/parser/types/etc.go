@@ -20,6 +20,7 @@ package types
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
@@ -160,12 +161,12 @@ const (
 
 var (
 	// ErrInvalidDefault is returned when meet a invalid default value.
-	ErrInvalidDefault = terror.ClassTypes.NewStd(mysql.ErrInvalidDefault)
+	ErrInvalidDefault = terror.ClassTypes.NewStd(errno.ErrInvalidDefault)
 	// ErrDataOutOfRange is returned when meet a value out of range.
-	ErrDataOutOfRange = terror.ClassTypes.NewStd(mysql.ErrDataOutOfRange)
+	ErrDataOutOfRange = terror.ClassTypes.NewStd(errno.ErrDataOutOfRange)
 	// ErrTruncatedWrongValue is returned when meet a value bigger than
 	// 99999999999999999999999999999999999999999999999999999999999999999 during parsing.
-	ErrTruncatedWrongValue = terror.ClassTypes.NewStd(mysql.ErrTruncatedWrongValue)
+	ErrTruncatedWrongValue = terror.ClassTypes.NewStd(errno.ErrTruncatedWrongValue)
 	// ErrIllegalValueForType is returned when strconv.ParseFloat meet strconv.ErrRange during parsing.
-	ErrIllegalValueForType = terror.ClassTypes.NewStd(mysql.ErrIllegalValueForType)
+	ErrIllegalValueForType = terror.ClassTypes.NewStd(errno.ErrIllegalValueForType)
 )

@@ -204,7 +204,7 @@ func TestCreateTableWithPartition(t *testing.T) {
 		partition p1 values less than (19xx91),
 		partition p2 values less than maxvalue
 	);`
-	tk.MustGetErrCode(sql18, mysql.ErrBadField)
+	tk.MustGetErrCode(sql18, errno.ErrBadField)
 
 	sql9 := `create TABLE t9 (
 	col1 int

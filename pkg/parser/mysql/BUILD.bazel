@@ -5,8 +5,6 @@ go_library(
     srcs = [
         "charset.go",
         "const.go",
-        "errcode.go",
-        "errname.go",
         "error.go",
         "locale_format.go",
         "privs.go",
@@ -17,6 +15,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/parser/mysql",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errno",
         "//pkg/parser/format",
         "@com_github_pingcap_errors//:errors",
     ],

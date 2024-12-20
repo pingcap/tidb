@@ -21,7 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -1130,4 +1130,4 @@ func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []HintedTable)
 }
 
 // ErrWarnConflictingHint is a warning error.
-var ErrWarnConflictingHint = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnConflictingHint)
+var ErrWarnConflictingHint = dbterror.ClassOptimizer.NewStd(errno.ErrWarnConflictingHint)
