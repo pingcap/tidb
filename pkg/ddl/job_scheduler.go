@@ -437,7 +437,6 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		}
 
 		s.deliveryJob(wk, targetPool, &job)
-		metrics.DDLScheduleJobHist.Observe(time.Since(job.SubmitTime).Seconds())
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}

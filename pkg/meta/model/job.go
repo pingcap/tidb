@@ -285,9 +285,8 @@ func GetJobVerInUse() JobVersion {
 
 // Job is for a DDL operation.
 type Job struct {
-	SubmitTime time.Time  `json:"submit_time"`
-	ID         int64      `json:"id"`
-	Type       ActionType `json:"type"`
+	ID   int64      `json:"id"`
+	Type ActionType `json:"type"`
 	// SchemaID means different for different job types:
 	// - ExchangeTablePartition: db id of non-partitioned table
 	SchemaID int64 `json:"schema_id"`

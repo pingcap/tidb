@@ -44,7 +44,6 @@ var (
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
 
 	// Metrics for job_worker.go.
-	WorkerNotifyDDLJob = "notify_job"
 	WorkerAddDDLJob    = "add_job"
 	DDLWorkerHistogram *prometheus.HistogramVec
 
@@ -61,6 +60,7 @@ var (
 	// │  │  │  ├─ async_notify
 	// │  │  ├─ other common works such as register MDL, commit, etc.
 	// │  ├─ wait_schema_synced
+	// │  ├─ clean_mdl_info
 	// ├─ step-2/3/4 ... similar as above -> done state
 	// ├─ handle_job_done
 	DDLRunOneStep           = "run_one_step"
@@ -70,7 +70,6 @@ var (
 	DDLRunJobOpHist         prometheus.Observer
 	DDLHandleJobDoneOpHist  prometheus.Observer
 	DDLTransitOneStepOpHist prometheus.Observer
-	DDLScheduleJobHist      prometheus.Observer
 	DDLLockVerDurationHist  prometheus.Observer
 	DDLCleanMDLInfoHist     prometheus.Observer
 
@@ -205,7 +204,6 @@ func InitDDLMetrics() {
 	DDLRunJobOpHist = DDLWorkerHistogram.WithLabelValues("run_job", "*", "*")
 	DDLHandleJobDoneOpHist = DDLWorkerHistogram.WithLabelValues("handle_job_done", "*", "*")
 	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
-	DDLScheduleJobHist = DDLWorkerHistogram.WithLabelValues("schedule_job", "*", "*")
 	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
 	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
 }
