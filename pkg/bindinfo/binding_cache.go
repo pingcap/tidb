@@ -410,6 +410,8 @@ func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err erro
 		c.digestBiMap.Add(noDBDigests[i], binding.SQLDigest)
 	}
 
+	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
+	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
 	cacheKey := bindingCacheKey(sqlDigest)
 	_, err = c.set(cacheKey, bindings)
 	return
