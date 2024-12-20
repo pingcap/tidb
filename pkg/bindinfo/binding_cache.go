@@ -48,6 +48,101 @@ var GetBindingReturnNilAlways = stringutil.StringerStr("getBindingReturnNilAlway
 // LoadBindingNothing is only for test
 var LoadBindingNothing = stringutil.StringerStr("LoadBindingNothing")
 
+// digestBiMap represents a bidirectional map between noDBDigest and sqlDigest, used to support cross-db binding.
+// One noDBDigest can map to multiple sqlDigests, but one sqlDigest can only map to one noDBDigest.
+type digestBiMap interface {
+	// Add adds a pair of noDBDigest and sqlDigest.
+	// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
+	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
+	Add(noDBDigest, sqlDigest string)
+
+	// Del deletes the pair of noDBDigest and sqlDigest.
+	Del(sqlDigest string)
+
+	// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
+	NoDBDigest2SQLDigest(noDBDigest string) []string
+
+	// SQLDigest2NoDBDigest converts sqlDigest to noDBDigest.
+	SQLDigest2NoDBDigest(sqlDigest string) string
+
+	// Copy copies this digestBiMap.
+	Copy() digestBiMap
+}
+
+type digestBiMapImpl struct {
+	mu                   sync.RWMutex
+	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
+	sqlDigest2noDBDigest map[string]string   // sqlDigest --> noDBDigest
+}
+
+func newDigestBiMap() digestBiMap {
+	return &digestBiMapImpl{
+		noDBDigest2SQLDigest: make(map[string][]string),
+		sqlDigest2noDBDigest: make(map[string]string),
+	}
+}
+
+func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.noDBDigest2SQLDigest[noDBDigest] = append(b.noDBDigest2SQLDigest[noDBDigest], sqlDigest)
+	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
+}
+
+func (b *digestBiMapImpl) Del(sqlDigest string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	noDBDigest, ok := b.sqlDigest2noDBDigest[sqlDigest]
+	if !ok {
+		return
+	}
+	digestList := b.noDBDigest2SQLDigest[noDBDigest]
+	for i := range digestList { // remove sqlDigest from this list
+		if digestList[i] == sqlDigest {
+			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
+			digestList = append(digestList[:i], digestList[i+1:]...)
+			break
+		}
+	}
+	if len(digestList) == 0 {
+		delete(b.noDBDigest2SQLDigest, noDBDigest)
+	} else {
+		b.noDBDigest2SQLDigest[noDBDigest] = digestList
+	}
+	delete(b.sqlDigest2noDBDigest, sqlDigest)
+}
+
+func (b *digestBiMapImpl) NoDBDigest2SQLDigest(noDBDigest string) []string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.noDBDigest2SQLDigest[noDBDigest]
+}
+
+func (b *digestBiMapImpl) SQLDigest2NoDBDigest(sqlDigest string) string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.sqlDigest2noDBDigest[sqlDigest]
+}
+
+func (b *digestBiMapImpl) Copy() digestBiMap {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	noDBDigest2SQLDigest := make(map[string][]string, len(b.noDBDigest2SQLDigest))
+	for k, list := range b.noDBDigest2SQLDigest {
+		newList := make([]string, len(list))
+		copy(newList, list)
+		noDBDigest2SQLDigest[k] = newList
+	}
+	sqlDigest2noDBDigest := make(map[string]string, len(b.sqlDigest2noDBDigest))
+	for k, v := range b.sqlDigest2noDBDigest {
+		sqlDigest2noDBDigest[k] = v
+	}
+	return &digestBiMapImpl{
+		noDBDigest2SQLDigest: noDBDigest2SQLDigest,
+		sqlDigest2noDBDigest: sqlDigest2noDBDigest,
+	}
+}
+
 // CrossDBBindingCache is based on BindingCache, and provide some more advanced features, like
 // cross-db matching, loading binding if cache miss automatically (TODO).
 type CrossDBBindingCache interface {
@@ -63,14 +158,7 @@ type CrossDBBindingCache interface {
 type crossDBBindingCache struct {
 	BindingCache
 
-	mu sync.RWMutex
-
-	// noDBDigest2SQLDigest is used to support cross-db matching.
-	// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
-	// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
-	noDBDigest2SQLDigest map[string][]string // noDBDigest --> sqlDigests
-
-	sqlDigest2noDBDigest map[string]string // sqlDigest --> noDBDigest
+	digestBiMap digestBiMap
 
 	// loadBindingFromStorageFunc is used to load binding from storage if cache miss.
 	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)
@@ -79,8 +167,7 @@ type crossDBBindingCache struct {
 func newCrossDBBindingCache(loadBindingFromStorageFunc func(sessionctx.Context, string) (Bindings, error)) CrossDBBindingCache {
 	return &crossDBBindingCache{
 		BindingCache:               newBindCache(),
-		noDBDigest2SQLDigest:       make(map[string][]string),
-		sqlDigest2noDBDigest:       make(map[string]string),
+		digestBiMap:                newDigestBiMap(),
 		loadBindingFromStorageFunc: loadBindingFromStorageFunc,
 	}
 }
@@ -109,15 +196,13 @@ func (cc *crossDBBindingCache) MatchingBinding(sctx sessionctx.Context, noDBDige
 }
 
 func (cc *crossDBBindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
-	cc.mu.RLock()
-	defer cc.mu.RUnlock()
 	bindingCache := cc.BindingCache
 	if bindingCache.Size() == 0 {
 		return
 	}
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, sqlDigest := range cc.noDBDigest2SQLDigest[noDBDigest] {
+	for _, sqlDigest := range cc.digestBiMap.NoDBDigest2SQLDigest(noDBDigest) {
 		bindings := bindingCache.GetBinding(sqlDigest)
 		if intest.InTest {
 			if sctx.Value(GetBindingReturnNil) != nil {
@@ -184,9 +269,6 @@ func (cc *crossDBBindingCache) loadFromStore(sctx sessionctx.Context, missingSQL
 }
 
 func (cc *crossDBBindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-
 	// prepare noDBDigests for all bindings
 	noDBDigests := make([]string, 0, len(bindings))
 	p := parser.New()
@@ -200,8 +282,7 @@ func (cc *crossDBBindingCache) SetBinding(sqlDigest string, bindings Bindings) (
 	}
 
 	for i, binding := range bindings {
-		cc.noDBDigest2SQLDigest[noDBDigests[i]] = append(cc.noDBDigest2SQLDigest[noDBDigests[i]], binding.SQLDigest)
-		cc.sqlDigest2noDBDigest[binding.SQLDigest] = noDBDigests[i]
+		cc.digestBiMap.Add(noDBDigests[i], binding.SQLDigest)
 	}
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
 	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
@@ -209,45 +290,18 @@ func (cc *crossDBBindingCache) SetBinding(sqlDigest string, bindings Bindings) (
 }
 
 func (cc *crossDBBindingCache) RemoveBinding(sqlDigest string) {
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
-	noDBDigest, ok := cc.sqlDigest2noDBDigest[sqlDigest]
-	if !ok {
-		return
-	}
-	digestList := cc.noDBDigest2SQLDigest[noDBDigest]
-	for i := range digestList { // remove sqlDigest from this list
-		if digestList[i] == sqlDigest {
-			digestList = append(digestList[:i], digestList[i+1:]...)
-			break
-		}
-	}
-	cc.noDBDigest2SQLDigest[noDBDigest] = digestList
-	delete(cc.sqlDigest2noDBDigest, sqlDigest)
+	cc.digestBiMap.Del(sqlDigest)
 	cc.BindingCache.RemoveBinding(sqlDigest)
 }
 
 func (cc *crossDBBindingCache) Copy() (c CrossDBBindingCache, err error) {
-	cc.mu.RLock()
-	defer cc.mu.RUnlock()
 	bc, err := cc.BindingCache.CopyBindingCache()
 	if err != nil {
 		return nil, err
 	}
-	sql2noDBDigest := make(map[string]string, len(cc.sqlDigest2noDBDigest))
-	for k, v := range cc.sqlDigest2noDBDigest {
-		sql2noDBDigest[k] = v
-	}
-	noDBDigest2SQLDigest := make(map[string][]string, len(cc.noDBDigest2SQLDigest))
-	for k, list := range cc.noDBDigest2SQLDigest {
-		newList := make([]string, len(list))
-		copy(newList, list)
-		noDBDigest2SQLDigest[k] = newList
-	}
 	return &crossDBBindingCache{
 		BindingCache:               bc,
-		noDBDigest2SQLDigest:       noDBDigest2SQLDigest,
-		sqlDigest2noDBDigest:       sql2noDBDigest,
+		digestBiMap:                cc.digestBiMap.Copy(),
 		loadBindingFromStorageFunc: cc.loadBindingFromStorageFunc,
 	}, nil
 }
