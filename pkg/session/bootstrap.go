@@ -1194,31 +1194,20 @@ const (
 	// enable fast_create_table on default
 	version218 = 218
 
+	// version 219
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version219 = 219
+
 	// ...
-	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// [version220, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
-<<<<<<< HEAD
-=======
-
-	// version 239
-	// add modify_params to tidb_global_task and tidb_global_task_history.
-	version239 = 239
-
-	// version 240
-	// Add indexes to mysql.analyze_jobs to speed up the query.
-	version240 = 240
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-<<<<<<< HEAD
-var currentBootstrapVersion int64 = version218
-=======
-var currentBootstrapVersion int64 = version240
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))
+var currentBootstrapVersion int64 = version219
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1392,11 +1381,7 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
-<<<<<<< HEAD
-=======
-		upgradeToVer239,
-		upgradeToVer240,
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))
+		upgradeToVer219,
 	}
 )
 
@@ -3295,16 +3280,6 @@ func upgradeToVer218(_ sessiontypes.Session, ver int64) {
 	// empty, just make lint happy.
 }
 
-<<<<<<< HEAD
-=======
-func upgradeToVer239(s sessiontypes.Session, ver int64) {
-	if ver >= version239 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
-}
-
 const (
 	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
 	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
@@ -3315,15 +3290,14 @@ const (
 	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
 )
 
-func upgradeToVer240(s sessiontypes.Session, ver int64) {
-	if ver >= version240 {
+func upgradeToVer219(s sessiontypes.Session, ver int64) {
+	if ver >= version219 {
 		return
 	}
 	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)

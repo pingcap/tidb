@@ -2524,113 +2524,25 @@ func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {
 	require.Equal(t, 1, row.Len())
 	require.Equal(t, int64(0), row.GetInt64(0))
 }
-<<<<<<< HEAD
-=======
 
-func TestKeyspaceEtcdNamespace(t *testing.T) {
-	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
-	keyspaceMeta.Name = "test_ks_name2"
-	makeStore(t, &keyspaceMeta, true)
-}
-
-func TestNullKeyspaceEtcdNamespace(t *testing.T) {
-	makeStore(t, nil, false)
-}
-
-func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix bool) {
-	integration.BeforeTestExternal(t)
-	var store kv.Storage
-	var err error
-	if keyspaceMeta != nil {
-		store, err = mockstore.NewMockStore(
-			mockstore.WithKeyspaceMeta(keyspaceMeta),
-			mockstore.WithStoreType(mockstore.EmbedUnistore),
-		)
-	} else {
-		store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	}
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-
-	// Build a mockEtcdBackend.
-	mockStore := &mockEtcdBackend{
-		Storage: store,
-		pdAddrs: []string{cluster.Members[0].GRPCURL()}}
-	etcdClient := cluster.RandClient()
-
-	require.NoError(t, err)
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient)
-	require.NoError(t, err)
-	defer dom.Close()
-
-	checkETCDNameSpace(t, dom, isHasPrefix)
-}
-
-func checkETCDNameSpace(t *testing.T, dom *domain.Domain, isHasPrefix bool) {
-	namespacePrefix := keyspace.MakeKeyspaceEtcdNamespace(dom.Store().GetCodec())
-	testKeyWithoutPrefix := "/testkey"
-	testVal := "test"
-	var expectTestKey string
-	if isHasPrefix {
-		expectTestKey = namespacePrefix + testKeyWithoutPrefix
-	} else {
-		expectTestKey = testKeyWithoutPrefix
-	}
-
-	// Put key value into etcd.
-	_, err := dom.EtcdClient().Put(context.Background(), testKeyWithoutPrefix, testVal)
-	require.NoError(t, err)
-
-	// Use expectTestKey to get the key from etcd.
-	getResp, err := dom.UnprefixedEtcdCli().Get(context.Background(), expectTestKey)
-	require.NoError(t, err)
-	require.Equal(t, len(getResp.Kvs), 1)
-
-	if isHasPrefix {
-		getResp, err = dom.UnprefixedEtcdCli().Get(context.Background(), testKeyWithoutPrefix)
-		require.NoError(t, err)
-		require.Equal(t, 0, len(getResp.Kvs))
-	}
-}
-
-type mockEtcdBackend struct {
-	kv.Storage
-	pdAddrs []string
-}
-
-func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
-	return mebd.pdAddrs, nil
-}
-
-func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
-
-func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
-
-func TestTiDBUpgradeToVer240(t *testing.T) {
+func TestTiDBUpgradeToVer219(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	ver239 := version239
-	seV239 := CreateSessionAndSetID(t, store)
+	ver218 := version218
+	seV218 := CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver239))
+	err = m.FinishBootstrap(int64(ver218))
 	require.NoError(t, err)
-	revertVersionAndVariables(t, seV239, ver239)
+	revertVersionAndVariables(t, seV218, ver218)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
 
 	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
-	res := MustExecToRecodeSet(t, seV239, "show create table mysql.analyze_jobs")
+	res := MustExecToRecodeSet(t, seV218, "show create table mysql.analyze_jobs")
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
@@ -2656,4 +2568,3 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))

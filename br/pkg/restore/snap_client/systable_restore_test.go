@@ -116,9 +116,5 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-<<<<<<< HEAD
-	require.Equal(t, int64(218), session.CurrentBootstrapVersion)
-=======
-	require.Equal(t, int64(240), session.CurrentBootstrapVersion)
->>>>>>> dde1dcd750d (session: add indexes for `mysql.analyze_jobs` (#58134))
+	require.Equal(t, int64(219), session.CurrentBootstrapVersion)
 }
