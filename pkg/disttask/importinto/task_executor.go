@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -72,7 +73,7 @@ func getTableImporter(
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
 ) (*importer.TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -168,6 +169,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return err
 	}
 
+	panicked := atomic.Bool{}
 outer:
 	for _, chunk := range subtaskMeta.Chunks {
 		// TODO: current workpool impl doesn't drain the input channel, it will
@@ -177,6 +179,7 @@ outer:
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
+			panicked:   &panicked,
 		}:
 		case <-op.Done():
 			break outer
@@ -184,14 +187,20 @@ outer:
 	}
 	source.Finish()
 
-	return pipeline.Close()
+	if err = pipeline.Close(); err != nil {
+		return err
+	}
+	if panicked.Load() {
+		return errors.Errorf("panic occurred during import, please check log")
+	}
+	return s.onFinished(ctx, subtask)
 }
 
 func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -348,10 +357,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
 		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
 	)
-	return err
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(subtask)
 }
 
-func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -404,32 +416,41 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	localBackend.WorkerConcurrency = subtask.Concurrency * 2
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.DataFiles,
-			StatFiles:       sm.StatFiles,
-			StartKey:        sm.StartKey,
-			EndKey:          sm.EndKey,
-			SplitKeys:       sm.RangeSplitKeys,
-			RegionSplitSize: sm.RangeSplitSize,
-			TotalFileSize:   int64(sm.TotalKVSize),
-			TotalKVCount:    0,
-			CheckHotspot:    false,
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			StartKey:      sm.StartKey,
+			EndKey:        sm.EndKey,
+			JobKeys:       jobKeys,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+			CheckHotspot:  false,
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.onFinished(ctx, subtask)
 }
 
 func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)

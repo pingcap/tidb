@@ -15,6 +15,7 @@
 package exec
 
 import (
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -38,6 +39,17 @@ func NewIndexUsageReporter(reporter *indexusage.StmtIndexUsageCollector,
 		runtimeStatsColl: runtimeStatsColl,
 		statsMap:         statsMap,
 	}
+}
+
+// ReportCopIndexUsageForHandle wraps around `ReportCopIndexUsageForTable` to get the `indexID` automatically
+// from the `table.Table` if the table has a clustered index or integer primary key.
+func (e *IndexUsageReporter) ReportCopIndexUsageForHandle(tbl table.Table, planID int) {
+	idxID, ok := getClusterIndexID(tbl.Meta())
+	if !ok {
+		return
+	}
+
+	e.ReportCopIndexUsageForTable(tbl, idxID, planID)
 }
 
 // ReportCopIndexUsageForTable wraps around `ReportCopIndexUsage` to get `tableID` and `physicalTableID` from the
@@ -75,21 +87,26 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 	e.reporter.Update(tableID, indexID, sample)
 }
 
+// ReportPointGetIndexUsageForHandle wraps around `ReportPointGetIndexUsage` to get the `indexID` automatically
+// from the `table.Table` if the table has a clustered index or integer primary key.
+func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, kvRequestTotal, rows int64) {
+	idxID, ok := getClusterIndexID(tblInfo)
+	if !ok {
+		return
+	}
+
+	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, kvRequestTotal, rows)
+}
+
 // ReportPointGetIndexUsage reports the index usage of a point get or batch point get
-func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int, kvRequestTotal int64) {
+func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
 		// skip if the table is empty or the stats is not valid
 		return
 	}
 
-	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID)
-	if basic == nil {
-		return
-	}
-	accessRows := basic.GetActRows()
-
-	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(accessRows), uint64(tableRowCount))
+	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
 	e.reporter.Update(tableID, indexID, sample)
 }
 
@@ -103,4 +120,24 @@ func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
 		return 0, false
 	}
 	return stats.RealtimeCount, true
+}
+
+// getClusterIndexID returns the indexID of the clustered index. If the table doesn't have a clustered index, it returns
+// (0, false).
+func getClusterIndexID(tblInfo *model.TableInfo) (int64, bool) {
+	var idxID int64
+	if tblInfo.PKIsHandle {
+		idxID = 0
+	} else if tblInfo.IsCommonHandle {
+		for _, idx := range tblInfo.Indices {
+			if idx.Primary {
+				idxID = idx.ID
+			}
+		}
+	} else {
+		// just ignore, this table is read through rowid.
+		return 0, false
+	}
+
+	return idxID, true
 }

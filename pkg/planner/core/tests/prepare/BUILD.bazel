@@ -19,6 +19,7 @@ go_test(
         "//pkg/parser",
         "//pkg/parser/auth",
         "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/sessionctx/variable",

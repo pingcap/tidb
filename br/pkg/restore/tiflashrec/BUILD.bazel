@@ -9,9 +9,9 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/utils",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
@@ -26,6 +26,7 @@ go_test(
     deps = [
         ":tiflashrec",
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],

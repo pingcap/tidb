@@ -25,8 +25,9 @@ import (
 	_ "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
@@ -73,9 +74,6 @@ func TestShowCreateTablePlacement(t *testing.T) {
 
 	// Partitioned tables
 	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec("set @old_list_part = @@tidb_enable_list_partition")
-	defer tk.MustExec("set @@tidb_enable_list_partition = @old_list_part")
-	tk.MustExec("set tidb_enable_list_partition = 1")
 	tk.MustExec("create table t(a int, b varchar(255))" +
 		"/*T![placement] PLACEMENT POLICY=\"x\" */" +
 		"PARTITION BY LIST (a)\n" +
@@ -288,16 +286,11 @@ func TestShowWarningsForExprPushdown(t *testing.T) {
 	// create tiflash replica
 	{
 		is := dom.InfoSchema()
-		db, exists := is.SchemaByName(model.NewCIStr("test"))
-		require.True(t, exists)
-		for _, tbl := range is.SchemaTables(db.Name) {
-			tblInfo := tbl.Meta()
-			if tblInfo.Name.L == "show_warnings_expr_pushdown" {
-				tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-					Count:     1,
-					Available: true,
-				}
-			}
+		tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("show_warnings_expr_pushdown"))
+		require.NoError(t, err)
+		tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+			Count:     1,
+			Available: true,
 		}
 	}
 	tk.MustExec("set tidb_allow_mpp=0")
@@ -524,7 +517,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery(`describe t`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`show columns from v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
 	tk.MustQuery(`describe v`).Check(testkit.RowsWithSep(",", "c,int(11),YES,,<nil>,"))
-	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1"))
+	tk.MustQuery("show collation where Charset = 'utf8' and Collation = 'utf8_bin'").Check(testkit.RowsWithSep(",", "utf8_bin,utf8,83,Yes,Yes,1,PAD SPACE"))
 	tk.MustExec(`drop sequence if exists seq`)
 	tk.MustExec(`create sequence seq`)
 	tk.MustQuery("show tables").Check(testkit.Rows("seq", "t", "v"))
@@ -536,7 +529,7 @@ func TestShow2(t *testing.T) {
 	tk.MustQuery("SHOW FULL TABLES in metrics_schema like 'uptime'").Check(testkit.Rows("uptime SYSTEM VIEW"))
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -679,7 +672,7 @@ func TestUnprivilegedShow(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "lowprivuser", Hostname: "192.168.0.1", AuthUsername: "lowprivuser", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(model.NewCIStr("testshow"), model.NewCIStr("t1"))
+	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr("testshow"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	createTime := model.TSConvert2Time(tblInfo.Meta().UpdateTS).Format(time.DateTime)
 
@@ -811,7 +804,7 @@ func TestAutoRandomWithLargeSignedShowTableRegions(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 
 	tk.MustExec("create table t (a bigint unsigned auto_random primary key clustered);")
-	tk.MustExec("set @@global.tidb_scatter_region=1;")
+	tk.MustExec("set @@session.tidb_scatter_region='table';")
 	// 18446744073709541615 is MaxUint64 - 10000.
 	// 18446744073709551615 is the MaxUint64.
 	tk.MustQuery("split table t between (18446744073709541615) and (18446744073709551615) regions 2;").
@@ -1195,7 +1188,7 @@ func TestShowLimitReturnRow(t *testing.T) {
 	require.Equal(t, rows[0][0], "server_id")
 
 	tk.MustQuery("Show Collation where collation='utf8_bin'").Check(testkit.RowsWithSep("|", ""+
-		"utf8_bin utf8 83 Yes Yes 1"))
+		"utf8_bin utf8 83 Yes Yes 1 PAD SPACE"))
 
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()

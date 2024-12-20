@@ -107,7 +107,7 @@ func TestIndexColumnLength(t *testing.T) {
 	tk.MustExec("create index idx_c2 on t(c2(6));")
 
 	is := dom.InfoSchema()
-	tab, err2 := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tab, err2 := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err2)
 
 	idxC1Cols := tables.FindIndexByColName(tab, "c1").Meta().Columns

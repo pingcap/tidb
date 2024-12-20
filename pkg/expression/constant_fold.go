@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -250,8 +251,14 @@ func foldConstant(ctx BuildContext, expr Expression) (Expression, bool) {
 		return &Constant{Value: value, RetType: retType}, false
 	case *Constant:
 		if x.ParamMarker != nil {
+			val, err := x.ParamMarker.GetUserVar(ctx.GetEvalCtx())
+			intest.AssertNoError(err, "fail to get param")
+			if err != nil {
+				logutil.BgLogger().Warn("fail to get param", zap.Error(err))
+				return expr, true
+			}
 			return &Constant{
-				Value:        x.ParamMarker.GetUserVar(ctx.GetEvalCtx()),
+				Value:        val,
 				RetType:      x.RetType,
 				DeferredExpr: x.DeferredExpr,
 				ParamMarker:  x.ParamMarker,

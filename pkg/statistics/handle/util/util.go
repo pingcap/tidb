@@ -20,16 +20,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -44,9 +47,6 @@ const (
 	StatsMetaHistorySourceSchemaChange = "schema change"
 	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
 	StatsMetaHistorySourceExtendedStats = "extended stats"
-
-	// TiDBGlobalStats represents the global-stats for a partitioned table.
-	TiDBGlobalStats = "global"
 )
 
 var (
@@ -74,7 +74,7 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
-func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := pool.Get()
 	if err != nil {
 		return err
@@ -181,7 +181,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func GetCurrentPruneMode(pool SessionPool) (mode string, err error) {
+func GetCurrentPruneMode(pool util.SessionPool) (mode string, err error) {
 	err = CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
@@ -213,26 +213,50 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 
 // Exec is a helper function to execute sql and return RecordSet.
 func Exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	return ExecWithCtx(StatsCtx, sctx, sql, args...)
+}
+
+// ExecWithCtx is a helper function to execute sql and return RecordSet.
+func ExecWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	sql string,
+	args ...any,
+) (sqlexec.RecordSet, error) {
 	sqlExec := sctx.GetSQLExecutor()
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
-	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
+	return sqlExec.ExecuteInternal(ctx, sql, args...)
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
-func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	failpoint.Inject("ExecRowsTimeout", func() {
+		failpoint.Return(nil, nil, errors.New("inject timeout error"))
+	})
+	return ExecRowsWithCtx(StatsCtx, sctx, sql, args...)
+}
+
+// ExecRowsWithCtx is a helper function to execute sql and return rows and fields.
+func ExecRowsWithCtx(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	sql string,
+	args ...any,
+) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	if intest.InTest {
 		if v := sctx.Value(mock.RestrictedSQLExecutorKey{}); v != nil {
-			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
-				UseCurrentSessionOpt, sql, args...)
+			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(
+				StatsCtx, UseCurrentSessionOpt, sql, args...,
+			)
 		}
 	}
 
 	sqlExec := sctx.GetRestrictedSQLExecutor()
-	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
+	return sqlExec.ExecRestrictedSQL(ctx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
-func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
@@ -242,52 +266,18 @@ func DurationToTS(d time.Duration) uint64 {
 	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
-// JSONTable is used for dumping statistics.
-type JSONTable struct {
-	Columns           map[string]*JSONColumn `json:"columns"`
-	Indices           map[string]*JSONColumn `json:"indices"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
-	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
-	Count             int64                  `json:"count"`
-	ModifyCount       int64                  `json:"modify_count"`
-	Version           uint64                 `json:"version"`
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
-}
-
-// JSONExtendedStats is used for dumping extended statistics.
-type JSONExtendedStats struct {
-	StatsName  string  `json:"stats_name"`
-	StringVals string  `json:"string_vals"`
-	ColIDs     []int64 `json:"cols"`
-	ScalarVals float64 `json:"scalar_vals"`
-	Tp         uint8   `json:"type"`
-}
-
-// JSONColumn is used for dumping statistics.
-type JSONColumn struct {
-	Histogram *tipb.Histogram `json:"histogram"`
-	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
-	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
-	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64  `json:"stats_ver"`
-	NullCount         int64   `json:"null_count"`
-	TotColSize        int64   `json:"tot_col_size"`
-	LastUpdateVersion uint64  `json:"last_update_version"`
-	Correlation       float64 `json:"correlation"`
-}
-
-// TotalMemoryUsage returns the total memory usage of this column.
-func (col *JSONColumn) TotalMemoryUsage() (size int64) {
-	if col.Histogram != nil {
-		size += int64(col.Histogram.Size())
+// IsSpecialGlobalIndex checks a index is a special global index or not.
+// A special global index is one that is a global index and has virtual generated columns or prefix columns.
+func IsSpecialGlobalIndex(idx *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	if !idx.Global {
+		return false
 	}
-	if col.CMSketch != nil {
-		size += int64(col.CMSketch.Size())
+	for _, col := range idx.Columns {
+		colInfo := tblInfo.Columns[col.Offset]
+		isPrefixCol := col.Length != types.UnspecifiedLength
+		if colInfo.IsVirtualGenerated() || isPrefixCol {
+			return true
+		}
 	}
-	if col.FMSketch != nil {
-		size += int64(col.FMSketch.Size())
-	}
-	return size
+	return false
 }

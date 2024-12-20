@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -27,7 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -137,7 +139,7 @@ type PointGetExecutor struct {
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
 	partitionDefIdx  *int
-	partitionNames   []model.CIStr
+	partitionNames   []pmodel.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -176,7 +178,7 @@ func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 	return tblInfo.ID
 }
 
-func matchPartitionNames(pid int64, partitionNames []model.CIStr, pi *model.PartitionInfo) bool {
+func matchPartitionNames(pid int64, partitionNames []pmodel.CIStr, pi *model.PartitionInfo) bool {
 	if len(partitionNames) == 0 {
 		return true
 	}
@@ -194,6 +196,15 @@ func matchPartitionNames(pid int64, partitionNames []model.CIStr, pi *model.Part
 		}
 	}
 	return false
+}
+
+// Recreated based on Init, change baseExecutor fields also
+func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan) {
+	e.Init(p)
+	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
+	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
+	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
+	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -246,16 +257,28 @@ func (e *PointGetExecutor) Open(context.Context) error {
 // Close implements the Executor interface.
 func (e *PointGetExecutor) Close() error {
 	if e.stats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+		defer func() {
+			sc := e.Ctx().GetSessionVars().StmtCtx
+			sc.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+			timeDetail := e.stats.SnapshotRuntimeStats.GetTimeDetail()
+			if timeDetail != nil {
+				e.Ctx().GetSessionVars().SQLCPUUsages.MergeTikvCPUTime(timeDetail.ProcessTime)
+			}
+		}()
 	}
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil && e.idxInfo != nil {
+	if e.indexUsageReporter != nil {
 		tableID := e.tblInfo.ID
 		physicalTableID := GetPhysID(e.tblInfo, e.partitionDefIdx)
 		kvReqTotal := e.stats.SnapshotRuntimeStats.GetCmdRPCCount(tikvrpc.CmdGet)
-		e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, e.ID(), kvReqTotal)
+		rows := e.RuntimeStats().GetActRows()
+		if e.idxInfo != nil {
+			e.indexUsageReporter.ReportPointGetIndexUsage(tableID, physicalTableID, e.idxInfo.ID, kvReqTotal, rows)
+		} else {
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, physicalTableID, kvReqTotal, rows)
+		}
 	}
 	e.done = false
 	return nil
@@ -354,8 +377,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 					return err
 				}
 				tblID = pid
-				if !matchPartitionNames(tblID, e.partitionNames, e.tblInfo.GetPartitionInfo()) {
+				pi := e.tblInfo.GetPartitionInfo()
+				if !matchPartitionNames(tblID, e.partitionNames, pi) {
 					return nil
+				}
+				for _, id := range pi.IDsInDDLToIgnore() {
+					if id == pid {
+						return nil
+					}
 				}
 			}
 		}
@@ -376,9 +405,10 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				IndexEncode: func(*consistency.RecordData) kv.Key {
 					return e.idxKey
 				},
-				Tbl:  e.tblInfo,
-				Idx:  e.idxInfo,
-				Sctx: e.Ctx(),
+				Tbl:             e.tblInfo,
+				Idx:             e.idxInfo,
+				EnableRedactLog: e.Ctx().GetSessionVars().EnableRedactLog,
+				Storage:         e.Ctx().GetStore(),
 			}).ReportLookupInconsistent(ctx,
 				1, 0,
 				[]kv.Handle{e.handle},
@@ -637,7 +667,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 
 	lock := e.tblInfo.Lock
-	if lock != nil && (lock.Tp == model.TableLockRead || lock.Tp == model.TableLockReadOnly) {
+	if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) {
 		if e.Ctx().GetSessionVars().EnablePointGetCache {
 			cacheDB := e.Ctx().GetStore().GetMemCache()
 			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
@@ -648,6 +678,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// if the query has max execution time set, we need to set the context deadline for the get request
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		return e.snapshot.Get(ctxWithTimeout, key)
+	}
 	return e.snapshot.Get(ctx, key)
 }
 
@@ -658,7 +694,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	tblInfo, _ := is.TableByID((e.tblInfo.ID))
+	tblInfo, _ := is.TableByID(context.Background(), e.tblInfo.ID)
 	tblName := tblInfo.Meta().Name.String()
 	tblID := GetPhysID(tblInfo.Meta(), e.partitionDefIdx)
 	if tblID != tblInfo.Meta().ID {

@@ -72,6 +72,8 @@ type Collator interface {
 	KeyWithoutTrimRightSpace(str string) []byte
 	// Pattern get a collation-aware WildcardPattern.
 	Pattern() WildcardPattern
+	// Clone returns a copy of the collator.
+	Clone() Collator
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.
@@ -165,7 +167,7 @@ func GetBinaryCollatorSlice(n int) []Collator {
 		return binCollatorInstanceSliceWithLen1
 	}
 	collators := make([]Collator, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		collators[i] = binCollatorInstance
 	}
 	return collators
@@ -367,6 +369,11 @@ func IsBinCollation(collate string) bool {
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
 		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
 	// TODO: define a constant to reference collations
+}
+
+// IsPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+func IsPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin && collation != "utf8mb4_0900_ai_ci" && collation != "utf8mb4_0900_bin"
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).

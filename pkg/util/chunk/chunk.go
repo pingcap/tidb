@@ -156,7 +156,7 @@ func renewEmpty(chk *Chunk) *Chunk {
 }
 
 func (c *Chunk) resetForReuse() {
-	for i := 0; i < len(c.columns); i++ {
+	for i := range len(c.columns) {
 		c.columns[i] = nil
 	}
 	columns := c.columns[:0]
@@ -187,8 +187,7 @@ func (c *Chunk) MemoryUsage() (sum int64) {
 		return 0
 	}
 	for _, col := range c.columns {
-		curColMemUsage := int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
-		sum += curColMemUsage
+		sum += int64(unsafe.Sizeof(*col)) + int64(cap(col.nullBitmap)) + int64(cap(col.offsets)*8) + int64(cap(col.data)) + int64(cap(col.elemBuf))
 	}
 	return
 }
@@ -237,21 +236,23 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	return nil
 }
 
-// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// swapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+// this function should not be used directly, if you wants to swap columns between two chunks,
+// use ColumnSwapHelper.SwapColumns instead.
+func (c *Chunk) swapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
 		return errors.New(msgErrSelNotNil)
 	}
 	// Find the leftmost Column of the reference which is the actual Column to
 	// be swapped.
-	for i := 0; i < colIdx; i++ {
+	for i := range colIdx {
 		if c.columns[i] == c.columns[colIdx] {
 			colIdx = i
 		}
 	}
-	for i := 0; i < otherIdx; i++ {
+	for i := range otherIdx {
 		if other.columns[i] == other.columns[otherIdx] {
 			otherIdx = i
 		}
@@ -470,12 +471,12 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset in
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
 		currentOffset += elemLen
 	} else {
-		elemLen := *(*uint64)(unsafe.Add(rowData, currentOffset))
+		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+8), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+sizeUint32), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		currentOffset += int(elemLen + 8)
+		currentOffset += int(elemLen + uint32(sizeUint32))
 	}
 	dst.length++
 	return currentOffset
@@ -612,6 +613,12 @@ func (c *Chunk) AppendJSON(colIdx int, j types.BinaryJSON) {
 	c.columns[colIdx].AppendJSON(j)
 }
 
+// AppendVectorFloat32 appends a VectorFloat32 value to the chunk.
+func (c *Chunk) AppendVectorFloat32(colIdx int, v types.VectorFloat32) {
+	c.appendSel(colIdx)
+	c.columns[colIdx].AppendVectorFloat32(v)
+}
+
 func (c *Chunk) appendSel(colIdx int) {
 	if colIdx == 0 && c.sel != nil { // use column 0 as standard
 		c.sel = append(c.sel, c.columns[0].length)
@@ -645,6 +652,8 @@ func (c *Chunk) AppendDatum(colIdx int, d *types.Datum) {
 		c.AppendTime(colIdx, d.GetMysqlTime())
 	case types.KindMysqlJSON:
 		c.AppendJSON(colIdx, d.GetMysqlJSON())
+	case types.KindVectorFloat32:
+		c.AppendVectorFloat32(colIdx, d.GetVectorFloat32())
 	}
 }
 
@@ -692,8 +701,8 @@ func (c *Chunk) Reconstruct() {
 
 // ToString returns all the values in a chunk.
 func (c *Chunk) ToString(ft []*types.FieldType) string {
-	var buf []byte
-	for rowIdx := 0; rowIdx < c.NumRows(); rowIdx++ {
+	buf := make([]byte, 0, c.NumRows()*2)
+	for rowIdx := range c.NumRows() {
 		row := c.GetRow(rowIdx)
 		buf = append(buf, row.ToString(ft)...)
 		buf = append(buf, '\n')

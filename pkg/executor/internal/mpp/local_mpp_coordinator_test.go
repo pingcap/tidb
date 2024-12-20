@@ -28,11 +28,28 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	passSender := &plannercore.PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
-
+	passSender.SetID(10)
+	tableReader := &plannercore.PhysicalTableReader{}
+	tableReader.SetTablePlanForTest(passSender)
+	limitTIDB := &plannercore.PhysicalLimit{}
+	limitTIDB.SetChildren(tableReader)
 	passSender.SetChildren(limit)
 	limit.SetChildren(tableScan)
-	require.True(t, needReportExecutionSummary(passSender))
 
-	passSender.SetChildren(tableScan)
-	require.False(t, needReportExecutionSummary(passSender))
+	require.True(t, needReportExecutionSummary(limitTIDB, 10, false))
+	require.False(t, needReportExecutionSummary(limitTIDB, 11, false))
+
+	projection := &plannercore.PhysicalProjection{}
+	projection.SetChildren(tableReader)
+	require.False(t, needReportExecutionSummary(projection, 10, false))
+
+	join := &plannercore.PhysicalHashJoin{}
+	tableScan2 := &plannercore.PhysicalTableScan{}
+	tableScan2.SetID(20)
+	tableReader2 := &plannercore.PhysicalTableReader{}
+	tableReader2.SetTablePlanForTest(tableScan2)
+	join.SetChildren(tableReader2, projection)
+	limitTIDB2 := &plannercore.PhysicalLimit{}
+	limitTIDB2.SetChildren(join)
+	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
 }

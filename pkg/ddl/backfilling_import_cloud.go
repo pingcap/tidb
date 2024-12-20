@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -109,6 +109,11 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		all.Merge(g)
 	}
 
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
@@ -116,6 +121,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
 			EndKey:        all.EndKey,
+			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
@@ -151,10 +157,5 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	return nil
-}
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
 }

@@ -208,9 +208,9 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 
 	// Step.2 starts call ebs snapshot api to back up volume data.
 	// NOTE: we should start snapshot in specify order.
-
-	progress := g.StartProgress(ctx, "backup", int64(storeCount)*100, !cfg.LogProgress)
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount)*100, cfg.ProgressFile)
+	volumeCount := storeCount * backupInfo.GetTiKVVolumeCount()
+	progress := g.StartProgress(ctx, "backup", int64(volumeCount)*100, !cfg.LogProgress)
+	go progressFileWriterRoutine(ctx, progress, int64(volumeCount)*100, cfg.ProgressFile)
 
 	ec2Session, err := aws.NewEC2Session(cfg.CloudAPIConcurrency, cfg.S3.Region)
 	if err != nil {
@@ -297,7 +297,7 @@ func waitAllScheduleStoppedAndNoRegionHole(ctx context.Context, cfg Config, mgr 
 	}
 	// we wait for nearly 15*40 = 600s = 10m
 	backoffer := utils.InitialRetryState(40, 5*time.Second, waitAllScheduleStoppedInterval)
-	for backoffer.Attempt() > 0 {
+	for backoffer.RemainingAttempts() > 0 {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

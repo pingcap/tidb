@@ -2161,3 +2161,30 @@ drop table if exists test.t;
 create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
 explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
+
+# TestIssue56460
+drop table if exists test.t;
+create table test.t (a int);
+insert into test.t values(0),(20015),(20100);
+select date_add(a, interval 12345 DAY_HOUR) from test.t;
+
+# TestIssue56481
+drop table if exists test.t;
+create table test.t(f1 char(1));
+insert into test.t values ('a'),('b'),('1');
+select (cast(f1 as float) = 1) or (cast(f1 as float) = 2) from test.t;
+SHOW WARNINGS;
+select (cast(f1 as float) != 1) and (cast(f1 as float) != 2) from test.t;
+SHOW WARNINGS;
+
+# TestIssue56462
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
+
+# TestIssue56339
+drop table if exists test.t;
+create table test.t(a double);
+insert into test.t values('20000102030405.0078125');
+select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';

@@ -277,7 +277,11 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
-		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		if e.diskTracker != nil {
+			e.diskTracker.Reset()
+		} else {
+			e.diskTracker = disk.NewTracker(e.ID(), -1)
+		}
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.dataInDisk.GetDiskTracker().AttachTo(e.diskTracker)
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
@@ -304,7 +308,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			globalOutputCh:       e.finalOutputCh,
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
-			chk:                  exec.TryNewCacheChunk(e.Children(0)),
+			chk:                  e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			groupKeyBuf:          *groupKeyBuf,
 			serializeHelpers:     aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:      false,
@@ -324,12 +328,10 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			e.partialWorkers[i].stats = &AggWorkerStat{}
 			e.stats.PartialStats = append(e.stats.PartialStats, e.partialWorkers[i].stats)
 		}
-		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
-			chk:        exec.NewFirstChunk(e.Children(0)),
+			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
-		e.memTracker.Consume(input.chk.MemoryUsage())
 		e.inputCh <- input
 	}
 }
@@ -343,7 +345,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			inputCh:                    e.partialOutputChs[i],
 			outputCh:                   e.finalOutputCh,
 			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
-			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
 			spillHelper:                e.spillHelper,
 			restoredAggResultMapperMem: 0,
 		}
@@ -353,7 +354,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
+		e.finalWorkers[i].finalResultHolderCh <- chunk.New(e.RetFieldTypes(), 0, e.MaxChunkSize())
 	}
 }
 
@@ -393,13 +394,22 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	for i := 0; i < baseRetTypeNum; i++ {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
+
+	var err error
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
+	e.spillHelper, err = newSpillHelper(e.memTracker, e.PartialAggFuncs, e.FinalAggFuncs, func() *chunk.Chunk {
 		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 	}, spillChunkFieldTypes)
+	if err != nil {
+		return err
+	}
 
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
-		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		if e.diskTracker != nil {
+			e.diskTracker.Reset()
+		} else {
+			e.diskTracker = disk.NewTracker(e.ID(), -1)
+		}
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker
 		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())

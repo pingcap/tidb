@@ -78,6 +78,7 @@ const (
 	DefaultRegionSplitBatchSize       = 4096
 	defaultLogicalImportBatchSize     = 96 * units.KiB
 	defaultLogicalImportBatchRows     = 65536
+	defaultLogicalImportPrepStmt      = false
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName           = "lightning_metadata"
@@ -104,7 +105,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs", "azure", "azblob"}
 
 	defaultFilter = []string{
 		"*.*",
@@ -175,7 +176,17 @@ func (d *DBStore) adjust(
 	}
 
 	if d.Security == nil {
-		d.Security = s
+		d.Security = &Security{
+			CAPath:                   s.CAPath,
+			CertPath:                 s.CertPath,
+			KeyPath:                  s.KeyPath,
+			CABytes:                  s.CABytes,
+			CertBytes:                s.CertBytes,
+			KeyBytes:                 s.KeyBytes,
+			RedactInfoLog:            s.RedactInfoLog,
+			TLSConfig:                s.TLSConfig,
+			AllowFallbackToPlaintext: s.AllowFallbackToPlaintext,
+		}
 	}
 
 	switch d.TLS {
@@ -202,9 +213,9 @@ func (d *DBStore) adjust(
 		d.Security.TLSConfig = nil
 		d.Security.CAPath = ""
 		d.Security.CertPath = ""
-		d.Security.KeyPath = ""
 		d.Security.CABytes = nil
 		d.Security.CertBytes = nil
+		d.Security.KeyPath = ""
 		d.Security.KeyBytes = nil
 	default:
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
@@ -1091,6 +1102,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	LogicalImportBatchSize  ByteSize `toml:"logical-import-batch-size" json:"logical-import-batch-size"`
 	LogicalImportBatchRows  int      `toml:"logical-import-batch-rows" json:"logical-import-batch-rows"`
+	LogicalImportPrepStmt   bool     `toml:"logical-import-prep-stmt" json:"logical-import-prep-stmt"`
 
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
@@ -1487,6 +1499,7 @@ func NewConfig() *Config {
 			BlockSize:               16 * 1024,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
+			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
@@ -1622,14 +1635,4 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
-}
-
-// AdjustForDDL acts like Adjust, but DDL will not use some functionalities so
-// those members are skipped in adjusting.
-func (cfg *Config) AdjustForDDL() error {
-	if err := cfg.TikvImporter.adjust(); err != nil {
-		return err
-	}
-	cfg.App.adjust(&cfg.TikvImporter)
-	return nil
 }

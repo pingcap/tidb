@@ -20,15 +20,36 @@ import (
 )
 
 type subTable struct {
-	rowData          *rowTable
-	hashTable        []unsafe.Pointer
+	rowData *rowTable
+	// the taggedPtr is used to save the row address, during hash join build stage
+	// it will convert the chunk data into row format, each row there is an unsafe.Pointer
+	// pointing the start address of the row. The unsafe.Pointer will be converted to
+	// taggedPtr and saved in hashTable.
+	// Generally speaking it is unsafe or even illegal in go to save unsafe.Pointer
+	// into uintptr, and later convert uintptr back to unsafe.Pointer since after save
+	// the value of unsafe.Pointer into uintptr, it has no pointer semantics, and may
+	// become invalid after GC. But it is ok to do this in hash join so far because
+	// 1. the check of heapObjectsCanMove makes sure that if the object is in heap, the address will not be changed after GC
+	// 2. row address only points to a valid address in `rowTableSegment.rawData`. `rawData` is a slice in `rowTableSegment`, and it will be used by multiple goroutines,
+	//    and its size will be runtime expanded, this kind of slice will always be allocated in heap
+	hashTable        []taggedPtr
 	posMask          uint64
 	isRowTableEmpty  bool
 	isHashTableEmpty bool
 }
 
-func (st *subTable) lookup(hashValue uint64) unsafe.Pointer {
-	return st.hashTable[hashValue&st.posMask]
+func (st *subTable) getTotalMemoryUsage() int64 {
+	return st.rowData.getTotalMemoryUsage() + getHashTableMemoryUsage(uint64(len(st.hashTable)))
+}
+
+func (st *subTable) lookup(hashValue uint64, tagHelper *tagPtrHelper) taggedPtr {
+	ret := st.hashTable[hashValue&st.posMask]
+	hashTagValue := tagHelper.getTaggedValue(hashValue)
+	if uint64(ret)&hashTagValue != hashTagValue {
+		// if tag value not match, the key will not be matched
+		return 0
+	}
+	return ret
 }
 
 func nextPowerOfTwo(value uint64) uint64 {
@@ -55,45 +76,49 @@ func newSubTable(table *rowTable) *subTable {
 	if table.validKeyCount() == 0 {
 		ret.isHashTableEmpty = true
 	}
-	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(1024))
-	ret.hashTable = make([]unsafe.Pointer, hashTableLength)
+	hashTableLength := max(nextPowerOfTwo(table.validKeyCount()), uint64(32))
+	ret.hashTable = make([]taggedPtr, hashTableLength)
 	ret.posMask = hashTableLength - 1
 	return ret
 }
 
-func (st *subTable) updateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+func (st *subTable) updateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
+	pos := hashValue & st.posMask
 	prev := st.hashTable[pos]
-	st.hashTable[pos] = rowAddress
+	tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
+	taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
+	st.hashTable[pos] = taggedAddress
 	setNextRowAddress(rowAddress, prev)
 }
 
-func (st *subTable) atomicUpdateHashValue(pos uint64, rowAddress unsafe.Pointer) {
+func (st *subTable) atomicUpdateHashValue(hashValue uint64, rowAddress unsafe.Pointer, tagHelper *tagPtrHelper) {
+	pos := hashValue & st.posMask
 	for {
-		prev := atomic.LoadPointer(&st.hashTable[pos])
-		if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
+		prev := taggedPtr(atomic.LoadUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos]))))
+		tagValue := tagHelper.getTaggedValue(hashValue | uint64(prev))
+		taggedAddress := tagHelper.toTaggedPtr(tagValue, rowAddress)
+		if atomic.CompareAndSwapUintptr((*uintptr)(unsafe.Pointer(&st.hashTable[pos])), uintptr(prev), uintptr(taggedAddress)) {
 			setNextRowAddress(rowAddress, prev)
 			break
 		}
 	}
 }
 
-func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
+func (st *subTable) build(startSegmentIndex int, endSegmentIndex int, tagHelper *tagPtrHelper) {
 	if startSegmentIndex == 0 && endSegmentIndex == len(st.rowData.segments) {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
-				rowAddress := st.rowData.segments[i].rowLocations[index]
+				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
-				pos := hashValue & st.posMask
-				st.updateHashValue(pos, rowAddress)
+				st.updateHashValue(hashValue, rowAddress, tagHelper)
 			}
 		}
 	} else {
 		for i := startSegmentIndex; i < endSegmentIndex; i++ {
 			for _, index := range st.rowData.segments[i].validJoinKeyPos {
-				rowAddress := st.rowData.segments[i].rowLocations[index]
+				rowAddress := st.rowData.segments[i].getRowPointer(index)
 				hashValue := st.rowData.segments[i].hashValues[index]
-				pos := hashValue & st.posMask
-				st.atomicUpdateHashValue(pos, rowAddress)
+				st.atomicUpdateHashValue(hashValue, rowAddress, tagHelper)
 			}
 		}
 	}
@@ -102,6 +127,20 @@ func (st *subTable) build(startSegmentIndex int, endSegmentIndex int) {
 type hashTableV2 struct {
 	tables          []*subTable
 	partitionNumber uint64
+}
+
+func (ht *hashTableV2) getPartitionMemoryUsage(partID int) int64 {
+	if ht.tables[partID] != nil {
+		return ht.tables[partID].getTotalMemoryUsage()
+	}
+	return 0
+}
+
+func (ht *hashTableV2) clearPartitionSegments(partID int) {
+	if ht.tables[partID] != nil {
+		ht.tables[partID].rowData.clearSegments()
+		ht.tables[partID].hashTable = nil
+	}
 }
 
 type rowPos struct {
@@ -117,7 +156,7 @@ type rowIter struct {
 }
 
 func (ri *rowIter) getValue() unsafe.Pointer {
-	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].rowLocations[ri.currentPos.rowIndex]
+	return ri.table.tables[ri.currentPos.subTableIndex].rowData.segments[ri.currentPos.rowSegmentIndex].getRowPointer(int(ri.currentPos.rowIndex))
 }
 
 func (ri *rowIter) next() {
@@ -151,25 +190,25 @@ func newJoinHashTableForTest(partitionedRowTables []*rowTable) *hashTableV2 {
 	return jht
 }
 
-func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
-	if pos > jht.totalRowCount() {
+func (ht *hashTableV2) createRowPos(pos uint64) *rowPos {
+	if pos > ht.totalRowCount() {
 		panic("invalid call to createRowPos, the input pos should be in [0, totalRowCount]")
 	}
-	if pos == jht.totalRowCount() {
+	if pos == ht.totalRowCount() {
 		return &rowPos{
-			subTableIndex:   len(jht.tables),
+			subTableIndex:   len(ht.tables),
 			rowSegmentIndex: 0,
 			rowIndex:        0,
 		}
 	}
 	subTableIndex := 0
-	for pos >= jht.tables[subTableIndex].rowData.rowCount() {
-		pos -= jht.tables[subTableIndex].rowData.rowCount()
+	for pos >= ht.tables[subTableIndex].rowData.rowCount() {
+		pos -= ht.tables[subTableIndex].rowData.rowCount()
 		subTableIndex++
 	}
 	rowSegmentIndex := 0
-	for pos >= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()) {
-		pos -= uint64(jht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount())
+	for pos >= uint64(ht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount()) {
+		pos -= uint64(ht.tables[subTableIndex].rowData.segments[rowSegmentIndex].rowCount())
 		rowSegmentIndex++
 	}
 	return &rowPos{
@@ -178,19 +217,19 @@ func (jht *hashTableV2) createRowPos(pos uint64) *rowPos {
 		rowIndex:        pos,
 	}
 }
-func (jht *hashTableV2) createRowIter(start, end uint64) *rowIter {
+func (ht *hashTableV2) createRowIter(start, end uint64) *rowIter {
 	if start > end {
 		start = end
 	}
 	return &rowIter{
-		table:      jht,
-		currentPos: jht.createRowPos(start),
-		endPos:     jht.createRowPos(end),
+		table:      ht,
+		currentPos: ht.createRowPos(start),
+		endPos:     ht.createRowPos(end),
 	}
 }
 
-func (jht *hashTableV2) isHashTableEmpty() bool {
-	for _, subTable := range jht.tables {
+func (ht *hashTableV2) isHashTableEmpty() bool {
+	for _, subTable := range ht.tables {
 		if !subTable.isHashTableEmpty {
 			return false
 		}
@@ -198,14 +237,18 @@ func (jht *hashTableV2) isHashTableEmpty() bool {
 	return true
 }
 
-func (jht *hashTableV2) totalRowCount() uint64 {
+func (ht *hashTableV2) totalRowCount() uint64 {
 	ret := uint64(0)
-	for _, table := range jht.tables {
+	for _, table := range ht.tables {
 		ret += table.rowData.rowCount()
 	}
 	return ret
 }
 
-func (jht *hashTableV2) buildHashTableForTest(partitionIndex int, startSegmentIndex int, segmentStep int) {
-	jht.tables[partitionIndex].build(startSegmentIndex, segmentStep)
+func getHashTableLength(table *rowTable) uint64 {
+	return max(nextPowerOfTwo(table.validKeyCount()), uint64(minimalHashTableLen))
+}
+
+func getHashTableMemoryUsage(hashTableLength uint64) int64 {
+	return int64(hashTableLength) * taggedPointerLen
 }

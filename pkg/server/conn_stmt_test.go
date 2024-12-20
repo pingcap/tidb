@@ -129,11 +129,11 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0, 0x2, 0x0, 0x0, 0x0,
 	)))
-	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows := c.Context().stmts[stmt1.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// `execute stmt2 using 1` with cursor
 	require.NoError(t, c.Dispatch(ctx, append(
@@ -142,13 +142,13 @@ func TestCursorWithParams(t *testing.T) {
 		0x0, 0x1, 0x3, 0x0,
 		0x1, 0x0, 0x0, 0x0,
 	)))
-	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowContainerReader()
-	require.Equal(t, int64(1), rows.Current().GetInt64(0))
-	require.Equal(t, int64(1), rows.Current().GetInt64(1))
-	require.Equal(t, int64(1), rows.Next().GetInt64(0))
-	require.Equal(t, int64(2), rows.Current().GetInt64(1))
-	rows.Next()
-	require.Equal(t, rows.End(), rows.Current())
+	rows = c.Context().stmts[stmt2.ID()].GetResultSet().GetRowIterator()
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(0))
+	require.Equal(t, int64(1), rows.Current(context.Background()).GetInt64(1))
+	require.Equal(t, int64(1), rows.Next(context.Background()).GetInt64(0))
+	require.Equal(t, int64(2), rows.Current(context.Background()).GetInt64(1))
+	rows.Next(context.Background())
+	require.Equal(t, rows.End(), rows.Current(context.Background()))
 
 	// fetch stmt2 with fetch size 256
 	require.NoError(t, c.Dispatch(ctx, append(

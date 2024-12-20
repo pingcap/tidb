@@ -445,6 +445,17 @@ func TestAdjustSecuritySection(t *testing.T) {
 			hasTLS:         false,
 			fallback2NoTLS: false,
 		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca2.pem"
+				[tidb]
+				tls = "false"
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -465,6 +476,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
 		}
 		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
+		// test to see if the security ca-path is affected when tls is false.
+		if cfg.TiDB.TLS == "false" {
+			beforeAjustCfg := NewConfig()
+			assignMinimalLegalValue(beforeAjustCfg)
+			beforeAjustCfg.TiDB.DistSQLScanConcurrency = 1
+			err = beforeAjustCfg.LoadFromTOML([]byte(tc.input))
+			require.NoError(t, err, comment)
+
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
+			require.Equal(t, "", cfg.TiDB.Security.CAPath, comment)
+			require.Equal(t, beforeAjustCfg.Security.CAPath, cfg.Security.CAPath, comment)
+		}
 	}
 	// test different tls config name
 	cfg := NewConfig()
@@ -1014,6 +1037,20 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestAdjustLogicalImportPrepStmt(t *testing.T) {
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, false, cfg.TikvImporter.LogicalImportPrepStmt)
+
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, true, cfg.TikvImporter.LogicalImportPrepStmt)
 }
 
 func TestAdjustConflictStrategy(t *testing.T) {

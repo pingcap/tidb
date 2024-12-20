@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/unionexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -139,6 +139,7 @@ func (e *HashJoinV1Exec) Close() error {
 		}
 		e.ProbeSideTupleFetcher.probeChkResourceCh = nil
 		terror.Call(e.RowContainer.Close)
+		e.HashJoinCtxV1.SessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.RowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
 	e.outerMatchedStatus = e.outerMatchedStatus[:0]
@@ -177,8 +178,12 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 	}
 	e.HashJoinCtxV1.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
-	e.diskTracker = disk.NewTracker(e.ID(), -1)
-	e.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
+	if e.HashJoinCtxV1.diskTracker != nil {
+		e.HashJoinCtxV1.diskTracker.Reset()
+	} else {
+		e.HashJoinCtxV1.diskTracker = disk.NewTracker(e.ID(), -1)
+	}
+	e.HashJoinCtxV1.diskTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.DiskTracker)
 
 	e.workerWg = util.WaitGroupWrapper{}
 	e.waiterWg = util.WaitGroupWrapper{}
@@ -209,10 +214,17 @@ func (e *HashJoinV1Exec) fetchAndProbeHashTable(ctx context.Context) {
 	e.initializeForProbe()
 	e.workerWg.RunWithRecover(func() {
 		defer trace.StartRegion(ctx, "HashJoinProbeSideFetcher").End()
-		e.ProbeSideTupleFetcher.fetchProbeSideChunks(ctx, e.MaxChunkSize(), func() bool {
-			return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
-		}, e.ProbeSideTupleFetcher.JoinType == plannercore.InnerJoin || e.ProbeSideTupleFetcher.JoinType == plannercore.SemiJoin,
-			false, e.ProbeSideTupleFetcher.IsOuterJoin, &e.ProbeSideTupleFetcher.hashJoinCtxBase)
+		e.ProbeSideTupleFetcher.fetchProbeSideChunks(
+			ctx,
+			e.MaxChunkSize(),
+			func() bool {
+				return e.ProbeSideTupleFetcher.RowContainer.Len() == uint64(0)
+			},
+			func() bool { return false },
+			e.ProbeSideTupleFetcher.JoinType == logicalop.InnerJoin || e.ProbeSideTupleFetcher.JoinType == logicalop.SemiJoin,
+			false,
+			e.ProbeSideTupleFetcher.IsOuterJoin,
+			&e.ProbeSideTupleFetcher.hashJoinCtxBase)
 	}, e.ProbeSideTupleFetcher.handleProbeSideFetcherPanic)
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -732,8 +744,8 @@ func (w *ProbeWorkerV1) joinNAASJMatchProbeSideRow2Chunk(probeKey uint64, probeK
 //	       For NA-AntiLeftOuterSemiJoin, we couldn't match null-bucket first, because once y set has a same key x and null
 //	       key, we should return the result as left side row appended with a scalar value 0 which is from same key matching failure.
 func (w *ProbeWorkerV1) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyNullBits *bitmap.ConcurrentBitmap, probeSideRow chunk.Row, hCtx *HashContext, joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
-	naAntiSemiJoin := w.HashJoinCtx.JoinType == plannercore.AntiSemiJoin && w.HashJoinCtx.IsNullAware
-	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == plannercore.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiSemiJoin && w.HashJoinCtx.IsNullAware
+	naAntiLeftOuterSemiJoin := w.HashJoinCtx.JoinType == logicalop.AntiLeftOuterSemiJoin && w.HashJoinCtx.IsNullAware
 	if naAntiSemiJoin {
 		return w.joinNAASJMatchProbeSideRow2Chunk(probeKey, probeKeyNullBits, probeSideRow, hCtx, joinResult)
 	}
@@ -1029,7 +1041,7 @@ func (e *HashJoinV1Exec) fetchAndBuildHashTable(ctx context.Context) {
 	e.workerWg.RunWithRecover(
 		func() {
 			defer trace.StartRegion(ctx, "HashJoinBuildSideFetcher").End()
-			e.BuildWorker.fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
+			e.BuildWorker.fetchBuildSideRows(ctx, &e.BuildWorker.HashJoinCtx.hashJoinCtxBase, nil, nil, buildSideResultCh, fetchBuildSideRowsOk, doneCh)
 		},
 		func(r any) {
 			if r != nil {
@@ -1273,7 +1285,7 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 	if e.CanUseCache {
 		// create a new one since it may be in the cache
-		e.InnerList = chunk.NewList(exec.RetTypes(e.InnerExec), e.InitCap(), e.MaxChunkSize())
+		e.InnerList = chunk.NewListWithMemTracker(exec.RetTypes(e.InnerExec), e.InitCap(), e.MaxChunkSize(), e.InnerList.GetMemTracker())
 	} else {
 		e.InnerList.Reset()
 	}

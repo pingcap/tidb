@@ -17,28 +17,22 @@ package context
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/nocopy"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // DistSQLContext provides all information needed by using functions in `distsql`
 type DistSQLContext struct {
-	// TODO: provide a `Clone` to copy this struct.
-	// The life cycle of some fields in this struct cannot be extended. For example, some fields will be recycled before
-	// the next execution. They'll need to be handled specially.
-	_ nocopy.NoCopy
-
 	WarnHandler contextutil.WarnAppender
 
 	InRestrictedSQL bool
@@ -54,6 +48,7 @@ type DistSQLContext struct {
 	Location         *time.Location
 	RuntimeStatsColl *execdetails.RuntimeStatsColl
 	SQLKiller        *sqlkiller.SQLKiller
+	CPUUsage         *ppcpuusage.SQLCPUUsages
 	ErrCtx           errctx.Context
 
 	// TiFlash related configurations
@@ -72,7 +67,7 @@ type DistSQLContext struct {
 	NotFillCache                  bool
 	TaskID                        uint64
 	Priority                      mysql.PriorityEnum
-	ResourceGroupTagger           tikvrpc.ResourceGroupTagger
+	ResourceGroupTagger           *kv.ResourceGroupTagBuilder
 	EnablePaging                  bool
 	MinPagingSize                 int
 	MaxPagingSize                 int
@@ -81,17 +76,44 @@ type DistSQLContext struct {
 	StoreBatchSize                int
 	ResourceGroupName             string
 	LoadBasedReplicaReadThreshold time.Duration
-	RunawayChecker                *resourcegroup.RunawayChecker
+	RunawayChecker                resourcegroup.RunawayChecker
 	TiKVClientReadTimeout         uint64
+	MaxExecutionTime              uint64
 
 	ReplicaClosestReadThreshold int64
 	ConnectionID                uint64
 	SessionAlias                string
 
 	ExecDetails *execdetails.SyncExecDetails
+
+	// Only one cop-reader can use lite worker. Using lite-worker in multiple readers will affect the concurrent execution of readers.
+	TryCopLiteWorker uint32
 }
 
 // AppendWarning appends the warning to the warning handler.
 func (dctx *DistSQLContext) AppendWarning(warn error) {
 	dctx.WarnHandler.AppendWarning(warn)
+}
+
+// Detach detaches this context from the session context.
+//
+// NOTE: Though this session context can be used parallelly with this context after calling
+// it, the `StatementContext` cannot. The session context should create a new `StatementContext`
+// before executing another statement.
+func (dctx *DistSQLContext) Detach() *DistSQLContext {
+	newCtx := *dctx
+
+	// TODO: using the same `SQLKiller` is actually not that meaningful. The `SQLKiller` will be reset before the
+	// execution of each statements, so that if the running statement is killed, the background cursor will also
+	// be affected (but it's not guaranteed). However, we don't provide an interface to `KILL` the background
+	// cursor, so that it's still good to provide at least one way to stop it.
+	// In the future, we should provide a more constant behavior for killing the cursor.
+	newCtx.SQLKiller = dctx.SQLKiller
+	newCPUUsages := new(ppcpuusage.SQLCPUUsages)
+	newCPUUsages.SetCPUUsages(dctx.CPUUsage.GetCPUUsages())
+	newCtx.CPUUsage = newCPUUsages
+	newCtx.KVVars = new(tikvstore.Variables)
+	*newCtx.KVVars = *dctx.KVVars
+	newCtx.KVVars.Killed = &newCtx.SQLKiller.Signal
+	return &newCtx
 }

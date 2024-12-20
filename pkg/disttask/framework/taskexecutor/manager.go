@@ -21,7 +21,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cgroup"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -80,7 +80,7 @@ type Manager struct {
 
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
-	logger := log.L()
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
 		logger = logger.With(zap.String("server-id", id))
 	}
@@ -329,7 +329,8 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
-			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
+				zap.Stringer("type", task.Type))
 			m.slotManager.free(task.ID)
 			m.delTaskExecutor(executor)
 			executor.Close()
@@ -381,7 +382,8 @@ func (m *Manager) failSubtask(err error, taskID int64, taskExecutor TaskExecutor
 		return m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	}, "update to subtask failed")
 	if err1 == nil {
-		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
+		m.logger.Error("update error to subtask success", zap.Int64("task-id", taskID),
+			zap.Error(err1), zap.Stack("stack"))
 	}
 }
 

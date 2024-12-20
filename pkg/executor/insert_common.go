@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -95,6 +95,8 @@ type InsertValues struct {
 	// fkChecks contains the foreign key checkers.
 	fkChecks   []*FKCheckExec
 	fkCascades []*FKCascadeExec
+
+	ignoreErr bool
 }
 
 type defaultVal struct {
@@ -521,11 +523,6 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 }
 
 func (e *InsertValues) doBatchInsert(ctx context.Context) error {
-	txn, err := e.Ctx().Txn(false)
-	if err != nil {
-		return exeerrors.ErrBatchInsertFail.GenWithStack("BatchInsert failed with error: %v", err)
-	}
-	e.memTracker.Consume(-int64(txn.Size()))
 	e.Ctx().StmtCommit(ctx)
 	if err := sessiontxn.NewTxnInStmt(ctx, e.Ctx()); err != nil {
 		// We should return a special error for batch insert.
@@ -699,7 +696,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// Handle exchange partition
 	tbl := e.Table.Meta()
 	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
-		if err := checkRowForExchangePartition(e.Ctx().GetTableCtx(), row, tbl); err != nil {
+		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}
@@ -878,19 +875,19 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 			}
 			// AllocBatchAutoIncrementValue allocates batch N consecutive autoIDs.
 			// The max value can be derived from adding the increment value to min for cnt-1 times.
-			min, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
+			minv, increment, err := table.AllocBatchAutoIncrementValue(ctx, e.Table, e.Ctx(), cnt)
 			if e.handleErr(col, &autoDatum, cnt, err) != nil {
 				return nil, err
 			}
 			// It's compatible with mysql setting the first allocated autoID to lastInsertID.
 			// Cause autoID may be specified by user, judge only the first row is not suitable.
 			if e.lastInsertID == 0 {
-				e.lastInsertID = uint64(min)
+				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
 			for j := 0; j < cnt; j++ {
 				offset := j + start
-				id := int64(uint64(min) + uint64(j)*uint64(increment))
+				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)
 				if err != nil {
 					return nil, err
@@ -1072,7 +1069,7 @@ func (e *InsertValues) allocAutoRandomID(ctx context.Context, fieldType *types.F
 	if err != nil {
 		return 0, err
 	}
-	currentShard := e.Ctx().GetSessionVars().GetCurrentShard(1)
+	currentShard := e.Ctx().GetSessionVars().GetRowIDShardGenerator().GetCurrentShard(1)
 	return shardFmt.Compose(currentShard, autoRandomID), nil
 }
 
@@ -1184,22 +1181,16 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 	if handle == nil {
 		return false, nil
 	}
-	_, err = e.removeRow(ctx, txn, handle, r, true)
-	if err != nil {
-		return false, err
-	}
-	return false, nil
+	return e.removeRow(ctx, txn, handle, r, true)
 }
 
 // batchCheckAndInsert checks rows with duplicate errors.
 // All duplicate rows will be ignored and appended as duplicate warnings.
 func (e *InsertValues) batchCheckAndInsert(
 	ctx context.Context, rows [][]types.Datum,
-	addRecord func(ctx context.Context, row []types.Datum) error,
+	addRecord func(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error,
 	replace bool,
 ) error {
-	// all the rows will be checked, so it is safe to set BatchCheck = true
-	e.Ctx().GetSessionVars().StmtCtx.BatchCheck = true
 	defer tracing.StartRegion(ctx, "InsertValues.batchCheckAndInsert").End()
 	start := time.Now()
 	// Get keys need to be checked.
@@ -1312,7 +1303,8 @@ func (e *InsertValues) batchCheckAndInsert(
 		// it should be added to values map for the further row check.
 		// There may be duplicate keys inside the insert statement.
 		e.Ctx().GetSessionVars().StmtCtx.AddCopiedRows(1)
-		err = addRecord(ctx, rows[i])
+		// all the rows have been checked, so it is safe to use DupKeyCheckSkip
+		err = addRecord(ctx, rows[i], table.DupKeyCheckSkip)
 		if err != nil {
 			// throw warning when violate check constraint
 			if table.ErrCheckConstraintViolated.Equal(err) {
@@ -1373,14 +1365,14 @@ func (e *InsertValues) removeRow(
 	}
 
 	if ph, ok := handle.(kv.PartitionHandle); ok {
-		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), ph.Handle, oldRow)
+		err = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID).RemoveRecord(e.Ctx().GetTableCtx(), txn, ph.Handle, oldRow)
 	} else {
-		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), handle, oldRow)
+		err = r.t.RemoveRecord(e.Ctx().GetTableCtx(), txn, handle, oldRow)
 	}
 	if err != nil {
 		return false, err
 	}
-	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades)
+	err = onRemoveRowForFK(e.Ctx(), oldRow, e.fkChecks, e.fkCascades, e.ignoreErr)
 	if err != nil {
 		return false, err
 	}
@@ -1410,23 +1402,24 @@ func (e *InsertValues) equalDatumsAsBinary(a []types.Datum, b []types.Datum) (bo
 	return true, nil
 }
 
-func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum) error {
-	return e.addRecordWithAutoIDHint(ctx, row, 0)
+func (e *InsertValues) addRecord(ctx context.Context, row []types.Datum, dupKeyCheck table.DupKeyCheckMode) error {
+	return e.addRecordWithAutoIDHint(ctx, row, 0, dupKeyCheck)
 }
 
 func (e *InsertValues) addRecordWithAutoIDHint(
-	ctx context.Context, row []types.Datum, reserveAutoIDCount int,
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
 ) (err error) {
 	vars := e.Ctx().GetSessionVars()
-	if !vars.ConstraintCheckInPlace {
-		vars.PresumeKeyNotExists = true
+	txn, err := e.Ctx().Txn(true)
+	if err != nil {
+		return err
 	}
+	pessimisticLazyCheck := getPessimisticLazyCheckMode(vars)
 	if reserveAutoIDCount > 0 {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), table.WithReserveAutoIDHint(reserveAutoIDCount), dupKeyCheck, pessimisticLazyCheck)
 	} else {
-		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), row, table.WithCtx(ctx))
+		_, err = e.Table.AddRecord(e.Ctx().GetTableCtx(), txn, row, table.WithCtx(ctx), dupKeyCheck, pessimisticLazyCheck)
 	}
-	vars.PresumeKeyNotExists = false
 	if err != nil {
 		return err
 	}
@@ -1434,7 +1427,7 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)
 	}
-	if !vars.StmtCtx.BatchCheck {
+	if dupKeyCheck != table.DupKeyCheckSkip {
 		for _, fkc := range e.fkChecks {
 			err = fkc.insertRowNeedToCheck(vars.StmtCtx, row)
 			if err != nil {
@@ -1442,6 +1435,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 			}
 		}
 	}
+
+	if e.Table.Meta().TTLInfo != nil {
+		// update the TTL metrics if the table is a TTL table
+		vars.TxnCtx.InsertTTLRowsCount++
+	}
+
 	return nil
 }
 

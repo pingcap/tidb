@@ -93,6 +93,13 @@ func (b *BaseOOMAction) GetFallback() ActionOnExceed {
 	return b.fallbackAction
 }
 
+// TriggerFallBackAction triggers the fallback action of the current action
+func (b *BaseOOMAction) TriggerFallBackAction(tracker *Tracker) {
+	if fallback := b.GetFallback(); fallback != nil {
+		fallback.Action(tracker)
+	}
+}
+
 // Default OOM Action priority.
 const (
 	DefPanicPriority = iota

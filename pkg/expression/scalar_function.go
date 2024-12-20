@@ -16,15 +16,16 @@ package expression
 
 import (
 	"bytes"
-	"fmt"
 	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -34,21 +35,28 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
+var _ base.HashEquals = &ScalarFunction{}
+
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
 	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType
+	RetType           *types.FieldType `plan-cache-clone:"shallow"`
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
 }
 
+// SafeToShareAcrossSession returns if the function can be shared across different sessions.
+func (sf *ScalarFunction) SafeToShareAcrossSession() bool {
+	return sf.Function.SafeToShareAcrossSession()
+}
+
 // VecEvalInt evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalInt(ctx, input, result)
@@ -57,7 +65,7 @@ func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 // VecEvalReal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalReal(ctx, input, result)
@@ -66,7 +74,7 @@ func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalString evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalString(ctx, input, result)
@@ -75,7 +83,7 @@ func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, res
 // VecEvalDecimal evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDecimal(ctx, input, result)
@@ -84,7 +92,7 @@ func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, re
 // VecEvalTime evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalTime(ctx, input, result)
@@ -93,7 +101,7 @@ func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, resul
 // VecEvalDuration evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalDuration(ctx, input, result)
@@ -102,10 +110,15 @@ func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, r
 // VecEvalJSON evaluates this expression in a vectorized manner.
 func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.vecEvalJSON(ctx, input, result)
+}
+
+// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
+func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
 }
 
 // GetArgs gets arguments of function.
@@ -118,20 +131,21 @@ func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
-// String implements fmt.Stringer interface.
-func (sf *ScalarFunction) String() string {
-	var buffer bytes.Buffer
-	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
+	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
+	buffer.WriteString(sf.FuncName.L)
+	buffer.WriteByte('(')
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(ctx, redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -141,9 +155,9 @@ func (sf *ScalarFunction) String() string {
 	return buffer.String()
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", sf)), nil
+// String returns the string representation of the function
+func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
@@ -337,7 +351,15 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
-		hashcode: sf.hashcode,
+	}
+	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
+	if sf.hashcode != nil {
+		c.hashcode = make([]byte, len(sf.hashcode))
+		copy(c.hashcode, sf.hashcode)
+	}
+	if sf.canonicalhashcode != nil {
+		c.canonicalhashcode = make([]byte, len(sf.canonicalhashcode))
+		copy(c.canonicalhashcode, sf.canonicalhashcode)
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -447,6 +469,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		res, isNull, err = sf.EvalDuration(ctx, row)
 	case types.ETJson:
 		res, isNull, err = sf.EvalJSON(ctx, row)
+	case types.ETVectorFloat32:
+		res, isNull, err = sf.EvalVectorFloat32(ctx, row)
 	case types.ETString:
 		var str string
 		str, isNull, err = sf.EvalString(ctx, row)
@@ -470,7 +494,7 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 // EvalInt implements Expression interface.
 func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalInt(ctx, row)
@@ -479,7 +503,7 @@ func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 // EvalReal implements Expression interface.
 func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalReal(ctx, row)
@@ -488,7 +512,7 @@ func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, boo
 // EvalDecimal implements Expression interface.
 func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDecimal(ctx, row)
@@ -497,7 +521,7 @@ func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.My
 // EvalString implements Expression interface.
 func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalString(ctx, row)
@@ -506,7 +530,7 @@ func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bo
 // EvalTime implements Expression interface.
 func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalTime(ctx, row)
@@ -515,7 +539,7 @@ func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, 
 // EvalDuration implements Expression interface.
 func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalDuration(ctx, row)
@@ -524,10 +548,15 @@ func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Du
 // EvalJSON implements Expression interface.
 func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	intest.Assert(ctx != nil)
-	if intest.InTest {
+	if intest.EnableAssert {
 		ctx = wrapEvalAssert(ctx, sf.Function)
 	}
 	return sf.Function.evalJSON(ctx, row)
+}
+
+// EvalVectorFloat32 implements Expression interface.
+func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
+	return sf.Function.evalVectorFloat32(ctx, row)
 }
 
 // HashCode implements Expression interface.
@@ -650,6 +679,49 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 			sf.canonicalhashcode = append(sf.canonicalhashcode, byte(evalTp))
 		}
 	}
+}
+
+// Hash64 implements HashEquals.<0th> interface.
+func (sf *ScalarFunction) Hash64(h base.Hasher) {
+	h.HashByte(scalarFunctionFlag)
+	h.HashString(sf.FuncName.L)
+	if sf.RetType == nil {
+		h.HashByte(base.NilFlag)
+	} else {
+		h.HashByte(base.NotNilFlag)
+		sf.RetType.Hash64(h)
+	}
+	// hash the arg length to avoid hash collision.
+	h.HashInt(len(sf.GetArgs()))
+	for _, arg := range sf.GetArgs() {
+		arg.Hash64(h)
+	}
+}
+
+// Equals implements HashEquals.<1th> interface.
+func (sf *ScalarFunction) Equals(other any) bool {
+	sf2, ok := other.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if sf == nil {
+		return sf2 == nil
+	}
+	if sf2 == nil {
+		return false
+	}
+	ok = sf.FuncName.L == sf2.FuncName.L
+	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
+	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
+		return false
+	}
+	for i, arg := range sf.GetArgs() {
+		ok = ok && arg.Equals(sf2.GetArgs()[i])
+		if !ok {
+			return false
+		}
+	}
+	return ok
 }
 
 // ReHashCode is used after we change the argument in place.
@@ -822,6 +894,16 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+// IsExplicitCharset return the charset is explicit set or not.
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+// SetExplicitCharset set the charset is explicit or not.
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
 }
 
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))

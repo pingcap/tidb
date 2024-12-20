@@ -32,6 +32,7 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "outer2inner")
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
+	testDataMap.LoadTestSuiteData("testdata", "predicate_pushdown_suite")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
@@ -60,4 +61,8 @@ func GetDerivedTopNSuiteData() testdata.TestData {
 
 func GetJoinReorderSuiteData() testdata.TestData {
 	return testDataMap["join_reorder_suite"]
+}
+
+func GetPredicatePushdownSuiteData() testdata.TestData {
+	return testDataMap["predicate_pushdown_suite"]
 }

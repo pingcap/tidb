@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil",
     visibility = ["//pkg/statistics/handle/cache:__subpackages__"],
     deps = [
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/statistics",
         "//pkg/types",

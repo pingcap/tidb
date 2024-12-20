@@ -6,6 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/cmd/benchdb",
     visibility = ["//visibility:private"],
     deps = [
+        "//pkg/config",
+        "//pkg/ddl",
         "//pkg/parser/terror",
         "//pkg/session",
         "//pkg/session/types",

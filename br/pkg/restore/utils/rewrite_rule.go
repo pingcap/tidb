@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"strings"
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -24,7 +25,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
@@ -44,6 +45,8 @@ type RewriteRules struct {
 	Data        []*import_sstpb.RewriteRule
 	OldKeyspace []byte
 	NewKeyspace []byte
+	// used to record checkpoint data
+	NewTableID int64
 }
 
 // Append append its argument to this rewrite rules.
@@ -171,7 +174,7 @@ func GetRewriteRuleOfTable(
 		})
 	}
 
-	return &RewriteRules{Data: dataRules}
+	return &RewriteRules{Data: dataRules, NewTableID: newTableID}
 }
 
 // ValidateFileRewriteRule uses rewrite rules to validate the ranges of a file.
@@ -238,10 +241,14 @@ func rewriteRawKey(key []byte, rewriteRules *RewriteRules) ([]byte, *import_sstp
 	}
 	if len(key) > 0 {
 		rule := matchOldPrefix(key, rewriteRules)
-		ret := bytes.Replace(key, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
-		return codec.EncodeBytes([]byte{}, ret), rule
+		return RewriteAndEncodeRawKey(key, rule), rule
 	}
 	return nil, nil
+}
+
+func RewriteAndEncodeRawKey(key []byte, rule *import_sstpb.RewriteRule) []byte {
+	ret := bytes.Replace(key, rule.GetOldKeyPrefix(), rule.GetNewKeyPrefix(), 1)
+	return codec.EncodeBytes([]byte{}, ret)
 }
 
 func matchOldPrefix(key []byte, rewriteRules *RewriteRules) *import_sstpb.RewriteRule {
@@ -278,6 +285,26 @@ func FindMatchedRewriteRule(file AppliedFile, rules *RewriteRules) *import_sstpb
 	return rule
 }
 
+func (r *RewriteRules) String() string {
+	var out strings.Builder
+	out.WriteRune('[')
+	if len(r.OldKeyspace) != 0 {
+		out.WriteString(redact.Key(r.OldKeyspace))
+		out.WriteString(" =[ks]=> ")
+		out.WriteString(redact.Key(r.NewKeyspace))
+	}
+	for i, d := range r.Data {
+		if i > 0 {
+			out.WriteString(",")
+		}
+		out.WriteString(redact.Key(d.OldKeyPrefix))
+		out.WriteString(" => ")
+		out.WriteString(redact.Key(d.NewKeyPrefix))
+	}
+	out.WriteRune(']')
+	return out.String()
+}
+
 // GetRewriteRawKeys rewrites rules to the raw key.
 func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, endKey []byte, err error) {
 	startID := tablecodec.DecodeTableID(file.GetStartKey())
@@ -286,7 +313,7 @@ func GetRewriteRawKeys(file AppliedFile, rewriteRules *RewriteRules) (startKey, 
 	if startID == endID {
 		startKey, rule = rewriteRawKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find raw rewrite rule for start key, startKey: %s; self = %s", redact.Key(file.GetStartKey()), rewriteRules)
 			return
 		}
 		endKey, rule = rewriteRawKey(file.GetEndKey(), rewriteRules)
@@ -360,7 +387,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	}
 	rg.StartKey, rule = replacePrefix(rg.StartKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.StartKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("start key", rg.StartKey))
 	} else {
 		log.Debug(
 			"rewrite start key",
@@ -369,7 +396,7 @@ func RewriteRange(rg *rtree.Range, rewriteRules *RewriteRules) (*rtree.Range, er
 	oldKey := rg.EndKey
 	rg.EndKey, rule = replacePrefix(rg.EndKey, rewriteRules)
 	if rule == nil {
-		log.Warn("cannot find rewrite rule", logutil.Key("key", rg.EndKey))
+		log.Warn("cannot find rewrite rule", logutil.Key("end key", rg.EndKey))
 	} else {
 		log.Debug(
 			"rewrite end key",

@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "logicaltrace",
+    srcs = ["logical_tracer.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/expression/aggregation",
+        "//pkg/planner/core/base",
+        "//pkg/planner/util",
+        "//pkg/planner/util/optimizetrace",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

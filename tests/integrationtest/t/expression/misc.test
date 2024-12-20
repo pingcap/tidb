@@ -611,3 +611,7 @@ drop table if exists tab0;
 CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
 SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
 show create table tab0;
+
+# TestTiDBMVCCInfo
+-- error 1582
+SELECT TIDB_MVCC_INFO();

@@ -995,7 +995,6 @@ insert into test_gc_read_1(a, b) values (1, null);
 insert into test_gc_read_2(a, b) values (1, null);
 
 # TestSelectPartition
-set @@session.tidb_enable_list_partition = ON;
 drop table if exists th, tr, tl;
 create table th (a int, b int) partition by hash(a) partitions 3;
 create table tr (a int, b int)
@@ -1046,7 +1045,6 @@ select * from tscalar where c1 in (40);
 select * from tscalar where c1 in (-40);
 select * from tscalar where c1 in (-40, -40);
 select * from tscalar where c1 in (-1);
-set @@session.tidb_enable_list_partition = default;
 
 # TestPrepareLoadData
 -- error 1295
@@ -1426,7 +1424,6 @@ set sql_mode = default;
 
 # TestSelectHashPartitionTable
 drop table if exists th;
-set @@session.tidb_enable_table_partition = '1';
 create table th (a int, b int) partition by hash(a) partitions 3;
 insert into th values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
 insert into th values (-1,-1),(-2,-2),(-3,-3),(-4,-4),(-5,-5),(-6,-6),(-7,-7),(-8,-8);
@@ -1434,7 +1431,6 @@ select b from th order by a;
 select * from th where a=-2;
 select * from th where a=5;
 drop table if exists th;
-set @@session.tidb_enable_table_partition = default;
 
 # TestSelectView
 drop table if exists view_t;
@@ -2108,8 +2104,8 @@ insert tdouble values (10.23);
 set sql_mode = '';
 insert t values ();
 show warnings;
+-- error 1048
 insert t values (null);
-show warnings;
 insert ignore t values (null);
 show warnings;
 insert t select null;
@@ -2357,7 +2353,7 @@ drop table if exists t, t1;
 create table t(a int, b int, index idx(a));
 create table t1(a int, c int, index idx(a));
 set tidb_mem_quota_query=10;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a;
 set global tidb_mem_oom_action=default;
@@ -2369,7 +2365,7 @@ create table t (a int primary key, b double);
 insert into t values (1,1);
 SET GLOBAL tidb_mem_oom_action='CANCEL';
 set @@tidb_mem_quota_query=1;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 select sum(b) from t group by a;
 
@@ -2378,19 +2374,19 @@ drop table if exists t,t1;
 create table t (a bigint);
 create table t1 (a bigint);
 set @@tidb_mem_quota_query=200;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 insert into t1 values (1),(2),(3),(4),(5);
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 replace into t1 values (1),(2),(3),(4),(5);
 set @@tidb_mem_quota_query=10000;
 insert into t1 values (1),(2),(3),(4),(5);
 set @@tidb_mem_quota_query=10;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 insert into t select a from t1 order by a desc;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 replace into t select a from t1 order by a desc;
 set @@tidb_mem_quota_query=10000;
@@ -2398,7 +2394,7 @@ insert into t values (1),(2),(3),(4),(5);
 ## Set the memory quota to 244 to make this SQL panic during the DeleteExec
 ## instead of the TableReaderExec.
 set @@tidb_mem_quota_query=244;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 delete from t;
 set @@tidb_mem_quota_query=10000;
@@ -2406,7 +2402,7 @@ delete from t1;
 insert into t1 values(1);
 insert into t values (1),(2),(3),(4),(5);
 set @@tidb_mem_quota_query=244;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 delete t, t1 from t join t1 on t.a = t1.a;
 set @@tidb_mem_quota_query=100000;
@@ -2415,7 +2411,7 @@ insert into t values(1),(2),(3);
 ## set the memory to quota to make the SQL panic during UpdateExec instead
 ## of TableReader.
 set @@tidb_mem_quota_query=244;
--- replace_regex /conn=[0-9]+/conn=<num>/
+-- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 update t set a = 4;
 
@@ -2627,12 +2623,12 @@ create table t (id bigint key,b int);
 split table t by (10),(20),(30);
 insert into t values (0,0),(10,10),(20,20),(30,30);
 alter table t add index idx1(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 insert into t values (1,0),(2,10),(3,20),(4,30);
 alter table t add index idx2(b);
---replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time>
+--replace_column 1 <job_id> 4 <type> 6 <schema_id> 7 <table_id> 9 <create_time> 10 <start_time> 11 <end_time> 13 <comments>
 admin show ddl jobs 1;
 
 # TestSummaryFailedUpdate
@@ -2641,7 +2637,7 @@ create table t(a int, b int as(-a));
 insert into t(a) values(1), (3), (7);
 SET GLOBAL tidb_mem_oom_action='CANCEL';
 set @@tidb_mem_quota_query=1;
---replace_regex /conn=[0-9]+/conn=<connID>/
+--replace_regex /conn=[-0-9]+/conn=<connID>/
 --error 8175
 update t set t.a = t.a - 1 where t.a in (select a from t where a < 4);
 set @@tidb_mem_quota_query=1000000000;
@@ -2708,6 +2704,9 @@ connection default;
 --replace_regex /server: .*session: .*/server: <server> session: <session>/
 --error 8020
 LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection conn1;
+unlock tables;
 
 disconnect conn1;
 unlock tables;

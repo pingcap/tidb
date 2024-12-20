@@ -25,7 +25,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -299,22 +300,22 @@ func generateRewriteTableInfos() (newTableInfo, oldTableInfo *model.TableInfo) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:   1,
-				Name: model.NewCIStr("i1"),
+				Name: pmodel.NewCIStr("i1"),
 			},
 			{
 				ID:   2,
-				Name: model.NewCIStr("i2"),
+				Name: pmodel.NewCIStr("i2"),
 			},
 		},
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{
 					ID:   100,
-					Name: model.NewCIStr("p1"),
+					Name: pmodel.NewCIStr("p1"),
 				},
 				{
 					ID:   200,
-					Name: model.NewCIStr("p2"),
+					Name: pmodel.NewCIStr("p2"),
 				},
 			},
 		},
@@ -324,22 +325,22 @@ func generateRewriteTableInfos() (newTableInfo, oldTableInfo *model.TableInfo) {
 		Indices: []*model.IndexInfo{
 			{
 				ID:   1,
-				Name: model.NewCIStr("i1"),
+				Name: pmodel.NewCIStr("i1"),
 			},
 			{
 				ID:   2,
-				Name: model.NewCIStr("i2"),
+				Name: pmodel.NewCIStr("i2"),
 			},
 		},
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{
 					ID:   101,
-					Name: model.NewCIStr("p1"),
+					Name: pmodel.NewCIStr("p1"),
 				},
 				{
 					ID:   201,
-					Name: model.NewCIStr("p2"),
+					Name: pmodel.NewCIStr("p2"),
 				},
 			},
 		},

@@ -24,15 +24,15 @@ import (
 
 type option struct {
 	specifiedDB string
-	fuzz        bool
+	noDB        bool
 }
 
 type optionFunc func(*option)
 
-// WithFuzz specifies whether to eliminate schema names.
-func WithFuzz(fuzz bool) optionFunc {
+// WithoutDB specifies whether to eliminate schema names.
+func WithoutDB(noDB bool) optionFunc {
 	return func(user *option) {
-		user.fuzz = fuzz
+		user.noDB = noDB
 	}
 }
 
@@ -44,14 +44,14 @@ func WithSpecifiedDB(specifiedDB string) optionFunc {
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
-// when fuzz is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-// when fuzz is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+// when noDB is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+// when noDB is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
 	opt := &option{}
 	for _, option := range options {
 		option(opt)
 	}
-	return normalizeStmt(stmtNode, opt.specifiedDB, opt.fuzz)
+	return normalizeStmt(stmtNode, opt.specifiedDB, opt.noDB)
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
@@ -59,12 +59,12 @@ func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (norm
 // For normal bindings, DB name will be completed automatically:
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (normalizedStmt, sqlDigest string) {
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, noDB bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
 		var normalizedSQL string
-		if !fuzzy {
+		if !noDB {
 			normalizedSQL = utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text())
 		} else {
 			normalizedSQL = utilparser.RestoreWithoutDB(n)

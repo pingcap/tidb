@@ -29,7 +29,8 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	. "github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -171,11 +172,11 @@ func TestDoChecksumWithTikv(t *testing.T) {
 
 	tableInfo := &model.TableInfo{
 		ID:   999,
-		Name: model.NewCIStr("t1"),
+		Name: pmodel.NewCIStr("t1"),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        1,
-				Name:      model.NewCIStr("c1"),
+				Name:      pmodel.NewCIStr("c1"),
 				FieldType: *fieldType,
 			},
 		},

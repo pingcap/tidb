@@ -253,7 +253,7 @@ type CopTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	physPlanPartInfo PhysPlanPartInfo
+	physPlanPartInfo *PhysPlanPartInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
@@ -345,7 +345,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)
@@ -394,7 +394,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 				tp = tp.Children()[0]
 			} else {
 				join := tp.(*PhysicalHashJoin)
-				tp = join.children[1-join.InnerChildIdx]
+				tp = join.Children()[1-join.InnerChildIdx]
 			}
 		}
 		ts := tp.(*PhysicalTableScan)

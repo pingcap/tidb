@@ -29,6 +29,7 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/infoschema",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "@com_github_stretchr_testify//require",

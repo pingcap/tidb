@@ -20,7 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,7 +137,7 @@ func TestGenSql(t *testing.T) {
 	tInfo := func(id int, name string) *model.TableInfo {
 		return &model.TableInfo{
 			ID:   int64(id),
-			Name: model.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 	}
 	fakeInfo := infoschema.MockInfoSchema([]*model.TableInfo{
@@ -175,7 +176,7 @@ func TestGenResetSql(t *testing.T) {
 	tInfo := func(id int, name string) *model.TableInfo {
 		return &model.TableInfo{
 			ID:   int64(id),
-			Name: model.NewCIStr(name),
+			Name: pmodel.NewCIStr(name),
 		}
 	}
 	fakeInfo := infoschema.MockInfoSchema([]*model.TableInfo{

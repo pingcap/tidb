@@ -15,16 +15,18 @@
 package ddl_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -32,28 +34,28 @@ import (
 func TestDropAndTruncatePartition(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
 
-	d := domain.DDL()
 	dbInfo, err := testSchemaInfo(store, "test_partition")
 	require.NoError(t, err)
-	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), d, dbInfo)
+	de := domain.DDLExecutor().(ddl.ExecutorForTest)
+	testCreateSchema(t, testkit.NewTestKit(t, store).Session(), de, dbInfo)
 	// generate 5 partition in tableInfo.
 	tblInfo, partIDs := buildTableInfoWithPartition(t, store)
 	ctx := testkit.NewTestKit(t, store).Session()
-	testCreateTable(t, ctx, d, dbInfo, tblInfo)
-	testDropPartition(t, ctx, d, dbInfo, tblInfo, []string{"p0", "p1"})
+	testCreateTable(t, ctx, de, dbInfo, tblInfo)
+	testDropPartition(t, ctx, de, dbInfo, tblInfo, []string{"p0", "p1"})
 
 	newIDs, err := genGlobalIDs(store, 2)
 	require.NoError(t, err)
-	testTruncatePartition(t, ctx, d, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
+	testTruncatePartition(t, ctx, de, dbInfo, tblInfo, []int64{partIDs[3], partIDs[4]}, newIDs)
 }
 
 func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableInfo, []int64) {
 	tbl := &model.TableInfo{
-		Name: model.NewCIStr("t"),
+		Name: pmodel.NewCIStr("t"),
 	}
 	tbl.MaxColumnID++
 	col := &model.ColumnInfo{
-		Name:      model.NewCIStr("c"),
+		Name:      pmodel.NewCIStr("c"),
 		Offset:    0,
 		State:     model.StatePublic,
 		FieldType: *types.NewFieldType(mysql.TypeLong),
@@ -69,33 +71,33 @@ func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableIn
 	partIDs, err := genGlobalIDs(store, 5)
 	require.NoError(t, err)
 	partInfo := &model.PartitionInfo{
-		Type:   model.PartitionTypeRange,
+		Type:   pmodel.PartitionTypeRange,
 		Expr:   tbl.Columns[0].Name.L,
 		Enable: true,
 		Definitions: []model.PartitionDefinition{
 			{
 				ID:       partIDs[0],
-				Name:     model.NewCIStr("p0"),
+				Name:     pmodel.NewCIStr("p0"),
 				LessThan: []string{"100"},
 			},
 			{
 				ID:       partIDs[1],
-				Name:     model.NewCIStr("p1"),
+				Name:     pmodel.NewCIStr("p1"),
 				LessThan: []string{"200"},
 			},
 			{
 				ID:       partIDs[2],
-				Name:     model.NewCIStr("p2"),
+				Name:     pmodel.NewCIStr("p2"),
 				LessThan: []string{"300"},
 			},
 			{
 				ID:       partIDs[3],
-				Name:     model.NewCIStr("p3"),
+				Name:     pmodel.NewCIStr("p3"),
 				LessThan: []string{"400"},
 			},
 			{
 				ID:       partIDs[4],
-				Name:     model.NewCIStr("p4"),
+				Name:     pmodel.NewCIStr("p4"),
 				LessThan: []string{"500"},
 			},
 		},
@@ -104,8 +106,9 @@ func buildTableInfoWithPartition(t *testing.T, store kv.Storage) (*model.TableIn
 	return tbl, partIDs
 }
 
-func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) (*model.Job, *model.TablePartitionArgs) {
 	return &model.Job{
+		Version:     model.GetJobVerInUse(),
 		SchemaID:    dbInfo.ID,
 		SchemaName:  dbInfo.Name.L,
 		TableID:     tblInfo.ID,
@@ -113,22 +116,22 @@ func buildDropPartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, partN
 		SchemaState: model.StatePublic,
 		Type:        model.ActionDropTablePartition,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []any{partNames},
-	}
+	}, &model.TablePartitionArgs{PartNames: partNames}
 }
 
-func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
-	job := buildDropPartitionJob(dbInfo, tblInfo, partNames)
+func testDropPartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, partNames []string) *model.Job {
+	job, args := buildDropPartitionJob(dbInfo, tblInfo, partNames)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
 	return job
 }
 
-func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) (*model.Job, *model.TruncateTableArgs) {
 	return &model.Job{
+		Version:     model.GetJobVerInUse(),
 		SchemaID:    dbInfo.ID,
 		SchemaName:  dbInfo.Name.L,
 		TableID:     tblInfo.ID,
@@ -136,14 +139,13 @@ func buildTruncatePartitionJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, p
 		Type:        model.ActionTruncateTablePartition,
 		SchemaState: model.StatePublic,
 		BinlogInfo:  &model.HistoryInfo{},
-		Args:        []any{pids, newIDs},
-	}
+	}, &model.TruncateTableArgs{OldPartitionIDs: pids, NewPartitionIDs: newIDs}
 }
 
-func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
-	job := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
+func testTruncatePartition(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest, dbInfo *model.DBInfo, tblInfo *model.TableInfo, pids []int64, newIDs []int64) *model.Job {
+	job, args := buildTruncatePartitionJob(dbInfo, tblInfo, pids, newIDs)
 	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := d.DoDDLJob(ctx, job)
+	err := d.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
 	require.NoError(t, err)
 	v := getSchemaVer(t, ctx)
 	checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
@@ -176,14 +178,12 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	defer close(wait)
 	ddlDone := make(chan error)
 	defer close(ddlDone)
-	hook := &callback.TestDDLCallback{Do: do}
-	hook.OnJobRunAfterExported = func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateWriteReorganization {
 			<-wait
 			<-wait
 		}
-	}
-	do.DDL().SetHook(hook)
+	})
 
 	go func() {
 		tk2 := testkit.NewTestKit(t, store)
@@ -223,7 +223,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	// check job rollback finished
 	rows := tk.MustQuery("admin show ddl jobs where JOB_ID=" + jobID).Rows()
 	require.Equal(t, 1, len(rows))
-	require.Equal(t, "rollback done", rows[0][len(rows[0])-1])
+	require.Equal(t, "rollback done", rows[0][len(rows[0])-2])
 
 	// check table meta after rollback
 	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
@@ -241,7 +241,7 @@ func TestReorganizePartitionRollback(t *testing.T) {
 		" PARTITION `p3` VALUES LESS THAN (8000000),\n" +
 		" PARTITION `p4` VALUES LESS THAN (10000000),\n" +
 		" PARTITION `p5` VALUES LESS THAN (MAXVALUE))"))
-	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl.Meta().Partition)
 	require.Nil(t, tbl.Meta().Partition.AddingDefinitions)
@@ -249,4 +249,28 @@ func TestReorganizePartitionRollback(t *testing.T) {
 
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
+}
+
+func TestUpdateDuringAddColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int) partition by hash (c1) partitions 16")
+	tk.MustExec("insert t1 values (1, 1), (2, 2)")
+	tk.MustExec("create table t2 (c1 int, c2 int) partition by hash (c1) partitions 16")
+	tk.MustExec("insert t2 values (1, 3), (2, 5)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
+			tk2.MustQuery("select * from t1").Sort().Check(testkit.Rows("8 1", "8 2"))
+			tk2.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
+		}
+	})
+
+	tk.MustExec("alter table t1 add column c3 bigint default 9")
+
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("8 1 9", "8 2 9"))
 }

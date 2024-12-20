@@ -30,10 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -43,7 +44,7 @@ type readIndexExecutor struct {
 	job     *model.Job
 	indexes []*model.IndexInfo
 	ptbl    table.PhysicalTable
-	jc      *JobContext
+	jc      *ReorgContext
 
 	avgRowSize      int
 	cloudStorageURI string
@@ -64,7 +65,7 @@ func newReadIndexExecutor(
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	jc *JobContext,
+	jc *ReorgContext,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
@@ -104,29 +105,40 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	opCtx := NewOperatorCtx(ctx, subtask.TaskID, subtask.ID)
-	defer opCtx.Cancel()
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
 	r.curRowCount.Store(0)
 
-	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
-	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
-	}
-	if err != nil {
-		return err
+		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, subtask.Concurrency)
+		if err != nil {
+			return err
+		}
+		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0); err != nil {
+			return errors.Trace(err)
+		}
+		return r.onFinished(ctx, subtask)
 	}
 
-	err = pipe.Execute()
+	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
 	if err != nil {
 		return err
 	}
-	err = pipe.Close()
-	if opCtx.OperatorErr() != nil {
-		return opCtx.OperatorErr()
+	err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0)
+	if err != nil {
+		// For dist task local based ingest, checkpoint is unsupported.
+		// If there is an error we should keep local sort dir clean.
+		err1 := r.bc.FinishAndUnregisterEngines(ingest.OptCleanData)
+		if err1 != nil {
+			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
+		}
+		return err
 	}
-	return err
+	err = r.bc.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return r.onFinished(ctx, subtask)
 }
 
 func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
@@ -142,7 +154,7 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish")
 	if len(r.cloudStorageURI) == 0 {
 		return nil
@@ -186,7 +198,7 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	}
 	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
 		pid := sm.PhysicalTableID
-		start, end, err = getTableRange(r.jc, r.d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+		start, end, err = getTableRange(r.jc, r.d.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 		if err != nil {
 			logutil.DDLLogger().Error("get table range error",
 				zap.Error(err))
@@ -216,7 +228,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		indexIDs = append(indexIDs, index.ID)
 		uniques = append(uniques, index.Unique)
 	}
-	engines, err := r.bc.Register(indexIDs, uniques, r.job.TableName)
+	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(opCtx).Error("cannot register new engine",
 			zap.Error(err),
@@ -224,8 +236,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O)
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -237,11 +248,11 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		r.curRowCount,
-		counter,
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
+		nil,
+		rowCntListener,
 	)
 }
 
@@ -269,8 +280,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O)
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
@@ -282,12 +292,31 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		r.indexes,
 		start,
 		end,
-		r.curRowCount,
-		counter,
 		onClose,
 		r.job.ReorgMeta,
 		r.avgRowSize,
 		concurrency,
 		r.GetResource(),
+		rowCntListener,
 	)
+}
+
+type distTaskRowCntListener struct {
+	EmptyRowCntListener
+	totalRowCount *atomic.Int64
+	counter       prometheus.Counter
+}
+
+func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName string) *distTaskRowCntListener {
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", dbName, tblName))
+	return &distTaskRowCntListener{
+		totalRowCount: totalRowCnt,
+		counter:       counter,
+	}
+}
+
+func (d *distTaskRowCntListener) Written(rowCnt int) {
+	d.totalRowCount.Add(int64(rowCnt))
+	d.counter.Add(float64(rowCnt))
 }

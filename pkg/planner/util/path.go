@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -73,7 +73,13 @@ type AccessPath struct {
 
 	StoreType kv.StoreType
 
-	IsDNFCond bool
+	// If the top level of the filters is an OR list, IsDNFCond is true.
+	// In this case, MinAccessCondsForDNFCond will record the minimum number of access conditions among all DNF items.
+	// For example, if the filter is (a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7),
+	// for index (a) or index (b), MinAccessCondsForDNFCond will be 1;
+	// for index (a, b, c), MinAccessCondsForDNFCond will be 2.
+	IsDNFCond                bool
+	MinAccessCondsForDNFCond int
 
 	// IsIntHandlePath indicates whether this path is table path.
 	IsIntHandlePath    bool
@@ -112,6 +118,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		PartialIndexPaths:            nil,
 		StoreType:                    path.StoreType,
 		IsDNFCond:                    path.IsDNFCond,
+		MinAccessCondsForDNFCond:     path.MinAccessCondsForDNFCond,
 		IsIntHandlePath:              path.IsIntHandlePath,
 		IsCommonHandlePath:           path.IsCommonHandlePath,
 		Forced:                       path.Forced,
@@ -137,15 +144,25 @@ func (path *AccessPath) Clone() *AccessPath {
 	return ret
 }
 
-// IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
+// IsTablePath returns true if it's IntHandlePath or CommonHandlePath. Including tiflash table scan.
 func (path *AccessPath) IsTablePath() bool {
-	return path.IsIntHandlePath || path.IsCommonHandlePath
+	return path.IsIntHandlePath || path.IsCommonHandlePath || (path.Index != nil && path.StoreType == kv.TiFlash)
+}
+
+// IsTiKVTablePath returns true if it's IntHandlePath or CommonHandlePath. And the store type is TiKV.
+func (path *AccessPath) IsTiKVTablePath() bool {
+	return (path.IsIntHandlePath || path.IsCommonHandlePath) && path.StoreType == kv.TiKV
+}
+
+// IsTiFlashSimpleTablePath returns true if it's a TiFlash path and will not use any special indexes like vector index.
+func (path *AccessPath) IsTiFlashSimpleTablePath() bool {
+	return path.StoreType == kv.TiFlash && path.Index == nil
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.
 // The function consider the `idx_col_1 = const and index_col_2 = cor_col and index_col_3 = const` case.
 // It enables more index columns to be considered. The range will be rebuilt in 'ResolveCorrelatedColumns'.
-func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx context.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
+func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext, eqOrInCount int) (access, remained []expression.Expression) {
 	// The plan cache do not support subquery now. So we skip this function when
 	// 'MaybeOverOptimized4PlanCache' function return true .
 	if expression.MaybeOverOptimized4PlanCache(ctx.GetExprCtx(), path.TableFilters) {
@@ -356,7 +373,7 @@ func CompareCol2Len(c1, c2 Col2Len) (int, bool) {
 }
 
 // GetCol2LenFromAccessConds returns columns with lengths from path.AccessConds.
-func (path *AccessPath) GetCol2LenFromAccessConds(ctx context.PlanContext) Col2Len {
+func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2Len {
 	if path.IsTablePath() {
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}

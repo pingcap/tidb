@@ -13,7 +13,7 @@ go_library(
         "//br/pkg/task",
         "//pkg/config",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/store/driver",
         "//pkg/tablecodec",
         "//pkg/util/codec",

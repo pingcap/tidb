@@ -7,9 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/kv",
         "//pkg/planner/core/base",
         "//pkg/planner/property",
         "//pkg/planner/util/optimizetrace",
+        "//pkg/util/execdetails",
     ],
 )
