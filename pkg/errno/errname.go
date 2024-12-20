@@ -14,18 +14,22 @@
 
 package errno
 
-import "github.com/pingcap/tidb/pkg/parser/mysql"
+// ErrMessage is a error message with the format specifier.
+type ErrMessage struct {
+	Raw          string
+	RedactArgPos []int
+}
 
 // Message creates a error message with the format specifier.
-func Message(message string, redactArgs []int) *mysql.ErrMessage {
-	return &mysql.ErrMessage{Raw: message, RedactArgPos: redactArgs}
+func Message(message string, redactArgs []int) *ErrMessage {
+	return &ErrMessage{Raw: message, RedactArgPos: redactArgs}
 }
 
 // MySQLErrName maps error code to MySQL error messages.
 // Note: all ErrMessage to be added should be considered about the log redaction
-// by setting the suitable configuration in the second argument of mysql.Message.
+// by setting the suitable configuration in the second argument of Message.
 // See https://github.com/pingcap/tidb/blob/master/errno/logredaction.md
-var MySQLErrName = map[uint16]*mysql.ErrMessage{
+var MySQLErrName = map[uint16]*ErrMessage{
 	ErrHashchk:                                  Message("hashchk", nil),
 	ErrNisamchk:                                 Message("isamchk", nil),
 	ErrNo:                                       Message("NO", nil),

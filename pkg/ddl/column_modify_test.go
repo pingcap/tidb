@@ -354,7 +354,7 @@ func TestChangeColumn(t *testing.T) {
 	err = tk.ExecToErr("alter table t4 change c1 a1 int not null;")
 	require.EqualError(t, err, "[ddl:1265]Data truncated for column 'a1' at row 1")
 	sql = "alter table t4 change c2 a bigint not null;"
-	tk.MustGetErrCode(sql, mysql.WarnDataTruncated)
+	tk.MustGetErrCode(sql, errno.WarnDataTruncated)
 	sql = "alter table t3 modify en enum('a', 'z', 'b', 'c') not null default 'a'"
 	tk.MustExec(sql)
 	// Rename to an existing column.
@@ -365,12 +365,12 @@ func TestChangeColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t5")
 	tk.MustExec("create table t5 (k char(10) primary key, v int)")
 	sql = "alter table t5 change column k k tinytext;"
-	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
 	tk.MustExec("drop table t5")
 	tk.MustExec("drop table if exists t5")
 	tk.MustExec("create table t5 (k char(10), v int, INDEX(k))")
 	sql = "alter table t5 change column k k tinytext;"
-	tk.MustGetErrCode(sql, mysql.ErrBlobKeyWithoutLength)
+	tk.MustGetErrCode(sql, errno.ErrBlobKeyWithoutLength)
 	tk.MustExec("drop table t5")
 	tk.MustExec("drop table t3")
 }

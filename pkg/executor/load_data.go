@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -276,7 +277,7 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) 
 		numWarnings = math.MaxUint16
 	}
 
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
+	msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	warns := make([]contextutil.SQLWarn, numWarnings)
 	n := copy(warns, stmtCtx.GetWarnings())
 	for i := 0; i < int(numRecords) && n < len(warns); i++ {

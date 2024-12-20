@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"go.uber.org/zap"
 )
@@ -197,7 +198,7 @@ func (ec ErrClass) New(code ErrCode, message string) *Error {
 
 // NewStdErr defines an *Error with an error code, an error
 // message and workaround to create standard error.
-func (ec ErrClass) NewStdErr(code ErrCode, message *mysql.ErrMessage) *Error {
+func (ec ErrClass) NewStdErr(code ErrCode, message *errno.ErrMessage) *Error {
 	rfcCode := ec.initError(code)
 	err := errors.Normalize(
 		message.Raw, errors.RedactArgs(message.RedactArgPos),
@@ -211,7 +212,7 @@ func (ec ErrClass) NewStdErr(code ErrCode, message *mysql.ErrMessage) *Error {
 // this method is not goroutine-safe and
 // usually be used in global variable initializer
 func (ec ErrClass) NewStd(code ErrCode) *Error {
-	return ec.NewStdErr(code, mysql.MySQLErrName[uint16(code)])
+	return ec.NewStdErr(code, errno.MySQLErrName[uint16(code)])
 }
 
 // Synthesize synthesizes an *Error in the air
@@ -261,16 +262,16 @@ var (
 	// ErrClassToMySQLCodes is the map of ErrClass to code-set.
 	ErrClassToMySQLCodes = make(map[ErrClass]map[ErrCode]struct{})
 	// ErrCritical is the critical error class.
-	ErrCritical = ClassGlobal.NewStdErr(CodeExecResultIsEmpty, mysql.Message("critical error %v", nil))
+	ErrCritical = ClassGlobal.NewStdErr(CodeExecResultIsEmpty, errno.Message("critical error %v", nil))
 	// ErrResultUndetermined is the error when execution result is unknown.
 	ErrResultUndetermined = ClassGlobal.NewStdErr(
 		CodeResultUndetermined,
-		mysql.Message("execution result undetermined", nil),
+		errno.Message("execution result undetermined", nil),
 	)
 )
 
 func init() {
-	defaultMySQLErrorCode = mysql.ErrUnknown
+	defaultMySQLErrorCode = errno.ErrUnknown
 }
 
 // ErrorEqual returns a boolean indicating whether err1 is equal to err2.

@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",
-        "//pkg/parser/mysql",
         "//pkg/util/dbterror",
     ],
 )

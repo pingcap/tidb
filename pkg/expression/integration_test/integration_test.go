@@ -1235,7 +1235,7 @@ func TestGetLock(t *testing.T) {
 	err := tk.ExecToErr("SELECT get_lock('testlock')")
 	require.Error(t, err)
 	terr := errors.Cause(err).(*terror.Error)
-	require.Equal(t, errors.ErrCode(mysql.ErrWrongParamcountToNativeFct), terr.Code())
+	require.Equal(t, errors.ErrCode(errno.ErrWrongParamcountToNativeFct), terr.Code())
 
 	// 0 timeout = immediate
 	// Negative timeout = convert to max value
@@ -2123,7 +2123,7 @@ func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
 		{[2]any{`{"a":1}`, "null"}, `null`, true, 0},
 
 		// Invalid json text
-		{[2]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
+		{[2]any{`{"a":1}`, `[1]}`}, nil, false, errno.ErrInvalidJSONText},
 	}
 
 	tk.MustExec(`use test;`)
@@ -2240,9 +2240,9 @@ func TestBuiltinFuncJSONMergePatch_InExpression(t *testing.T) {
 		{[]any{`{"a":"foo"}`, `{"d":1}`, `{"a":{"bb":{"ccc":null}}}`}, `{"a":{"bb":{}},"d":1}`, true, 0},
 
 		// Invalid json text
-		{[]any{`{"a":1}`, `[1]}`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, mysql.ErrInvalidJSONText},
-		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, mysql.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `[1]}`}, nil, false, errno.ErrInvalidJSONText},
+		{[]any{`{{"a":1}`, `[1]`, `null`}, nil, false, errno.ErrInvalidJSONText},
+		{[]any{`{"a":1}`, `jjj`, `null`}, nil, false, errno.ErrInvalidJSONText},
 	}
 
 	for _, tt := range tests {

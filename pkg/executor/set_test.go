@@ -538,10 +538,10 @@ func TestSetVar(t *testing.T) {
 
 	varList := []string{"character_set_server", "character_set_client", "character_set_filesystem", "character_set_database"}
 	for _, v := range varList {
-		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), mysql.ErrWrongValueForVar)
-		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), mysql.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@global.%s = @global_start_value;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = @global_start_value;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = NULL;", v), errno.ErrWrongValueForVar)
+		tk.MustGetErrCode(fmt.Sprintf("SET @@%s = \"\";", v), errno.ErrWrongValueForVar)
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = \"somecharset\";", v), "Unknown charset somecharset")
 		// we do not support set character_set_xxx or collation_xxx to a collation id.
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@global.%s = 46;", v), "Unknown charset 46")
@@ -805,8 +805,8 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@session.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 
 	// test variables `init_connect'
-	tk.MustGetErrCode("set global init_connect = '-1'", mysql.ErrWrongTypeForVar)
-	tk.MustGetErrCode("set global init_connect = 'invalidstring'", mysql.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = '-1'", errno.ErrWrongTypeForVar)
+	tk.MustGetErrCode("set global init_connect = 'invalidstring'", errno.ErrWrongTypeForVar)
 	tk.MustExec("set global init_connect = 'select now(); select timestamp()'")
 
 	// test variable 'tidb_session_plan_cache_size'

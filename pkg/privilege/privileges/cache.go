@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -670,7 +671,7 @@ func (p *MySQLPrivilege) merge(diff *MySQLPrivilege, userList map[string]struct{
 func noSuchTable(err error) bool {
 	e1 := errors.Cause(err)
 	if e2, ok := e1.(*terror.Error); ok {
-		if terror.ErrCode(e2.Code()) == terror.ErrCode(mysql.ErrNoSuchTable) {
+		if terror.ErrCode(e2.Code()) == terror.ErrCode(errno.ErrNoSuchTable) {
 			return true
 		}
 	}

@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -143,7 +144,7 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return mysql.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_execute")
 	}
 
@@ -157,10 +158,10 @@ func (cc *clientConn) handleStmtExecute(ctx context.Context, data []byte) (err e
 		useCursor = true
 	}
 	if flag&mysql.CursorTypeForUpdate > 0 {
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeForUpdate", nil)
+		return mysql.NewErrf(errno.ErrUnknown, "unsupported flag: CursorTypeForUpdate", nil)
 	}
 	if flag&mysql.CursorTypeScrollable > 0 {
-		return mysql.NewErrf(mysql.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
+		return mysql.NewErrf(errno.ErrUnknown, "unsupported flag: CursorTypeScrollable", nil)
 	}
 
 	if useCursor {
@@ -494,11 +495,11 @@ func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err err
 
 	stmt := cc.ctx.GetStatement(int(stmtID))
 	if stmt == nil {
-		return errors.Annotate(mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return errors.Annotate(mysql.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.FormatUint(uint64(stmtID), 10), "stmt_fetch"), cc.preparedStmt2String(stmtID))
 	}
 	if !stmt.GetCursorActive() {
-		return errors.Annotate(mysql.NewErr(mysql.ErrSpCursorNotOpen), cc.preparedStmt2String(stmtID))
+		return errors.Annotate(mysql.NewErr(errno.ErrSpCursorNotOpen), cc.preparedStmt2String(stmtID))
 	}
 	// from now on, we have made sure: the statement has an active cursor
 	// then if facing any error, this cursor should be reset
@@ -567,7 +568,7 @@ func (cc *clientConn) handleStmtSendLongData(data []byte) (err error) {
 
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return mysql.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_send_longdata")
 	}
 
@@ -587,7 +588,7 @@ func (cc *clientConn) handleStmtReset(ctx context.Context, data []byte) (err err
 	stmtID := int(binary.LittleEndian.Uint32(data[0:4]))
 	stmt := cc.ctx.GetStatement(stmtID)
 	if stmt == nil {
-		return mysql.NewErr(mysql.ErrUnknownStmtHandler,
+		return mysql.NewErr(errno.ErrUnknownStmtHandler,
 			strconv.Itoa(stmtID), "stmt_reset")
 	}
 	err = stmt.Reset()

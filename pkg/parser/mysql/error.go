@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 )
 
 // Portable analogs of some common call errors.
@@ -47,7 +48,7 @@ func NewErr(errCode uint16, args ...interface{}) *SQLError {
 		e.State = DefaultMySQLState
 	}
 
-	if sqlErr, ok := MySQLErrName[errCode]; ok {
+	if sqlErr, ok := errno.MySQLErrName[errCode]; ok {
 		errors.RedactErrorArg(args, sqlErr.RedactArgPos)
 		e.Message = fmt.Sprintf(sqlErr.Raw, args...)
 	} else {
