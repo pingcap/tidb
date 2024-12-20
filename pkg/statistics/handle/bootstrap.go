@@ -592,8 +592,8 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 			continue
 		}
 		hist = &index.Histogram
-		lower, upper = types.NewBytesDatum(row.GetBytes(4)), types.NewBytesDatum(row.GetBytes(5))
-		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2), row.GetInt64(3), row.GetInt64(6))
+		lower, upper = types.NewBytesDatum(row.GetBytes(4) /*lower_bound*/), types.NewBytesDatum(row.GetBytes(5) /*upper_bound*/)
+		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
