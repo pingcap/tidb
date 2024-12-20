@@ -1130,7 +1130,7 @@ func (rc *LogClient) RestoreAndRewriteMetaKVFiles(
 
 	// Update global schema version and report all of TiDBs.
 	if diffReload {
-		if err := rc.UpdateSchemaVersionDiffReload(ctx, schemasReplace); err != nil {
+		if err := rc.BatchedSchemaReload(ctx, schemasReplace); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -1464,6 +1464,21 @@ func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
 	return ids, err
 }
 
+// updateGlobalSchemaVersionToEtcd updates the global schema version in etcd
+func (rc *LogClient) updateGlobalSchemaVersionToEtcd(ctx context.Context, schemaVersion int64) error {
+	ver := strconv.FormatInt(schemaVersion, 10)
+	if err := ddlutil.PutKVToEtcd(
+		ctx,
+		rc.GetDomain().GetEtcdClient(),
+		math.MaxInt,
+		ddlutil.DDLGlobalSchemaVersion,
+		ver,
+	); err != nil {
+		return errors.Annotatef(err, "failed to put global schema version %v to etcd", ver)
+	}
+	return nil
+}
+
 // UpdateSchemaVersionFullReload updates schema version by triggering a full reload using transaction.
 func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	storage := rc.GetDomain().Store()
@@ -1497,95 +1512,7 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	}
 
 	log.Info("update global schema version", zap.Int64("global-schema-version", schemaVersion))
-
-	ver := strconv.FormatInt(schemaVersion, 10)
-	if err := ddlutil.PutKVToEtcd(
-		ctx,
-		rc.GetDomain().GetEtcdClient(),
-		math.MaxInt,
-		ddlutil.DDLGlobalSchemaVersion,
-		ver,
-	); err != nil {
-		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
-	}
-
-	return nil
-}
-
-// UpdateSchemaVersionDiffReload updates schema version by triggering a diff reload using transaction.
-func (rc *LogClient) UpdateSchemaVersionDiffReload(ctx context.Context, sr *stream.SchemasReplace) error {
-	s := rc.GetDomain().Store()
-	var schemaVersion int64
-
-	// Build affected options directly from schema mapping
-	affectedOpts := make([]*model.AffectedOption, 0)
-	dbReplaces := sr.GetDBReplaceMap()
-
-	// Collect all affected schemas and tables from the mapping
-	for upSchema, dbReplace := range dbReplaces {
-		if utils.IsSysDB(dbReplace.Name) || !sr.TableFilter.MatchSchema(dbReplace.Name) {
-			continue
-		}
-		// Add schema level affected option
-		affectedOpts = append(affectedOpts, &model.AffectedOption{
-			SchemaID: dbReplace.DbID,
-		})
-
-		// Add table level affected options
-		for upTable, tableReplace := range dbReplace.TableMap {
-			log.Info("######## adding affected opts", zap.Any("upstream scehma id", upSchema), zap.Any("upstream table id", upTable), zap.Any("schema id", dbReplace.DbID), zap.Any("schema name", dbReplace.Name), zap.Any("table id", tableReplace.TableID), zap.Any("table name", tableReplace.Name))
-			affectedOpts = append(affectedOpts, &model.AffectedOption{
-				SchemaID: dbReplace.DbID,
-				TableID:  tableReplace.TableID,
-			})
-		}
-	}
-
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	if err := kv.RunInNewTxn(
-		ctx,
-		s,
-		true,
-		func(ctx context.Context, txn kv.Transaction) error {
-			t := meta.NewMutator(txn)
-			var e error
-			// Update schema version by 1
-			schemaVersion, e = t.GenSchemaVersion()
-			if e != nil {
-				return e
-			}
-			// build the diff key and put all the tables that need to load into the AffectedOpts
-			return t.SetSchemaDiff(&model.SchemaDiff{
-				Version:             schemaVersion,
-				Type:                model.ActionLogRestore,
-				SchemaID:            -1,
-				TableID:             -1,
-				RegenerateSchemaMap: false, // don't set otherwise will full reload
-				ReadTableFromMeta:   true,
-				AffectedOpts:        affectedOpts,
-			})
-		},
-	); err != nil {
-		return errors.Trace(err)
-	}
-
-	log.Info("update global schema version to trigger diff reload",
-		zap.Int64("global-schema-version", schemaVersion),
-		zap.Int("affected-schemas", len(affectedOpts)))
-
-	// Update global schema version in etcd
-	ver := strconv.FormatInt(schemaVersion, 10)
-	if err := ddlutil.PutKVToEtcd(
-		ctx,
-		rc.GetDomain().GetEtcdClient(),
-		math.MaxInt,
-		ddlutil.DDLGlobalSchemaVersion,
-		ver,
-	); err != nil {
-		return errors.Annotatef(err, "failed to put global schema verson %v to etcd", ver)
-	}
-
-	return nil
+	return rc.updateGlobalSchemaVersionToEtcd(ctx, schemaVersion)
 }
 
 // WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
@@ -2043,4 +1970,118 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 
 	return eg.Wait()
+}
+
+const (
+	// SchemaReloadBatchSize is the number of schemas to reload in each batch
+	SchemaReloadBatchSize = 100
+)
+
+// BatchedSchemaReload handles schema diff reloads in batches with proper timing
+func (rc *LogClient) BatchedSchemaReload(ctx context.Context, sr *stream.SchemasReplace) error {
+	lease := rc.GetDomain().GetSchemaLease()
+	reloadInterval := lease / 2
+
+	// Collect all affected schemas and tables from the mapping
+	var affectedOpts []*model.AffectedOption
+	dbReplaces := sr.GetDBReplaceMap()
+	for _, dbReplace := range dbReplaces {
+		if utils.IsSysDB(dbReplace.Name) || !sr.TableFilter.MatchSchema(dbReplace.Name) {
+			continue
+		}
+
+		// Add schema level affected option
+		affectedOpts = append(affectedOpts, &model.AffectedOption{
+			SchemaID: dbReplace.DbID,
+		})
+
+		// Add table level affected options
+		for _, tableReplace := range dbReplace.TableMap {
+			affectedOpts = append(affectedOpts, &model.AffectedOption{
+				SchemaID: dbReplace.DbID,
+				TableID:  tableReplace.TableID,
+			})
+		}
+	}
+
+	// Split into batches
+	var batches [][]*model.AffectedOption
+	for i := 0; i < len(affectedOpts); i += SchemaReloadBatchSize {
+		end := i + SchemaReloadBatchSize
+		if end > len(affectedOpts) {
+			end = len(affectedOpts)
+		}
+		batches = append(batches, affectedOpts[i:end])
+	}
+
+	log.Info("starting batched schema reload",
+		zap.Int("total-schemas", len(affectedOpts)),
+		zap.Int("batch-size", SchemaReloadBatchSize),
+		zap.Int("total-batches", len(batches)),
+		zap.Duration("reload-interval", reloadInterval))
+
+	// Process each batch
+	for i, batch := range batches {
+		log.Info("processing schema reload batch",
+			zap.Int("batch", i+1),
+			zap.Int("total-batches", len(batches)),
+			zap.Int("batch-size", len(batch)))
+
+		// Update schema version for this batch
+		if err := rc.UpdateSchemaVersionDiffReload(ctx, batch); err != nil {
+			return errors.Annotatef(err, "failed to update schema version for batch %d", i+1)
+		}
+
+		// Add delay before next batch if not the last batch
+		if i < len(batches)-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(reloadInterval):
+			}
+		}
+	}
+
+	return nil
+}
+
+// UpdateSchemaVersionDiffReload updates schema version by triggering a diff reload using transaction.
+func (rc *LogClient) UpdateSchemaVersionDiffReload(ctx context.Context, affectedOpts []*model.AffectedOption) error {
+	s := rc.GetDomain().Store()
+
+	var schemaVersion int64
+
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	if err := kv.RunInNewTxn(
+		ctx,
+		s,
+		true,
+		func(ctx context.Context, txn kv.Transaction) error {
+			t := meta.NewMutator(txn)
+			var e error
+			// Update schema version by 1
+			schemaVersion, e = t.GenSchemaVersion()
+			if e != nil {
+				return e
+			}
+			// build the diff key and put all the tables that need to load into the AffectedOpts
+			return t.SetSchemaDiff(&model.SchemaDiff{
+				Version:             schemaVersion,
+				Type:                model.ActionLogRestore,
+				SchemaID:            -1,
+				TableID:             -1,
+				RegenerateSchemaMap: false, // don't set otherwise will full reload
+				ReadTableFromMeta:   true,
+				AffectedOpts:        affectedOpts,
+			})
+		},
+	); err != nil {
+		return errors.Trace(err)
+	}
+
+	log.Info("update global schema version to trigger diff reload",
+		zap.Int64("global-schema-version", schemaVersion),
+		zap.Int("affected-schemas", len(affectedOpts)))
+
+	return rc.updateGlobalSchemaVersionToEtcd(ctx, schemaVersion)
 }

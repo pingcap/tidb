@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -76,7 +75,6 @@ func (tc *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 	}
 	// sanity check
 	if value == nil {
-		log.Warn("entry suggests having short value but is nil")
 		return nil
 	}
 

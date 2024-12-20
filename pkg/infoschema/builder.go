@@ -602,54 +602,6 @@ func (b *Builder) applyRecoverSchema(m meta.Reader, diff *model.SchemaDiff) ([]i
 	return applyCreateTables(b, m, diff)
 }
 
-func (b *Builder) applyLogRestore(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	var affectedTableIDs []int64
-
-	// Process each affected table/schema
-	for _, opt := range diff.AffectedOpts {
-		if opt.TableID <= 0 {
-			continue
-		}
-
-		// Get schema info first
-		dbInfo, err := m.GetDatabase(opt.SchemaID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if dbInfo == nil {
-			return nil, errors.Errorf("database %d not found in log restore meta", opt.SchemaID)
-		}
-
-		// Add schema if it doesn't exist
-		if _, ok := b.infoSchema.SchemaByID(opt.SchemaID); !ok {
-			schTbls := &schemaTables{
-				dbInfo: dbInfo,
-				tables: make(map[string]table.Table),
-			}
-			b.infoSchema.addSchema(schTbls)
-		}
-
-		// Create a temporary SchemaDiff for this table
-		tableDiff := &model.SchemaDiff{
-			Version:    diff.Version,
-			Type:       model.ActionCreateTable,
-			SchemaID:   opt.SchemaID,
-			TableID:    opt.TableID,
-			OldTableID: opt.TableID,
-		}
-
-		// Use existing table update mechanism
-		tableIDs, err := applyTableUpdate(b, m, tableDiff)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		affectedTableIDs = append(affectedTableIDs, tableIDs...)
-	}
-
-	return affectedTableIDs, nil
-}
-
 // copySortedTables copies sortedTables for old table and new table for later modification.
 func (b *Builder) copySortedTables(oldTableID, newTableID int64) {
 	if tableIDIsValid(oldTableID) {

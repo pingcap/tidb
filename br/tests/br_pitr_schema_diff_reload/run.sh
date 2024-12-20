@@ -17,7 +17,7 @@
 set -eux
 DB="$TEST_NAME"
 CUR=$(cd `dirname $0`; pwd)
-TASK_NAME="pitr_table_filter"
+TASK_NAME="pitr_schema_diff_reload"
 . run_services
 
 # helper methods
@@ -69,235 +69,240 @@ drop_tables() {
     done
 }
 
-test_basic() {
-    restart_services || { echo "Failed to restart services"; exit 1; }
-
-    echo "start basic filter testing"
-    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
-
-    run_sql "create schema $DB;"
-
-    echo "write initial data and do snapshot backup"
-    create_tables_with_values "full_backup" 3
-    create_tables_with_values "table_to_drop" 3
-
-    run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
-
-    echo "write more data and wait for log backup to catch up"
-    create_tables_with_values "log_backup_lower" 3
-    create_tables_with_values "LOG_BACKUP_UPPER" 3
-    create_tables_with_values "other" 3
-    drop_tables "table_to_drop" 3
-
-    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
-
-    # restart services to clean up the cluster
-    restart_services || { echo "Failed to restart services"; exit 1; }
-
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
-
-    verify_tables "log_backup_lower" 3 true
-    verify_tables "LOG_BACKUP_UPPER" 3 true
-    verify_tables "full_backup" 3 true
-    verify_tables "other" 3 true
-    verify_tables "table_to_drop" 3 false
-
-    # cleanup
-    rm -rf "$TEST_DIR/$TASK_NAME"
-    echo "test_basic passed"
-}
-
-test_schema_diff_reload() {
+test_basic_schema_table_diff_reload() {
     restart_services || { echo "Failed to restart services"; exit 1; }
     
     echo "start schema diff reload testing"
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
 
-    # Create initial schemas and tables
     run_sql "create schema $DB;"
     run_sql "create schema ${DB}_to_drop;"
     
-    # Case 1: Tables that exist in both TiKV and InfoSchema
+    # Add tables to the schema that will be dropped
+    run_sql "create table ${DB}_to_drop.t1(id int primary key);"
+    run_sql "create table ${DB}_to_drop.t2(id int primary key);"
+    run_sql "insert into ${DB}_to_drop.t1 values (1), (2), (3);"
+    run_sql "insert into ${DB}_to_drop.t2 values (4), (5), (6);"
+    
+    # tables that exist in both TiKV and InfoSchema
     create_tables_with_values "keep" 3
     
-    # Case 2: Tables that exist in InfoSchema but not in TiKV (should be dropped)
+    # tables that exist in InfoSchema but not in TiKV (should be dropped)
     create_tables_with_values "to_drop" 3
     
-    # Take full backup
+    # Create a table that will have its schema changed
+    run_sql "create table $DB.schema_change(id int primary key, name varchar(50));"
+    run_sql "insert into $DB.schema_change values (1, 'old');"
+    
     run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
     
-    # Make schema changes after backup:
-    # 1. Drop some tables (they'll exist in InfoSchema but not TiKV during restore)
     drop_tables "to_drop" 3
     
-    # 2. Create new tables (they'll exist in TiKV but not InfoSchema during restore)
+    # create new tables (they'll exist in TiKV but not InfoSchema during restore)
     create_tables_with_values "new" 3
     
-    # 3. Rename some tables to test table ID mapping
+    # rename tables to test table ID mapping
     rename_tables "keep" "renamed" 3
     
-    # 4. Drop a schema to test schema handling
+    # modify table schema
+    run_sql "alter table $DB.schema_change add column age int;"
+    run_sql "insert into $DB.schema_change values (2, 'new', 25);"
+    
+    # drop a schema to test schema handling
     run_sql "drop schema ${DB}_to_drop;"
     
-    # Wait for log backup to catch up
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
     
-    # Restart services to clean up cluster
     restart_services || { echo "Failed to restart services"; exit 1; }
     
-    # Restore and verify:
-    echo "Testing schema diff reload restore"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
         --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
-    
+    # add a small delay to allow diff reload to get triggered
+    sleep 2
+
     # Verify:
-    # 1. Tables that existed in both should be present with correct data
+    # 1. tables that existed in both should be present with correct data
     verify_tables "renamed" 3 true
     
-    # 2. Tables that were only in InfoSchema should be dropped
+    # 2. tables that were only in InfoSchema should be dropped
     verify_tables "to_drop" 3 false
     
-    # 3. New tables created after backup should be present
+    # 3. new tables created after backup should be present
     verify_tables "new" 3 true
     
-    # 4. Dropped schema should not exist
+    # 4. dropped schema should not exist
     if run_sql "use ${DB}_to_drop" 2>/dev/null; then
         echo "Dropped schema still exists"
         exit 1
     fi
+    
+    # Verify the tables in dropped schema are also gone
+    if run_sql "select * from ${DB}_to_drop.t1" 2>/dev/null; then
+        echo "Table t1 in dropped schema still exists"
+        exit 1
+    fi
+    
+    if run_sql "select * from ${DB}_to_drop.t2" 2>/dev/null; then
+        echo "Table t2 in dropped schema still exists"
+        exit 1
+    fi
+
+    # 5. Verify schema changed table
+    run_sql "select count(*) = 2 from $DB.schema_change" || {
+        echo "Schema changed table data verification failed"
+        exit 1
+    }
+    run_sql "select count(*) = 1 from $DB.schema_change where age = 25" || {
+        echo "Schema changed table column verification failed"
+        exit 1
+    }
 
     # Cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
     echo "test_schema_diff_reload passed"
 }
 
-test_table_diff_reload() {
+test_partition_diff_reload() {
     restart_services || { echo "Failed to restart services"; exit 1; }
     
-    echo "start table diff reload testing"
+    echo "start partition diff reload testing"
     run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
 
-    # Create initial schemas
     run_sql "create schema $DB;"
     
-    # Case 1: Regular tables with different data types
-    run_sql "CREATE TABLE $DB.t1 (
-        id INT PRIMARY KEY,
-        name VARCHAR(50),
-        created_at TIMESTAMP
-    );"
-    run_sql "INSERT INTO $DB.t1 VALUES (1, 'original', NOW());"
-    
-    # Case 2: Partitioned table
-    run_sql "CREATE TABLE $DB.t2 (
-        id INT,
-        created_date DATE
-    ) PARTITION BY RANGE (id) (
+    # 1. Create a partitioned table with fixed ranges (no MAXVALUE)
+    run_sql "CREATE TABLE $DB.part_table (id INT) PARTITION BY RANGE(id) (
         PARTITION p0 VALUES LESS THAN (100),
-        PARTITION p1 VALUES LESS THAN (200)
-    );"
-    run_sql "INSERT INTO $DB.t2 VALUES (50, NOW()), (150, NOW());"
+        PARTITION p1 VALUES LESS THAN (200),
+        PARTITION p2 VALUES LESS THAN (300));"
+    run_sql "INSERT INTO $DB.part_table VALUES (50), (150), (250);"
     
-    # Case 3: Table with indexes
-    run_sql "CREATE TABLE $DB.t3 (
-        id INT PRIMARY KEY,
-        email VARCHAR(50),
-        INDEX idx_email(email)
-    );"
-    run_sql "INSERT INTO $DB.t3 VALUES (1, 'test@example.com');"
+    # 2. Create a table for exchange with data that matches partition p1's range (100-200)
+    run_sql "CREATE TABLE $DB.exchange_table (id INT);"
+    run_sql "INSERT INTO $DB.exchange_table VALUES (150);"
     
-    # Case 4: Table with foreign keys
-    run_sql "CREATE TABLE $DB.parent (id INT PRIMARY KEY);"
-    run_sql "CREATE TABLE $DB.child (
-        id INT PRIMARY KEY,
-        parent_id INT,
-        FOREIGN KEY (parent_id) REFERENCES parent(id)
-    );"
-    run_sql "INSERT INTO $DB.parent VALUES (1);"
-    run_sql "INSERT INTO $DB.child VALUES (1, 1);"
+    # 3. Create another partitioned table that will be truncated entirely
+    run_sql "CREATE TABLE $DB.part_table_to_truncate (id INT) PARTITION BY RANGE(id) (
+        PARTITION p0 VALUES LESS THAN (100),
+        PARTITION p1 VALUES LESS THAN MAXVALUE);"
+    run_sql "INSERT INTO $DB.part_table_to_truncate VALUES (50), (150);"
     
-    # Take full backup
     run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
     
-    # Make table changes after backup:
+    # 4. Perform various partition operations
+    # Truncate a partition
+    run_sql "ALTER TABLE $DB.part_table TRUNCATE PARTITION p0;"
     
-    # 1. Modify regular table
-    run_sql "ALTER TABLE $DB.t1 ADD COLUMN status VARCHAR(20);"
-    run_sql "UPDATE $DB.t1 SET status = 'active';"
+    # Exchange a partition
+    run_sql "ALTER TABLE $DB.part_table EXCHANGE PARTITION p1 WITH TABLE $DB.exchange_table;"
     
-    # 2. Add partition to partitioned table
-    run_sql "ALTER TABLE $DB.t2 ADD PARTITION (PARTITION p2 VALUES LESS THAN (300));"
-    run_sql "INSERT INTO $DB.t2 VALUES (250, NOW());"
+    # Truncate entire partitioned table
+    run_sql "TRUNCATE TABLE $DB.part_table_to_truncate;"
     
-    # 3. Add/Drop indexes
-    run_sql "ALTER TABLE $DB.t3 DROP INDEX idx_email;"
-    run_sql "ALTER TABLE $DB.t3 ADD INDEX idx_id_email(id, email);"
+    # Add a new partition
+    run_sql "ALTER TABLE $DB.part_table ADD PARTITION (PARTITION p3 VALUES LESS THAN (400));"
+    run_sql "INSERT INTO $DB.part_table VALUES (350);"
     
-    # 4. Table with special attributes
-    run_sql "CREATE TABLE $DB.t4 (id INT PRIMARY KEY) TTL = \"id + INTERVAL 1 DAY\";"
+    # Drop a partition
+    run_sql "ALTER TABLE $DB.part_table DROP PARTITION p2;"
     
-    # 5. Drop and recreate table with same name but different schema
-    run_sql "DROP TABLE $DB.child;"
-    run_sql "CREATE TABLE $DB.child (
-        id INT PRIMARY KEY,
-        parent_id INT,
-        name VARCHAR(50)
-    );"
-    
-    # Wait for log backup to catch up
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
     
-    # Restart services to clean up cluster
     restart_services || { echo "Failed to restart services"; exit 1; }
     
-    # Restore and verify:
-    echo "Testing table diff reload restore"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
         --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
     
-    # Verify:
-    # 1. Regular table structure and data
-    run_sql "SELECT count(*) = 1, count(status) = 1 FROM $DB.t1 WHERE id = 1" || {
-        echo "Table t1 data verification failed"
+    # add a small delay to allow diff reload to get triggered
+    sleep 2
+
+    # Verify partition operations
+    # Check truncated partition
+    run_sql "SELECT count(*) = 0 FROM $DB.part_table PARTITION (p0)" || {
+        echo "Partition p0 should be empty after truncate"
         exit 1
     }
     
-    # 2. Partitioned table structure and data
-    run_sql "SELECT count(*) = 3 FROM $DB.t2" || {
-        echo "Table t2 data verification failed"
-        exit 1
-    }
-    run_sql "SELECT count(*) = 1 FROM information_schema.partitions WHERE table_name = 't2' AND partition_name = 'p2'" || {
-        echo "Table t2 partition verification failed"
+    # Check exchanged partition
+    run_sql "SELECT count(*) = 1, sum(id) = 150 FROM $DB.part_table PARTITION (p1)" || {
+        echo "Partition p1 should have exchanged data"
         exit 1
     }
     
-    # 3. Verify indexes
-    run_sql "SHOW INDEX FROM $DB.t3 WHERE Key_name = 'idx_id_email'" || {
-        echo "Table t3 index verification failed"
+    # Check new partition
+    run_sql "SELECT count(*) = 1, sum(id) = 350 FROM $DB.part_table PARTITION (p3)" || {
+        echo "New partition p3 should have correct data"
         exit 1
     }
     
-    # 4. Verify special attributes
-    run_sql "SELECT TTL_ENABLE FROM information_schema.tables WHERE table_name = 't4'" || {
-        echo "Table t4 TTL attribute verification failed"
+    # Verify dropped partition doesn't exist
+    if run_sql "SELECT * FROM $DB.part_table PARTITION (p2)" 2>/dev/null; then
+        echo "Partition p2 should not exist"
         exit 1
-    }
+    fi
     
-    # 5. Verify recreated table structure
-    run_sql "SHOW CREATE TABLE $DB.child" | grep "name VARCHAR" || {
-        echo "Table child structure verification failed"
+    run_sql "SHOW TABLES FROM $DB"
+
+    # Verify truncated partitioned table
+    run_sql "SELECT count(*) = 0 FROM $DB.part_table_to_truncate" || {
+        echo "Truncated partitioned table should be empty"
         exit 1
     }
 
     # Cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
-    echo "test_table_diff_reload passed"
+    echo "test_partition_diff_reload passed"
 }
 
-# Run all tests
-test_basic
-test_schema_diff_reload
-test_table_diff_reload
+test_large_batch_diff_reload() {
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    
+    echo "start large batch diff reload testing"
+    run_br --pd $PD_ADDR log start --task-name $TASK_NAME -s "local://$TEST_DIR/$TASK_NAME/log"
+
+    run_sql "create schema $DB;"
+    
+    # Create 1500 tables to test batch processing
+    create_tables_with_values "batch" 1500
+    
+    run_br backup full -f "$DB.*" -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
+    
+    # Drop every third table to create gaps
+    for i in $(seq 3 3 1500); do
+        run_sql "drop table $DB.batch_${i};"
+    done
+    
+    . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
+    
+    restart_services || { echo "Failed to restart services"; exit 1; }
+    
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" \
+        --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.*"
+    
+    # add a small delay to allow diff reload to get triggered
+    sleep 2
+
+    # Verify:
+    # 1. Tables that weren't dropped should exist with correct data
+    for i in $(seq 1 1500); do
+        # Skip tables that were dropped (every third)
+        if [ $((i % 3)) -eq 0 ]; then
+            continue
+        fi
+        run_sql "select count(*) = 1 from $DB.batch_${i} where c = $i" || {
+            echo "Table $DB.batch_${i} doesn't have expected value $i"
+            exit 1
+        }
+    done
+
+    # Cleanup
+    rm -rf "$TEST_DIR/$TASK_NAME"
+    echo "test_large_batch_diff_reload passed"
+}
+
+# run all tests
+# test_basic_schema_table_diff_reload
+# test_partition_diff_reload
+test_large_batch_diff_reload
 
 echo "br pitr schema diff reload passed"

@@ -1276,13 +1276,6 @@ func applyCreateTables(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int
 }
 
 func applyLogRestore(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
-	if b.enableV2 {
-		return b.applyLogRestoreV2(m, diff)
-	}
-	return b.applyLogRestore(m, diff)
-}
-
-func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	var affectedTableIDs []int64
 
 	// group affected tables by schema ID to minimize TiKV calls
@@ -1294,7 +1287,7 @@ func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]in
 		schemaToTables[opt.SchemaID] = append(schemaToTables[opt.SchemaID], opt.TableID)
 	}
 
-	// create lookup map for existing tables per schema
+	// create lookup map for existing tables in TiKV per schema
 	existingTables := make(map[int64]map[int64]struct{})
 	for schemaID := range schemaToTables {
 		dbInfo, err := m.GetDatabase(schemaID)
@@ -1319,9 +1312,10 @@ func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]in
 		existingTables[schemaID] = tableMap
 	}
 
+	// iterate on the affected schemas/tables and create/update/drop in infoschema by looking at status in TiKV
 	for schemaID, tableIDs := range schemaToTables {
 		_, schemaExistsInTiKV := existingTables[schemaID]
-		_, schemaExistsInInfoSchema := b.infoschemaV2.SchemaByID(schemaID)
+		_, schemaExistsInInfoSchema := schemaByID(b, schemaID)
 
 		if !schemaExistsInTiKV {
 			// schema exists in infoschema but not in TiKV - drop it, noop if already dropped
@@ -1353,8 +1347,8 @@ func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]in
 				log.Info("Drop table that doesn't exist in TiKV",
 					zap.Int64("tableID", tableID),
 					zap.Int64("schemaID", schemaID))
-				if dbInfo, ok := b.infoschemaV2.SchemaByID(schemaID); ok {
-					affectedTableIDs = b.applyDropTableV2(diff, dbInfo, tableID, affectedTableIDs)
+				if dbInfo, ok := schemaByID(b, schemaID); ok {
+					affectedTableIDs = applyDropTable(b, diff, dbInfo, tableID, affectedTableIDs)
 				}
 				continue
 			}
@@ -1366,7 +1360,6 @@ func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]in
 				TableID:  tableID,
 			}
 
-			log.Info("######### infoschema updating table", zap.Any("table", tableID))
 			tableIDs, err := applyTableUpdate(b, m, tableDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
@@ -1377,6 +1370,13 @@ func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]in
 	}
 
 	return affectedTableIDs, nil
+}
+
+func schemaByID(b *Builder, id int64) (*model.DBInfo, bool) {
+	if b.enableV2 {
+		return b.infoschemaV2.SchemaByID(id)
+	}
+	return b.SchemaByID(id)
 }
 
 func updateInfoSchemaBundles(b *Builder) {
