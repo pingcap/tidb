@@ -750,7 +750,7 @@ func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (i
 	defer lock.Unlock(ctx)
 
 	migs, err := m.Load(ctx)
-	if err != nil {
+	if err != nil && !berrors.Is(err, berrors.ErrMigrationNotFound) {
 		return 0, err
 	}
 	newSN := 1
