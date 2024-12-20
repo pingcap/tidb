@@ -501,7 +501,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		return
 	}
 
-	if copStats.ScanDetail != nil {
+	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
@@ -542,7 +542,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	if hasExecutor {
 		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, nil)
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
 		}
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
 	} else {
@@ -566,7 +566,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 			planID := r.copPlanIDs[i]
 			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, copStats.ScanDetail, copStats.TimeDetail, summary)
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
 			} else if summary != nil {
 				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
 			}
@@ -650,11 +650,7 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	if copStats.ScanDetail != nil {
-		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
-	} else {
-		s.procKeys.Add(0)
-	}
+	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
 	if len(copStats.BackoffSleep) > 0 {
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)

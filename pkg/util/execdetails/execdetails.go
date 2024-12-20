@@ -77,9 +77,8 @@ type CopExecDetails struct {
 	BackoffSleep  map[string]time.Duration
 	BackoffTimes  map[string]int
 	CalleeAddress string
-	// todo: avoid allocate in heap
-	ScanDetail *util.ScanDetail
-	TimeDetail util.TimeDetail
+	ScanDetail    util.ScanDetail
+	TimeDetail    util.TimeDetail
 }
 
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
@@ -436,7 +435,7 @@ func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime t
 		s.execDetails.CopTime += copTime
 		s.execDetails.BackoffTime += details.BackoffTime
 		s.execDetails.RequestCount++
-		s.mergeScanDetail(details.ScanDetail)
+		s.mergeScanDetail(&details.ScanDetail)
 		s.mergeTimeDetail(details.TimeDetail)
 		detail := &DetailsNeedP90{
 			BackoffSleep:  details.BackoffSleep,
