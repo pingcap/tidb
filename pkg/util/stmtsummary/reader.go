@@ -139,10 +139,10 @@ func (ssr *stmtSummaryReader) SetChecker(checker *stmtSummaryChecker) {
 	ssr.checker = checker
 }
 
-func (ssr *stmtSummaryReader) isAuthed(ssbd *stmtSummaryByDigest) bool {
+func (ssr *stmtSummaryReader) isAuthed(ssStats *stmtSummaryStats) bool {
 	isAuthed := true
 	if ssr.user != nil && !ssr.hasProcessPriv {
-		_, isAuthed = ssbd.cumulative.authUsers[ssr.user.Username]
+		_, isAuthed = ssStats.authUsers[ssr.user.Username]
 	}
 	return isAuthed
 }
@@ -150,7 +150,7 @@ func (ssr *stmtSummaryReader) isAuthed(ssbd *stmtSummaryByDigest) bool {
 func (ssr *stmtSummaryReader) getStmtByDigestCumulativeRow(ssbd *stmtSummaryByDigest) []types.Datum {
 	ssbd.Lock()
 	defer ssbd.Unlock()
-	if !ssr.isAuthed(ssbd) {
+	if !ssr.isAuthed(&ssbd.cumulative) {
 		return nil
 	}
 
@@ -181,7 +181,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestRow(ssbd *stmtSummaryByDigest, begi
 func (ssr *stmtSummaryReader) getStmtByDigestElementRow(ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) []types.Datum {
 	ssElement.Lock()
 	defer ssElement.Unlock()
-	if !ssr.isAuthed(ssbd) {
+	if !ssr.isAuthed(&ssElement.stmtSummaryStats) {
 		return nil
 	}
 
