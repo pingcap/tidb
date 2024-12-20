@@ -26,6 +26,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tidwall/btree"
+	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -1271,6 +1273,110 @@ func applyDropTable(b *Builder, diff *model.SchemaDiff, dbInfo *model.DBInfo, ta
 
 func applyCreateTables(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
 	return b.applyCreateTables(m, diff)
+}
+
+func applyLogRestore(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	if b.enableV2 {
+		return b.applyLogRestoreV2(m, diff)
+	}
+	return b.applyLogRestore(m, diff)
+}
+
+func (b *Builder) applyLogRestoreV2(m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	var affectedTableIDs []int64
+
+	// group affected tables by schema ID to minimize TiKV calls
+	schemaToTables := make(map[int64][]int64)
+	for _, opt := range diff.AffectedOpts {
+		if opt.TableID <= 0 {
+			continue
+		}
+		schemaToTables[opt.SchemaID] = append(schemaToTables[opt.SchemaID], opt.TableID)
+	}
+
+	// create lookup map for existing tables per schema
+	existingTables := make(map[int64]map[int64]struct{})
+	for schemaID := range schemaToTables {
+		dbInfo, err := m.GetDatabase(schemaID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if dbInfo == nil {
+			// schema doesn't exist in TiKV
+			continue
+		}
+
+		// get all tables in this schema in one call
+		tables, err := m.ListSimpleTables(schemaID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tableMap := make(map[int64]struct{}, len(tables))
+		for _, t := range tables {
+			tableMap[t.ID] = struct{}{}
+		}
+		existingTables[schemaID] = tableMap
+	}
+
+	for schemaID, tableIDs := range schemaToTables {
+		_, schemaExistsInTiKV := existingTables[schemaID]
+		_, schemaExistsInInfoSchema := b.infoschemaV2.SchemaByID(schemaID)
+
+		if !schemaExistsInTiKV {
+			// schema exists in infoschema but not in TiKV - drop it, noop if already dropped
+			log.Info("Drop schema that doesn't exist in TiKV", zap.Int64("schemaID", schemaID))
+			schemaDiff := &model.SchemaDiff{
+				Version:  diff.Version,
+				Type:     model.ActionDropSchema,
+				SchemaID: schemaID,
+			}
+			affectedTableIDs = append(affectedTableIDs, applyDropSchema(b, schemaDiff)...)
+			// skip all tables under this schema since dropped
+			continue
+		} else if !schemaExistsInInfoSchema {
+			// schema exists in TiKV but not in infoschema - create it
+			log.Info("Create schema that exists in TiKV", zap.Int64("schemaID", schemaID))
+			schemaDiff := &model.SchemaDiff{
+				Version:  diff.Version,
+				Type:     model.ActionCreateSchema,
+				SchemaID: schemaID,
+			}
+			if err := applyCreateSchema(b, m, schemaDiff); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
+		// process tables under this schema
+		for _, tableID := range tableIDs {
+			if _, ok := existingTables[schemaID][tableID]; !ok {
+				log.Info("Drop table that doesn't exist in TiKV",
+					zap.Int64("tableID", tableID),
+					zap.Int64("schemaID", schemaID))
+				if dbInfo, ok := b.infoschemaV2.SchemaByID(schemaID); ok {
+					affectedTableIDs = b.applyDropTableV2(diff, dbInfo, tableID, affectedTableIDs)
+				}
+				continue
+			}
+
+			tableDiff := &model.SchemaDiff{
+				Version:  diff.Version,
+				Type:     model.ActionCreateTable,
+				SchemaID: schemaID,
+				TableID:  tableID,
+			}
+
+			log.Info("######### infoschema updating table", zap.Any("table", tableID))
+			tableIDs, err := applyTableUpdate(b, m, tableDiff)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			affectedTableIDs = append(affectedTableIDs, tableIDs...)
+		}
+	}
+
+	return affectedTableIDs, nil
 }
 
 func updateInfoSchemaBundles(b *Builder) {

@@ -502,6 +502,10 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 	return sr.tryRecordIngestIndex(job)
 }
 
+func (sr *SchemasReplace) GetDBReplaceMap() map[UpstreamID]*DBReplace {
+	return sr.DbMap
+}
+
 type DelRangeParams struct {
 	JobID    int64
 	ElemID   int64
