@@ -2540,6 +2540,7 @@ func TestTiDBUpgradeToVer219(t *testing.T) {
 	revertVersionAndVariables(t, seV218, ver218)
 	err = txn.Commit(ctx)
 	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
 
 	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
 	res := MustExecToRecodeSet(t, seV218, "show create table mysql.analyze_jobs")
