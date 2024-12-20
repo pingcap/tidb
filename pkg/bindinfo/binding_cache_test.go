@@ -35,7 +35,7 @@ func bindingNoDBDigest(t *testing.T, b Binding) string {
 }
 
 func TestCrossDBBindingCache(t *testing.T) {
-	fbc := newCrossDBBindingCache(nil).(*crossDBBindingCache)
+	fbc := newBindCache(nil).(*bindingCache)
 	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
 	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
@@ -73,7 +73,7 @@ func TestCrossDBBindingCache(t *testing.T) {
 	// test deep copy
 	newCache, err := fbc.Copy()
 	require.NoError(t, err)
-	newFBC := newCache.(*crossDBBindingCache)
+	newFBC := newCache.(*bindingCache)
 	newFBC.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1] = nil
 	delete(newFBC.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest, b1.SQLDigest)
 	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1]), 1) // no impact to the original cache
@@ -83,7 +83,7 @@ func TestCrossDBBindingCache(t *testing.T) {
 
 func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(250)
-	bindCache := newBindCache().(*bindingCache)
+	bindCache := newBindCache(nil).(*bindingCache)
 
 	value := make([]Bindings, 3)
 	key := make([]bindingCacheKey, 3)
