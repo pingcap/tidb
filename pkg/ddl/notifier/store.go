@@ -21,7 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
+
+// CloseFn is the function to release the resource.
+type CloseFn func()
 
 // Store is the (de)serialization and persistent layer.
 type Store interface {
@@ -35,9 +39,9 @@ type Store interface {
 	) error
 	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
 	// List will start a transaction of given session and read all schema changes
-	// through a ListResult. The session should not be used for other operations and
-	// caller should rollback the session after the List operation.
-	List(ctx context.Context, se *sess.Session) ListResult
+	// through a ListResult. The ownership of session is occupied Store until CloseFn
+	// is called.
+	List(ctx context.Context, se *sess.Session) (ListResult, CloseFn)
 }
 
 // ListResult is the result stream of a List operation.
@@ -123,7 +127,7 @@ func (t *tableStore) DeleteAndCommit(
 }
 
 // List implements Store interface.
-func (t *tableStore) List(ctx context.Context, se *sess.Session) ListResult {
+func (t *tableStore) List(ctx context.Context, se *sess.Session) (ListResult, CloseFn) {
 	return &listResult{
 		ctx: ctx,
 		se:  se,
@@ -141,7 +145,7 @@ func (t *tableStore) List(ctx context.Context, se *sess.Session) ListResult {
 		// DDL job ID are always positive, so we can use 0 as the initial value.
 		maxReturnedDDLJobID: 0,
 		maxReturnedSubJobID: 0,
-	}
+	}, se.Rollback
 }
 
 type listResult struct {
@@ -169,6 +173,13 @@ func (r *listResult) Read(changes []*SchemaChange) (int, error) {
 		return 0, errors.Trace(err)
 	}
 
+	if err = r.unmarshalSchemaChanges(rows, changes); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return len(rows), nil
+}
+
+func (r *listResult) unmarshalSchemaChanges(rows []chunk.Row, changes []*SchemaChange) error {
 	for i, row := range rows {
 		if changes[i] == nil {
 			changes[i] = new(SchemaChange)
@@ -176,10 +187,13 @@ func (r *listResult) Read(changes []*SchemaChange) (int, error) {
 		if changes[i].event == nil {
 			changes[i].event = new(SchemaChangeEvent)
 		}
+		if changes[i].event.inner == nil {
+			changes[i].event.inner = new(jsonSchemaChangeEvent)
+		}
 
-		err = json.Unmarshal(row.GetBytes(2), changes[i].event)
+		err := json.Unmarshal(row.GetBytes(2), changes[i].event.inner)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 		changes[i].ddlJobID = row.GetInt64(0)
 		changes[i].subJobID = row.GetInt64(1)
@@ -190,7 +204,7 @@ func (r *listResult) Read(changes []*SchemaChange) (int, error) {
 			r.maxReturnedSubJobID = changes[i].subJobID
 		}
 	}
-	return len(rows), nil
+	return nil
 }
 
 // OpenTableStore opens a store on a created table `db`.`table`. The table should

@@ -177,8 +177,8 @@ func (n *DDLNotifier) processEvents(ctx context.Context) error {
 	}
 	defer n.sysSessionPool.Put(s)
 	sess4List := sess.NewSession(s.(sessionctx.Context))
-	result := n.store.List(ctx, sess4List)
-	defer sess4List.Rollback()
+	result, closeFn := n.store.List(ctx, sess4List)
+	defer closeFn()
 
 	s2, err := n.sysSessionPool.Get()
 	if err != nil {
