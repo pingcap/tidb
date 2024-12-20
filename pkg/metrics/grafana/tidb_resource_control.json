@@ -285,7 +285,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU Max: Max Cost During 20s Period",
+               "title": "RU Max(Max Cost During 20s Period)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
