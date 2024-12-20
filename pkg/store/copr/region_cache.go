@@ -17,11 +17,7 @@ package copr
 import (
 	"bytes"
 	"strconv"
-<<<<<<< HEAD
 	"sync/atomic"
-	"time"
-=======
->>>>>>> 08840e06c15 (copr: fix the issue that busy threshold may redirect batch copr to followers (#58193))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
