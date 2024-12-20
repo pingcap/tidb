@@ -322,7 +322,6 @@ func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists tp")
 	tk.MustExec("drop table if exists doc")
 
 	// A non-partitioned table
