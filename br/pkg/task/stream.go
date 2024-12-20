@@ -1419,21 +1419,31 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	// load the id maps only when the checkpoint mode is used and not the first execution
-	newTask := true
+	currentIdMapSaved := false
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
-		newTask = false
+		currentIdMapSaved = true
 	}
+
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get the schemas ID replace information.
 	// since targeted full backup storage, need to use the full backup cipher
-	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
-		IsNewTask:         newTask,
+	tableMappingManager, err := client.BuildTableMappingManager(ctx, &logclient.BuildTableMappingManagerConfig{
+		CurrentIdMapSaved: currentIdMapSaved,
 		TableFilter:       cfg.TableFilter,
-		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
-	}, &cfg.Config.CipherInfo)
+		CipherInfo:        &cfg.Config.CipherInfo,
+		Files:             ddlFiles,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DbReplaceMap, cfg.tiflashRecorder,
+		client.CurrentTS(), cfg.TableFilter, client.RecordDeleteRange)
 	schemasReplace.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -1452,14 +1462,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
-	if err != nil {
-		return err
-	}
+
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
