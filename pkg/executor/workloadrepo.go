@@ -22,7 +22,7 @@ import (
 )
 
 // TakeSnapshot is a hook from workload repo that may trigger manual snapshot.
-var TakeSnapshot func() error = nil
+var TakeSnapshot func() error
 
 // WorkloadRepoCreateExec indicates WorkloadRepoCreate executor.
 type WorkloadRepoCreateExec struct {
