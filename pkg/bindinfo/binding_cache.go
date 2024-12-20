@@ -294,6 +294,9 @@ func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest strin
 }
 
 func (c *bindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
+	if c.Size() == 0 {
+		return
+	}
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, sqlDigest := range c.digestBiMap.NoDBDigest2SQLDigest(noDBDigest) {
