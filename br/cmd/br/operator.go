@@ -114,6 +114,7 @@ func newMigrateToCommand() *cobra.Command {
 
 func newChecksumCommand() *cobra.Command {
 	cmd := &cobra.Command{
+		Use:   "checksum-as",
 		Short: "calculate the checksum with rewrite rules",
 		Long: "Calculate the checksum of the current cluster (specified by `-u`) " +
 			"with applying the rewrite rules generated from a backup (specified by `-s`). " +
@@ -135,6 +136,7 @@ func newChecksumCommand() *cobra.Command {
 
 func newForceFlushCommand() *cobra.Command {
 	cmd := &cobra.Command{
+		Use:   "force-flush",
 		Short: "force a log backup task to flush",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
