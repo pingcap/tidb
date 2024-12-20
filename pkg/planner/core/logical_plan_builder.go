@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unique"
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
@@ -464,7 +465,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				continue
 			}
 			if x.AsName.L != "" {
-				name.TblName = x.AsName
+				name.TblName = unique.Make(x.AsName)
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
@@ -473,13 +474,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName.Value(), TableName: p.OutputNames()[0].TblName.Value()}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
 		dupNames := make(map[string]struct{}, len(p.Schema().Columns))
 		for _, name := range p.OutputNames() {
-			colName := name.ColName.O
+			colName := name.ColName.Value().O
 			if _, ok := dupNames[colName]; ok {
 				return nil, plannererrors.ErrDupFieldName.GenWithStackByArgs(colName)
 			}
@@ -762,13 +763,13 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		checkAmbiguous := func(names types.NameSlice) error {
 			columnNameInFilter := set.StringSet{}
 			for _, name := range names {
-				if _, ok := filter[name.ColName.L]; !ok {
+				if _, ok := filter[name.ColName.Value().L]; !ok {
 					continue
 				}
-				if columnNameInFilter.Exist(name.ColName.L) {
-					return plannererrors.ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+				if columnNameInFilter.Exist(name.ColName.Value().L) {
+					return plannererrors.ErrAmbiguous.GenWithStackByArgs(name.ColName.Value().L, "from clause")
 				}
-				columnNameInFilter.Insert(name.ColName.L)
+				columnNameInFilter.Insert(name.ColName.Value().L)
 			}
 			return nil
 		}
@@ -791,33 +792,33 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		rNameMap := make(map[string]int, len(rNames))
 		for _, name := range lNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.Value().L == "_tidb_rowid" {
 				continue
 			}
 			// record left map
-			if cnt, ok := lNameMap[name.ColName.L]; ok {
-				lNameMap[name.ColName.L] = cnt + 1
+			if cnt, ok := lNameMap[name.ColName.Value().L]; ok {
+				lNameMap[name.ColName.Value().L] = cnt + 1
 			} else {
-				lNameMap[name.ColName.L] = 1
+				lNameMap[name.ColName.Value().L] = 1
 			}
 		}
 		for _, name := range rNames {
 			// Natural join should ignore _tidb_rowid
-			if name.ColName.L == "_tidb_rowid" {
+			if name.ColName.Value().L == "_tidb_rowid" {
 				continue
 			}
 			// record right map
-			if cnt, ok := rNameMap[name.ColName.L]; ok {
-				rNameMap[name.ColName.L] = cnt + 1
+			if cnt, ok := rNameMap[name.ColName.Value().L]; ok {
+				rNameMap[name.ColName.Value().L] = cnt + 1
 			} else {
-				rNameMap[name.ColName.L] = 1
+				rNameMap[name.ColName.Value().L] = 1
 			}
 			// check left map
-			if cnt, ok := lNameMap[name.ColName.L]; ok {
+			if cnt, ok := lNameMap[name.ColName.Value().L]; ok {
 				if cnt > 1 {
-					return plannererrors.ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+					return plannererrors.ErrAmbiguous.GenWithStackByArgs(name.ColName.Value().L, "from clause")
 				}
-				commonNames = append(commonNames, name.ColName.L)
+				commonNames = append(commonNames, name.ColName.Value().L)
 			}
 		}
 		// check right map
@@ -832,20 +833,20 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid
-		if lName.ColName.L == "_tidb_rowid" {
+		if lName.ColName.Value().L == "_tidb_rowid" {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
-			if lName.ColName.L != rNames[j].ColName.L {
+			if lName.ColName.Value().L != rNames[j].ColName.Value().L {
 				continue
 			}
 
 			if len(filter) > 0 {
-				if !filter[lName.ColName.L] {
+				if !filter[lName.ColName.Value().L] {
 					break
 				}
 				// Mark this column exist.
-				filter[lName.ColName.L] = false
+				filter[lName.ColName.Value().L] = false
 			}
 
 			col := lColumns[i]
@@ -984,14 +985,14 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (*PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName pmodel.CIStr) {
-	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+	origTblName, origColName, dbName = name.OrigTblName.Value(), name.OrigColName.Value(), name.DBName.Value()
 	if origField.AsName.L == "" {
 		colName = colNameField.Name.Name
 	} else {
 		colName = origField.AsName
 	}
 	if tblName.L == "" {
-		tblName = name.TblName
+		tblName = name.TblName.Value()
 	} else {
 		tblName = colNameField.Name.Table
 	}
@@ -1071,19 +1072,19 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 		colName = pmodel.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	} else if isCol {
 		// col ref to original col, while its nullability may be changed.
-		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
-		colName = pmodel.NewCIStr("ex_" + name.ColName.O)
-		tblName = pmodel.NewCIStr("ex_" + name.TblName.O)
+		origTblName, origColName, dbName = name.OrigTblName.Value(), name.OrigColName.Value(), name.DBName.Value()
+		colName = pmodel.NewCIStr("ex_" + name.ColName.Value().O)
+		tblName = pmodel.NewCIStr("ex_" + name.TblName.Value().O)
 	} else {
 		// Other: complicated expression.
 		colName = pmodel.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
 	newName := &types.FieldName{
-		TblName:     tblName,
-		OrigTblName: origTblName,
-		ColName:     colName,
-		OrigColName: origColName,
-		DBName:      dbName,
+		TblName:     unique.Make(tblName),
+		OrigTblName: unique.Make(origTblName),
+		ColName:     unique.Make(colName),
+		OrigColName: unique.Make(origColName),
+		DBName:      unique.Make(dbName),
 	}
 	return newName
 }
@@ -1117,11 +1118,11 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 		}
 	}
 	name := &types.FieldName{
-		TblName:     tblName,
-		OrigTblName: origTblName,
-		ColName:     colName,
-		OrigColName: origColName,
-		DBName:      dbName,
+		TblName:     unique.Make(tblName),
+		OrigTblName: unique.Make(origTblName),
+		ColName:     unique.Make(colName),
+		OrigColName: unique.Make(origColName),
+		DBName:      unique.Make(dbName),
 	}
 	if isCol {
 		return col, name, nil
@@ -2238,9 +2239,9 @@ func (a *havingWindowAndOrderbyExprResolver) resolveFromPlan(v *ast.ColumnNameEx
 	}
 	name := outputNames[idx]
 	newColName := &ast.ColumnName{
-		Schema: name.DBName,
-		Table:  name.TblName,
-		Name:   name.ColName,
+		Schema: name.DBName.Value(),
+		Table:  name.TblName.Value(),
+		Name:   name.ColName.Value(),
 	}
 	for i, field := range a.selectFields {
 		if c, ok := field.Expr.(*ast.ColumnNameExpr); ok && c.Name.Match(newColName) {
@@ -2387,7 +2388,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 					return n, true
 				}
 			}
-			a.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), clauseMsg[a.curClause])
+			a.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName, clauseMsg[a.curClause])
 			return node, false
 		}
 		if a.inAggFunc {
@@ -2458,9 +2459,9 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 						if cone.UniqueID == pone.UniqueID {
 							pname := p.OutputNames()[idx]
 							colName = &ast.ColumnName{
-								Schema: pname.DBName,
-								Table:  pname.TblName,
-								Name:   pname.ColName,
+								Schema: pname.DBName.Value(),
+								Table:  pname.TblName.Value(),
+								Name:   pname.ColName.Value(),
 							}
 							break
 						}
@@ -2813,9 +2814,9 @@ func (b *PlanBuilder) resolveCorrelatedAggregates(ctx context.Context, sel *ast.
 		allColFromAggExprNode(p, aggFunc, colMap)
 		for k := range colMap {
 			colName := &ast.ColumnName{
-				Schema: k.DBName,
-				Table:  k.TblName,
-				Name:   k.ColName,
+				Schema: k.DBName.Value(),
+				Table:  k.TblName.Value(),
+				Name:   k.ColName.Value(),
 			}
 			// Add the column referred in the agg func into the select list. So that we can resolve the agg func correctly.
 			// And we need set the AuxiliaryColInAgg to true to help our only_full_group_by checker work correctly.
@@ -2890,9 +2891,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 				ret := g.fields[index].Expr
 				ret.Accept(extractor)
 				if len(extractor.AggFuncs) != 0 {
-					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to group function")
+					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName, "reference to group function")
 				} else if ast.HasWindowFlag(ret) {
-					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName(), "reference to window function")
+					err = plannererrors.ErrIllegalReference.GenWithStackByArgs(v.Name.OrigColName, "reference to window function")
 				} else {
 					if isParam, ok := ret.(*driver.ParamMarkerExpr); ok {
 						isParam.UseAsValueInGbyByClause = true
@@ -2938,7 +2939,7 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 	nodeW := resolve.NewNodeWWithCtx(from, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, true)
 	for _, field := range tableList {
-		if field.Name.L == name.TblName.L {
+		if field.Name.L == name.TblName.Value().L {
 			tnW := b.resolveCtx.GetTableName(field)
 			if tnW != nil {
 				return tnW.TableInfo
@@ -2948,7 +2949,7 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 				// Ignore during create
 				return nil
 			}
-			tblInfo, err := b.is.TableInfoByName(name.DBName, name.TblName)
+			tblInfo, err := b.is.TableInfoByName(name.DBName.Value(), name.TblName.Value())
 			if err != nil {
 				return nil
 			}
@@ -3064,8 +3065,8 @@ func checkColFuncDepend(
 				break
 			}
 			cn := &ast.ColumnName{
-				Schema: name.DBName,
-				Table:  name.TblName,
+				Schema: name.DBName.Value(),
+				Table:  name.TblName.Value(),
 				Name:   iColInfo.Name,
 			}
 			iIdx, err := expression.FindFieldName(p.OutputNames(), cn)
@@ -3102,8 +3103,8 @@ func checkColFuncDepend(
 		}
 		hasPrimaryField = true
 		pkName := &ast.ColumnName{
-			Schema: name.DBName,
-			Table:  name.TblName,
+			Schema: name.DBName.Value(),
+			Table:  name.TblName.Value(),
 			Name:   colInfo.Name,
 		}
 		pIdx, err := expression.FindFieldName(p.OutputNames(), pkName)
@@ -3306,7 +3307,7 @@ func (b *PlanBuilder) checkOnlyFullGroupByWithGroupClause(p base.LogicalPlan, se
 			if sel.GroupBy.Rollup {
 				return plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(strconv.Itoa(errExprLoc.Offset + 1))
 			}
-			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, name.DBName.O+"."+name.TblName.O+"."+name.OrigColName.O)
+			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, name.DBName.Value().O+"."+name.TblName.Value().O+"."+name.OrigColName.Value().O)
 		case ErrExprInOrderBy:
 			return plannererrors.ErrFieldNotInGroupBy.GenWithStackByArgs(errExprLoc.Offset+1, errExprLoc.Loc, sel.OrderBy.Items[errExprLoc.Offset].Expr.Text())
 		}
@@ -3538,18 +3539,18 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		if col.IsHidden {
 			continue
 		}
-		if (dbName.L == "" || dbName.L == name.DBName.L) &&
-			(tblName.L == "" || tblName.L == name.TblName.L) &&
+		if (dbName.L == "" || dbName.L == name.DBName.Value().L) &&
+			(tblName.L == "" || tblName.L == name.TblName.Value().L) &&
 			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
-					Schema: name.DBName,
-					Table:  name.TblName,
-					Name:   name.ColName,
+					Schema: name.DBName.Value(),
+					Table:  name.TblName.Value(),
+					Name:   name.ColName.Value(),
 				}}
 			colName.SetType(col.GetStaticType())
 			field := &ast.SelectField{Expr: colName}
-			field.SetText(nil, name.ColName.O)
+			field.SetText(nil, name.ColName.Value().O)
 			resultList = append(resultList, field)
 		}
 	}
@@ -3567,11 +3568,11 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 				colName = field.AsName
 			}
 			projOutNames = append(projOutNames, &types.FieldName{
-				TblName:     colNameField.Name.Table,
-				OrigTblName: colNameField.Name.Table,
-				ColName:     colName,
-				OrigColName: colNameField.Name.Name,
-				DBName:      colNameField.Name.Schema,
+				TblName:     unique.Make(colNameField.Name.Table),
+				OrigTblName: unique.Make(colNameField.Name.Table),
+				ColName:     unique.Make(colName),
+				OrigColName: unique.Make(colNameField.Name.Name),
+				DBName:      unique.Make(colNameField.Name.Schema),
 			})
 		} else {
 			// create view v as select name_const('col', 100);
@@ -3591,7 +3592,7 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	for i, field := range selectFields {
 		newField := *field
 		if newField.AsName.L == "" {
-			newField.AsName = projOutNames[i].ColName
+			newField.AsName = projOutNames[i].ColName.Value()
 		}
 
 		if _, ok := field.Expr.(*ast.ColumnNameExpr); !ok && field.AsName.L == "" {
@@ -4043,10 +4044,10 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
-		DBName:      ds.DBName,
-		TblName:     ds.TableInfo.Name,
-		ColName:     model.ExtraPhysTblIDName,
-		OrigColName: model.ExtraPhysTblIDName,
+		DBName:      unique.Make(ds.DBName),
+		TblName:     unique.Make(ds.TableInfo.Name),
+		ColName:     unique.Make(model.ExtraPhysTblIDName),
+		OrigColName: unique.Make(model.ExtraPhysTblIDName),
 	}))
 	ds.TblCols = append(ds.TblCols, pidCol)
 	return pidCol
@@ -4279,7 +4280,7 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 				var on types.NameSlice
 				for _, name := range p.OutputNames() {
 					cpOn := *name
-					cpOn.TblName = *asName
+					cpOn.TblName = unique.Make(*asName)
 					on = append(on, &cpOn)
 				}
 				p.SetOutputNames(on)
@@ -4338,8 +4339,8 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 	b.handleHelper.popMap()
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
-		name.TblName = cte.Name
-		name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		name.TblName = unique.Make(cte.Name)
+		name.DBName = unique.Make(pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB))
 	}
 
 	if len(cte.ColNameList) > 0 {
@@ -4347,7 +4348,7 @@ func (b *PlanBuilder) buildDataSourceFromCTEMerge(ctx context.Context, cte *ast.
 			return nil, errors.New("CTE columns length is not consistent")
 		}
 		for i, n := range cte.ColNameList {
-			outPutNames[i].ColName = n
+			outPutNames[i].ColName = unique.Make(n)
 		}
 	}
 	p.SetOutputNames(outPutNames)
@@ -4617,11 +4618,11 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	for i, col := range columns {
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
+			DBName:      unique.Make(dbName),
+			TblName:     unique.Make(tableInfo.Name),
+			ColName:     unique.Make(col.Name),
+			OrigTblName: unique.Make(tableInfo.Name),
+			OrigColName: unique.Make(col.Name),
 			// For update statement and delete statement, internal version should see the special middle state column, while user doesn't.
 			NotExplicitUsable: col.State != model.StatePublic,
 		})
@@ -4650,10 +4651,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
 			schema.Append(extraCol)
 			names = append(names, &types.FieldName{
-				DBName:      dbName,
-				TblName:     tableInfo.Name,
-				ColName:     model.ExtraHandleName,
-				OrigColName: model.ExtraHandleName,
+				DBName:      unique.Make(dbName),
+				TblName:     unique.Make(tableInfo.Name),
+				ColName:     unique.Make(model.ExtraHandleName),
+				OrigColName: unique.Make(model.ExtraHandleName),
 			})
 			ds.TblCols = append(ds.TblCols, extraCol)
 		}
@@ -4777,11 +4778,11 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName pmodel.CIStr, tabl
 	var handleCols util.HandleCols
 	for _, col := range tableInfo.Columns {
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			TblName:     tableInfo.Name,
-			ColName:     col.Name,
-			OrigTblName: tableInfo.Name,
-			OrigColName: col.Name,
+			DBName:      unique.Make(dbName),
+			TblName:     unique.Make(tableInfo.Name),
+			ColName:     unique.Make(col.Name),
+			OrigTblName: unique.Make(tableInfo.Name),
+			OrigColName: unique.Make(col.Name),
 		})
 		// NOTE: Rewrite the expression if memory table supports generated columns in the future
 		newCol := &expression.Column{
@@ -5059,15 +5060,15 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName pmodel.CIStr, 
 	for i, name := range outputNamesOfUnderlyingSelect {
 		origColName := name.ColName
 		if tableInfo.View.Cols != nil {
-			origColName = tableInfo.View.Cols[i]
+			origColName = unique.Make(tableInfo.View.Cols[i])
 		}
 		projNames = append(projNames, &types.FieldName{
 			// TblName is the of view instead of the name of the underlying table.
-			TblName:     tableInfo.Name,
-			OrigTblName: name.OrigTblName,
-			ColName:     columnInfo[i].Name,
+			TblName:     unique.Make(tableInfo.Name),
+			OrigTblName: unique.Make(name.OrigTblName.Value()),
+			ColName:     unique.Make(columnInfo[i].Name),
 			OrigColName: origColName,
-			DBName:      dbName,
+			DBName:      unique.Make(dbName),
 		})
 		projSchema.Append(&expression.Column{
 			UniqueID: cols[i].UniqueID,
@@ -5190,7 +5191,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCon
 
 func getTableOffset(names []*types.FieldName, handleName *types.FieldName) (int, error) {
 	for i, name := range names {
-		if name.DBName.L == handleName.DBName.L && name.TblName.L == handleName.TblName.L {
+		if name.DBName.Value().L == handleName.DBName.Value().L && name.TblName.Value().L == handleName.TblName.Value().L {
 			return i, nil
 		}
 	}
@@ -5397,7 +5398,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	// Mark the columns in indexes.
 	for _, idx := range deletableIdxs {
 		for _, col := range idx.Meta().Columns {
-			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.L {
+			if col.Offset+originalStart >= len(names) || deletableCols[col.Offset].Name.L != names[col.Offset+originalStart].ColName.Value().L {
 				return 0, plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
 			fixedPos[col.Offset] = 0
@@ -5656,11 +5657,11 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 			// see https://dev.mysql.com/doc/mysql-errors/5.7/en/server-error-reference.html#error_er_multi_update_key_conflict
 			if otherTable, ok := updateFromOtherAlias[tbl.Meta().ID]; ok {
 				if otherTable.pkUpdated || updatePK || otherTable.partitionColUpdated || updatePartitionCol {
-					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.O)
+					return plannererrors.ErrMultiUpdateKeyConflict.GenWithStackByArgs(otherTable.name, updt.names[content.Start].TblName.Value().O)
 				}
 			} else {
 				updateFromOtherAlias[tbl.Meta().ID] = tblUpdateInfo{
-					name:                updt.names[content.Start].TblName.O,
+					name:                updt.names[content.Start].TblName.Value().O,
 					pkUpdated:           updatePK,
 					partitionColUpdated: updatePartitionCol,
 				}
@@ -5702,9 +5703,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		foundListItem := false
 		for _, tl := range tableList {
 			tlW := b.resolveCtx.GetTableName(tl)
-			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.L) && (tl.Name.L == name.TblName.L) {
+			if (tl.Schema.L == "" || tl.Schema.L == name.DBName.Value().L) && (tl.Name.L == name.TblName.Value().L) {
 				if isCTE(tlW) || tlW.TableInfo.IsView() || tlW.TableInfo.IsSequence() {
-					return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+					return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.Value().O, "UPDATE")
 				}
 				foundListItem = true
 			}
@@ -5714,9 +5715,9 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			// 1: update (select * from t1) t1 set b = 1111111 ----- (no updatable table here)
 			// 2: update (select 1 as a) as t, t1 set a=1      ----- (updatable t1 don't have column a)
 			// --- subQuery is not counted as updatable table.
-			return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.O, "UPDATE")
+			return nil, nil, false, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(name.TblName.Value().O, "UPDATE")
 		}
-		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.L, name.TblName.L, name.ColName.L)
+		columnFullName := fmt.Sprintf("%s.%s.%s", name.DBName.Value().L, name.TblName.Value().L, name.ColName.Value().L)
 		// We save a flag for the column in map `modifyColumns`
 		// This flag indicated if assign keyword `DEFAULT` to the column
 		modifyColumns[columnFullName] = IsDefaultExprSameColumn(p.OutputNames()[idx:idx+1], assign.Expr)
@@ -5847,16 +5848,16 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 		if cols := expression.ExtractColumnSet(newExpr); cols.Len() > 0 {
 			b.ctx.GetSessionVars().StmtCtx.ColRefFromUpdatePlan.UnionWith(cols)
 		}
-		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName, Expr: newExpr})
-		dbName := name.DBName.L
+		newList = append(newList, &expression.Assignment{Col: col, ColName: name.ColName.Value(), Expr: newExpr})
+		dbName := name.DBName.Value().L
 		// To solve issue#10028, we need to get database name by the table alias name.
-		if dbNameTmp, ok := tblDbMap[name.TblName.L]; ok {
+		if dbNameTmp, ok := tblDbMap[name.TblName.Value().L]; ok {
 			dbName = dbNameTmp
 		}
 		if dbName == "" {
 			dbName = b.ctx.GetSessionVars().CurrentDB
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.Value().L, "", nil)
 	}
 	return newList, p, allAssignmentsAreConstant, nil
 }
@@ -6147,7 +6148,7 @@ func (p *Delete) cleanTblID2HandleMap(
 // matchingDeletingTable checks whether this column is from the table which is in the deleting list.
 func (*Delete) matchingDeletingTable(names []*resolve.TableNameW, name *types.FieldName) bool {
 	for _, n := range names {
-		if (name.DBName.L == "" || name.DBName.L == n.DBInfo.Name.L) && name.TblName.L == n.Name.L {
+		if (name.DBName.Value().L == "" || name.DBName.Value().L == n.DBInfo.Name.L) && name.TblName.Value().L == n.Name.L {
 			return true
 		}
 	}
@@ -7359,9 +7360,9 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.CommonTableExpression) (base.LogicalPlan, error) {
 	outPutNames := p.OutputNames()
 	for _, name := range outPutNames {
-		name.TblName = def.Name
-		if name.DBName.String() == "" {
-			name.DBName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		name.TblName = unique.Make(def.Name)
+		if name.DBName.Value().String() == "" {
+			name.DBName = unique.Make(pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB))
 		}
 	}
 	if len(def.ColNameList) > 0 {
@@ -7369,7 +7370,7 @@ func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.Commo
 			return nil, dbterror.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
-			outPutNames[i].ColName = n
+			outPutNames[i].ColName = unique.Make(n)
 		}
 	}
 	p.SetOutputNames(outPutNames)

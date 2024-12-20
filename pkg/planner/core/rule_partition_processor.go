@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -478,29 +479,29 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 	for _, colExpr := range ds.TblCols {
 		if colExpr.ID == model.ExtraHandleID {
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
-				TblName:     ds.TableInfo.Name,
-				ColName:     model.ExtraHandleName,
-				OrigColName: model.ExtraHandleName,
+				DBName:      unique.Make(ds.DBName),
+				TblName:     unique.Make(ds.TableInfo.Name),
+				ColName:     unique.Make(model.ExtraHandleName),
+				OrigColName: unique.Make(model.ExtraHandleName),
 			})
 			continue
 		}
 		if colExpr.ID == model.ExtraPhysTblID {
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
-				TblName:     ds.TableInfo.Name,
-				ColName:     model.ExtraPhysTblIDName,
-				OrigColName: model.ExtraPhysTblIDName,
+				DBName:      unique.Make(ds.DBName),
+				TblName:     unique.Make(ds.TableInfo.Name),
+				ColName:     unique.Make(model.ExtraPhysTblIDName),
+				OrigColName: unique.Make(model.ExtraPhysTblIDName),
 			})
 			continue
 		}
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
-				TblName:     ds.TableInfo.Name,
-				ColName:     colInfo.Name,
-				OrigTblName: ds.TableInfo.Name,
-				OrigColName: colInfo.Name,
+				DBName:      unique.Make(ds.DBName),
+				TblName:     unique.Make(ds.TableInfo.Name),
+				ColName:     unique.Make(colInfo.Name),
+				OrigTblName: unique.Make(ds.TableInfo.Name),
+				OrigColName: unique.Make(colInfo.Name),
 			})
 			continue
 		}

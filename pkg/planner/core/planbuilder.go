@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unique"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -1886,9 +1887,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
 			names = append(names, &types.FieldName{
-				ColName: idxCol.Name,
-				TblName: tn.Name,
-				DBName:  tn.Schema,
+				ColName: unique.Make(idxCol.Name),
+				TblName: unique.Make(tn.Name),
+				DBName:  unique.Make(tn.Schema),
 			})
 			schema.Append(&expression.Column{
 				RetType:  &col.FieldType,
@@ -1896,9 +1897,9 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 				ID:       col.ID})
 		}
 		names = append(names, &types.FieldName{
-			ColName: pmodel.NewCIStr("extra_handle"),
-			TblName: tn.Name,
-			DBName:  tn.Schema,
+			ColName: unique.Make(pmodel.NewCIStr("extra_handle")),
+			TblName: unique.Make(tn.Name),
+			DBName:  unique.Make(tn.Schema),
 		})
 		schema.Append(&expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -3355,8 +3356,13 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 	fieldType.SetFlen(size)
 	fieldType.SetFlag(flag)
 	return &expression.Column{
-		RetType: fieldType,
-	}, &types.FieldName{DBName: util2.InformationSchemaName, TblName: pmodel.NewCIStr(tableName), ColName: pmodel.NewCIStr(name)}
+			RetType: fieldType,
+		},
+		&types.FieldName{
+			DBName:  unique.Make(util2.InformationSchemaName),
+			TblName: unique.Make(pmodel.NewCIStr(tableName)),
+			ColName: unique.Make(pmodel.NewCIStr(name)),
+		}
 }
 
 type columnsWithNames struct {
@@ -3522,7 +3528,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	// If we have ShowPredicateExtractor, we do not buildSelection with Pattern
 	if show.Pattern != nil && buildPattern {
 		show.Pattern.Expr = &ast.ColumnNameExpr{
-			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName},
+			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName.Value()},
 		}
 		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
 		if err != nil {
@@ -4079,7 +4085,7 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 
 		p.OnDuplicate = append(p.OnDuplicate, &expression.Assignment{
 			Col:     p.tableSchema.Columns[idx],
-			ColName: p.tableColNames[idx].ColName,
+			ColName: p.tableColNames[idx].ColName.Value(),
 			Expr:    expr,
 			LazyErr: err,
 		})
@@ -4225,9 +4231,9 @@ func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	switch x := node.(type) {
 	case *ast.ColumnNameExpr:
 		fieldName := types.FieldName{
-			DBName:  x.Name.Schema,
-			TblName: x.Name.Table,
-			ColName: x.Name.Name,
+			DBName:  unique.Make(x.Name.Schema),
+			TblName: unique.Make(x.Name.Table),
+			ColName: unique.Make(x.Name.Name),
 		}
 		c.colNameMap[fieldName] = x
 		return node, true
@@ -5147,7 +5153,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			adjustOverlongViewColname(plan.(base.LogicalPlan))
 			v.Cols = make([]pmodel.CIStr, len(schema.Columns))
 			for i, name := range names {
-				v.Cols[i] = name.ColName
+				v.Cols[i] = name.ColName.Value()
 			}
 		}
 		if len(v.Cols) != schema.Len() {
@@ -5724,7 +5730,7 @@ func convert2OutputSchemasAndNames(names []string, ftypes []byte, flags []uint) 
 	outputNames = make([]*types.FieldName, 0, len(names))
 	for i := range names {
 		col := &expression.Column{}
-		outputNames = append(outputNames, &types.FieldName{ColName: pmodel.NewCIStr(names[i])})
+		outputNames = append(outputNames, &types.FieldName{ColName: unique.Make(pmodel.NewCIStr(names[i]))})
 		// User varchar as the default return column type.
 		tp := mysql.TypeVarchar
 		if len(ftypes) != 0 && ftypes[i] != mysql.TypeUnspecified {
@@ -5816,8 +5822,8 @@ func buildChecksumTableSchema() (*expression.Schema, []*types.FieldName) {
 func adjustOverlongViewColname(plan base.LogicalPlan) {
 	outputNames := plan.OutputNames()
 	for i := range outputNames {
-		if outputName := outputNames[i].ColName.L; len(outputName) > mysql.MaxColumnNameLength {
-			outputNames[i].ColName = pmodel.NewCIStr(fmt.Sprintf("name_exp_%d", i+1))
+		if outputName := outputNames[i].ColName.Value().L; len(outputName) > mysql.MaxColumnNameLength {
+			outputNames[i].ColName = unique.Make(pmodel.NewCIStr(fmt.Sprintf("name_exp_%d", i+1)))
 		}
 	}
 }

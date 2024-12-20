@@ -16,6 +16,7 @@ package types
 
 import (
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -24,11 +25,11 @@ import (
 
 // FieldName records the names used for mysql protocol.
 type FieldName struct {
-	OrigTblName model.CIStr
-	OrigColName model.CIStr
-	DBName      model.CIStr
-	TblName     model.CIStr
-	ColName     model.CIStr
+	OrigTblName unique.Handle[model.CIStr]
+	OrigColName unique.Handle[model.CIStr]
+	DBName      unique.Handle[model.CIStr]
+	TblName     unique.Handle[model.CIStr]
+	ColName     unique.Handle[model.CIStr]
 
 	Hidden bool
 
@@ -48,13 +49,13 @@ func (name *FieldName) String() string {
 	if name.Hidden {
 		return emptyName
 	}
-	if name.DBName.L != "" {
-		builder.WriteString(name.DBName.L + ".")
+	if name.DBName.Value().L != "" {
+		builder.WriteString(name.DBName.Value().L + ".")
 	}
-	if name.TblName.L != "" {
-		builder.WriteString(name.TblName.L + ".")
+	if name.TblName.Value().L != "" {
+		builder.WriteString(name.TblName.Value().L + ".")
 	}
-	builder.WriteString(name.ColName.L)
+	builder.WriteString(name.ColName.Value().L)
 	return builder.String()
 }
 
@@ -63,9 +64,16 @@ func (name *FieldName) MemoryUsage() (sum int64) {
 	if name == nil {
 		return
 	}
-
-	sum = name.OrigTblName.MemoryUsage() + name.OrigColName.MemoryUsage() + name.DBName.MemoryUsage() +
-		name.TblName.MemoryUsage() + name.ColName.MemoryUsage() + size.SizeOfBool*3
+	origTblName := name.OrigTblName.Value()
+	origColName := name.OrigColName.Value()
+	dbName := name.DBName.Value()
+	tblName := name.TblName.Value()
+	colName := name.ColName.Value()
+	sum = origTblName.MemoryUsage() +
+		origColName.MemoryUsage() +
+		dbName.MemoryUsage() +
+		tblName.MemoryUsage() +
+		colName.MemoryUsage() + size.SizeOfBool*3
 	return
 }
 
@@ -85,9 +93,9 @@ var EmptyName = &FieldName{Hidden: true}
 // FindAstColName checks whether the given ast.ColumnName is appeared in this slice.
 func (s NameSlice) FindAstColName(name *ast.ColumnName) bool {
 	for _, fieldName := range s {
-		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.L) &&
-			(name.Table.L == "" || name.Table.L == fieldName.TblName.L) &&
-			name.Name.L == fieldName.ColName.L {
+		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.Value().L) &&
+			(name.Table.L == "" || name.Table.L == fieldName.TblName.Value().L) &&
+			name.Name.L == fieldName.ColName.Value().L {
 			return true
 		}
 	}

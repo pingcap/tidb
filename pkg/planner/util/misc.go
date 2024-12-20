@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -272,12 +273,12 @@ func DeriveLimitStats(childProfile *property.StatsInfo, limitCount float64) *pro
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
 func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
-	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
+	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.Value().L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L ||
-				(name.DBName.L != "" && firstName.DBName.L != "" &&
-					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+			if name.TblName.Value().L != firstName.TblName.Value().L ||
+				(name.DBName.Value().L != "" && firstName.DBName.Value().L != "" &&
+					name.DBName.Value().L != firstName.DBName.Value().L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -291,10 +292,10 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 			qbOffset = parentOffset
 		}
 		dbName := firstName.DBName
-		if dbName.L == "" {
-			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+		if dbName.Value().L == "" {
+			dbName = unique.Make(pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB))
 		}
-		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+		return &h.HintedTable{DBName: dbName.Value(), TblName: firstName.TblName.Value(), SelectOffset: qbOffset}
 	}
 	return nil
 }

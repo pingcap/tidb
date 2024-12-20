@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -86,10 +87,10 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	names := make(types.NameSlice, 0, len(cols))
 	for i, col := range cols {
 		names = append(names, &types.FieldName{
-			OrigTblName: meta.Name,
-			OrigColName: col.Name,
-			TblName:     meta.Name,
-			ColName:     col.Name,
+			OrigTblName: unique.Make(meta.Name),
+			OrigColName: unique.Make(col.Name),
+			TblName:     unique.Make(meta.Name),
+			ColName:     unique.Make(col.Name),
 		})
 		exprColumns = append(exprColumns, &expression.Column{
 			RetType:  col.FieldType.Clone(),
