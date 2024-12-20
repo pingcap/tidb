@@ -245,6 +245,9 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 					zap.Int64("total", int64(total)),
 				)
 			})
+			if err != nil {
+				return err
+			}
 			res := ChecksumResult{
 				DBName:    req.dbName,
 				TableName: req.tableName,
@@ -256,7 +259,7 @@ func (c *checksumTableCtx) runChecksum(ctx context.Context, reqs []request) ([]C
 			resultsMu.Lock()
 			results = append(results, res)
 			resultsMu.Unlock()
-			return err
+			return nil
 		})
 	}
 
