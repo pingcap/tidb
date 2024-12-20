@@ -1262,6 +1262,9 @@ func restoreStream(
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
+	restoreCfg := enableTiDBConfig()
+	defer restoreCfg()
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
 			"restoreStream",

@@ -24,7 +24,8 @@ res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
 # start a new cluster
 echo "restart a services"
-restart_services
+stop_services
+start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
 
 # prepare the data
 echo "prepare the data"
