@@ -44,12 +44,34 @@ var (
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
 
 	// Metrics for job_worker.go.
-	WorkerNotifyDDLJob      = "notify_job"
-	WorkerAddDDLJob         = "add_job"
-	WorkerRunDDLJob         = "run_job"
-	WorkerFinishDDLJob      = "finish_job"
-	WorkerWaitSchemaChanged = "wait_schema_changed"
-	DDLWorkerHistogram      *prometheus.HistogramVec
+	WorkerAddDDLJob    = "add_job"
+	DDLWorkerHistogram *prometheus.HistogramVec
+
+	// DDLRunOneStep is the label for the DDL worker operation run_one_step.
+	//
+	// if a DDL job runs successfully, the cost time is mostly in below structure:
+	//
+	// run_job
+	// ├─ step-1
+	// │  ├─ transit_one_step
+	// │  │  ├─ run_one_step
+	// │  │  │  ├─ lock_schema_ver
+	// │  │  │  ├─ incr_schema_ver
+	// │  │  │  ├─ async_notify
+	// │  │  ├─ other common works such as register MDL, commit, etc.
+	// │  ├─ wait_schema_synced
+	// │  ├─ clean_mdl_info
+	// ├─ step-2/3/4 ... similar as above -> done state
+	// ├─ handle_job_done
+	DDLRunOneStep           = "run_one_step"
+	DDLWaitSchemaSynced     = "wait_schema_synced"
+	DDLIncrSchemaVerOpHist  prometheus.Observer
+	DDLLockSchemaVerOpHist  prometheus.Observer
+	DDLRunJobOpHist         prometheus.Observer
+	DDLHandleJobDoneOpHist  prometheus.Observer
+	DDLTransitOneStepOpHist prometheus.Observer
+	DDLLockVerDurationHist  prometheus.Observer
+	DDLCleanMDLInfoHist     prometheus.Observer
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -174,6 +196,16 @@ func InitDDLMetrics() {
 		Help:      "scan rate",
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
+
+	// those metrics are for diagnose performance issues of running multiple DDLs
+	// is a short time window, so we don't need to add label for DDL type.
+	DDLIncrSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("incr_schema_ver", "*", "*")
+	DDLLockSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("lock_schema_ver", "*", "*")
+	DDLRunJobOpHist = DDLWorkerHistogram.WithLabelValues("run_job", "*", "*")
+	DDLHandleJobDoneOpHist = DDLWorkerHistogram.WithLabelValues("handle_job_done", "*", "*")
+	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
+	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
+	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
 }
 
 // Label constants.
