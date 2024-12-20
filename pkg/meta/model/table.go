@@ -22,6 +22,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1351,6 +1352,10 @@ func (t *TTLInfo) Clone() *TTLInfo {
 // Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
 // and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
 func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
 	if len(t.JobInterval) == 0 {
 		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
 		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the

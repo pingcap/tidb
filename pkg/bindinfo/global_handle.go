@@ -47,7 +47,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
+	MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindings Bindings)
@@ -91,7 +91,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool util.SessionPool
 
-	fuzzyBindingCache atomic.Value
+	crossDBBindingCache atomic.Value
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -131,19 +131,19 @@ func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() FuzzyBindingCache {
-	return h.fuzzyBindingCache.Load().(FuzzyBindingCache)
+func (h *globalBindingHandle) getCache() CrossDBBindingCache {
+	return h.crossDBBindingCache.Load().(CrossDBBindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c FuzzyBindingCache) {
+func (h *globalBindingHandle) setCache(c CrossDBBindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
-	h.fuzzyBindingCache.Store(c)
+	h.crossDBBindingCache.Store(c)
 }
 
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
-	h.setCache(newFuzzyBindingCache(h.LoadBindingsFromStorage))
+	h.setCache(newCrossDBBindingCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -159,11 +159,11 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache FuzzyBindingCache
+	var newCache CrossDBBindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newFuzzyBindingCache(h.LoadBindingsFromStorage)
+		newCache = newCrossDBBindingCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
@@ -411,8 +411,8 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	return h.getCache().FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	return h.getCache().MatchingBinding(sctx, noDBDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.

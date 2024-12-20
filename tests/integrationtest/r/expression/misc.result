@@ -1021,3 +1021,5 @@ tab0	CREATE TABLE `tab0` (
   `col1` int DEFAULT NULL,
   `col2` int DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+SELECT TIDB_MVCC_INFO();
+Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_mvcc_info'

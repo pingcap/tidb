@@ -42,7 +42,7 @@ type SessionBindingHandle interface {
 	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
+	MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindings Bindings)
@@ -55,13 +55,13 @@ type SessionBindingHandle interface {
 
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
-	ch FuzzyBindingCache
+	ch CrossDBBindingCache
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
 	sessionHandle := &sessionBindingHandle{}
-	sessionHandle.ch = newFuzzyBindingCache(nil)
+	sessionHandle.ch = newCrossDBBindingCache(nil)
 	return sessionHandle
 }
 
@@ -110,8 +110,8 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	matchedBinding, isMatched = h.ch.FuzzyMatchingBinding(sctx, fuzzyDigest, tableNames)
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+	matchedBinding, isMatched = h.ch.MatchingBinding(sctx, noDBDigest, tableNames)
 	return
 }
 

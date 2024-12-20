@@ -35,7 +35,7 @@ import (
 
 type fault interface {
 	// shouldFault returns whether the session should fault this time.
-	shouldFault() bool
+	shouldFault(sql string) bool
 }
 
 var _ fault = &faultAfterCount{}
@@ -46,13 +46,34 @@ type faultAfterCount struct {
 	currentCount int
 }
 
-func (f *faultAfterCount) shouldFault() bool {
+func newFaultAfterCount(faultCount int) *faultAfterCount {
+	return &faultAfterCount{faultCount: faultCount}
+}
+
+func (f *faultAfterCount) shouldFault(sql string) bool {
 	if f.currentCount >= f.faultCount {
 		return true
 	}
 
 	f.currentCount++
 	return false
+}
+
+type faultWithFilter struct {
+	filter func(string) bool
+	f      fault
+}
+
+func (f *faultWithFilter) shouldFault(sql string) bool {
+	if f.filter == nil || f.filter(sql) {
+		return f.f.shouldFault(sql)
+	}
+
+	return false
+}
+
+func newFaultWithFilter(filter func(string) bool, f fault) *faultWithFilter {
+	return &faultWithFilter{filter: filter, f: f}
 }
 
 // sessionWithFault is a session which will fail to execute SQL after successfully executing several SQLs. It's designed
@@ -97,19 +118,12 @@ func (s *sessionWithFault) ExecuteInternal(ctx context.Context, sql string, args
 }
 
 func (s *sessionWithFault) shouldFault(sql string) bool {
-	if s.fault.Load() == nil {
+	fault := s.fault.Load()
+	if fault == nil {
 		return false
 	}
 
-	// as a fault implementation may have side-effect, we should always call it before checking the SQL.
-	shouldFault := (*s.fault.Load()).shouldFault()
-
-	// skip some local only sql, ref `getSession()` in `session.go`
-	if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
-		return false
-	}
-
-	return shouldFault
+	return (*fault).shouldFault(sql)
 }
 
 type faultSessionPool struct {
@@ -144,6 +158,11 @@ func (f *faultSessionPool) Put(se pools.Resource) {
 }
 
 func (f *faultSessionPool) setFault(ft fault) {
+	if ft == nil {
+		f.fault.Store(nil)
+		return
+	}
+
 	f.fault.Store(&ft)
 }
 
@@ -153,7 +172,14 @@ func TestGetSessionWithFault(t *testing.T) {
 	pool := newFaultSessionPool(dom.SysSessionPool())
 
 	for i := 0; i < 50; i++ {
-		pool.setFault(&faultAfterCount{faultCount: i})
+		pool.setFault(newFaultWithFilter(func(sql string) bool {
+			// skip some local only sql, ref `getSession()` in `session.go`
+			if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
+				return false
+			}
+			return true
+		}, newFaultAfterCount(i)))
+
 		se, err := ttlworker.GetSessionForTest(pool)
 		logutil.BgLogger().Info("get session", zap.Int("error after count", i), zap.Bool("session is nil", se == nil), zap.Bool("error is nil", err == nil))
 		require.True(t, se != nil || err != nil)
