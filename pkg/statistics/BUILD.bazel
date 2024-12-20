@@ -91,6 +91,7 @@ go_test(
         "//pkg/planner/core/resolve",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/analyzehelper",
         "//pkg/testkit/testdata",

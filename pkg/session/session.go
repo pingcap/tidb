@@ -3630,6 +3630,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// init the instance plan cache
 	dom.InitInstancePlanCache()
 
+	// setup workload-based learning worker
+	dom.SetupWorkloadBasedLearningWorker()
+
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
 	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
@@ -4094,7 +4097,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
-		*ast.RenameUserStmt, *ast.CreateBindingStmt, *ast.DropBindingStmt, *ast.SetBindingStmt:
+		*ast.RenameUserStmt, *ast.CreateBindingStmt, *ast.DropBindingStmt, *ast.SetBindingStmt, *ast.BRIEStmt:
 		isCrucial = true
 	}
 

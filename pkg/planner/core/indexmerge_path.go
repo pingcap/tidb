@@ -133,59 +133,54 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	return nil
 }
 
-func generateNormalIndexPartialPaths4DNF(
+func generateNormalIndexPartialPath(
 	ds *logicalop.DataSource,
-	dnfItems []expression.Expression,
-	candidatePaths []*util.AccessPath,
-) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
-	paths = make([]*util.AccessPath, 0, len(dnfItems))
-	usedMap = make([]bool, len(dnfItems))
+	item expression.Expression,
+	candidatePath *util.AccessPath,
+) (paths *util.AccessPath, needSelection bool) {
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
-	for offset, item := range dnfItems {
-		cnfItems := expression.SplitCNFItems(item)
-		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
-		for _, cnfItem := range cnfItems {
-			if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
-				pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
-			} else {
-				needSelection = true
-			}
-		}
-		itemPaths := accessPathsForConds(ds, pushedDownCNFItems, candidatePaths)
-		if len(itemPaths) == 0 {
-			// for this dnf item, we couldn't generate an index merge partial path.
-			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
-			// the entire index merge is not valid anymore.
-			return nil, false, usedMap
-		}
-		partialPath := buildIndexMergePartialPath(itemPaths)
-		if partialPath == nil {
-			// for this dnf item, we couldn't generate an index merge partial path.
-			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
-			// the entire index merge is not valid anymore.
-			return nil, false, usedMap
-		}
-
-		// identify whether all pushedDownCNFItems are fully used.
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(partialPath.TableFilters) > 0 {
-			needSelection = true
-			partialPath.TableFilters = nil
-		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
-			needSelection = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			partialPath.IndexFilters = nil
-		}
-		// Keep this filter as a part of table filters for safety if it has any parameter.
-		if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
+	cnfItems := expression.SplitCNFItems(item)
+	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
+	for _, cnfItem := range cnfItems {
+		if expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cnfItem}, kv.TiKV) {
+			pushedDownCNFItems = append(pushedDownCNFItems, cnfItem)
+		} else {
 			needSelection = true
 		}
-		usedMap[offset] = true
-		paths = append(paths, partialPath)
 	}
-	return paths, needSelection, usedMap
+	itemPaths := accessPathsForConds(ds, pushedDownCNFItems, []*util.AccessPath{candidatePath})
+	if len(itemPaths) != 1 {
+		// for this dnf item, we couldn't generate an index merge partial path.
+		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
+		// the entire index merge is not valid anymore.
+		return nil, false
+	}
+	partialPath := buildIndexMergePartialPath(itemPaths)
+	if partialPath == nil {
+		// for this dnf item, we couldn't generate an index merge partial path.
+		// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
+		// the entire index merge is not valid anymore.
+		return nil, false
+	}
+
+	// identify whether all pushedDownCNFItems are fully used.
+	// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+	if len(partialPath.TableFilters) > 0 {
+		needSelection = true
+		partialPath.TableFilters = nil
+	}
+	// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+	if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, partialPath.IndexFilters, kv.TiKV) {
+		needSelection = true
+		// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+		partialPath.IndexFilters = nil
+	}
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), cnfItems) {
+		needSelection = true
+	}
+
+	return partialPath, needSelection
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
@@ -789,12 +784,12 @@ func generateIndexMergeOnDNF4MVIndex(ds *logicalop.DataSource, normalPathCnt int
 			}
 			dnfFilters := expression.SplitDNFItems(sf) // [(1 member of (a) and b=1), (2 member of (a) and b=2)]
 
-			unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
+			unfinishedIndexMergePath := genUnfinishedPathFromORList(
 				ds,
 				dnfFilters,
 				[]*util.AccessPath{ds.PossibleAccessPaths[idx]},
 			)
-			finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
+			finishedIndexMergePath := handleTopLevelANDList(
 				ds,
 				filters,
 				current,
@@ -909,12 +904,12 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 		}
 		dnfFilters := expression.SplitDNFItems(sf)
 
-		unfinishedIndexMergePath := generateUnfinishedIndexMergePathFromORList(
+		unfinishedIndexMergePath := genUnfinishedPathFromORList(
 			ds,
 			dnfFilters,
 			candidateAccessPaths,
 		)
-		finishedIndexMergePath := handleTopLevelANDListAndGenFinishedPath(
+		finishedIndexMergePath := handleTopLevelANDList(
 			ds,
 			indexMergeConds,
 			current,

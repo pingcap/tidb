@@ -260,6 +260,9 @@ type StatsCache interface {
 
 	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 	UpdateStatsHealthyMetrics()
+
+	// TriggerEvict triggers the cache to evict some items
+	TriggerEvict()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -516,7 +519,7 @@ type StatsGlobal interface {
 // DDL is used to handle ddl events.
 type DDL interface {
 	// HandleDDLEvent handles ddl events.
-	HandleDDLEvent(changeEvent *notifier.SchemaChangeEvent) error
+	HandleDDLEvent(ctx context.Context, sctx sessionctx.Context, changeEvent *notifier.SchemaChangeEvent) error
 	// DDLEventCh returns ddl events channel in handle.
 	DDLEventCh() chan *notifier.SchemaChangeEvent
 }
