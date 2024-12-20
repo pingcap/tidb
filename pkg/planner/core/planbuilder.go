@@ -3859,6 +3859,10 @@ func (b *PlanBuilder) getDefaultValueForInsert(col *table.Column) (*expression.C
 func (b *PlanBuilder) resolveGeneratedColumns(ctx context.Context, columns []*table.Column, onDups map[string]struct{}, mockPlan base.LogicalPlan) (igc InsertGeneratedColumns, err error) {
 	for _, column := range columns {
 		if !column.IsGenerated() {
+			// columns having on-update-now flag should also be considerd.
+			if mysql.HasOnUpdateNowFlag(column.GetFlag()) {
+				onDups[column.Name.L] = struct{}{}
+			}
 			continue
 		}
 		columnName := &ast.ColumnName{Name: column.Name}

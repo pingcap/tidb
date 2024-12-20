@@ -704,7 +704,7 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
 }
 
-func TestInsertDuplicateOnMVIndex(t *testing.T) {
+func TestInsertDuplicateToGeneratedColumns(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -716,4 +716,16 @@ func TestInsertDuplicateOnMVIndex(t *testing.T) {
 	tk.MustExec("insert into tmv set j1 = '[1]'")
 	tk.MustExec("insert ignore into tmv set j1 = '[1]' on duplicate key update j1 = '[2]'")
 	tk.MustExec("admin check table tmv;")
+
+	tk.MustExec(`
+		CREATE TABLE ttime (
+			id int primary key,
+			t1 datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			t2 datetime GENERATED ALWAYS AS (date_add(t1, interval 1 day)) VIRTUAL,
+			t3 datetime GENERATED ALWAYS AS (date_add(t2, interval 1 day)) VIRTUAL,
+			UNIQUE KEY i1 (t1),
+			KEY i2 (t3))`)
+	tk.MustExec(`insert into ttime set id = 1, t1 = "2011-12-20 17:15:50"`)
+	tk.MustExec("insert into ttime set id = 1 on duplicate key update id = 2")
+	tk.MustExec("admin check table ttime;")
 }
