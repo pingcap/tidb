@@ -703,8 +703,7 @@ create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as un
 insert into t values ('[1,2,3]', 1);
 explain format=brief select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
 id	estRows	task	access object	operator info
-IndexMerge	10.00	root		type: union
-├─TableFullScan(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	10.00	root		type: intersection
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi(cast(`j` as unsigned array))	range:[1,1], keep order:false, stats:pseudo
 └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t force index(mvi) where isnull(i) or json_contains(j, '1');

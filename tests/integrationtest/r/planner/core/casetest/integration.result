@@ -1493,7 +1493,7 @@ TableReader	20.00	root	partition:p0,p2	data:Selection
 explain format = 'brief' select * from t where a in (15, 0.12, 3.47);
 id	estRows	task	access object	operator info
 TableReader	10.00	root	partition:p2	data:Selection
-└─Selection	10.00	cop[tikv]		or(eq(planner__core__casetest__integration.t.a, 15), 0)
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__integration.t.a, 15)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a in (0.12, 3.47);
 id	estRows	task	access object	operator info

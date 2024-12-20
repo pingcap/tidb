@@ -139,3 +139,146 @@ select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 
 
 # Test OR simplification end 
 
+# Test for issue https://github.com/pingcap/tidb/issues/58171
+# This includes tests for:
+#    (1) Simplification of nested AND/OR expressions with True/False values
+#    (2) Simplification of boolean expressions in subqueries
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (a1 int, b1 int, c1 int);
+create table t2 (a2 int, b2 int);
+
+INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 9, NULL),  (10, 11, 12);
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
+
+# short-circuit subquery
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
+
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
+;
+
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
+;
+
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
+;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+
+# short-circuit subquery and NO_DECORRELATE
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
+
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ))
+;
+
+# complex short circuit
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) AND (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) OR (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
+
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
+
+EXPLAIN format=brief
+select * from t1 where a1 = 100 and (b1<=200 or a1<=200);
+
+# verify results
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 ;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 ;
+SELECT count(*) FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ));
+
+SELECT 1 FROM t1 WHERE
+(1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
+;
+  
+SELECT 1 FROM t1 WHERE 
+(1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))));
+  
+SELECT 1 FROM t1 WHERE
+(0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))));
+
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+
+
+
+SELECT count(*) FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 1 OR a1 = 1) AND (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 0 OR a1 = 1) OR (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
+SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
+
+# end of test for https://github.com/pingcap/tidb/issues/58171
