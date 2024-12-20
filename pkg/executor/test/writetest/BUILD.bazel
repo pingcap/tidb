@@ -26,7 +26,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util",
-        "//pkg/util/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_opencensus_go//stats/view",
