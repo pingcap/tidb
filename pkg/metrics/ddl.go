@@ -204,12 +204,12 @@ func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) stri
 		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
 	}
 	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("_")
+	stringBuilder.WriteString("-")
 	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("_")
+	stringBuilder.WriteString("-")
 	stringBuilder.WriteString(tableName)
 	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("_")
+		stringBuilder.WriteString("-")
 		stringBuilder.WriteString(colOrIdxNames)
 	}
 	return stringBuilder.String()
