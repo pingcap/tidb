@@ -57,10 +57,11 @@ func TestPublishToTableStore(t *testing.T) {
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
 	changes := make([]*notifier.SchemaChange, 8)
-	result := s.List(ctx, se)
+	result, closeFn := s.List(ctx, se)
 	n, err := result.Read(changes)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
+	closeFn()
 }
 
 func TestBasicPubSub(t *testing.T) {
@@ -207,9 +208,10 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		changes := make([]*notifier.SchemaChange, 8)
-		result := s.List(ctx, se)
+		result, closeFn := s.List(ctx, se)
 		count, err2 := result.Read(changes)
 		require.NoError(t, err2)
+		closeFn()
 		return count == 0
 	}, time.Second, 50*time.Millisecond)
 
