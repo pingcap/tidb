@@ -271,9 +271,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 	}
 }
 
-// initStatsHistogramsSQLGen generates the SQL to load all stats_histograms records.
+// genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
 // We need to read all the records since we need to do initialization of table.ColAndIdxExistenceMap.
-func initStatsHistogramsSQLGen(isPaging bool) string {
+func genInitStatsHistogramsSQL(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -283,7 +283,7 @@ func initStatsHistogramsSQLGen(isPaging bool) string {
 }
 
 func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.StatsCache) error {
-	sql := initStatsHistogramsSQLGen(false)
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -306,7 +306,7 @@ func (h *Handle) initStatsHistogramsLite(ctx context.Context, cache statstypes.S
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache) error {
-	sql := initStatsHistogramsSQLGen(false)
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -340,7 +340,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	}()
 
 	sctx := se.(sessionctx.Context)
-	sql := initStatsHistogramsSQLGen(true)
+	sql := genInitStatsHistogramsSQL(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -419,10 +419,10 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	}
 }
 
-// initStatsTopNSQLGen generates the SQL to load all stats_top_n records.
+// genInitStatsTopNSQLForIndexes generates the SQL to load all stats_top_n records for indexes.
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
-func initStatsTopNSQLGen(isPaging bool) string {
+func genInitStatsTopNSQLForIndexes(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_top_n,tbl) */ HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -432,7 +432,7 @@ func initStatsTopNSQLGen(isPaging bool) string {
 }
 
 func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64) error {
-	sql := initStatsTopNSQLGen(false)
+	sql := genInitStatsTopNSQLForIndexes(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -465,7 +465,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := initStatsTopNSQLGen(true)
+	sql := genInitStatsTopNSQLForIndexes(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -603,10 +603,10 @@ func (*Handle) initStatsBuckets4Chunk(cache statstypes.StatsCache, iter *chunk.I
 	}
 }
 
-// initStatsBucketsSQLGen generates the SQL to load all stats_top_n records.
+// genInitStatsBucketsSQLForIndexes generates the SQL to load all stats_buckets records for indexes.
 // We only need to load the indexes' since we only record the existence of columns in ColAndIdxExistenceMap.
 // The stats of the column is not loaded during the bootstrap process.
-func initStatsBucketsSQLGen(isPaging bool) string {
+func genInitStatsBucketsSQLForIndexes(isPaging bool) string {
 	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl) */ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1"
 	orderSuffix := " order by table_id"
 	if !isPaging {
@@ -625,7 +625,7 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 			return errors.Trace(err)
 		}
 	} else {
-		sql := initStatsBucketsSQLGen(false)
+		sql := genInitStatsBucketsSQLForIndexes(false)
 		rc, err := util.Exec(h.initStatsCtx, sql)
 		if err != nil {
 			return errors.Trace(err)
@@ -664,7 +664,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := initStatsBucketsSQLGen(true)
+	sql := genInitStatsBucketsSQLForIndexes(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
