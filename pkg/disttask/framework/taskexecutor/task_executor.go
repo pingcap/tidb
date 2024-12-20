@@ -257,8 +257,8 @@ func (e *BaseTaskExecutor) Run() {
 				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
 				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
 			// when task switch to next step, task meta might change too, but in
-			// this case step executor will be recreated, so we only notify it
-			// when it's still running the same step.
+			// this case step executor will be recreated with new concurrency and
+			// meta, so we only notify it when it's still running the same step.
 			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
 				e.logger.Info("notify step executor to update task meta")
 				if err2 := e.stepExec.TaskMetaModified(newTask); err2 != nil {
@@ -280,7 +280,7 @@ func (e *BaseTaskExecutor) Run() {
 			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
 
 			if e.stepExec != nil {
-				execute.ModifyResource(e.stepExec, newResource)
+				e.stepExec.SetResource(newResource)
 			}
 		}
 

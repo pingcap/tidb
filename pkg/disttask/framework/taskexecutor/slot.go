@@ -115,9 +115,8 @@ func (sm *slotManager) canAlloc0(task *proto.TaskBase) (canAlloc bool, tasksNeed
 	return false, nil
 }
 
-// exchange is used to exchange the slots of old task with the new task.
-// if there is not enough slots, it will return false. if the new task has the
-// same concurrency as the old, we only update the stored task and return true.
+// exchange is used to exchange the slots of old task with the new one.
+// if there is not enough slots, it will return false.
 func (sm *slotManager) exchange(newTask *proto.TaskBase) bool {
 	sm.Lock()
 	defer sm.Unlock()

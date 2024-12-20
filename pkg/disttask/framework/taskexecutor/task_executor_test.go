@@ -60,6 +60,10 @@ func (w *stepExecWrap) GetResource() *proto.StepResource {
 	return w.StepExecFrameworkInfo.GetResource()
 }
 
+func (w *stepExecWrap) SetResource(resource *proto.StepResource) {
+	w.StepExecFrameworkInfo.SetResource(resource)
+}
+
 type taskExecutorRunEnv struct {
 	ctrl            *gomock.Controller
 	taskTable       *mock.MockTaskTable

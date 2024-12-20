@@ -76,6 +76,8 @@ type StepExecFrameworkInfo interface {
 	GetStep() proto.Step
 	// GetResource returns the expected resource of this step executor.
 	GetResource() *proto.StepResource
+	// SetResource sets the resource of this step executor.
+	SetResource(resource *proto.StepResource)
 }
 
 var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
@@ -85,6 +87,8 @@ type frameworkInfo struct {
 	resource atomic.Pointer[proto.StepResource]
 }
 
+var _ StepExecFrameworkInfo = (*frameworkInfo)(nil)
+
 func (*frameworkInfo) restricted() {}
 
 func (f *frameworkInfo) GetStep() proto.Step {
@@ -93,6 +97,10 @@ func (f *frameworkInfo) GetStep() proto.Step {
 
 func (f *frameworkInfo) GetResource() *proto.StepResource {
 	return f.resource.Load()
+}
+
+func (f *frameworkInfo) SetResource(resource *proto.StepResource) {
+	f.resource.Store(resource)
 }
 
 // SetFrameworkInfo sets the framework info for the StepExecutor.
@@ -114,21 +122,5 @@ func SetFrameworkInfo(exec StepExecutor, step proto.Step, resource *proto.StepRe
 	// will not be found. This is happened in mock generated code.
 	if info.IsValid() && info.CanSet() {
 		info.Set(reflect.ValueOf(toInject))
-	}
-}
-
-// ModifyResource modifies the resource of the StepExecutor.
-func ModifyResource(exec StepExecutor, resource *proto.StepResource) {
-	if exec == nil {
-		return
-	}
-	e := reflect.ValueOf(exec)
-	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {
-		e = e.Elem()
-	}
-	info := e.FieldByName(stepExecFrameworkInfoName)
-	// mock generated code don't have this field.
-	if info.IsValid() {
-		info.Interface().(*frameworkInfo).resource.Store(resource)
 	}
 }

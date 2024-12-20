@@ -191,7 +191,7 @@ func (m *Manager) handleTasksLoop() {
 }
 
 // we handle tasks by their rank which is defined by Task.Compare.
-// Manager will make sure task with high ranking is run before tasks of low ranking,
+// Manager will make sure tasks with high ranking are run before tasks with low ranking,
 // when there are not enough slots, we might preempt the tasks with low ranking,
 // i.e. to cancel their task executor directly, so it's possible some subtask of
 // those tasks are half done, they have to rerun when the task is scheduled again.
