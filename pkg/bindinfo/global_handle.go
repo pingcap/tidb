@@ -131,11 +131,11 @@ func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() CrossDBBindingCache {
-	return h.crossDBBindingCache.Load().(CrossDBBindingCache)
+func (h *globalBindingHandle) getCache() BindingCache {
+	return h.crossDBBindingCache.Load().(BindingCache)
 }
 
-func (h *globalBindingHandle) setCache(c CrossDBBindingCache) {
+func (h *globalBindingHandle) setCache(c BindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
 	h.crossDBBindingCache.Store(c)
 }
@@ -143,7 +143,7 @@ func (h *globalBindingHandle) setCache(c CrossDBBindingCache) {
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
-	h.setCache(newCrossDBBindingCache(h.LoadBindingsFromStorage))
+	h.setCache(newBindCache(h.LoadBindingsFromStorage))
 	variable.RegisterStatistics(h)
 }
 
@@ -159,11 +159,11 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache CrossDBBindingCache
+	var newCache BindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newCrossDBBindingCache(h.LoadBindingsFromStorage)
+		newCache = newBindCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
