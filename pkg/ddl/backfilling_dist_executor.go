@@ -58,7 +58,7 @@ type BackfillSubTaskMeta struct {
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
 	// TS is used to make sure subtasks are idempotent.
-	// Used by by both local sort and global sort.
+	// TODO(tangenta): support local sort.
 	TS uint64 `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
 	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
@@ -140,7 +140,7 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 
 func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
-	// TODO(tangenta): support checkpoint manager later.
+	// TODO(tangenta): support checkpoint manager that interact with subtask table.
 	ctx := s.BaseTaskExecutor.Ctx()
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, s.d.store, job).
 		WithImportDistributedLock(s.d.etcdCli).

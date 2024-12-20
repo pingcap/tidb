@@ -178,13 +178,7 @@ func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) er
 	bc.timeOfLastFlush.Store(time.Now())
 
 	if !shouldImport {
-		if bc.checkpointMgr != nil {
-			err := bc.checkpointMgr.AdvanceWatermark(false)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
+		return bc.AdvanceWatermark(false)
 	}
 
 	release, err := bc.tryAcquireDistLock()
@@ -199,13 +193,7 @@ func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) er
 	if err != nil {
 		return err
 	}
-	if bc.checkpointMgr != nil {
-		err := bc.checkpointMgr.AdvanceWatermark(true)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	return bc.AdvanceWatermark(true)
 }
 
 // Flush implements FlushController.
@@ -234,27 +222,18 @@ func (bc *litBackendCtx) Flush(ctx context.Context) error {
 		return err
 	}
 
-	if bc.checkpointMgr != nil {
-		// Try to advance watermark even if there is an error.
-		err1 := bc.checkpointMgr.AdvanceWatermark(true)
-		if err1 != nil {
-			return err1
-		}
-	}
-
-	return nil
+	return bc.AdvanceWatermark(true)
 }
 
 func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
 	for _, ei := range bc.engines {
 		ei.flushLock.Lock()
-		//nolint: all_revive,revive
-		defer ei.flushLock.Unlock()
-
 		if err := ei.Flush(); err != nil {
 			logutil.Logger(ctx).Error("flush error", zap.Error(err))
+			ei.flushLock.Unlock()
 			return err
 		}
+		ei.flushLock.Unlock()
 	}
 	return nil
 }

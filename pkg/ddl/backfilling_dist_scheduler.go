@@ -225,13 +225,14 @@ func generatePartitionPlan(
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
-		ingestTS, err := allocNewTS(ctx, store)
+		// It should be different for each subtask to determine if there are duplicate entries.
+		importTS, err := allocNewTS(ctx, store)
 		if err != nil {
 			return nil, err
 		}
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
-			TS:              ingestTS,
+			TS:              importTS,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -306,7 +307,8 @@ func generateNonPartitionPlan(
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			ingestTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
+			// It should be different for each subtask to determine if there are duplicate entries.
+			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
 			if err != nil {
 				return true, nil
 			}
@@ -318,7 +320,7 @@ func generateNonPartitionPlan(
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
 				RowEnd:   batch[len(batch)-1].EndKey(),
-				TS:       ingestTS,
+				TS:       importTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -446,13 +448,13 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	ingestTS, err := allocNewTS(ctx, store)
+	importTS, err := allocNewTS(ctx, store)
 	if err != nil {
 		return nil, err
 	}
 	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
 		i := val.(int)
-		ingestTS = uint64(i)
+		importTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
@@ -500,7 +502,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			StatFiles:      statFiles,
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
-			TS:             ingestTS,
+			TS:             importTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
