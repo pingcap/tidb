@@ -82,6 +82,9 @@ func newDigestBiMap() digestBiMap {
 	}
 }
 
+// Add adds a pair of noDBDigest and sqlDigest.
+// noDBDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> noDBDigest.
+// sqlDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
 func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -89,6 +92,7 @@ func (b *digestBiMapImpl) Add(noDBDigest, sqlDigest string) {
 	b.sqlDigest2noDBDigest[sqlDigest] = noDBDigest
 }
 
+// Del deletes the pair of noDBDigest and sqlDigest.
 func (b *digestBiMapImpl) Del(sqlDigest string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -112,18 +116,21 @@ func (b *digestBiMapImpl) Del(sqlDigest string) {
 	delete(b.sqlDigest2noDBDigest, sqlDigest)
 }
 
+// NoDBDigest2SQLDigest converts noDBDigest to sqlDigest.
 func (b *digestBiMapImpl) NoDBDigest2SQLDigest(noDBDigest string) []string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.noDBDigest2SQLDigest[noDBDigest]
 }
 
+// SQLDigest2NoDBDigest converts sqlDigest to noDBDigest.
 func (b *digestBiMapImpl) SQLDigest2NoDBDigest(sqlDigest string) string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.sqlDigest2noDBDigest[sqlDigest]
 }
 
+// Copy copies this digestBiMap.
 func (b *digestBiMapImpl) Copy() digestBiMap {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
