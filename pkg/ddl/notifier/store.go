@@ -39,8 +39,8 @@ type Store interface {
 	) error
 	DeleteAndCommit(ctx context.Context, se *sess.Session, ddlJobID int64, multiSchemaChangeID int) error
 	// List will start a transaction of given session and read all schema changes
-	// through a ListResult. The ownership of session is occupied Store until CloseFn
-	// is called.
+	// through a ListResult. The ownership of session is occupied by Store until
+	// CloseFn is called.
 	List(ctx context.Context, se *sess.Session) (ListResult, CloseFn)
 }
 
