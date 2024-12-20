@@ -23,6 +23,7 @@
 package expression
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
@@ -38,6 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -651,8 +654,32 @@ func (c *castAsJSONFunctionClass) getFunction(ctx BuildContext, args []Expressio
 		sig = &builtinCastJSONAsJSONSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_CastJsonAsJson)
 	case types.ETString:
+		// to be compatible with MySQL, we'll need to check whether a constant string is a valid JSON value.
+		// it affects the behavior of `explain ...` statement.
+		if args[0].ConstLevel() == ConstStrict {
+			argType := args[0].GetType(ctx.GetEvalCtx())
+			if !types.IsBinaryStr(argType) && mysql.HasParseToJSONFlag(c.tp.GetFlag()) {
+				s, isNull, err := args[0].EvalString(ctx.GetEvalCtx(), chunk.Row{})
+				if err != nil {
+					return nil, err
+				}
+				if !isNull {
+					if len(s) == 0 {
+						err = types.ErrInvalidJSONText.GenWithStackByArgs("The document is empty")
+						return nil, err
+					}
+					data := hack.Slice(s)
+					if !json.Valid(data) {
+						// The error is different with MySQL. MySQL returns `types.ErrInvalidJSONTextInParam`, but we don't have enough
+						// information to generate `ErrInvalidJSONTextInParam` here.
+						err = types.ErrInvalidJSONText.GenWithStackByArgs("The document root must not be followed by other values.")
+						return nil, err
+					}
+				}
+			}
+		}
+
 		sig = &builtinCastStringAsJSONSig{bf}
-		sig.getRetTp().AddFlag(mysql.ParseToJSONFlag)
 		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsJson)
 	case types.ETVectorFloat32:
 		sig = &builtinCastVectorFloat32AsUnsupportedSig{bf}
@@ -2477,6 +2504,7 @@ func BuildCastCollationFunction(ctx BuildContext, expr Expression, ec *ExprColla
 func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression) {
 	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
 	terror.Log(err)
+	intest.AssertNoError(err)
 	return
 }
 
@@ -2723,14 +2751,17 @@ func WrapWithCastAsDuration(ctx BuildContext, expr Expression) Expression {
 	return BuildCastFunction(ctx, expr, tp)
 }
 
-// WrapWithCastAsJSON wraps `expr` with `cast` if the return type of expr is not
+// WrapWithCastAsJSONWithCheck wraps `expr` with `cast` if the return type of expr is not
 // type json, otherwise, returns `expr` directly.
-func WrapWithCastAsJSON(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsJSONWithCheck(ctx BuildContext, expr Expression, shouldParseJSON bool) (Expression, error) {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeJSON && !mysql.HasParseToJSONFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag()) {
-		return expr
+		return expr, nil
 	}
 	tp := types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(12582912).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
-	return BuildCastFunction(ctx, expr, tp)
+	if shouldParseJSON {
+		tp.AddFlag(mysql.ParseToJSONFlag)
+	}
+	return BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
 }
 
 // WrapWithCastAsVectorFloat32 wraps `expr` with `cast` if the return type of expr is not

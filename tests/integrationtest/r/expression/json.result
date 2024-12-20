@@ -817,3 +817,71 @@ set @a=1;
 execute stmt using @a, @a;
 json_object(?, ?)
 {"1": 1}
+drop table if exists t;
+create table t (j json);
+explain select * from t where json_contains(j->"$[*]", "[4,");
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT j <= ']' FROM t;
+j <= ']'
+SELECT j < ']' FROM t;
+j < ']'
+SELECT j >= ']' FROM t;
+j >= ']'
+SELECT j > ']' FROM t;
+j > ']'
+SELECT j = ']' FROM t;
+j = ']'
+SELECT j <> ']' FROM t;
+j <> ']'
+SELECT j <=> ']' FROM t;
+j <=> ']'
+SELECT JSON_SET('[', '$.a', '{}');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_SET('{}', '$.a', '{a');
+JSON_SET('{}', '$.a', '{a')
+{"a": "{a"}
+SELECT JSON_INSERT('[', '$.a', '{}');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_INSERT('{}', '$.a', '{a');
+JSON_INSERT('{}', '$.a', '{a')
+{"a": "{a"}
+SELECT JSON_REPLACE('[', '$.a', '{}');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_REPLACE('{}', '$.a', '{a');
+JSON_REPLACE('{}', '$.a', '{a')
+{}
+SELECT JSON_ARRAY_APPEND('[', '$.a', '{}');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_ARRAY_APPEND('{}', '$.a', '{a');
+JSON_ARRAY_APPEND('{}', '$.a', '{a')
+{}
+SELECT JSON_ARRAY_INSERT('[', '$.a', '{}');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_ARRAY_INSERT('{"a": []}', '$.a[5]', '{a');
+JSON_ARRAY_INSERT('{"a": []}', '$.a[5]', '{a')
+{"a": ["{a"]}
+SELECT JSON_OBJECT('key', ']');
+JSON_OBJECT('key', ']')
+{"key": "]"}
+SELECT JSON_OBJECT('key', ']', 'key2', '[');
+JSON_OBJECT('key', ']', 'key2', '[')
+{"key": "]", "key2": "["}
+SELECT JSON_ARRAY(']', 'a');
+JSON_ARRAY(']', 'a')
+["]", "a"]
+SELECT '{' member of ('["{"]');
+'{' member of ('["{"]')
+1
+SELECT '{}' member of ('{');
+Error 3140 (22032): Invalid JSON text: The document root must not be followed by other values.
+SELECT JSON_QUOTE('{');
+JSON_QUOTE('{')
+"{"
+SELECT JSON_UNQUOTE('{');
+JSON_UNQUOTE('{')
+{
+SELECT cast('{}' as JSON) in ('{}', '[', '}');
+cast('{}' as JSON) in ('{}', '[', '}')
+0
+SELECT '{' in (json_array(1,2,3), j) FROM t;
+'{' in (json_array(1,2,3), j)

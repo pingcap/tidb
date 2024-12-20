@@ -98,9 +98,6 @@ func (c *inFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig 
 	if err != nil {
 		return nil, err
 	}
-	for i := 1; i < len(args); i++ {
-		DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-	}
 	bf.tp.SetFlen(1)
 	switch args[0].GetType(ctx.GetEvalCtx()).EvalType() {
 	case types.ETInt:

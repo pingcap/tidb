@@ -110,7 +110,14 @@ func TestJSONUnquote(t *testing.T) {
 		var d types.Datum
 		d.SetString(tt.Input, mysql.DefaultCollationName)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{d}))
-		require.NoError(t, err)
+		if tt.Error != nil {
+			if err != nil {
+				require.Contains(t, err.Error(), "The document root must not be followed by other values")
+				continue
+			}
+		} else {
+			require.NoError(t, err)
+		}
 		d, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.Error == nil {
 			require.Equal(t, tt.Result, d.GetString())
@@ -366,7 +373,12 @@ func TestJSONRemove(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.Input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.Success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 
 		if tt.Success {
@@ -413,7 +425,14 @@ func TestJSONMemberOf(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err, tt.input)
+		if tt.err != nil {
+			if err != nil {
+				require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+				continue
+			}
+		} else {
+			require.NoError(t, err, tt.input)
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err, tt.input)
@@ -479,7 +498,14 @@ func TestJSONContains(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.err != nil {
+			if err != nil {
+				require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+				continue
+			}
+		} else {
+			require.NoError(t, err)
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
@@ -558,7 +584,14 @@ func TestJSONOverlaps(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err, tt.input)
+		if tt.err != nil {
+			if err != nil {
+				require.True(t, tt.err.(*terror.Error).Equal(err), tt.input)
+				continue
+			}
+		} else {
+			require.NoError(t, err, tt.input)
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err, tt.input)
@@ -617,7 +650,12 @@ func TestJSONContainsPath(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -818,7 +856,12 @@ func TestJSONDepth(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -967,7 +1010,12 @@ func TestJSONSearch(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -1119,7 +1167,11 @@ func TestJSONStorageFree(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		} else if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -1162,7 +1214,12 @@ func TestJSONStorageSize(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -1236,7 +1293,12 @@ func TestJSONPretty(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)
@@ -1326,7 +1388,12 @@ func TestJSONMergePatch(t *testing.T) {
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
-		require.NoError(t, err)
+		if tt.success {
+			require.NoError(t, err)
+		}
+		if err != nil {
+			continue
+		}
 		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.success {
 			require.NoError(t, err)

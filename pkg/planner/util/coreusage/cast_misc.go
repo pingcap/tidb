@@ -22,10 +22,15 @@ import (
 // WrapCastForAggFuncs wraps the args of an aggregate function with a cast function.
 // If the mode is FinalMode or Partial2Mode, we do not need to wrap cast upon the args,
 // since the types of the args are already the expected.
-func WrapCastForAggFuncs(sctx expression.BuildContext, aggFuncs []*aggregation.AggFuncDesc) {
+func WrapCastForAggFuncs(sctx expression.BuildContext, aggFuncs []*aggregation.AggFuncDesc) error {
 	for i := range aggFuncs {
 		if aggFuncs[i].Mode != aggregation.FinalMode && aggFuncs[i].Mode != aggregation.Partial2Mode {
-			aggFuncs[i].WrapCastForAggArgs(sctx)
+			err := aggFuncs[i].WrapCastForAggArgs(sctx)
+			if err != nil {
+				return err
+			}
 		}
 	}
+
+	return nil
 }

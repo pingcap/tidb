@@ -210,7 +210,10 @@ func PBExprToAggFuncDesc(ctx expression.BuildContext, aggFunc *tipb.Expr, fieldT
 		Args:  args,
 		RetTp: expression.FieldTypeFromPB(aggFunc.FieldType),
 	}
-	base.WrapCastForAggArgs(ctx)
+	err = base.WrapCastForAggArgs(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &AggFuncDesc{
 		baseFuncDesc: base,
 		Mode:         PBAggFuncModeToAggFuncMode(aggFunc.AggFuncMode),

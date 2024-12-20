@@ -6546,7 +6546,10 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p base.LogicalPl
 				return nil, nil, plannererrors.ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.Name))
 			}
 			preArgs += len(windowFunc.Args)
-			desc.WrapCastForAggArgs(b.ctx.GetExprCtx())
+			err = desc.WrapCastForAggArgs(b.ctx.GetExprCtx())
+			if err != nil {
+				return nil, nil, err
+			}
 			descs = append(descs, desc)
 			windowMap[windowFunc] = schema.Len()
 			schema.Append(&expression.Column{

@@ -1993,12 +1993,6 @@ func (c *compareFunctionClass) generateCmpSigs(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	if tp == types.ETJson {
-		// In compare, if we cast string to JSON, we shouldn't parse it.
-		for i := range args {
-			DisableParseJSONFlag4Expr(ctx.GetEvalCtx(), args[i])
-		}
-	}
 	bf.tp.SetFlen(1)
 	switch tp {
 	case types.ETInt:

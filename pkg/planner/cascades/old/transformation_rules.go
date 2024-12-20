@@ -2348,7 +2348,10 @@ func (*InjectProjectionBelowAgg) OnTransform(old *memo.ExprIter) (newExprs []*me
 	for _, aggFunc := range agg.AggFuncs {
 		copyFunc := aggFunc.Clone()
 		// WrapCastForAggArgs will modify AggFunc, so we should clone AggFunc.
-		copyFunc.WrapCastForAggArgs(agg.SCtx().GetExprCtx())
+		err = copyFunc.WrapCastForAggArgs(agg.SCtx().GetExprCtx())
+		if err != nil {
+			return nil, false, false, err
+		}
 		copyFuncs = append(copyFuncs, copyFunc)
 		for _, arg := range copyFunc.Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)

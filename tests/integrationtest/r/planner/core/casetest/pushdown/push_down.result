@@ -75,10 +75,10 @@ id	estRows	task	access object	operator info
 Projection	10000.00	root		json_depth(planner__core__casetest__pushdown__push_down.t2.a)->Column#3
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-desc format = 'brief' select json_contains(a, '$.key0')from t2;
+desc format = 'brief' select json_contains(a, '{}')from t2;
 id	estRows	task	access object	operator info
 TableReader	10000.00	root		data:Projection
-└─Projection	10000.00	cop[tikv]		json_contains(planner__core__casetest__pushdown__push_down.t2.a, cast($.key0, json BINARY))->Column#3
+└─Projection	10000.00	cop[tikv]		json_contains(planner__core__casetest__pushdown__push_down.t2.a, cast({}, json BINARY))->Column#3
   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 desc format = 'brief' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
 id	estRows	task	access object	operator info
