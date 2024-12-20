@@ -1565,7 +1565,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminFlushBindings:
 		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		return nil, errors.Errorf("Auto Capture is not supported")
 	case ast.AdminEvolveBindings:
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
@@ -3666,7 +3666,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3680,7 +3680,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
