@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -358,10 +357,10 @@ func (bc *litBackendCtx) Close() {
 
 // CheckpointOperator contains the operations to checkpoints.
 type CheckpointOperator interface {
-	NextStartKey() kv.Key
+	NextStartKey() tikv.Key
 	TotalKeyCount() int
 
-	AddTask(id int, endKey kv.Key)
+	AddTask(id int, endKey tikv.Key)
 	UpdateTask(id int, count int, done bool)
 	FinishTask(id int, count int)
 
@@ -371,7 +370,7 @@ type CheckpointOperator interface {
 }
 
 // NextStartKey implements CheckpointOperator interface.
-func (bc *litBackendCtx) NextStartKey() kv.Key {
+func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.NextKeyToProcess()
 	}
@@ -387,7 +386,7 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 }
 
 // AddTask implements CheckpointOperator interface.
-func (bc *litBackendCtx) AddTask(id int, endKey kv.Key) {
+func (bc *litBackendCtx) AddTask(id int, endKey tikv.Key) {
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Register(id, endKey)
 	}

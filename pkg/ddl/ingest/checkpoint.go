@@ -173,6 +173,8 @@ func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	return nil
 }
 
+// TotalKeyCount returns the key counts that have processed.
+// It contains the keys that is not sync to checkpoint.
 func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
