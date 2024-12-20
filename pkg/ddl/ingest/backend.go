@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/kv"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -62,7 +63,7 @@ type BackendCtx interface {
 
 	FlushController
 
-	GetCheckpointManager() *CheckpointManager
+	CheckpointOperator
 
 	// GetLocalBackend exposes local.Backend. It's only used in global sort based
 	// ingest.
@@ -161,9 +162,7 @@ func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) TryFlush(ctx context.Context, taskID int, count int) error {
-	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateWrittenKeys(taskID, count)
-	}
+	bc.FinishTask(taskID, count)
 	shouldFlush, shouldImport := bc.checkFlush(FlushModeAuto)
 	if !shouldFlush {
 		return nil
@@ -298,11 +297,8 @@ func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInf
 		zap.String("usage info", LitDiskRoot.UsageInfo()))
 
 	closedEngine := backend.NewClosedEngine(bc.backend, logger, ei.uuid, 0)
-	var ingestTS uint64
-	if bc.checkpointMgr != nil {
-		ingestTS = bc.checkpointMgr.GetTS()
-		logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
-	}
+	ingestTS := bc.GetImportTS()
+	logger.Info("set ingest ts before import", zap.Int64("jobID", bc.jobID), zap.Uint64("ts", ingestTS))
 	err := bc.backend.SetTSBeforeImportEngine(ctx, ei.uuid, ingestTS)
 	if err != nil {
 		logger.Error("set TS failed", zap.Int64("index ID", ei.indexID))
@@ -365,11 +361,6 @@ func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
 	return bc.backend
 }
 
-// GetCheckpointManager returns the checkpoint manager.
-func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
-	return bc.checkpointMgr
-}
-
 // GetDiskUsage returns current disk usage of underlying backend.
 func (bc *litBackendCtx) GetDiskUsage() uint64 {
 	_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
@@ -384,4 +375,71 @@ func (bc *litBackendCtx) Close() {
 	bc.backend.Close()
 	LitDiskRoot.Remove(bc.jobID)
 	BackendCounterForTest.Dec()
+}
+
+// CheckpointOperator contains the operations to checkpoints.
+type CheckpointOperator interface {
+	NextStartKey() kv.Key
+	TotalKeyCount() int
+
+	AddTask(id int, endKey kv.Key)
+	UpdateTask(id int, count int, done bool)
+	FinishTask(id int, count int)
+
+	AdvanceWatermark(imported bool) error
+
+	GetImportTS() uint64
+}
+
+// NextStartKey implements CheckpointOperator interface.
+func (bc *litBackendCtx) NextStartKey() kv.Key {
+	if bc.checkpointMgr != nil {
+		return bc.checkpointMgr.NextKeyToProcess()
+	}
+	return nil
+}
+
+// TotalKeyCount implements CheckpointOperator interface.
+func (bc *litBackendCtx) TotalKeyCount() int {
+	if bc.checkpointMgr != nil {
+		return bc.checkpointMgr.TotalKeyCount()
+	}
+	return 0
+}
+
+// AddTask implements CheckpointOperator interface.
+func (bc *litBackendCtx) AddTask(id int, endKey kv.Key) {
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.Register(id, endKey)
+	}
+}
+
+// UpdateTask implements CheckpointOperator interface.
+func (bc *litBackendCtx) UpdateTask(id int, count int, done bool) {
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
+	}
+}
+
+// FinishTask implements CheckpointOperator interface.
+func (bc *litBackendCtx) FinishTask(id int, count int) {
+	if bc.checkpointMgr != nil {
+		bc.checkpointMgr.UpdateWrittenKeys(id, count)
+	}
+}
+
+// GetImportTS implements CheckpointOperator interface.
+func (bc *litBackendCtx) GetImportTS() uint64 {
+	if bc.checkpointMgr != nil {
+		return bc.checkpointMgr.GetTS()
+	}
+	return 0
+}
+
+// AdvanceWatermark implements CheckpointOperator interface.
+func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+	if bc.checkpointMgr != nil {
+		return bc.checkpointMgr.AdvanceWatermark(imported)
+	}
+	return nil
 }

@@ -54,11 +54,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 	}
 
 	mgr := backend.MakeEngineManager(bc.backend)
-	ts := uint64(0)
-	if c := bc.GetCheckpointManager(); c != nil {
-		ts = c.GetTS()
-	}
-	cfg := generateLocalEngineConfig(ts)
+	cfg := generateLocalEngineConfig(bc.GetImportTS())
 
 	openedEngines := make(map[int64]*engineInfo, numIdx)
 

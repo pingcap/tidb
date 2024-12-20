@@ -98,7 +98,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		src := testutil.NewOperatorTestSource(opTasks...)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, nil, 0, nil)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, srcChkPool, 3, 0, nil, nil)
 		sink := testutil.NewOperatorTestSink[ddl.IndexRecordChunk]()
 
 		operator.Compose[ddl.TableScanTask](src, scanOp)
@@ -151,7 +151,7 @@ func TestBackfillOperators(t *testing.T) {
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
 			opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta, nil, &ddl.EmptyRowCntListener{})
+			srcChkPool, 3, reorgMeta, &ddl.EmptyRowCntListener{})
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -383,7 +383,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 	{
 		ctx := context.Background()
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
-		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, nil, 0, nil)
+		scanOp := ddl.NewTableScanOperator(opCtx, sessPool, copCtx, nil, 2, 0, nil, nil)
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
@@ -406,7 +406,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index},
 			[]ingest.Engine{mockEngine}, nil, 2, nil,
-			nil, &ddl.EmptyRowCntListener{})
+			&ddl.EmptyRowCntListener{})
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))

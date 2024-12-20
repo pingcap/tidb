@@ -16,6 +16,7 @@ package tables
 
 import (
 	"context"
+	"encoding/hex"
 	"sync"
 	"time"
 
@@ -29,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 // index is the data structure for index data in the KV store.
@@ -207,6 +210,14 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				key, tempKey = tempKey, nil
 				keyIsTempIdxKey = true
 			}
+		}
+
+		if c.idxInfo.Name.L == "idx" {
+			logutil.BgLogger().Info("create index key",
+				zap.String("key", hex.EncodeToString(key)),
+				zap.String("tempKey", hex.EncodeToString(tempKey)),
+				zap.String("keyVer", string(keyVer)),
+			)
 		}
 
 		if txn.IsPipelined() {

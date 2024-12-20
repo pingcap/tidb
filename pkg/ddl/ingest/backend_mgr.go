@@ -84,13 +84,6 @@ var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
 func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
-	var mockBackend BackendCtx
-	failpoint.InjectCall("mockNewBackendContext", b.job, &mockBackend)
-	if mockBackend != nil {
-		BackendCounterForTest.Inc()
-		return mockBackend, nil
-	}
-
 	ctx, store, job := b.ctx, b.store, b.job
 	sortPath, err := GenIngestTempDataDir()
 	if err != nil {
@@ -118,13 +111,6 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 
 	//nolint: forcetypeassert
 	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
-	discovery := pdCli.GetServiceDiscovery()
-	bd, err := createLocalBackend(ctx, cfg, discovery)
-	if err != nil {
-		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
-		return nil, err
-	}
-
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
 		localStoreDir := filepath.Join(sortPath, encodeBackendTag(job.ID))
@@ -135,6 +121,20 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 				zap.Error(err))
 			return nil, err
 		}
+	}
+
+	var mockBackend BackendCtx
+	failpoint.InjectCall("mockNewBackendContext", b.job, cpMgr, &mockBackend)
+	if mockBackend != nil {
+		BackendCounterForTest.Inc()
+		return mockBackend, nil
+	}
+
+	discovery := pdCli.GetServiceDiscovery()
+	bd, err := createLocalBackend(ctx, cfg, discovery)
+	if err != nil {
+		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", job.ID), zap.Error(err))
+		return nil, err
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,

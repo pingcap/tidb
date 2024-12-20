@@ -39,6 +39,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/sessiontxn",
         "//pkg/table",
         "//pkg/util",
         "//pkg/util/dbterror",

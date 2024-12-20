@@ -29,17 +29,19 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
 )
 
 // NewMockBackendCtx creates a MockBackendCtx.
-func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context) BackendCtx {
+func NewMockBackendCtx(job *model.Job, sessCtx sessionctx.Context, cpMgr *CheckpointManager) BackendCtx {
 	logutil.DDLIngestLogger().Info("mock backend mgr register", zap.Int64("jobID", job.ID))
 	mockCtx := &MockBackendCtx{
-		mu:      sync.Mutex{},
-		sessCtx: sessCtx,
-		jobID:   job.ID,
+		mu:            sync.Mutex{},
+		sessCtx:       sessCtx,
+		jobID:         job.ID,
+		checkpointMgr: cpMgr,
 	}
 	return mockCtx
 }
@@ -59,12 +61,19 @@ func (m *MockBackendCtx) Register(indexIDs []int64, _ []bool, _ table.Table) ([]
 	for range indexIDs {
 		ret = append(ret, &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu})
 	}
+	err := sessiontxn.NewTxn(context.Background(), m.sessCtx)
+	if err != nil {
+		return nil, err
+	}
+	m.sessCtx.GetSessionVars().SetInTxn(true)
 	return ret, nil
 }
 
 // FinishAndUnregisterEngines implements BackendCtx interface.
-func (*MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
-	logutil.DDLIngestLogger().Info("mock backend ctx unregister")
+func (m *MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
+	m.sessCtx.StmtCommit(context.Background())
+	err := m.sessCtx.CommitTxn(context.Background())
+	logutil.DDLIngestLogger().Info("mock backend ctx unregister", zap.Error(err))
 	return nil
 }
 
@@ -75,17 +84,71 @@ func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) 
 }
 
 // TryFlush implements BackendCtx.TryFlush interface.
-func (*MockBackendCtx) TryFlush(_ context.Context, _, _ int) error {
+func (m *MockBackendCtx) TryFlush(_ context.Context, taskID, cnt int) error {
+	if m.checkpointMgr != nil {
+		m.checkpointMgr.UpdateWrittenKeys(taskID, cnt)
+	}
 	return nil
 }
 
 // Flush implements BackendCtx.Flush interface.
-func (*MockBackendCtx) Flush(_ context.Context) error {
+func (m *MockBackendCtx) Flush(_ context.Context) error {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.AdvanceWatermark(true)
+	}
 	return nil
 }
 
-// GetCheckpointManager returns the checkpoint manager.
-func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
+// NextStartKey implements CheckpointOperator interface.
+func (m *MockBackendCtx) NextStartKey() kv.Key {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.NextKeyToProcess()
+	}
+	return nil
+}
+
+// TotalKeyCount implements CheckpointOperator interface.
+func (m *MockBackendCtx) TotalKeyCount() int {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.TotalKeyCount()
+	}
+	return 0
+}
+
+// AddTask implements CheckpointOperator interface.
+func (m *MockBackendCtx) AddTask(id int, endKey kv.Key) {
+	if m.checkpointMgr != nil {
+		m.checkpointMgr.Register(id, endKey)
+	}
+}
+
+// UpdateTask implements CheckpointOperator interface.
+func (m *MockBackendCtx) UpdateTask(id int, count int, done bool) {
+	if m.checkpointMgr != nil {
+		m.checkpointMgr.UpdateTotalKeys(id, count, done)
+	}
+}
+
+// FinishTask implements CheckpointOperator interface.
+func (m *MockBackendCtx) FinishTask(id int, count int) {
+	if m.checkpointMgr != nil {
+		m.checkpointMgr.UpdateWrittenKeys(id, count)
+	}
+}
+
+// GetImportTS implements CheckpointOperator interface.
+func (m *MockBackendCtx) GetImportTS() uint64 {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.GetTS()
+	}
+	return 0
+}
+
+// AdvanceWatermark implements CheckpointOperator interface.
+func (m *MockBackendCtx) AdvanceWatermark(imported bool) error {
+	if m.checkpointMgr != nil {
+		return m.checkpointMgr.AdvanceWatermark(imported)
+	}
 	return nil
 }
 
@@ -98,9 +161,7 @@ func (m *MockBackendCtx) GetLocalBackend() *local.Backend {
 
 // Close implements BackendCtx.
 func (m *MockBackendCtx) Close() {
-	m.sessCtx.StmtCommit(context.Background())
-	err := m.sessCtx.CommitTxn(context.Background())
-	logutil.DDLIngestLogger().Info("mock backend context close", zap.Int64("jobID", m.jobID), zap.Error(err))
+	logutil.DDLIngestLogger().Info("mock backend context close", zap.Int64("jobID", m.jobID))
 	BackendCounterForTest.Dec()
 }
 
@@ -179,6 +240,7 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	if MockExecAfterWriteRow != nil {
 		MockExecAfterWriteRow()
 	}
+	failpoint.InjectCall("afterMockWriterWriteRow")
 	return nil
 }
 

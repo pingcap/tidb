@@ -173,16 +173,14 @@ func (s *CheckpointManager) NextKeyToProcess() kv.Key {
 	return nil
 }
 
-// Status returns the status of the checkpoint.
-func (s *CheckpointManager) Status() (keyCnt int, minKeyImported kv.Key) {
+func (s *CheckpointManager) TotalKeyCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	total := 0
 	for _, cp := range s.checkpoints {
 		total += cp.writtenKeys
 	}
-	// TODO(lance6716): ???
-	return s.flushedKeyCnt + total, s.importedKeyLowWatermark
+	return s.flushedKeyCnt + total
 }
 
 // Register registers a new task. taskID MUST be continuous ascending and start
