@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"go.uber.org/zap"
 )
 
@@ -438,7 +438,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	}
 	for _, pDef := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
-		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 		if err != nil {
 			return needWait, errors.Trace(err)
 		}

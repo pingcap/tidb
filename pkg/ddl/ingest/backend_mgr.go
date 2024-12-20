@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	pd "github.com/tikv/pd/client"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -48,7 +48,7 @@ type BackendCtxMgr interface {
 		jobID int64,
 		hasUnique bool,
 		etcdClient *clientv3.Client,
-		pdSvcDiscovery pd.ServiceDiscovery,
+		pdSvcDiscovery sd.ServiceDiscovery,
 		resourceGroupName string,
 		importConc int,
 		maxWriteSpeed int,
@@ -116,7 +116,7 @@ func (m *litBackendCtxMgr) Register(
 	jobID int64,
 	hasUnique bool,
 	etcdClient *clientv3.Client,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 	resourceGroupName string,
 	concurrency int,
 	maxWriteSpeed int,
@@ -177,7 +177,7 @@ func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (*local.Backend, error) {
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
