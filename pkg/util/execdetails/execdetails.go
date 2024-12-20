@@ -873,7 +873,7 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      *basicCopRuntimeStats
+	stats      basicCopRuntimeStats
 	scanDetail util.ScanDetail
 	timeDetail util.TimeDetail
 	storeType  kv.StoreType
@@ -893,10 +893,6 @@ var zeroScanDetail = util.ScanDetail{}
 var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
-	if crs.stats == nil {
-		return ""
-	}
-
 	procTimes := crs.stats.procTimes
 	totalTasks := procTimes.size
 	isTiFlashCop := crs.storeType == kv.TiFlash
@@ -1625,7 +1621,7 @@ func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
-	if !ok || copStats.stats == nil {
+	if !ok {
 		return 0, 0
 	}
 	return copStats.GetTasks(), copStats.GetActRows()
@@ -1675,9 +1671,6 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 				e.copStats[planID] = copStats
 			}
 		}
-		if copStats.stats == nil {
-			copStats.stats = &basicCopRuntimeStats{}
-		}
 		copStats.stats.mergeExecSummary(summary)
 	}
 	return planID
@@ -1696,9 +1689,6 @@ func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, 
 			storeType: storeType,
 		}
 		e.copStats[planID] = copStats
-	}
-	if copStats.stats == nil {
-		copStats.stats = &basicCopRuntimeStats{}
 	}
 	copStats.stats.mergeExecSummary(summary)
 	return planID
