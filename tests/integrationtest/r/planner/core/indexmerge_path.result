@@ -1187,3 +1187,129 @@ IndexMerge	0.01	root		type: intersection
 │ └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:mvi4(cast(`j` as unsigned array), d)	range:[5,5], keep order:false, stats:pseudo
 └─Selection(Probe)	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t1.c, 1)
   └─TableRowIDScan	0.01	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int, b int, c int, d int,
+index iab(a,b),
+index iac(a,c),
+index iad(a,d));
+explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or c = 3 or d = 4);
+id	estRows	task	access object	operator info
+IndexLookUp	0.03	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:iab(a, b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.03	cop[tikv]		or(eq(planner__core__indexmerge_path.t.b, 2), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t(a int, b int, c int, d int,
+index iab(b,a),
+index iac(c,a,d),
+index iad(a,d));
+explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or (c = 3 and d = 4) or d = 5);
+id	estRows	task	access object	operator info
+IndexLookUp	0.02	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:iad(a, d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	0.02	cop[tikv]		or(eq(planner__core__indexmerge_path.t.b, 2), or(and(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)), eq(planner__core__indexmerge_path.t.d, 5)))
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int, b int, c int, j1 json, j2 json,
+key mvi1((cast(j1 as unsigned array)), a),
+key mvi2((cast(j1 as unsigned array)), b),
+key mvi3((cast(j2 as unsigned array)), a),
+key mvi4((cast(j2 as unsigned array)), b) );
+explain format = brief select * from t where 1 member of (j1) or 2 member of (j2) order by a;
+id	estRows	task	access object	operator info
+Projection	19.99	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
+└─IndexMerge	19.99	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[1,1], keep order:true, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi3(cast(`j2` as unsigned array), a)	range:[2,2], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from t where 1 member of (j1) or 2 member of (j2) order by b;
+id	estRows	task	access object	operator info
+Sort	19.99	root		planner__core__indexmerge_path.t.b
+└─IndexMerge	19.99	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi3(cast(`j2` as unsigned array), a)	range:[2,2], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from t where json_overlaps(j1, '[1,3,5]') or 2 member of (j2) order by a desc limit 10;
+id	estRows	task	access object	operator info
+Limit	10.00	root		offset:0, count:10
+└─Selection	10.00	root		or(json_overlaps(planner__core__indexmerge_path.t.j1, cast("[1,3,5]", json BINARY)), json_memberof(cast(2, json BINARY), planner__core__indexmerge_path.t.j2))
+  └─Projection	10.00	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
+    └─IndexMerge	10.00	root		type: union
+      ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[1,1], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[3,3], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[5,5], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	2.50	cop[tikv]	table:t, index:mvi3(cast(`j2` as unsigned array), a)	range:[2,2], keep order:true, desc, stats:pseudo
+      └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from t where 1 member of (j1) or json_contains(j2, '[5]') order by b limit 10000;
+id	estRows	task	access object	operator info
+TopN	19.99	root		planner__core__indexmerge_path.t.b, offset:0, count:10000
+└─IndexMerge	19.99	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a)	range:[1,1], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi3(cast(`j2` as unsigned array), a)	range:[5,5], keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+INSERT INTO t VALUES (2, 2, 2, '[1,2,3]', '[4,5,6]');
+INSERT INTO t VALUES (5, 1, 5, '[]', '[2]');
+INSERT INTO t VALUES (10, 10, 10, '[1,2,3]', '[4,5,6]');
+INSERT INTO t VALUES (1, 2, 3, '[1,2,3]', '[4,5,6]');
+INSERT INTO t VALUES (4, 5, 6, '[7,8,5]', '[10,11,2]');
+INSERT INTO t VALUES (7, 8, 9, '[13,14,15]', '[16,17,18]');
+INSERT INTO t VALUES (10, 11, 12, '[19,20,21]', '[22,23,24]');
+INSERT INTO t VALUES (13, 14, 15, '[25,1,27]', '[2,29,30]');
+INSERT INTO t VALUES (16, 17, 18, '[31,32,33]', '[34,35,36]');
+INSERT INTO t VALUES (19, 20, 21, '[37,38,39]', '[40,2,42]');
+INSERT INTO t VALUES (22, 23, 24, '[5,44,45]', '[46,47,48]');
+INSERT INTO t VALUES (25, 26, 27, '[49,50,3]', '[52,53,54]');
+INSERT INTO t VALUES (28, 29, 30, '[5,56,57]', '[58,2,60]');
+INSERT INTO t VALUES (31, 32, 33, '[61,3,63]', '[64,65,66]');
+INSERT INTO t VALUES (34, 35, 36, '[67,68,69]', '[70,71,72]');
+INSERT INTO t VALUES (37, 38, 39, '[73,74,2]', '[76,2,2]');
+select /*+ use_index_merge(t) */ * from t where json_overlaps(j1, '[1,3,5]') or 2 member of (j2) order by a limit 2;
+a	b	c	j1	j2
+1	2	3	[1, 2, 3]	[4, 5, 6]
+2	2	2	[1, 2, 3]	[4, 5, 6]
+select /*+ use_index_merge(t) */ * from t where 1 member of (j1) or 2 member of (j2) order by b desc;
+a	b	c	j1	j2
+37	38	39	[73, 74, 2]	[76, 2, 2]
+28	29	30	[5, 56, 57]	[58, 2, 60]
+19	20	21	[37, 38, 39]	[40, 2, 42]
+13	14	15	[25, 1, 27]	[2, 29, 30]
+10	10	10	[1, 2, 3]	[4, 5, 6]
+4	5	6	[7, 8, 5]	[10, 11, 2]
+2	2	2	[1, 2, 3]	[4, 5, 6]
+1	2	3	[1, 2, 3]	[4, 5, 6]
+5	1	5	[]	[2]
+drop table if exists t;
+create table t (a int, b int, c int, d int, e int, j1 json, j2 json,
+key mvi1((cast(j1 as unsigned array)), a, e),
+key idx1(a, b, e),
+key mvi2(b, (cast(j2 as unsigned array)), e),
+key idx2(d, e, c) );
+explain format = brief select /*+ use_index_merge(t) */ * from t where
+a = 5 and
+(1 member of (j1) or b = 3 or b = 4 and json_overlaps(j2, '[3,4,5]') or d = 10)
+order by e;
+id	estRows	task	access object	operator info
+Selection	8.00	root		or(or(json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t.j1), eq(planner__core__indexmerge_path.t.b, 3)), or(and(eq(planner__core__indexmerge_path.t.b, 4), json_overlaps(planner__core__indexmerge_path.t.j2, cast("[3,4,5]", json BINARY))), eq(planner__core__indexmerge_path.t.d, 10)))
+└─Projection	0.01	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.d, planner__core__indexmerge_path.t.e, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
+  └─IndexMerge	0.01	root		type: union
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a, e)	range:[1 5,1 5], keep order:true, stats:pseudo
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx1(a, b, e)	range:[5 3,5 3], keep order:true, stats:pseudo
+    ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx1(a, b, e)	range:[5 4,5 4], keep order:true, stats:pseudo
+    ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx2(d, e, c)	range:[10,10], keep order:true, stats:pseudo
+    └─Selection(Probe)	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 5)
+      └─TableRowIDScan	10.30	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index_merge(t) */ * from t where
+a = 5 and
+(1 member of (j1) or b = 3 or b = 4 and json_overlaps(j2, '[3,4,5]') or d = 10)
+order by e desc limit 10;
+id	estRows	task	access object	operator info
+Limit	8.00	root		offset:0, count:10
+└─Selection	8.00	root		or(or(json_memberof(cast(1, json BINARY), planner__core__indexmerge_path.t.j1), eq(planner__core__indexmerge_path.t.b, 3)), or(and(eq(planner__core__indexmerge_path.t.b, 4), json_overlaps(planner__core__indexmerge_path.t.j2, cast("[3,4,5]", json BINARY))), eq(planner__core__indexmerge_path.t.d, 10)))
+  └─Projection	0.01	root		planner__core__indexmerge_path.t.a, planner__core__indexmerge_path.t.b, planner__core__indexmerge_path.t.c, planner__core__indexmerge_path.t.d, planner__core__indexmerge_path.t.e, planner__core__indexmerge_path.t.j1, planner__core__indexmerge_path.t.j2
+    └─IndexMerge	0.01	root		type: union
+      ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:mvi1(cast(`j1` as unsigned array), a, e)	range:[1 5,1 5], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx1(a, b, e)	range:[5 3,5 3], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx1(a, b, e)	range:[5 4,5 4], keep order:true, desc, stats:pseudo
+      ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx2(d, e, c)	range:[10,10], keep order:true, desc, stats:pseudo
+      └─Selection(Probe)	0.01	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 5)
+        └─TableRowIDScan	10.30	cop[tikv]	table:t	keep order:false, stats:pseudo
