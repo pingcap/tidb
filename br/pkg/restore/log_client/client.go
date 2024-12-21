@@ -1982,9 +1982,14 @@ func (rc *LogClient) BatchedSchemaReload(ctx context.Context, sr *stream.Schemas
 	lease := rc.GetDomain().GetSchemaLease()
 	reloadInterval := lease / 2
 
-	// Collect all affected schemas and tables from the mapping
-	var affectedOpts []*model.AffectedOption
 	dbReplaces := sr.GetDBReplaceMap()
+	initialCapacity := 0
+	for _, dbReplace := range dbReplaces {
+		// for schema
+		initialCapacity++
+		initialCapacity += len(dbReplace.TableMap)
+	}
+	affectedOpts := make([]*model.AffectedOption, 0, initialCapacity)
 	for _, dbReplace := range dbReplaces {
 		if utils.IsSysDB(dbReplace.Name) || !sr.TableFilter.MatchSchema(dbReplace.Name) {
 			continue

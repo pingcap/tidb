@@ -301,8 +301,8 @@ test_large_batch_diff_reload() {
 }
 
 # run all tests
-# test_basic_schema_table_diff_reload
-# test_partition_diff_reload
+test_basic_schema_table_diff_reload
+test_partition_diff_reload
 test_large_batch_diff_reload
 
 echo "br pitr schema diff reload passed"
