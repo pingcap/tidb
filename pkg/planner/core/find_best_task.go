@@ -1022,7 +1022,13 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		matchIdxes := make([]int, 0, 1)
 		for i, oneAlternative := range oneORBranch {
 			// if there is some sort items and this path doesn't match this prop, continue.
-			if !noSortItem && !isMatchProp(ds, oneAlternative, prop) {
+			match := true
+			for _, oneAccessPath := range oneAlternative {
+				if !noSortItem && !isMatchProp(ds, oneAccessPath, prop) {
+					match = false
+				}
+			}
+			if !match {
 				continue
 			}
 			// two possibility here:
@@ -1037,39 +1043,31 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
-			tmpOneItemAlternatives := oneORBranch
+			alternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
-				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
-				}
-				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
-				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
-				}
-				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmpAlternativesByRowCount(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}
 				// If CountAfterAccess is same, any path is global index should be the first one.
 				var lIsGlobalIndex, rIsGlobalIndex int
-				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+				if !alternatives[a][0].IsTablePath() && alternatives[a][0].Index.Global {
 					lIsGlobalIndex = 1
 				}
-				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+				if !alternatives[b][0].IsTablePath() && alternatives[b][0].Index.Global {
 					rIsGlobalIndex = 1
 				}
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
 		lowestCountAfterAccessIdx := matchIdxes[0]
-		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx])
+		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx][0])
 		// record the index usage info to avoid choosing a single index for all partial paths
 		var indexID int64
-		if oneORBranch[lowestCountAfterAccessIdx].IsTablePath() {
+		if oneORBranch[lowestCountAfterAccessIdx][0].IsTablePath() {
 			indexID = -1
 		} else {
-			indexID = oneORBranch[lowestCountAfterAccessIdx].Index.ID
+			indexID = oneORBranch[lowestCountAfterAccessIdx][0].Index.ID
 		}
 		// record the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}

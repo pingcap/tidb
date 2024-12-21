@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -37,38 +38,37 @@ func getIndexMergePathDigest(ctx expression.EvalContext, paths []*util.AccessPat
 	if len(paths) == startIndex {
 		return "[]"
 	}
-	idxMergeDigest := "["
-	for i := startIndex; i < len(paths); i++ {
-		if i != startIndex {
-			idxMergeDigest += ","
-		}
-		path := paths[i]
-		idxMergeDigest += "{Idxs:["
-		for j := 0; j < len(path.PartialAlternativeIndexPaths); j++ {
-			if j > 0 {
-				idxMergeDigest += ","
-			}
-			idxMergeDigest += "{"
+	resultStrs := make([]string, 0, len(paths)-startIndex)
+	for _, path := range paths[startIndex:] {
+		partialPathsStrs := make([]string, 0, len(path.PartialIndexPaths))
+		for _, partial := range path.PartialAlternativeIndexPaths {
 			// for every ONE index partial alternatives, output a set.
-			for k, one := range path.PartialAlternativeIndexPaths[j] {
-				if k != 0 {
-					idxMergeDigest += ","
+			oneAlternativeStrs := make([]string, 0, len(partial))
+			for _, oneAlternative := range partial {
+				if len(oneAlternative) == 1 {
+					oneAlternativeStrs = append(oneAlternativeStrs, oneAlternative[0].Index.Name.L)
+					continue
 				}
-				idxMergeDigest += one.Index.Name.L
+				pathStrs := make([]string, 0, len(oneAlternative))
+				for _, singlePath := range oneAlternative {
+					pathStrs = append(pathStrs, singlePath.Index.Name.L)
+				}
+				oneAlternativeStrs = append(oneAlternativeStrs, "{"+strings.Join(pathStrs, ",")+"}")
 			}
-			idxMergeDigest += "}"
+			partialPathsStrs = append(partialPathsStrs, "{"+strings.Join(oneAlternativeStrs, ",")+"}")
 		}
-		idxMergeDigest += "],TbFilters:["
-		for j := 0; j < len(path.TableFilters); j++ {
-			if j > 0 {
-				idxMergeDigest += ","
-			}
-			idxMergeDigest += path.TableFilters[j].StringWithCtx(ctx, errors.RedactLogDisable)
+
+		filterStrs := make([]string, 0, len(path.TableFilters))
+		for _, filter := range path.TableFilters {
+			filterStrs = append(filterStrs, filter.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
-		idxMergeDigest += "]}"
+		resultStrs = append(resultStrs, "{Idxs:["+
+			strings.Join(partialPathsStrs, ",")+
+			"],TbFilters:["+
+			strings.Join(filterStrs, ",")+
+			"]}")
 	}
-	idxMergeDigest += "]"
-	return idxMergeDigest
+	return "[" + strings.Join(resultStrs, ",") + "]"
 }
 
 func TestIndexMergePathGeneration(t *testing.T) {

@@ -438,7 +438,14 @@ func buildIndexMergeOrPath(
 	current int,
 	shouldKeepCurrentFilter bool,
 ) *util.AccessPath {
-	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: partialAlternativePaths}
+	tmp := make([][][]*util.AccessPath, len(partialAlternativePaths))
+	for i, orBranch := range partialAlternativePaths {
+		tmp[i] = make([][]*util.AccessPath, len(orBranch))
+		for j, alternative := range orBranch {
+			tmp[i][j] = []*util.AccessPath{alternative}
+		}
+	}
+	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: tmp}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
 	// since shouldKeepCurrentFilter may be changed in alternative paths converging, kept the filer expression anyway here.
