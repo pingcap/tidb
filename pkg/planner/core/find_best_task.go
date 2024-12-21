@@ -1273,6 +1273,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
 	partialPathMatchResults := make([]property.PhysicalPropMatchResult, 0, len(path.PartialAlternativeIndexPaths))
 	usedIndexMap := make(map[int64]struct{}, 1)
+<<<<<<< HEAD
 	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
 		matchIdxes := make([]int, 0, 1)
 		// altMatchResults[i] stores the matchProperty result for
@@ -1307,6 +1308,39 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				// 1. no sort items requirement.
 				// 2. matched with sorted items.
 				matchIdxes = append(matchIdxes, i)
+=======
+	type idxWrapper struct {
+		// matchIdx is those match alternative paths from one alternative paths set.
+		// like we said above, for a=1, it has two partial alternative paths: [a, ac]
+		// if we met an empty property here, matchIdx from [a, ac] for a=1 will be both. = [0,1]
+		// if we met an sort[c] property here, matchIdx from [a, ac] for a=1 will be both. = [1]
+		matchIdx []int
+		// pathIdx actually is original position offset indicates where current matchIdx is
+		// computed from. eg: [[a, ac], [b, bc]] for sort[c] property:
+		//     idxWrapper{[ac], 0}, 0 is the offset in first dimension of PartialAlternativeIndexPaths
+		//     idxWrapper{[bc], 1}, 1 is the offset in first dimension of PartialAlternativeIndexPaths
+		pathIdx int
+	}
+	allMatchIdxes := make([]idxWrapper, 0, len(path.PartialAlternativeIndexPaths))
+	// special logic for alternative paths:
+	// index merge:
+	//  path1: {pk, index1}
+	//  path2: {pk}
+	// if we choose pk in the first path, then path2 has no choice but pk, this will result in all single index failure.
+	// so we should collect all match prop paths down, stored as matchIdxes here.
+	for pathIdx, oneORBranch := range path.PartialAlternativeIndexPaths {
+		matchIdxes := make([]int, 0, 1)
+		for i, oneAlternative := range oneORBranch {
+			// if there is some sort items and this path doesn't match this prop, continue.
+			match := true
+			for _, oneAccessPath := range oneAlternative {
+				if !noSortItem && !isMatchProp(ds, oneAccessPath, prop) {
+					match = false
+				}
+			}
+			if !match {
+				continue
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 			}
 		}
 		if len(matchIdxes) == 0 {
@@ -1316,31 +1350,28 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
+<<<<<<< HEAD
 			tmpOneItemAlternatives := oneORBranch
+=======
+			alternatives := oneORBranch
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
-				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
-				}
-				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
-				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
-				}
-				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+				res := cmpAlternativesByRowCount(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}
 				// If CountAfterAccess is same, any path is global index should be the first one.
 				var lIsGlobalIndex, rIsGlobalIndex int
-				if !tmpOneItemAlternatives[a].IsTablePath() && tmpOneItemAlternatives[a].Index.Global {
+				if !alternatives[a][0].IsTablePath() && alternatives[a][0].Index.Global {
 					lIsGlobalIndex = 1
 				}
-				if !tmpOneItemAlternatives[b].IsTablePath() && tmpOneItemAlternatives[b].Index.Global {
+				if !alternatives[b][0].IsTablePath() && alternatives[b][0].Index.Global {
 					rIsGlobalIndex = 1
 				}
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
+<<<<<<< HEAD
 		lowestCountAfterAccessIdx := matchIdxes[0]
 		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx])
 		partialPathMatchResults = append(partialPathMatchResults, altMatchResults[lowestCountAfterAccessIdx])
@@ -1350,6 +1381,48 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			indexID = -1
 		} else {
 			indexID = oneORBranch[lowestCountAfterAccessIdx].Index.ID
+=======
+		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
+	}
+	// sort allMatchIdxes by its element length.
+	// index merge:                index merge:
+	//  path1: {pk, index1}  ==>    path2: {pk}
+	//  path2: {pk}                 path1: {pk, index1}
+	// here for the fixed choice pk of path2, let it be the first one to choose, left choice of index1 to path1.
+	slices.SortStableFunc(allMatchIdxes, func(a, b idxWrapper) int {
+		lhsLen := len(a.matchIdx)
+		rhsLen := len(b.matchIdx)
+		return cmp.Compare(lhsLen, rhsLen)
+	})
+	for _, matchIdxes := range allMatchIdxes {
+		// since matchIdxes are ordered by matchIdxes's length,
+		// we should use matchIdxes.pathIdx to locate where it comes from.
+		alternatives := path.PartialAlternativeIndexPaths[matchIdxes.pathIdx]
+		found := false
+		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
+		// By this way, a distinguished one is better.
+		for _, oneIdx := range matchIdxes.matchIdx {
+			var indexID int64
+			if alternatives[oneIdx][0].IsTablePath() {
+				indexID = -1
+			} else {
+				indexID = alternatives[oneIdx][0].Index.ID
+			}
+			if _, ok := usedIndexMap[indexID]; !ok {
+				// try to avoid all index partial paths are all about a single index.
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx][0].Clone())
+				usedIndexMap[indexID] = struct{}{}
+				found = true
+				break
+			}
+		}
+		if !found {
+			// just pick the same name index (just using the first one is ok), in case that there may be some other
+			// picked distinctive index path for other partial paths latter.
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+				alternatives[matchIdxes.matchIdx[0]][0].Clone())
+			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
+>>>>>>> d0ea9e50d5a (planner: prepare `AccessPath.PartialAlternativeIndexPaths` to handle MV indexes (#58397))
 		}
 		// record the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}
