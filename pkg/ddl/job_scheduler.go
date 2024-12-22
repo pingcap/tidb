@@ -437,7 +437,6 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		}
 
 		s.deliveryJob(wk, targetPool, &job)
-
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
@@ -476,6 +475,10 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
 
 	s.wg.Run(func() {
+		start := time.Now()
+		defer func() {
+			metrics.DDLRunJobOpHist.Observe(time.Since(start).Seconds())
+		}()
 		defer func() {
 			r := recover()
 			if r != nil {
@@ -612,6 +615,10 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 
 // cleanMDLInfo cleans metadata lock info.
 func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
+	start := time.Now()
+	defer func() {
+		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
+	}()
 	if !variable.EnableMDL.Load() {
 		return
 	}

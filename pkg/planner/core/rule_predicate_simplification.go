@@ -30,6 +30,7 @@ import (
 //  1. in-list and not equal list intersection.
 //  2. Drop OR predicates if they are empty for this pattern: P AND (P1 OR P2 ... OR Pn)
 //     Pi is removed if P & Pi is false/empty.
+//  3. Simplify predicates with logical constants (True/False).
 type PredicateSimplification struct {
 }
 
@@ -44,15 +45,49 @@ const (
 	lessThanOrEqualPredicate
 	greaterThanOrEqualPredicate
 	orPredicate
+	andPredicate
 	scalarPredicate
+	falsePredicate
+	truePredicate
 	otherPredicate
 )
 
-func findPredicateType(expr expression.Expression) (*expression.Column, predicateType) {
+func logicalConstant(bc base.PlanContext, cond expression.Expression) predicateType {
+	sc := bc.GetSessionVars().StmtCtx
+	con, ok := cond.(*expression.Constant)
+	if !ok {
+		return otherPredicate
+	}
+	if expression.MaybeOverOptimized4PlanCache(bc.GetExprCtx(), []expression.Expression{con}) {
+		return otherPredicate
+	}
+	isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault())
+	if err == nil {
+		if isTrue == 0 {
+			return falsePredicate
+		}
+		return truePredicate
+	}
+	return otherPredicate
+}
+
+// FindPredicateType determines the type of predicate represented by a given expression.
+// It analyzes the provided expression and returns a column (if applicable) and a corresponding predicate type.
+// The function handles different expression types, including constants, scalar functions, and their specific cases:
+// - Logical operators (`OR` and `AND`).
+// - Comparison operators (`EQ`, `NE`, `LT`, `GT`, `LE`, `GE`).
+// - IN predicates with a list of constants.
+// If the expression doesn't match any of these recognized patterns, it returns an `otherPredicate` type.
+func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expression.Column, predicateType) {
 	switch v := expr.(type) {
+	case *expression.Constant:
+		return nil, logicalConstant(bc, expr)
 	case *expression.ScalarFunction:
 		if v.FuncName.L == ast.LogicOr {
 			return nil, orPredicate
+		}
+		if v.FuncName.L == ast.LogicAnd {
+			return nil, andPredicate
 		}
 		args := v.GetArgs()
 		if len(args) == 0 {
@@ -103,8 +138,8 @@ func (*PredicateSimplification) Optimize(_ context.Context, p base.LogicalPlan, 
 // updateInPredicate applies intersection of an in list with <> value. It returns updated In list and a flag for
 // a special case if an element in the inlist is not removed to keep the list not empty.
 func updateInPredicate(ctx base.PlanContext, inPredicate expression.Expression, notEQPredicate expression.Expression) (expression.Expression, bool) {
-	_, inPredicateType := findPredicateType(inPredicate)
-	_, notEQPredicateType := findPredicateType(notEQPredicate)
+	_, inPredicateType := FindPredicateType(ctx, inPredicate)
+	_, notEQPredicateType := FindPredicateType(ctx, notEQPredicate)
 	if inPredicateType != inListPredicate || notEQPredicateType != notEqualPredicate {
 		return inPredicate, true
 	}
@@ -149,7 +184,8 @@ func splitCNF(conditions []expression.Expression) []expression.Expression {
 }
 
 func applyPredicateSimplification(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
-	simplifiedPredicate := mergeInAndNotEQLists(sctx, predicates)
+	simplifiedPredicate := shortCircuitLogicalConstants(sctx, predicates)
+	simplifiedPredicate = mergeInAndNotEQLists(sctx, simplifiedPredicate)
 	pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = splitCNF(simplifiedPredicate)
 	return simplifiedPredicate
@@ -165,8 +201,8 @@ func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Express
 		for j := i + 1; j < len(predicates); j++ {
 			ithPredicate := predicates[i]
 			jthPredicate := predicates[j]
-			iCol, iType := findPredicateType(ithPredicate)
-			jCol, jType := findPredicateType(jthPredicate)
+			iCol, iType := FindPredicateType(sctx, ithPredicate)
+			jCol, jType := FindPredicateType(sctx, jthPredicate)
 			if iCol == jCol {
 				if iType == notEqualPredicate && jType == inListPredicate {
 					predicates[j], specialCase = updateInPredicate(sctx, jthPredicate, ithPredicate)
@@ -206,8 +242,8 @@ func unsatisfiableExpression(ctx base.PlanContext, p expression.Expression) bool
 func unsatisfiable(ctx base.PlanContext, p1, p2 expression.Expression) bool {
 	var equalPred expression.Expression
 	var otherPred expression.Expression
-	col1, p1Type := findPredicateType(p1)
-	col2, p2Type := findPredicateType(p2)
+	col1, p1Type := FindPredicateType(ctx, p1)
+	col2, p2Type := FindPredicateType(ctx, p2)
 	if col1 != col2 || col1 == nil {
 		return false
 	}
@@ -247,8 +283,8 @@ func comparisonPred(predType predicateType) predicateType {
 // It is applied for this pattern: P AND (P1 OR P2 ... OR Pn)
 // Pi is removed if P & Pi is false/empty.
 func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expression, scalarPredicatePtr expression.Expression) expression.Expression {
-	_, orPredicateType := findPredicateType(orPredicateList)
-	_, scalarPredicateType := findPredicateType(scalarPredicatePtr)
+	_, orPredicateType := FindPredicateType(ctx, orPredicateList)
+	_, scalarPredicateType := FindPredicateType(ctx, scalarPredicatePtr)
 	scalarPredicateType = comparisonPred(scalarPredicateType)
 	if orPredicateType != orPredicate || scalarPredicateType != scalarPredicate {
 		return orPredicateList
@@ -256,8 +292,8 @@ func updateOrPredicate(ctx base.PlanContext, orPredicateList expression.Expressi
 	v := orPredicateList.(*expression.ScalarFunction)
 	firstCondition := v.GetArgs()[0]
 	secondCondition := v.GetArgs()[1]
-	_, firstConditionType := findPredicateType(firstCondition)
-	_, secondConditionType := findPredicateType(secondCondition)
+	_, firstConditionType := FindPredicateType(ctx, firstCondition)
+	_, secondConditionType := FindPredicateType(ctx, secondCondition)
 	emptyFirst := false
 	emptySecond := false
 	if comparisonPred(firstConditionType) == scalarPredicate {
@@ -296,8 +332,8 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 		for j := i + 1; j < len(predicates); j++ {
 			ithPredicate := predicates[i]
 			jthPredicate := predicates[j]
-			_, iType := findPredicateType(ithPredicate)
-			_, jType := findPredicateType(jthPredicate)
+			_, iType := FindPredicateType(sctx, ithPredicate)
+			_, jType := FindPredicateType(sctx, jthPredicate)
 			iType = comparisonPred(iType)
 			jType = comparisonPred(jType)
 			if iType == scalarPredicate && jType == orPredicate {
@@ -309,6 +345,83 @@ func pruneEmptyORBranches(sctx base.PlanContext, predicates []expression.Express
 			}
 		}
 	}
+}
+
+// shortCircuitANDORLogicalConstants simplifies logical expressions by performing short-circuit evaluation
+// based on the logical AND/OR nature of the predicate and constant truth/falsehood values.
+func shortCircuitANDORLogicalConstants(sctx base.PlanContext, predicate expression.Expression, orCase bool) (expression.Expression, bool) {
+	con, _ := predicate.(*expression.ScalarFunction)
+	args := con.GetArgs()
+	firstCondition, secondCondition := args[0], args[1]
+
+	// Recursively process first and second conditions
+	firstCondition, firstType := processCondition(sctx, firstCondition)
+	secondCondition, secondType := processCondition(sctx, secondCondition)
+
+	switch {
+	case firstType == truePredicate && orCase:
+		return firstCondition, true
+	case secondType == truePredicate && orCase:
+		return secondCondition, true
+	case firstType == falsePredicate && orCase:
+		return secondCondition, true
+	case secondType == falsePredicate && orCase:
+		return firstCondition, true
+	case firstType == truePredicate && !orCase:
+		return secondCondition, true
+	case secondType == truePredicate && !orCase:
+		return firstCondition, true
+	case firstType == falsePredicate && !orCase:
+		return firstCondition, true
+	case secondType == falsePredicate && !orCase:
+		return secondCondition, true
+	default:
+		if firstCondition != args[0] || secondCondition != args[1] {
+			finalResult := expression.NewFunctionInternal(sctx.GetExprCtx(), con.FuncName.L, con.GetStaticType(), firstCondition, secondCondition)
+			return finalResult, true
+		}
+		return predicate, false
+	}
+}
+
+// processCondition handles individual predicate evaluation for logical AND/OR cases
+// and returns the potentially simplified condition and its updated type.
+func processCondition(sctx base.PlanContext, condition expression.Expression) (expression.Expression, predicateType) {
+	applied := false
+	_, conditionType := FindPredicateType(sctx, condition)
+
+	if conditionType == orPredicate {
+		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, true)
+	} else if conditionType == andPredicate {
+		condition, applied = shortCircuitANDORLogicalConstants(sctx, condition, false)
+	}
+
+	if applied {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("True/False predicate simplification is triggered")
+	}
+
+	_, conditionType = FindPredicateType(sctx, condition)
+	return condition, conditionType
+}
+
+// shortCircuitLogicalConstants evaluates a list of predicates, applying short-circuit logic
+// to simplify the list and eliminate redundant or trivially true/false predicates.
+func shortCircuitLogicalConstants(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	finalResult := make([]expression.Expression, 0, len(predicates))
+
+	for _, predicate := range predicates {
+		predicate, predicateType := processCondition(sctx, predicate)
+
+		if predicateType == falsePredicate {
+			return []expression.Expression{predicate}
+		}
+
+		if predicateType != truePredicate {
+			finalResult = append(finalResult, predicate)
+		}
+	}
+
+	return finalResult
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.

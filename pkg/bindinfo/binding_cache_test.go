@@ -34,8 +34,8 @@ func bindingNoDBDigest(t *testing.T, b Binding) string {
 	return noDBDigest
 }
 
-func TestFuzzyBindingCache(t *testing.T) {
-	fbc := newCrossDBBindingCache(nil).(*crossDBBindingCache)
+func TestCrossDBBindingCache(t *testing.T) {
+	fbc := newBindCache(nil).(*bindingCache)
 	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
 	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
@@ -46,44 +46,44 @@ func TestFuzzyBindingCache(t *testing.T) {
 	require.NoError(t, fbc.SetBinding(b1.SQLDigest, []Binding{b1}))
 	require.NoError(t, fbc.SetBinding(b2.SQLDigest, []Binding{b2}))
 	require.NoError(t, fbc.SetBinding(b3.SQLDigest, []Binding{b3}))
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest), 2) // b1 and b2 have the same noDBDigest
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest[fDigest1]), 2)
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest[fDigest3]), 1)
-	require.Equal(t, len(fbc.sqlDigest2noDBDigest), 3)
-	_, ok := fbc.sqlDigest2noDBDigest[b1.SQLDigest]
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest), 2) // b1 and b2 have the same noDBDigest
+	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest1)), 2)
+	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest3)), 1)
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest), 3)
+	_, ok := fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b1.SQLDigest]
 	require.True(t, ok)
-	_, ok = fbc.sqlDigest2noDBDigest[b2.SQLDigest]
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b2.SQLDigest]
 	require.True(t, ok)
-	_, ok = fbc.sqlDigest2noDBDigest[b3.SQLDigest]
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b3.SQLDigest]
 	require.True(t, ok)
 
 	// remove b2
 	fbc.RemoveBinding(b2.SQLDigest)
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest), 2)
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest[fDigest1]), 1)
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest[fDigest3]), 1)
-	require.Equal(t, len(fbc.sqlDigest2noDBDigest), 2)
-	_, ok = fbc.sqlDigest2noDBDigest[b1.SQLDigest]
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest), 2)
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1]), 1)
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest3]), 1)
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest), 2)
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b1.SQLDigest]
 	require.True(t, ok)
-	_, ok = fbc.sqlDigest2noDBDigest[b2.SQLDigest]
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b2.SQLDigest]
 	require.False(t, ok) // can't find b2 now
-	_, ok = fbc.sqlDigest2noDBDigest[b3.SQLDigest]
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b3.SQLDigest]
 	require.True(t, ok)
 
 	// test deep copy
 	newCache, err := fbc.Copy()
 	require.NoError(t, err)
-	newFBC := newCache.(*crossDBBindingCache)
-	newFBC.noDBDigest2SQLDigest[fDigest1] = nil
-	delete(newFBC.sqlDigest2noDBDigest, b1.SQLDigest)
-	require.Equal(t, len(fbc.noDBDigest2SQLDigest[fDigest1]), 1) // no impact to the original cache
-	_, ok = fbc.sqlDigest2noDBDigest[b1.SQLDigest]
+	newFBC := newCache.(*bindingCache)
+	newFBC.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1] = nil
+	delete(newFBC.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest, b1.SQLDigest)
+	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1]), 1) // no impact to the original cache
+	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b1.SQLDigest]
 	require.True(t, ok)
 }
 
 func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(250)
-	bindCache := newBindCache().(*bindingCache)
+	bindCache := newBindCache(nil).(*bindingCache)
 
 	value := make([]Bindings, 3)
 	key := make([]bindingCacheKey, 3)

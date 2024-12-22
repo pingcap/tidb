@@ -253,7 +253,7 @@ Projection	39.20	root		planner__core__casetest__physicalplantest__physical_plan.
   └─CTEFullScan(Probe)	7.00	root	CTE:cte AS c2	data:CTE_0
 CTE_0	7.00	root		Non-Recursive CTE
 └─TableReader(Seed Part)	7.00	root		data:Selection
-  └─Selection	7.00	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 60), or(lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 18), 1)
+  └─Selection	7.00	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 60)
     └─TableFullScan	7.00	cop[tikv]	table:tc	keep order:false
 show warnings;
 Level	Code	Message

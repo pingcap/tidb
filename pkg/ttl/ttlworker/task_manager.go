@@ -118,8 +118,13 @@ type taskManager struct {
 }
 
 func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
+	ctx = logutil.WithKeyValue(ctx, "ttl-worker", "task-manager")
+	if intest.InTest {
+		// in test environment, in the same log there will be multiple ttl managers, so we need to distinguish them
+		ctx = logutil.WithKeyValue(ctx, "ttl-worker", id)
+	}
 	return &taskManager{
-		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
+		ctx:      ctx,
 		sessPool: sessPool,
 
 		id: id,
@@ -374,7 +379,7 @@ loop:
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * getTaskManagerHeartBeatInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
@@ -412,7 +417,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return err
 		}
-		if task.OwnerID != "" && !task.OwnerHBTime.Add(getTaskManagerHeartBeatExpireInterval()).Before(now) {
+		if task.OwnerID != "" && !task.OwnerHBTime.Add(2*getTaskManagerHeartBeatInterval()).Before(now) {
 			return errors.WithStack(errAlreadyScheduled)
 		}
 

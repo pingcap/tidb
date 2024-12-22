@@ -315,7 +315,7 @@ var funcName2Alias = map[string]string{
 	"decode":                     ast.Decode,
 	"encode":                     ast.Encode,
 	"md5":                        ast.MD5,
-	"password_func":              ast.PasswordFunc,
+	"password":                   ast.PasswordFunc,
 	"random_bytes":               ast.RandomBytes,
 	"sha1":                       ast.SHA1,
 	"sha":                        ast.SHA,

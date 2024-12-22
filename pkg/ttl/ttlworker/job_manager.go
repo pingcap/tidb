@@ -66,7 +66,7 @@ const taskGCTemplate = `DELETE task FROM
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
 const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE (current_job_status IS NULL OR current_job_owner_hb_time < %?)`
 
-const timeFormat = time.DateTime
+var timeFormat = time.DateTime
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []any) {
 	return insertNewTableIntoStatusTemplate, []any{tableID, parentTableID}
@@ -86,7 +86,7 @@ func gcTTLTableStatusGCSQL(existIDs []int64, now time.Time) (string, []any) {
 		existIDStrs = append(existIDStrs, strconv.Itoa(int(id)))
 	}
 
-	hbExpireTime := now.Add(-jobManagerLoopTickerInterval * 2)
+	hbExpireTime := now.Add(-getHeartbeatInterval() * 2)
 	args := []any{hbExpireTime.Format(timeFormat)}
 	if len(existIDStrs) > 0 {
 		return ttlTableStatusGCWithoutIDTemplate + fmt.Sprintf(` AND table_id NOT IN (%s)`, strings.Join(existIDStrs, ",")), args
@@ -137,6 +137,10 @@ func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdC
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
+	if intest.InTest {
+		// in test environment, in the same log there will be multiple ttl managers, so we need to distinguish them
+		manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", id)
+	}
 
 	manager.infoSchemaCache = cache.NewInfoSchemaCache(getUpdateInfoSchemaCacheInterval())
 	manager.tableStatusCache = cache.NewTableStatusCache(getUpdateTTLTableStatusCacheInterval())
@@ -181,15 +185,15 @@ func (m *JobManager) jobLoop() error {
 	infoSchemaCacheUpdateTicker := time.Tick(m.infoSchemaCache.GetInterval())
 	tableStatusCacheUpdateTicker := time.Tick(m.tableStatusCache.GetInterval())
 	resizeWorkersTicker := time.Tick(getResizeWorkersInterval())
-	gcTicker := time.Tick(ttlGCInterval)
+	gcTicker := time.Tick(getTTLGCInterval())
 
 	scheduleJobTicker := time.Tick(getCheckJobInterval())
 	jobCheckTicker := time.Tick(getCheckJobInterval())
-	updateJobHeartBeatTicker := time.Tick(jobManagerLoopTickerInterval)
+	updateJobHeartBeatTicker := time.Tick(getHeartbeatInterval())
 	timerTicker := time.Tick(getJobManagerLoopSyncTimerInterval())
 
 	scheduleTaskTicker := time.Tick(getTaskManagerLoopTickerInterval())
-	updateTaskHeartBeatTicker := time.Tick(ttlTaskHeartBeatTickerInterval)
+	updateTaskHeartBeatTicker := time.Tick(getTaskManagerHeartBeatInterval())
 	taskCheckTicker := time.Tick(getTaskManagerLoopCheckTaskInterval())
 	checkScanTaskFinishedTicker := time.Tick(getTaskManagerLoopTickerInterval())
 
@@ -732,7 +736,7 @@ func (m *JobManager) couldLockJob(tableStatus *cache.TableStatus, table *cache.P
 		hbTime := tableStatus.CurrentJobOwnerHBTime
 		// jobManagerLoopTickerInterval is used to do heartbeat periodically.
 		// Use twice the time to detect the heartbeat timeout.
-		hbTimeout := jobManagerLoopTickerInterval * 2
+		hbTimeout := getHeartbeatInterval() * 2
 		if interval := getUpdateTTLTableStatusCacheInterval() * 2; interval > hbTimeout {
 			// tableStatus is get from the cache which may contain stale data.
 			// So if cache update interval > heartbeat interval, use the cache update interval instead.

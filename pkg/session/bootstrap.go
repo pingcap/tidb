@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -804,6 +806,29 @@ func bootstrap(s sessiontypes.Session) {
 	}
 }
 
+func getFunctionName(f func(sessiontypes.Session, int64)) (string, error) {
+	if f == nil {
+		return "", errors.New("function is nil")
+	}
+
+	funcPtr := reflect.ValueOf(f).Pointer()
+	if funcPtr == 0 {
+		return "", errors.New("invalid function pointer")
+	}
+
+	fullName := runtime.FuncForPC(funcPtr).Name()
+	if fullName == "" {
+		return "", errors.New("unable to retrieve function name")
+	}
+
+	parts := strings.Split(fullName, ".")
+	if len(parts) == 0 {
+		return "", errors.New("invalid function name structure")
+	}
+
+	return parts[len(parts)-1], nil
+}
+
 const (
 	// varTrue is the true value in mysql.TiDB table for boolean columns.
 	varTrue = "True"
@@ -1554,7 +1579,13 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		funcName, err := getFunctionName(upgrade)
+		terror.MustNil(err)
 		upgrade(s, ver)
+		logutil.BgLogger().Info("upgrade in progress, a version has just been completed or be skipped.",
+			zap.Int64("old-start-version", ver),
+			zap.String("in-progress-version", funcName),
+			zap.Int64("latest-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
