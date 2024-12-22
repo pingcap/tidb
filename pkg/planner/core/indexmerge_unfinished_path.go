@@ -428,15 +428,17 @@ func buildIntoAccessPath(
 	// 1. Clean/Set KeepIndexMergeORSourceFilter, InexFilters and TableFilters for each partial path.
 	// 2. Collect all index IDs and check if there is any MV index.
 	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(p.TableFilters) > 0 {
+		// A partial path can handle TableFilters only if it's a table path, and the filters can be pushed to TiKV.
+		// Otherwise, we should clear TableFilters and set KeepIndexMergeORSourceFilter to true.
+		if len(p.TableFilters) > 0 &&
+			(!expression.CanExprsPushDown(pushDownCtx, p.TableFilters, kv.TiKV) ||
+				!p.IsTablePath()) {
 			p.KeepIndexMergeORSourceFilter = true
 			p.TableFilters = nil
 		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		// A partial path can handle IndexFilters if the filters can be pushed to TiKV.
 		if len(p.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, p.IndexFilters, kv.TiKV) {
 			p.KeepIndexMergeORSourceFilter = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			p.IndexFilters = nil
 		}
 
