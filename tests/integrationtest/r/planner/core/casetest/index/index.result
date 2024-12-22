@@ -35,23 +35,22 @@ drop table if exists t2;
 create table t2(pk int primary key, a json, b json, c int, d int, e int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 1: OR index merge from multi complicated mv index (memberof);
 id	estRows	task	access object	operator info
-IndexMerge_8	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_11	8.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t2, index:idx3(c, d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection_10(Probe)	8.00	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t2.c, 1)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 1)))
+  └─TableRowIDScan_9	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1) or (2 member of (b) and c=1); -- 2: OR index merge from multi complicated mv index (memberof);
 id	estRows	task	access object	operator info
-IndexMerge_8	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 1,2 1], keep order:false, stats:pseudo
-└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_11	8.00	root		
+├─IndexRangeScan_8(Build)	10.00	cop[tikv]	table:t2, index:idx3(c, d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection_10(Probe)	8.00	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), eq(planner__core__casetest__index__index.t2.c, 1)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 1)))
+  └─TableRowIDScan_9	10.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 3: OR index merge from multi complicated mv index (memberof)，while each DNF item contains redundant condition, which should be remained as table filters;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexLookUp_11	0.16	root		
+├─IndexRangeScan_8(Build)	0.20	cop[tikv]	table:t2, index:idx3(c, d)	range:[1 2,1 2], [3 2,3 2], keep order:false, stats:pseudo
+└─Selection_10(Probe)	0.16	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_9	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 4: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
 IndexLookUp_11	0.16	root		
@@ -60,27 +59,22 @@ IndexLookUp_11	0.16	root
   └─TableRowIDScan_9	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_overlaps(a, '[1, 2, 3]') and c=1 and d=2) or (2 member of (b) and c=3 and d=2); -- 5: OR index merge from multi complicated mv index (memberof)，make full use of DNF item's condition even if the predicate is intersection case (json_contains);
 id	estRows	task	access object	operator info
-Selection_5	0.32	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-└─IndexMerge_11	0.40	root		type: union
-  ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 1,1 1], keep order:false, stats:pseudo
-  ├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 2,1 2], keep order:false, stats:pseudo
-  ├─IndexRangeScan_8(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[1 3,1 3], keep order:false, stats:pseudo
-  ├─IndexRangeScan_9(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-  └─TableRowIDScan_10(Probe)	0.40	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Selection_5	8000.00	root		or(and(json_overlaps(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), and(eq(planner__core__casetest__index__index.t2.c, 1), eq(planner__core__casetest__index__index.t2.d, 2))), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+└─TableReader_7	10000.00	root		data:TableFullScan_6
+  └─TableFullScan_6	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2); -- 6: OR index merge from multi complicated mv index (memberof)，make full use of other DNF items even if one of the DNF items fails;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.01	root		type: union
+IndexMerge_9	0.02	root		type: union
 ├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[2,2], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[2 3,2 3], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.01	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), eq(planner__core__casetest__index__index.t2.d, 2)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
-  └─TableRowIDScan_7	10.10	cop[tikv]	table:t2	keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3,3], keep order:false, stats:pseudo
+└─Selection_8(Probe)	0.02	cop[tikv]		or(and(json_contains(planner__core__casetest__index__index.t2.a, cast("[1, 2, 3]", json BINARY)), eq(planner__core__casetest__index__index.t2.d, 2)), and(json_memberof(cast(2, json BINARY), planner__core__casetest__index__index.t2.b), and(eq(planner__core__casetest__index__index.t2.c, 3), eq(planner__core__casetest__index__index.t2.d, 2))))
+  └─TableRowIDScan_7	19.99	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.;
 id	estRows	task	access object	operator info
-IndexMerge_9	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
+IndexMerge_8	0.20	root		type: union
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[1 3,1 3], keep order:false, stats:pseudo
 ├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
-└─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)))
-  └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableRowIDScan_7(Probe)	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
 id	estRows	task	access object	operator info
 TableReader_7	10.18	root		data:Selection_6
@@ -88,12 +82,12 @@ TableReader_7	10.18	root		data:Selection_6
   └─TableFullScan_5	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
 id	estRows	task	access object	operator info
-IndexMerge_10	0.01	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+IndexMerge_10	0.03	root		type: union
+├─IndexRangeScan_5(Build)	10.00	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3,3], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[4,4], keep order:false, stats:pseudo
 ├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
-└─Selection_9(Probe)	0.01	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
-  └─TableRowIDScan_8	10.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─Selection_9(Probe)	0.03	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
+  └─TableRowIDScan_8	29.97	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
 create table t2(pk int primary key, a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));
@@ -793,17 +787,11 @@ drop table if exists t;
 create table t(pk varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, fpi json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `fpi` ((cast(`fpi` as unsigned array))));
 explain format='brief' SELECT pk FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(fpi, '[69236881]') LIMIT   10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__casetest__index__index.t.pk
-└─IndexMerge	10.00	root		type: union, limit embedded(offset:0, count:10)
-  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
-  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:domains(cast(`domains` as char(253) array))	range:["B2c32","B2c32"], keep order:false, stats:pseudo
-  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
-  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:image_signatures(cast(`image_signatures` as char(32) array))	range:["2eoqyp6399","2eoqyp6399"], keep order:false, stats:pseudo
-  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
-  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:canonical_links(cast(`canonical_links` as char(1000) array))	range:["E33EAdAc2Bee.com/s/link","E33EAdAc2Bee.com/s/link"], keep order:false, stats:pseudo
-  ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:10
-  │ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[69236881,69236881], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	10.00	root		offset:0, count:10
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:10
+    └─Selection	10.00	cop[tikv]		or(or(json_memberof(cast("B2c32", json BINARY), planner__core__casetest__index__index.t.domains), json_memberof(cast("2eoqyp6399", json BINARY), planner__core__casetest__index__index.t.image_signatures)), or(json_memberof(cast("E33EAdAc2Bee.com/s/link", json BINARY), planner__core__casetest__index__index.t.canonical_links), json_contains(planner__core__casetest__index__index.t.fpi, cast("[69236881]", json BINARY))))
+      └─TableFullScan	2503.75	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, t2;
 CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` binary(206) DEFAULT '0', `c` json DEFAULT NULL, UNIQUE KEY `idx_29` (`a`,(cast(`c` as signed array)),`b`), UNIQUE KEY `idx_30` ((cast(`c` as signed array)),`a`(5))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
