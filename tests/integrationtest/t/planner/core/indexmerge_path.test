@@ -505,6 +505,7 @@ d not like '%test%';
 
 # TestIssue58361
 
+# Test non-MV index OR IndexMerge can collect usable filters (only support eq now) from the top level AND filters
 drop table if exists t;
 create table t (a int, b int, c int, d int,
 index iab(a,b),
@@ -519,6 +520,7 @@ index iac(c,a,d),
 index iad(a,d));
 explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or (c = 3 and d = 4) or d = 5);
 
+# Test MV index OR IndexMerge can satisfy Sort property when there are multiple indexes to choose from
 drop table if exists t;
 create table t (a int, b int, c int, j1 json, j2 json,
 key mvi1((cast(j1 as unsigned array)), a),
@@ -566,4 +568,3 @@ explain format = brief select /*+ use_index_merge(t) */ * from t where
 a = 5 and
 (1 member of (j1) or b = 3 or b = 4 and json_overlaps(j2, '[3,4,5]') or d = 10)
 order by e desc limit 10;
-

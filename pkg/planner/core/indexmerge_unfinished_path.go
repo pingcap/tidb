@@ -391,8 +391,8 @@ func buildIntoAccessPath(
 				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.idxColHasUsableFilter) > 0
 			} else {
 				// case 2: non-mv index
-				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
 				var path *util.AccessPath
+				// Reuse the previous implementation. The same usage as in initUnfinishedPathsFromExpr().
 				path, needSelection = generateNormalIndexPartialPath(
 					ds,
 					expression.ComposeCNFCondition(
