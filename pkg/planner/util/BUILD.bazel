@@ -50,6 +50,7 @@ go_test(
     ],
     embed = [":util"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/domain",
         "//pkg/meta/model",
