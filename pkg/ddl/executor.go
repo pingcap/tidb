@@ -888,6 +888,11 @@ func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, err
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
+// * This is used for:
+//   - CREATE TABLE
+//   - CREATE SCHEMA (aka CREATE DATABASE)
+//   - ALTER TABLE ... ADD COLUMN
+//   - ALTER TABLE ... MODIFY COLUMN
 func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
 	var tableChs, tableColl, schemaChs, schemaColl string
 	for i, v := range charsetOpts {
