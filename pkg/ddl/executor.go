@@ -955,7 +955,6 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 			return "", "", errors.Trace(err)
 		}
 		chs = collation.CharsetName
-
 	} else if objectChs == "" && objectColl == "" { // ...
 		chs = templChs
 		coll = templColl
