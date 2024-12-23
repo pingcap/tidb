@@ -1582,7 +1582,7 @@ func (v visitInfoArray) Swap(i, j int) {
 	v[i], v[j] = v[j], v[i]
 }
 
-func unique(v []visitInfo) []visitInfo {
+func uniqueVisitInfo(v []visitInfo) []visitInfo {
 	repeat := 0
 	for i := 1; i < len(v); i++ {
 		if v[i].Equals(&v[i-1]) {
@@ -1597,8 +1597,8 @@ func unique(v []visitInfo) []visitInfo {
 func checkVisitInfo(t *testing.T, v1, v2 []visitInfo, comment string) {
 	sort.Sort(visitInfoArray(v1))
 	sort.Sort(visitInfoArray(v2))
-	v1 = unique(v1)
-	v2 = unique(v2)
+	v1 = uniqueVisitInfo(v1)
+	v2 = uniqueVisitInfo(v2)
 
 	require.Equal(t, len(v2), len(v1), comment)
 	for i := 0; i < len(v1); i++ {

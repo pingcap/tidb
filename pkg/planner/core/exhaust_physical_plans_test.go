@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -69,6 +70,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dataSourceNode := logicalop.DataSource{}.Init(ctx.GetPlanCtx(), 0)
 	dsSchema := expression.NewSchema()
 	var dsNames types.NameSlice
+	uniqueDBName := unique.Make(model.NewCIStr("test"))
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -76,7 +78,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("a"),
 		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -85,7 +87,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("b"),
 		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -94,7 +96,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("c"),
 		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -103,7 +105,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("d"),
 		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	dsSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -112,7 +114,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	dsNames = append(dsNames, &types.FieldName{
 		ColName: model.NewCIStr("c_ascii"),
 		TblName: model.NewCIStr("t"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	dataSourceNode.SetSchema(dsSchema)
 	dataSourceNode.SetStats(&property.StatsInfo{StatsVersion: statistics.PseudoVersion})
@@ -129,7 +131,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("e"),
 		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -138,7 +140,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("f"),
 		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -147,7 +149,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("g"),
 		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	outerChildSchema.Append(&expression.Column{
 		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
@@ -156,7 +158,7 @@ func prepareForAnalyzeLookUpFilters() *indexJoinContext {
 	outerChildNames = append(outerChildNames, &types.FieldName{
 		ColName: model.NewCIStr("h"),
 		TblName: model.NewCIStr("t1"),
-		DBName:  model.NewCIStr("test"),
+		DBName:  &uniqueDBName,
 	})
 	joinNode.SetSchema(expression.MergeSchema(dsSchema, outerChildSchema))
 	joinColNames := append(dsNames.Shallow(), outerChildNames...)
