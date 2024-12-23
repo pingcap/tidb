@@ -16,9 +16,7 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"maps"
-	"strings"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -47,9 +45,6 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
 	histNeeded := syncWait > 0
-	if strings.HasPrefix(plan.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select count(1) from t1 group by a, b") {
-		fmt.Println(1)
-	}
 	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))

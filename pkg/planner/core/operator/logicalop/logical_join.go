@@ -1199,7 +1199,6 @@ func (p *LogicalJoin) getGroupNDVs(childStats []*property.StatsInfo) []property.
 		outerIdx = 1
 	}
 	if outerIdx >= 0 {
-		// whether parent asked or we are in memo, do maintain the group ndv.
 		return childStats[outerIdx].GroupNDVs
 	}
 	return nil

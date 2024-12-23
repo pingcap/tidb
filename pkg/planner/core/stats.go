@@ -430,6 +430,9 @@ func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float
 
 func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
 	colGroups := ds.AskedColumnGroup
+	if len(ds.AskedColumnGroup) == 0 {
+		return nil
+	}
 	tbl := ds.TableStats.HistColl
 	ndvs := make([]property.GroupNDV, 0, len(colGroups))
 	tbl.ForEachIndexImmutable(func(idxID int64, idx *statistics.Index) bool {
