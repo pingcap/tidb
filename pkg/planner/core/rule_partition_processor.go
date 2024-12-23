@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -477,8 +478,9 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 	}
 	for _, colExpr := range ds.TblCols {
 		if colExpr.ID == model.ExtraHandleID {
+			uniqueDBName := unique.Make(ds.DBName)
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
+				DBName:      &uniqueDBName,
 				TblName:     ds.TableInfo.Name,
 				ColName:     model.ExtraHandleName,
 				OrigColName: model.ExtraHandleName,
@@ -486,8 +488,9 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 			continue
 		}
 		if colExpr.ID == model.ExtraPhysTblID {
+			uniqueDBName := unique.Make(ds.DBName)
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
+				DBName:      &uniqueDBName,
 				TblName:     ds.TableInfo.Name,
 				ColName:     model.ExtraPhysTblIDName,
 				OrigColName: model.ExtraPhysTblIDName,
@@ -495,8 +498,9 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 			continue
 		}
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
+			uniqueDBName := unique.Make(ds.DBName)
 			names = append(names, &types.FieldName{
-				DBName:      ds.DBName,
+				DBName:      &uniqueDBName,
 				TblName:     ds.TableInfo.Name,
 				ColName:     colInfo.Name,
 				OrigTblName: ds.TableInfo.Name,

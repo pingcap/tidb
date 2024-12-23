@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"unique"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -1885,20 +1886,22 @@ func (b *PlanBuilder) buildCheckIndexSchema(tn *ast.TableName, indexName string)
 		}
 		for _, idxCol := range idxInfo.Columns {
 			col := cols[idxCol.Offset]
+			uniqueDBName := unique.Make(tn.Schema)
 			names = append(names, &types.FieldName{
 				ColName: idxCol.Name,
 				TblName: tn.Name,
-				DBName:  tn.Schema,
+				DBName:  &uniqueDBName,
 			})
 			schema.Append(&expression.Column{
 				RetType:  &col.FieldType,
 				UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
 				ID:       col.ID})
 		}
+		uniqueDBName := unique.Make(tn.Schema)
 		names = append(names, &types.FieldName{
 			ColName: pmodel.NewCIStr("extra_handle"),
 			TblName: tn.Name,
-			DBName:  tn.Schema,
+			DBName:  &uniqueDBName,
 		})
 		schema.Append(&expression.Column{
 			RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -3354,9 +3357,10 @@ func buildColumnWithName(tableName, name string, tp byte, size int) (*expression
 	fieldType.SetCollate(cl)
 	fieldType.SetFlen(size)
 	fieldType.SetFlag(flag)
+	unqiueDBName := unique.Make(util2.InformationSchemaName)
 	return &expression.Column{
 		RetType: fieldType,
-	}, &types.FieldName{DBName: util2.InformationSchemaName, TblName: pmodel.NewCIStr(tableName), ColName: pmodel.NewCIStr(name)}
+	}, &types.FieldName{DBName: &unqiueDBName, TblName: pmodel.NewCIStr(tableName), ColName: pmodel.NewCIStr(name)}
 }
 
 type columnsWithNames struct {
@@ -4224,8 +4228,9 @@ type colNameInOnDupExtractor struct {
 func (c *colNameInOnDupExtractor) Enter(node ast.Node) (ast.Node, bool) {
 	switch x := node.(type) {
 	case *ast.ColumnNameExpr:
+		uniqueDBName := unique.Make(x.Name.Schema)
 		fieldName := types.FieldName{
-			DBName:  x.Name.Schema,
+			DBName:  &uniqueDBName,
 			TblName: x.Name.Table,
 			ColName: x.Name.Name,
 		}

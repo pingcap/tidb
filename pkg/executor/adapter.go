@@ -116,8 +116,11 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
 	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
-		dbName := names[i].DBName
-		if dbName.L == "" && names[i].TblName.L != "" {
+		var dbName pmodel.CIStr
+		if names[i].DBName != nil {
+			dbName = names[i].DBName.Value()
+		}
+		if names[i].EqualDBNameString("") && names[i].TblName.L != "" {
 			dbName = defaultDBCIStr
 		}
 		origColName := names[i].OrigColName
