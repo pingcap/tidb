@@ -235,6 +235,18 @@ func updateRecord(
 		}
 	}
 
+	// A corner case for generated column:
+	// When we get old data from getOldRow, the type of generated column may be KindNull.
+	// But if NotNullFlag flag is set for the generated column,
+	// the type of corresponding datum needs to be set explicitly by HandleBadNull.
+	// So we have to manually set the type for old datum to make index record updated properly.
+	for i, col := range t.Cols() {
+		if col.IsGenerated() && oldData[i].IsNull() &&
+			(mysql.HasNotNullFlag(col.GetFlag()) || mysql.HasPreventNullInsertFlag(col.GetFlag())) {
+			oldData[i] = table.GetZeroValue(col.ToInfo())
+		}
+	}
+
 	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
 	if ignoreErr {
 		ignored, err := checkFKIgnoreErr(ctx, sctx, fkChecks, newData)
