@@ -828,7 +828,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
 			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
 			ctx.WritePlain(" = ")
 			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
@@ -842,6 +842,9 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
