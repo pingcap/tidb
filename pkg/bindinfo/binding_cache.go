@@ -325,8 +325,8 @@ func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err erro
 		noDBDigests = append(noDBDigests, noDBDigest)
 	}
 
-	for i, binding := range bindings {
-		c.digestBiMap.Add(noDBDigests[i], binding.SQLDigest)
+	for i := range bindings {
+		c.digestBiMap.Add(noDBDigests[i], sqlDigest)
 	}
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
 	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
