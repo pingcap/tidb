@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -226,6 +227,7 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 		return nil, err
 	}
 	d := r.d
+<<<<<<< HEAD
 	engines := make([]ingest.Engine, 0, len(r.indexes))
 	for _, index := range r.indexes {
 		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
@@ -238,6 +240,28 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+=======
+	indexIDs := make([]int64, 0, len(r.indexes))
+	uniques := make([]bool, 0, len(r.indexes))
+	var idxNames strings.Builder
+	for _, index := range r.indexes {
+		indexIDs = append(indexIDs, index.ID)
+		uniques = append(uniques, index.Unique)
+		if idxNames.Len() > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(index.Name.O)
+	}
+	engines, err := r.bc.Register(indexIDs, uniques, r.ptbl)
+	if err != nil {
+		tidblogutil.Logger(opCtx).Error("cannot register new engine",
+			zap.Error(err),
+			zap.Int64("job ID", r.job.ID),
+			zap.Int64s("index IDs", indexIDs))
+		return nil, err
+	}
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -283,8 +307,19 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
+<<<<<<< HEAD
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+=======
+	var idxNames strings.Builder
+	for _, idx := range r.indexes {
+		if idxNames.Len() > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(idx.Name.O)
+	}
+	rowCntListener := newDistTaskRowCntListener(r.curRowCount, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
@@ -306,3 +341,25 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		r.GetResource(),
 	)
 }
+<<<<<<< HEAD
+=======
+
+type distTaskRowCntListener struct {
+	EmptyRowCntListener
+	totalRowCount *atomic.Int64
+	counter       prometheus.Counter
+}
+
+func newDistTaskRowCntListener(totalRowCnt *atomic.Int64, dbName, tblName, idxName string) *distTaskRowCntListener {
+	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, dbName, tblName, idxName)
+	return &distTaskRowCntListener{
+		totalRowCount: totalRowCnt,
+		counter:       counter,
+	}
+}
+
+func (d *distTaskRowCntListener) Written(rowCnt int) {
+	d.totalRowCount.Add(int64(rowCnt))
+	d.counter.Add(float64(rowCnt))
+}
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))

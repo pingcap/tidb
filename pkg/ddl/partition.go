@@ -2927,7 +2927,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
@@ -2982,17 +2982,39 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		tblInfo.Partition.DDLState = model.StateWriteOnly
+<<<<<<< HEAD
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
+=======
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.2 / float64(math.MaxUint64))
+		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("Injected error by reorgPartRollback2")
+				failpoint.Return(rollbackReorganizePartitionWithErr(jobCtx, job, err))
+			}
+		})
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// Insert this state to confirm all servers can see the new partitions when reorg is running,
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
+<<<<<<< HEAD
 		tblInfo.Partition.DDLState = model.StateWriteReorganization
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		job.SchemaState = model.StateWriteReorganization
+=======
+		for i := range tblInfo.Indices {
+			if tblInfo.Indices[i].Unique && tblInfo.Indices[i].State == model.StateWriteOnly {
+				tblInfo.Indices[i].State = model.StateWriteReorganization
+			}
+		}
+		job.SchemaState = model.StateWriteReorganization
+		tblInfo.Partition.DDLState = job.SchemaState
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.3 / float64(math.MaxUint64))
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
 		tbl, err2 := getTable((*asAutoIDRequirement)(d), job.SchemaID, tblInfo)
@@ -3238,7 +3260,15 @@ type reorgPartitionWorker struct {
 	reorgedTbl        table.PartitionedTable
 }
 
+<<<<<<< HEAD
 func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) (*reorgPartitionWorker, error) {
+=======
+func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false, false)
+	if err != nil {
+		return nil, err
+	}
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	reorgedTbl, err := tables.GetReorganizedPartitionedTable(t)
 	if err != nil {
 		return nil, errors.Trace(err)

@@ -598,10 +598,6 @@ func NewIndexIngestOperator(
 				writers = append(writers, writer)
 			}
 
-			indexIDs := make([]int64, len(indexes))
-			for i := 0; i < len(indexes); i++ {
-				indexIDs[i] = indexes[i].Meta().ID
-			}
 			return &indexIngestLocalWorker{
 				indexIngestBaseWorker: indexIngestBaseWorker{
 					ctx:     ctx,
@@ -615,8 +611,14 @@ func NewIndexIngestOperator(
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
 				},
+<<<<<<< HEAD
 				indexIDs:   indexIDs,
 				backendCtx: backendCtx,
+=======
+				backendCtx:     backendCtx,
+				rowCntListener: rowCntListener,
+				cpMgr:          cpMgr,
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 			}
 		})
 	return &IndexIngestOperator{
@@ -642,8 +644,14 @@ func (w *indexIngestExternalWorker) HandleTask(rs IndexRecordChunk, send func(In
 
 type indexIngestLocalWorker struct {
 	indexIngestBaseWorker
+<<<<<<< HEAD
 	indexIDs   []int64
 	backendCtx ingest.BackendCtx
+=======
+	backendCtx     ingest.BackendCtx
+	rowCntListener RowCountListener
+	cpMgr          *ingest.CheckpointManager
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 }
 
 func (w *indexIngestLocalWorker) HandleTask(rs IndexRecordChunk, send func(IndexWriteResult)) {

@@ -28,11 +28,17 @@ import (
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -243,7 +249,15 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
+<<<<<<< HEAD
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+=======
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblAddIdxRate, false, false)
+			if err != nil {
+				return err
+			}
+
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
 				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
 			if err != nil {
@@ -252,7 +266,14 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
+<<<<<<< HEAD
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+=======
+			backfillCtx, err := newBackfillCtx(i, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false, false)
+			if err != nil {
+				return err
+			}
+>>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
