@@ -828,16 +828,22 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
-		ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
-		ctx.WritePlain(" = ")
-		if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
-			ctx.WritePlainf("%d", n.SplitOpt.Num)
-		} else {
-			ctx.WritePlain("(")
-			if err := n.SplitOpt.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPresplit, func() error {
+			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
+			ctx.WritePlain(" = ")
+			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
+				ctx.WritePlainf("%d", n.SplitOpt.Num)
+			} else {
+				ctx.WritePlain("(")
+				if err := n.SplitOpt.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
+				}
+				ctx.WritePlain(")")
 			}
-			ctx.WritePlain(")")
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 	}
 	return nil
