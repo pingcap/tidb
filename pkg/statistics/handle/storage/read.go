@@ -319,6 +319,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, histVer)
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -415,6 +416,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			table.StatsVer = int(statsVer)
 			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, histVer)
 		}
+		table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, histVer)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:

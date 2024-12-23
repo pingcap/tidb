@@ -217,12 +217,16 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 					BIGINT(64) UNSIGNED NOT NULL,
+		table_id 					BIGINT(64) NOT NULL,
+		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
+		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_analyze_version		BIGINT(64) UNSIGNED DEFAULT NULL,
+		last_affected_ddl_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
+		INDEX idx_analyze_version(last_analyze_version),
+		INDEX idx_last_affected_ddl_version(last_affected_ddl_version),
 		UNIQUE INDEX tbl(table_id)
 	);`
 
@@ -1234,11 +1238,15 @@ const (
 	// version 240
 	// Add indexes to mysql.analyze_jobs to speed up the query.
 	version240 = 240
+
+	// version 241
+	// Add last_affected_ddl_version to mysql.stats_meta.
+	version241 = 241
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version240
+var currentBootstrapVersion int64 = version241
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1414,6 +1422,7 @@ var (
 		upgradeToVer218,
 		upgradeToVer239,
 		upgradeToVer240,
+		upgradeToVer241,
 	}
 )
 
@@ -3341,6 +3350,14 @@ func upgradeToVer240(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
 	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer241(s sessiontypes.Session, ver int64) {
+	if ver >= version241 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_analyze_version bigint(20) unsigned DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_affected_ddl_version bigint(20) unsigned DEFAULT NULL")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

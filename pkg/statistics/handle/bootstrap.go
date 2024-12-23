@@ -82,7 +82,8 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
 			// But in the future, we maybe will create some records for _row_id, see:
 			// https://github.com/pingcap/tidb/issues/51098
-			LastAnalyzeVersion: snapshot,
+			LastAnalyzeVersion:         snapshot,
+			LastStatsFullUpdateVersion: snapshot,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -146,17 +147,14 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		}
 		if isIndex > 0 {
 			table.ColAndIdxExistenceMap.InsertIndex(id, statsVer != statistics.Version0)
-			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
-				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
-			}
 		} else {
 			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
-			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
-				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
-			}
 		}
+		// The LastXXXVersion can be added by ALTER table so its value might be 0.
+		if statsVer != statistics.Version0 {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
+		}
+		table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, row.GetUint64(4))
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -236,6 +234,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
+			table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, version)
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
 			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
@@ -274,6 +273,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
+			table.LastStatsFullUpdateVersion = max(table.LastStatsFullUpdateVersion, version)
 		}
 	}
 	if table != nil {

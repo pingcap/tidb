@@ -146,27 +146,24 @@ func (e *ShowExec) appendTableForStatsMeta(dbName, tblName, partitionName string
 	if statsTbl.Pseudo {
 		return
 	}
+	row := make([]any, 8)
+	row[0] = dbName
+	row[1] = tblName
+	row[2] = partitionName
+	row[3] = e.versionToTime(statsTbl.Version)
+	row[4] = statsTbl.ModifyCount
+	row[5] = statsTbl.RealtimeCount
 	if !statsTbl.IsAnalyzed() {
-		e.appendRow([]any{
-			dbName,
-			tblName,
-			partitionName,
-			e.versionToTime(statsTbl.Version),
-			statsTbl.ModifyCount,
-			statsTbl.RealtimeCount,
-			nil,
-		})
+		row[6] = nil
 	} else {
-		e.appendRow([]any{
-			dbName,
-			tblName,
-			partitionName,
-			e.versionToTime(statsTbl.Version),
-			statsTbl.ModifyCount,
-			statsTbl.RealtimeCount,
-			e.versionToTime(statsTbl.LastAnalyzeVersion),
-		})
+		row[6] = e.versionToTime(statsTbl.LastAnalyzeVersion)
 	}
+	if statsTbl.LastStatsFullUpdateVersion == 0 {
+		row[7] = nil
+	} else {
+		row[7] = e.versionToTime(statsTbl.LastStatsFullUpdateVersion)
+	}
+	e.appendRow(row)
 }
 
 func (e *ShowExec) appendTableForStatsLocked(dbName, tblName, partitionName string) {

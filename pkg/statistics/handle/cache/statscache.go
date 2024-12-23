@@ -123,7 +123,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
+		query := "SELECT version, table_id, modify_count, count, snapshot, last_analyze_version, last_affected_ddl_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if len(tableAndPartitionIDs) > 0 {
@@ -164,6 +164,13 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		snapshot := row.GetUint64(4)
+		var latestHistUpdateVersion uint64 = 0
+		if !row.IsNull(5) {
+			latestHistUpdateVersion = row.GetUint64(5)
+		}
+		if !row.IsNull(6) {
+			latestHistUpdateVersion = max(latestHistUpdateVersion, row.GetUint64(6))
+		}
 
 		// Detect the context cancel signal, since it may take a long time for the loop.
 		// TODO: add context to TableInfoByID and remove this code block?
@@ -184,7 +191,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the table is not updated, we can skip it.
 		if oldTbl, ok := s.Get(physicalID); ok &&
 			oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
+			latestHistUpdateVersion != 0 && oldTbl.LastStatsFullUpdateVersion >= latestHistUpdateVersion {
 			continue
 		}
 		tbl, err := s.statsHandle.TableStatsFromStorage(
