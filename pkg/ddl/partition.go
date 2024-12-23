@@ -3334,7 +3334,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = job.SchemaState
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
@@ -3398,7 +3398,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			}
 		}
 		tblInfo.Partition.DDLState = model.StateWriteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.2 / float64(math.MaxUint64))
 		failpoint.Inject("reorgPartRollback2", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("Injected error by reorgPartRollback2")
@@ -3419,7 +3419,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		job.SchemaState = model.StateWriteReorganization
 		tblInfo.Partition.DDLState = job.SchemaState
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 	case model.StateWriteReorganization:
 		physicalTableIDs := getPartitionIDsFromDefinitions(tblInfo.Partition.DroppingDefinitions)
@@ -3813,7 +3813,7 @@ type reorgPartitionWorker struct {
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
-	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false, false)
+	bCtx, err := newBackfillCtx(i, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false, false)
 	if err != nil {
 		return nil, err
 	}
