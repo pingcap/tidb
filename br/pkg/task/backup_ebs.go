@@ -353,6 +353,8 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 		defer mutex.Unlock()
 		allRegions = append(allRegions, regions...)
 	}
+
+	storeLeaderRegionsFlat := make([]*metapb.Region, 0, 100*len(allStores))
 	for i := range allStores {
 		store := allStores[i]
 		if ectx.Err() != nil {
@@ -371,7 +373,7 @@ func waitUntilAllScheduleStopped(ctx context.Context, cfg Config, allStores []*m
 				return errors.Trace(err)
 			}
 
-			storeLeaderRegions := make([]*metapb.Region, 0, 100)
+			storeLeaderRegions := storeLeaderRegionsFlat[i*100 : 0 : (i+1)*100]
 			for {
 				response, err2 := checkAdminClient.Recv()
 				if err2 != nil {
