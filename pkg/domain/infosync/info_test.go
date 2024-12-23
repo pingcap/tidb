@@ -84,10 +84,11 @@ func TestTopology(t *testing.T) {
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
-	require.Equal(t, info.getTopologyInfo(), *topology)
+	selfInfo := info.getLocalServerInfo()
+	require.Equal(t, info.getTopologyInfo(selfInfo), *topology)
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 
 	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
@@ -105,7 +106,7 @@ func TestTopology(t *testing.T) {
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
 	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.getTopologyInfo(), *topology)
+	require.Equal(t, info.getTopologyInfo(info.getLocalServerInfo()), *topology)
 
 	// check ttl key
 	ttlExists, err := info.ttlKeyExists(ctx)
@@ -124,7 +125,8 @@ func TestTopology(t *testing.T) {
 }
 
 func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
-	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -144,7 +146,8 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, e
 }
 
 func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return false, err
