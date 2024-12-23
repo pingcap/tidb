@@ -965,8 +965,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.ReplaceOrInsert(&item)
-			b.infoData.byName.ReplaceOrInsert(&item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
