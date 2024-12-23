@@ -3910,7 +3910,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 			row = append(row, types.NewStringDatum(schema.O))
 			row = append(row, types.NewStringDatum(tbl.Name.O))
-			row = append(row, types.NewStringDatum(idx.Name.O))
+			row = append(row, types.NewStringDatum(idx.Name))
 			row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))

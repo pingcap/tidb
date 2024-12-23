@@ -15,14 +15,11 @@
 package bindinfo
 
 import (
-	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,66 +66,26 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.False(t, ok) // can't find b2 now
 	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b3.SQLDigest]
 	require.True(t, ok)
-
-	// test deep copy
-	newCache, err := fbc.Copy()
-	require.NoError(t, err)
-	newFBC := newCache.(*bindingCache)
-	newFBC.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1] = nil
-	delete(newFBC.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest, b1.SQLDigest)
-	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1]), 1) // no impact to the original cache
-	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b1.SQLDigest]
-	require.True(t, ok)
 }
 
 func TestBindCache(t *testing.T) {
-	variable.MemQuotaBindingCache.Store(250)
-	bindCache := newBindCache(nil).(*bindingCache)
+	bindings := Bindings{{BindSQL: "SELECT * FROM t1"}}
+	kvSize := len("digest1") + int(bindings.size())
+	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
+	bindCache := newBindCache(nil)
 
-	value := make([]Bindings, 3)
-	key := make([]bindingCacheKey, 3)
-	var bigKey string
-	for i := 0; i < 3; i++ {
-		cacheKey := strings.Repeat(strconv.Itoa(i), 50)
-		key[i] = bindingCacheKey(hack.Slice(cacheKey))
-		value[i] = []Binding{{OriginalSQL: cacheKey}}
-		bigKey += cacheKey
-
-		require.Equal(t, int64(116), calcBindCacheKVMem(key[i], value[i]))
-	}
-
-	ok, err := bindCache.set(key[0], value[0])
-	require.True(t, ok)
+	err := bindCache.SetBinding("digest1", bindings)
 	require.Nil(t, err)
-	result := bindCache.get(key[0])
-	require.NotNil(t, result)
+	require.NotNil(t, bindCache.GetBinding("digest1"))
 
-	ok, err = bindCache.set(key[1], value[1])
-	require.True(t, ok)
+	err = bindCache.SetBinding("digest2", bindings)
 	require.Nil(t, err)
-	result = bindCache.get(key[1])
-	require.NotNil(t, result)
+	require.NotNil(t, bindCache.GetBinding("digest2"))
 
-	ok, err = bindCache.set(key[2], value[2])
-	require.True(t, ok)
+	err = bindCache.SetBinding("digest3", bindings)
 	require.NotNil(t, err) // exceed the memory limit
-	result = bindCache.get(key[2])
-	require.NotNil(t, result)
+	require.NotNil(t, bindCache.GetBinding("digest2"))
 
-	// key[0] is not in the cache
-	result = bindCache.get(key[0])
-	require.Nil(t, result)
-
-	// key[1] is still in the cache
-	result = bindCache.get(key[1])
-	require.NotNil(t, result)
-
-	bigBindCacheKey := bindingCacheKey(hack.Slice(bigKey))
-	bigBindCacheValue := []Binding{{OriginalSQL: strings.Repeat("x", 100)}}
-	require.Equal(t, int64(266), calcBindCacheKVMem(bigBindCacheKey, bigBindCacheValue))
-	ok, err = bindCache.set(bigBindCacheKey, bigBindCacheValue)
-	require.False(t, ok) // the key-value pair is too big to be cached
-	require.NotNil(t, err)
-	result = bindCache.get(bigBindCacheKey)
-	require.Nil(t, result)
+	require.Nil(t, bindCache.GetBinding("digest1"))    // digest1 is evicted
+	require.NotNil(t, bindCache.GetBinding("digest2")) // digest2 is still in the cache
 }

@@ -514,6 +514,7 @@ go_test(
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
 )

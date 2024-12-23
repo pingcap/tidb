@@ -110,21 +110,6 @@ func (br Bindings) Copy() Bindings {
 	return nbr
 }
 
-// HasAvailableBinding checks if there are any available bindings in bind record.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func HasAvailableBinding(br Bindings) bool {
-	if br == nil {
-		return false
-	}
-	for _, binding := range br {
-		if binding.IsBindingAvailable() {
-			return true
-		}
-	}
-	return false
-}
-
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {

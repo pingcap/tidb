@@ -69,7 +69,7 @@ func TestInsertGE(t *testing.T) {
 	limit := logicalop.LogicalLimit{}.Init(ctx, 0)
 	limit.SetID(-4)
 	hasher := mm.GetHasher()
-	groupExpr := NewGroupExpression(limit, []*Group{mm.GetRootGroup()})
+	groupExpr := mm.NewGroupExpression(limit, []*Group{mm.GetRootGroup()})
 	groupExpr.Init(hasher)
 
 	// Insert a new group with a new expression.

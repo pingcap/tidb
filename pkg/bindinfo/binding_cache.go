@@ -168,8 +168,6 @@ type BindingCache interface {
 	GetMemUsage() int64
 	// GetMemCapacity gets the memory capacity of the cache.
 	GetMemCapacity() int64
-	// Copy copies the cache.
-	Copy() (newCache BindingCache, err error)
 	// Size returns the number of items in the cache.
 	Size() int
 }
@@ -449,28 +447,6 @@ func (c *bindingCache) GetMemCapacity() int64 {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.memCapacity
-}
-
-// Copy copies a new bindingCache from the origin cache.
-// The function is thread-safe.
-func (c *bindingCache) Copy() (BindingCache, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	var err error
-	newCache := newBindCache(c.loadBindingFromStorageFunc).(*bindingCache)
-	if c.memTracker.BytesConsumed() > newCache.GetMemCapacity() {
-		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
-	}
-	keys := c.cache.Keys()
-	for _, key := range keys {
-		cacheKey := key.(bindingCacheKey)
-		v := c.get(cacheKey)
-		if _, err := newCache.set(cacheKey, v); err != nil {
-			return nil, err
-		}
-	}
-	newCache.digestBiMap = c.digestBiMap.Copy()
-	return newCache, err
 }
 
 func (c *bindingCache) Size() int {
