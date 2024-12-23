@@ -4928,6 +4928,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
 			m.SetBatchSize(variable.TidbOptInt(sv, 0))
 		}
+		m.SetMaxWriteSpeed(int(variable.DDLReorgMaxWriteSpeed.Load()))
 	}
 
 	setDistTaskParam := func() error {
@@ -6584,8 +6585,15 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 	})
 
-	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
-	result := <-jobW.ResultCh[0]
+	var result jobSubmitResult
+	select {
+	case <-e.ctx.Done():
+		logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+		return e.ctx.Err()
+	case res := <-jobW.ResultCh[0]:
+		// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
+		result = res
+	}
 	// job.ID must be allocated after previous channel receive returns nil.
 	jobID, err := result.jobID, result.err
 	defer e.delJobDoneCh(jobID)
@@ -6655,7 +6663,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
 		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
-			return context.Canceled
+			return e.ctx.Err()
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.

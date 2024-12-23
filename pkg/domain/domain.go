@@ -357,6 +357,16 @@ func (do *Domain) loadInfoSchema(startTS uint64, isSnapshot bool) (infoschema.In
 		// We can fall back to full load, don't need to return the error.
 		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
 	}
+
+	// add failpoint to simulate long-running schema loading scenario
+	failpoint.Inject("mock-load-schema-long-time", func(val failpoint.Value) {
+		if val.(bool) {
+			// not ideal to use sleep, but not sure if there is a better way
+			logutil.BgLogger().Error("sleep before doing a full load")
+			time.Sleep(15 * time.Second)
+		}
+	})
+
 	// full load.
 	schemas, err := do.fetchAllSchemasWithTables(m)
 	if err != nil {
@@ -522,7 +532,7 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
 		} else {
-			tables, err = m.ListTables(di.ID)
+			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
 				return err
 			}
@@ -1567,8 +1577,12 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 				infosync.StoreInternalSession(r)
 			},
 			func(r pools.Resource) {
-				_, ok := r.(sessionctx.Context)
+				sctx, ok := r.(sessionctx.Context)
 				intest.Assert(ok)
+				intest.AssertFunc(func() bool {
+					txn, _ := sctx.Txn(false)
+					return txn == nil || !txn.Valid()
+				})
 				infosync.DeleteInternalSession(r)
 			},
 		),
@@ -1675,7 +1689,7 @@ func (do *Domain) Init(
 	skipRegisterToDashboard := config.GetGlobalConfig().SkipRegisterToDashboard
 	do.info, err = infosync.GlobalInfoSyncerInit(ctx, do.ddl.GetID(), do.ServerID,
 		do.etcdClient, do.unprefixedEtcdCli, pdCli, pdHTTPCli,
-		do.Store().GetCodec(), skipRegisterToDashboard)
+		do.Store().GetCodec(), skipRegisterToDashboard, do.infoCache)
 	if err != nil {
 		return err
 	}
@@ -1794,6 +1808,11 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 // GetSchemaLease return the schema lease.
 func (do *Domain) GetSchemaLease() time.Duration {
 	return do.schemaLease
+}
+
+// IsLeaseExpired returns whether lease has expired
+func (do *Domain) IsLeaseExpired() bool {
+	return do.SchemaValidator.IsLeaseExpired()
 }
 
 // InitInfo4Test init infosync for distributed execution test.
@@ -2910,6 +2929,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
+			do.StatsHandle().StatsCache.TriggerEvict()
 		case <-updateStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
 		}

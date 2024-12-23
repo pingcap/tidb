@@ -59,6 +59,25 @@ func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 	}
 }
 
+// GetAndResetRecentInfoSchemaTS provides the min start ts for infosync.InfoSyncer.
+// It works like this:
+//
+//	There is a background infosync worker calling ReportMinStartTS() function periodically.
+//	At the beginning of each round, the Data.recentMinTS here is reset to current TS.
+//	If InfoSchemaV2 APIs are called, there is an internal keepAlive() function will also be called.
+//	The keepAlive() function will compare the InfoSchemaV2's ts with Data.recentMinTS, and
+//	update the Data.recentMinTS to smaller one.
+//
+// In a nutshell, every round of ReportMinStartTS(), the minimal known TS used be InfoSchemaV2 APIs will be reported.
+// Some corner cases might happen: the caller take an InfoSchemaV2 instance and not use it immediately.
+// Seveval rounds later, that InfoSchema is used and its TS is reported to block GC safepoint advancing.
+// But that's too late, the GC has been done, "GC life time is shorter than transaction duration" error still happen.
+func (h *InfoCache) GetAndResetRecentInfoSchemaTS(now uint64) uint64 {
+	ret := h.Data.recentMinTS.Load()
+	h.Data.recentMinTS.Store(now)
+	return ret
+}
+
 // ReSize re-size the cache.
 func (h *InfoCache) ReSize(capacity int) {
 	h.mu.Lock()

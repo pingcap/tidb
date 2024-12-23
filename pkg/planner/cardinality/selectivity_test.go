@@ -289,6 +289,56 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 0.0, count)
 }
 
+func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, key idx(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	for i := 1; i <= 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t values (%d)", i))
+		testKit.MustExec(fmt.Sprintf("insert into t select a from t where a = %d", i))
+	}
+	testKit.MustExec("analyze table t")
+	h := dom.StatsHandle()
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	statsTbl := h.GetTableStats(table.Meta())
+
+	// Search for a found value == 10.0
+	sctx := mock.NewContext()
+	col := statsTbl.GetCol(table.Meta().Columns[0].ID)
+	count, err := cardinality.GetColumnRowCount(sctx, col, getRange(5, 5), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.NoError(t, err)
+	require.Equal(t, 10.0, count)
+
+	// Search for a not found value with zero modifyCount. Defaults to count == 1.0
+	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(11, 11), statsTbl.RealtimeCount, statsTbl.ModifyCount, false)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, count)
+
+	// Add another 200 rows to the table
+	testKit.MustExec("insert into t select a+10 from t")
+	testKit.MustExec("insert into t select a+10 from t where a <= 10")
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
+	statsTblnew := h.GetTableStats(table.Meta())
+
+	// Search for a not found value based upon statistics - count should be >= 10 and <=40
+	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblnew.RealtimeCount, statsTblnew.ModifyCount, false)
+	require.NoError(t, err)
+	require.Truef(t, count < 41, "expected: between 10 to 40, got: %v", count)
+	require.Truef(t, count > 9, "expected: between 10 to 40, got: %v", count)
+}
+
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)

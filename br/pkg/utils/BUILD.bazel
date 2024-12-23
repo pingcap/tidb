@@ -20,6 +20,7 @@ go_library(
         "safe_point.go",
         "schema.go",
         "store_manager.go",
+        "wait.go",
         "worker.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/utils",

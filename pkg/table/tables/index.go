@@ -179,6 +179,15 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	}
 	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
+	allowOverwriteOfOldGlobalIndex := false
+	if c.idxInfo.Global && c.tblInfo.Partition.DDLState == model.StateDeleteReorganization &&
+		// TODO: Also do the same for DROP PARTITION
+		c.tblInfo.Partition.DDLAction == model.ActionTruncateTablePartition {
+		allowOverwriteOfOldGlobalIndex = true
+		if len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
+			skipCheck = false
+		}
+	}
 	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
@@ -281,7 +290,31 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		var value []byte
-		if c.tblInfo.TempTableType != model.TempTableNone {
+		if allowOverwriteOfOldGlobalIndex {
+			// In DeleteReorganization, overwrite Global Index keys pointing to
+			// old dropped/truncated partitions.
+			// Note that a partitioned table cannot be temporary table
+			value, err = txn.Get(ctx, key)
+			if err == nil && len(value) != 0 {
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
+				if errPart != nil {
+					return nil, errPart
+				}
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
+						if id == partHandle.PartitionID {
+							// Simply overwrite it
+							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							if err != nil {
+								return nil, err
+							}
+							value = nil
+							break
+						}
+					}
+				}
+			}
+		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {

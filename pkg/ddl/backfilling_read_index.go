@@ -114,14 +114,14 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		if err != nil {
 			return err
 		}
-		return executeAndClosePipeline(opCtx, pipe, nil, 0)
+		return executeAndClosePipeline(opCtx, pipe, nil, nil, 0)
 	}
 
 	pipe, err := r.buildLocalStorePipeline(opCtx, sm, subtask.Concurrency)
 	if err != nil {
 		return err
 	}
-	err = executeAndClosePipeline(opCtx, pipe, nil, 0)
+	err = executeAndClosePipeline(opCtx, pipe, nil, nil, 0)
 	if err != nil {
 		// For dist task local based ingest, checkpoint is unsupported.
 		// If there is an error we should keep local sort dir clean.

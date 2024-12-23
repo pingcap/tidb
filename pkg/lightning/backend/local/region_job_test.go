@@ -579,3 +579,25 @@ func TestStoreBalancerNoRace(t *testing.T) {
 	<-done2
 	require.Len(t, jobFromWorkerCh, 0)
 }
+
+func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
+	backend := &Backend{
+		writeLimiter: newStoreWriteLimiter(0),
+	}
+
+	var wg sync.WaitGroup
+	concurrentRoutines := 100
+	for i := 0; i < concurrentRoutines; i++ {
+		wg.Add(2)
+		go func(limit int) {
+			defer wg.Done()
+			backend.UpdateWriteSpeedLimit(limit)
+		}(i)
+
+		go func() {
+			defer wg.Done()
+			_ = backend.GetWriteSpeedLimit()
+		}()
+	}
+	wg.Wait()
+}
