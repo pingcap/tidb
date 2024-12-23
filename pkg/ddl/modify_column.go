@@ -1091,7 +1091,6 @@ func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column,
 		chs, coll, err = ResolveCharsetCollation([]ast.CharsetOpt{
 			{Chs: chs, Col: coll},
 			{Chs: meta.Charset, Col: meta.Collate},
-			{Chs: schema.Charset, Col: schema.Collate},
 		}, ctx.GetDefaultCollationForUTF8MB4())
 		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll, ctx.GetDefaultCollationForUTF8MB4())
 		if err != nil {
