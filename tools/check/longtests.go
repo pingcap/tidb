@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,26 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package skip
+package main
 
-import (
-	"testing"
-
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
-)
-
-// UnderShort skips the test if the -short flag is set.
-func UnderShort(t *testing.T, args ...any) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip(append([]any{"disabled under -short"}, args...)...)
-	}
+var longTests = map[string][]string{
+	"pkg/ttl/ttlworker": {
+		"TestParallelLockNewJob",
+		"TestParallelLockNewTask",
+		"TestJobManagerWithFault",
+	},
 }
 
-// NotUnderLong skips the test if the -long flag is not set
-func NotUnderLong(t *testing.T, args ...any) {
-	t.Helper()
-	if !testflag.Long() {
-		t.Skip(append([]any{"disabled not under -short"}, args...)...)
-	}
-}
+var longTestWorkerCount = 2

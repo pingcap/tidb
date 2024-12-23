@@ -564,11 +564,13 @@ j:
 				zap.Int64("tableID", job.tbl.ID),
 				zap.String("table", job.tbl.FullName()),
 			)
-			logger.Info("job has finished")
 			summary, err := summarizeTaskResult(allTasks)
 			if err != nil {
 				logger.Info("fail to summarize job", zap.Error(err))
 			}
+			logger.Info("job has finished", zap.String("summary", summary.SummaryText),
+				zap.Uint64("totalRows", summary.TotalRows), zap.Uint64("successRows", summary.SuccessRows), zap.Uint64("errorRows", summary.ErrorRows),
+				zap.String("scanTaskError", summary.ScanTaskErr))
 			err = job.finish(se, se.Now(), summary)
 			if err != nil {
 				logger.Warn("fail to finish job", zap.Error(err))
