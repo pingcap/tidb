@@ -41,6 +41,7 @@ type FieldName struct {
 	Redundant bool
 }
 
+// EqualDBName compares the DBName with the given CIStr.
 func (name *FieldName) EqualDBName(dbName model.CIStr) bool {
 	if name.DBName == nil {
 		return dbName.L == ""
@@ -48,6 +49,7 @@ func (name *FieldName) EqualDBName(dbName model.CIStr) bool {
 	return name.DBName.Value().L == dbName.L
 }
 
+// EqualDBNameString compares the DBName with the given string.
 func (name *FieldName) EqualDBNameString(dbName string) bool {
 	if name.DBName == nil {
 		return dbName == ""
@@ -55,6 +57,7 @@ func (name *FieldName) EqualDBNameString(dbName string) bool {
 	return name.DBName.Value().L == dbName
 }
 
+// EqualDBNameWithFieldName compares the DBName with the given FieldName.
 func (name *FieldName) EqualDBNameWithFieldName(b FieldName) bool {
 	if name.DBName == nil && b.DBName == nil {
 		return true
