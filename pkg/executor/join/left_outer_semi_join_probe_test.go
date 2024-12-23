@@ -32,19 +32,19 @@ import (
 func genLeftOuterSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
 	resultTypes []*types.FieldType) []*chunk.Chunk {
-	return genLeftOuterSemiOrSemiJoinResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, true)
+	return genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, true, false)
 }
 
 func genSemiJoinResult(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
 	resultTypes []*types.FieldType) []*chunk.Chunk {
-	return genLeftOuterSemiOrSemiJoinResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, false)
+	return genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t, sessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes, rightTypes, leftKeyTypes, rightKeyTypes, leftUsedColumns, otherConditions, resultTypes, false, false)
 }
 
 // generate left outer semi join result using nested loop
-func genLeftOuterSemiOrSemiJoinResultImpl(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
+func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessCtx sessionctx.Context, leftFilter expression.CNFExprs, leftChunks []*chunk.Chunk, rightChunks []*chunk.Chunk, leftKeyIndex []int, rightKeyIndex []int,
 	leftTypes []*types.FieldType, rightTypes []*types.FieldType, leftKeyTypes []*types.FieldType, rightKeyTypes []*types.FieldType, leftUsedColumns []int, otherConditions expression.CNFExprs,
-	resultTypes []*types.FieldType, isLeftOuter bool) []*chunk.Chunk {
+	resultTypes []*types.FieldType, isLeftOuter bool, isAnti bool) []*chunk.Chunk {
 	filterVector := make([]bool, 0)
 	var err error
 	returnChks := make([]*chunk.Chunk, 0, 1)
@@ -69,7 +69,11 @@ func genLeftOuterSemiOrSemiJoinResultImpl(t *testing.T, sessCtx sessionctx.Conte
 				if isLeftOuter {
 					// Filtered by left filter, append 0 for matched flag
 					appendToResultChk(leftChunk.GetRow(leftIndex), chunk.Row{}, leftUsedColumns, nil, resultChk)
-					resultChk.AppendInt64(len(leftUsedColumns), 0)
+					if isAnti {
+						resultChk.AppendInt64(len(leftUsedColumns), 1)
+					} else {
+						resultChk.AppendInt64(len(leftUsedColumns), 0)
+					}
 				}
 
 				if resultChk.IsFull() {
@@ -117,13 +121,25 @@ func genLeftOuterSemiOrSemiJoinResultImpl(t *testing.T, sessCtx sessionctx.Conte
 			if isLeftOuter {
 				// Append result with matched flag
 				appendToResultChk(leftRow, chunk.Row{}, leftUsedColumns, nil, resultChk)
-				if hasMatch {
-					resultChk.AppendInt64(len(leftUsedColumns), 1)
-				} else {
-					if hasNull {
-						resultChk.AppendNull(len(leftUsedColumns))
-					} else {
+				if isAnti {
+					if hasMatch {
 						resultChk.AppendInt64(len(leftUsedColumns), 0)
+					} else {
+						if hasNull {
+							resultChk.AppendNull(len(leftUsedColumns))
+						} else {
+							resultChk.AppendInt64(len(leftUsedColumns), 1)
+						}
+					}
+				} else {
+					if hasMatch {
+						resultChk.AppendInt64(len(leftUsedColumns), 1)
+					} else {
+						if hasNull {
+							resultChk.AppendNull(len(leftUsedColumns))
+						} else {
+							resultChk.AppendInt64(len(leftUsedColumns), 0)
+						}
 					}
 				}
 			} else {
