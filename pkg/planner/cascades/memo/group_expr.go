@@ -146,6 +146,19 @@ func (e *GroupExpression) SetAbandoned() {
 	e.abandoned = true
 }
 
+// mergeTo will migrate the src GE state to dst GE and remove src GE from its group.
+func (e *GroupExpression) mergeTo(target *GroupExpression) {
+	e.GetGroup().Delete(e)
+	// rule mask | OR
+	target.mask.InPlaceUnion(e.mask)
+	// clear work
+	for _, childG := range e.Inputs {
+		childG.removeParentGEs(e)
+	}
+	e.Inputs = e.Inputs[:0]
+	e.group = nil
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children

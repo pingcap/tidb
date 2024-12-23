@@ -45,7 +45,7 @@ type Group struct {
 
 	// hash2ParentGroupExpr is reverted pointer back from current Group to parent referred GEs.
 	// uint64 means *list.Element's addr, list.Element means the pos in global memo group expression's list.
-	hash2ParentGroupExpr *hashmap.Map[*GroupExpression, struct{}]
+	hash2ParentGroupExpr *hashmap.Map[*GroupExpression, bool]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
@@ -207,7 +207,62 @@ func (g *Group) removeParentGEs(parent *GroupExpression) {
 func (g *Group) addParentGEs(parent *GroupExpression) {
 	_, ok := g.hash2ParentGroupExpr.Get(parent)
 	intest.Assert(!ok)
-	g.hash2ParentGroupExpr.Put(parent, struct{}{})
+	g.hash2ParentGroupExpr.Put(parent, true)
+}
+
+// mergeTo will merge src group's element into target group.
+func (g *Group) mergeTo(target *Group) {
+	// maintain target group's parent GE refs, except the triggering src GE.
+	g.hash2ParentGroupExpr.Each(func(key *GroupExpression, val bool) {
+		target.hash2ParentGroupExpr.Put(key, true)
+	})
+	// maintain the ge migration.
+	g.ForEachGE(func(ge *GroupExpression) bool {
+		existedElem, ok := target.hash2GroupExpr.Get(ge)
+		if ok {
+			existedGE := existedElem.Value.(*GroupExpression)
+			// not a same object
+			intest.Assert(ge != existedGE)
+			ge.mergeTo(existedGE)
+		} else {
+			target.Insert(ge)
+		}
+		return true
+	})
+	g.Clear()
+}
+
+func (g *Group) Clear() {
+	// clean the list.
+	g.hash2GroupExpr.Each(func(key *GroupExpression, val *list.Element) {
+		g.logicalExpressions.Remove(val)
+	})
+	// clean the map.
+	g.hash2GroupExpr.Clear()
+	g.hash2ParentGroupExpr.Clear()
+	clear(g.Operand2FirstExpr)
+	g.logicalProp = nil
+}
+
+func (g *Group) Check() {
+	intest.Assert(g.groupID > 0)
+	intest.Assert(g.logicalExpressions.Len() == g.hash2GroupExpr.Size())
+	// assert existence.
+	hashMap := make(map[uint64]struct{}, g.logicalExpressions.Len())
+	g.ForEachGE(func(ge *GroupExpression) bool {
+		_, ok := g.hash2GroupExpr.Get(ge)
+		intest.Assert(ok)
+		hashMap[ge.hash64] = struct{}{}
+		return true
+	})
+	g.hash2GroupExpr.Each(func(key *GroupExpression, val *list.Element) {
+		_, ok := hashMap[key.hash64]
+		intest.Assert(ok)
+	})
+	for _, v := range g.Operand2FirstExpr {
+		_, ok := hashMap[v.Value.(*GroupExpression).hash64]
+		intest.Assert(ok)
+	}
 }
 
 // NewGroup creates a new Group with given logical prop.
@@ -225,7 +280,7 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 				return t.GetHash64()
 			},
 		),
-		hash2ParentGroupExpr: hashmap.New[*GroupExpression, struct{}](
+		hash2ParentGroupExpr: hashmap.New[*GroupExpression, bool](
 			4,
 			func(a, b *GroupExpression) bool {
 				return a.Equals(b)

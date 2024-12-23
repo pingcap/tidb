@@ -149,7 +149,15 @@ func (mm *Memo) GetRootGroup() *Group {
 // InsertGroupExpression insert ge into a target group.
 // @GroupExpression indicates the returned group expression, which may be the existed one or the newly inserted.
 // @bool indicates whether the groupExpr is inserted to a new group.
-func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) (*GroupExpression, bool) {
+func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group) (_ *GroupExpression, inserted bool) {
+	defer func() {
+		if inserted {
+			// maintain the parentGE refs after being successfully inserted.
+			for _, childG := range groupExpr.Inputs {
+				childG.addParentGEs(groupExpr)
+			}
+		}
+	}()
 	// for group merge, here groupExpr is the new groupExpr with undetermined belonged group.
 	// we need to use groupExpr hash to find whether there is same groupExpr existed before.
 	// if existed and the existed groupExpr.Group is not same with target, we should merge them up.
@@ -160,8 +168,6 @@ func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group)
 	}
 	if target == nil {
 		target = mm.NewGroup()
-		mm.groups.PushBack(target)
-		mm.groupID2Group[target.groupID] = mm.groups.Back()
 	}
 	// if target has already existed a same groupExpr, it should exit above and return existedGE. Here just safely add it.
 	target.Insert(groupExpr)
@@ -174,6 +180,8 @@ func (mm *Memo) InsertGroupExpression(groupExpr *GroupExpression, target *Group)
 func (mm *Memo) NewGroup() *Group {
 	group := NewGroup(nil)
 	group.groupID = mm.groupIDGen.NextGroupID()
+	mm.groups.PushBack(group)
+	mm.groupID2Group[group.groupID] = mm.groups.Back()
 	return group
 }
 
@@ -213,10 +221,8 @@ func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupE
 	// init hasher
 	h := mm.GetHasher()
 	ge.Init(h)
-	// maintain the parentGE refs.
-	for _, childG := range inputs {
-		childG.addParentGEs(ge)
-	}
+	// since we can't ensure this new group expression can be successfully inserted in target group,
+	// it may be duplicated, so we move the maintenance of parentGE refs after insert action.
 	return ge
 }
 
@@ -227,6 +233,78 @@ func (mm *Memo) NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupE
 // 3: this two GEs has the same operator info.
 // from the 3 above, we could say this two group expression are equivalent,
 // and their groups are equivalent as well from the equivalent transitive rule.
-func (*Memo) mergeGroup(_, _ *Group) {
-	// todo: in next pull request
+func (mm *Memo) mergeGroup(src, dst *Group) {
+	// two groups should be different at group id.
+	needMerge := dst != nil && dst.GetGroupID() != src.GetGroupID()
+	if !needMerge {
+		return
+	}
+	// step1: remove src group from the global register map and list
+	srcGroupElem, ok := mm.groupID2Group[src.GetGroupID()]
+	intest.Assert(ok)
+	if !ok {
+		return
+	}
+	mm.groups.Remove(srcGroupElem)
+	delete(mm.groupID2Group, src.GetGroupID())
+	// reset the root group which has been remove above.
+	if src.GetGroupID() == mm.rootGroup.GetGroupID() {
+		mm.rootGroup = dst
+	}
+	// step2: change src group's parent GE's child group id and reinsert them.
+	// for each src group's parent groupExpression, we need modify their input group.
+	src.hash2ParentGroupExpr.Each(func(key *GroupExpression, val bool) {
+		if key.group.Equals(dst) {
+			// child GE in child group is equivalent with one in parent Group.
+			return
+		}
+		// when GE's child group is changed, its hash64 is changed as well, re-insert them.
+		mm.hash2GlobalGroupExpr.Remove(key)
+		// keep the original owner group, otherwise, it will be set to nil when delete the key from it.
+		parentOwnerG := key.GetGroup()
+		parentOwnerG.Delete(key)
+		reInsertGE := mm.replaceGEChild(key, src, dst)
+		parentOwnerG.Insert(reInsertGE)
+
+		// parentGE's input group has been modified, reinsert them.
+		existedGE, ok := mm.hash2GlobalGroupExpr.Get(reInsertGE)
+		if ok {
+			intest.Assert(existedGE.GetGroup() != nil)
+			// group expression is already in the Memo's groupExpressions, this indicates that reInsertGE is a redundant
+			// group Expression, and it should be removed. With the concern that this redundant group expression may be
+			// already in the TaskScheduler stack for some pushed task types, we should set it be abandoned for a signal.
+			reInsertGE.SetAbandoned()
+			if existedGE.GetGroup().Equals(reInsertGE.GetGroup()) {
+				// equiv one and re-insert one are in same group, merge them.
+				reInsertGE.mergeTo(existedGE)
+			} else {
+				// the reinsertGE and existedGE share the same hash64 while not in the same group, it triggers another
+				// group merge action. do it recursively here.
+				mm.mergeGroup(reInsertGE.GetGroup(), existedGE.GetGroup())
+			}
+		} else {
+			// no global equiv one, just put it into memo's global group expression map.
+			//reInsertGE.GetGroup().Insert(reInsertGE)
+			mm.hash2GlobalGroupExpr.Put(reInsertGE, reInsertGE)
+		}
+	})
+	// step3: merge two groups' element together, and remove it from memo's global map and list.
+	src.mergeTo(dst)
+}
+
+func (mm *Memo) replaceGEChild(ge *GroupExpression, old, new *Group) *GroupExpression {
+	// maintain the old group's parentGEs
+	old.removeParentGEs(ge)
+	for i, childGroup := range ge.Inputs {
+		if childGroup.GetGroupID() == old.GetGroupID() {
+			ge.Inputs[i] = new
+		}
+	}
+	// recompute the hash
+	hasher := mm.GetHasher()
+	ge.Hash64(hasher)
+	ge.hash64 = hasher.Sum64()
+	// maintain the new group's parentGEs
+	new.addParentGEs(ge)
+	return ge
 }
