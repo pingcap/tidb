@@ -176,7 +176,7 @@ func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) (B
 		NumCounters: 1e7,
 		MaxCost:     variable.MemQuotaBindingCache.Load(),
 		BufferItems: 64,
-		Cost: func(value interface{}) int64 {
+		Cost: func(value any) int64 {
 			return int64(value.(Bindings).size())
 		},
 		IgnoreInternalCost: true,
