@@ -365,12 +365,12 @@ Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
-      └─IndexMerge	71993.60	root		type: union
+      └─IndexMerge	63.35	root		type: union
         ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
         ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
         │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	71993.60	cop[tikv]		substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─Selection(Probe)	63.35	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
           └─TableRowIDScan	89992.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3
@@ -384,12 +384,12 @@ Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
-      └─IndexMerge	71993.60	root		type: union
+      └─IndexMerge	63.35	root		type: union
         ├─Selection(Build)	10000.00	cop[tikv]		eq(10, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
         ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
         │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	71993.60	cop[tikv]		reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
+        └─Selection(Probe)	63.35	cop[tikv]		or(and(eq(planner__core__casetest__index__index.t1.c1, 10), eq(10, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), reverse(cast(planner__core__casetest__index__index.t1.c3, var_string(20)))
           └─TableRowIDScan	89992.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 = 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and reverse(c3)) order by c1;
 c1	c2	c3
@@ -401,13 +401,13 @@ Sort	10000.00	root		planner__core__casetest__index__index.t2.c1
   └─Apply	10000.00	root		CARTESIAN inner join, other cond:or(and(lt(planner__core__casetest__index__index.t2.c1, Column#8), if(ne(Column#9, 0), NULL, 1)), or(eq(Column#10, 0), if(isnull(planner__core__casetest__index__index.t2.c1), NULL, 0)))
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-    └─HashAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
-      └─IndexMerge	26709333.33	root		type: union
+    └─StreamAgg(Probe)	10000.00	root		funcs:min(planner__core__casetest__index__index.t1.c1)->Column#8, funcs:sum(0)->Column#9, funcs:count(1)->Column#10
+      └─IndexMerge	30263.46	root		type: union
         ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)
         │ └─TableRangeScan	33333333.33	cop[tikv]	table:t1	range:[10,+inf], keep order:false, stats:pseudo
         ├─Selection(Build)	80000.00	cop[tikv]		eq(1, planner__core__casetest__index__index.t2.c3)
         │ └─IndexRangeScan	100000.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:pseudo
-        └─Selection(Probe)	26709333.33	cop[tikv]		substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
+        └─Selection(Probe)	30263.46	cop[tikv]		or(and(ge(planner__core__casetest__index__index.t1.c1, 10), eq(planner__core__casetest__index__index.t1.c1, planner__core__casetest__index__index.t2.c3)), and(eq(planner__core__casetest__index__index.t1.c2, 1), eq(1, planner__core__casetest__index__index.t2.c3))), substring(cast(planner__core__casetest__index__index.t1.c3, var_string(20)), 10)
           └─TableRowIDScan	33386666.67	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t2 where c1 < all(select /*+ use_index_merge(t1) */ c1 from t1 where (c1 >= 10 and c1 = t2.c3 or c2 = 1 and c2 = t2.c3) and substring(c3, 10)) order by c1;
 c1	c2	c3
@@ -440,13 +440,14 @@ Projection	10000.00	root		planner__core__casetest__index__index.tt1.c_int
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:tt1	keep order:true, stats:pseudo
   └─StreamAgg(Probe)	10000.00	root		funcs:max(Column#14)->Column#9, funcs:sum(Column#15)->Column#10, funcs:count(1)->Column#11
-    └─Projection	43330.00	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
-      └─IndexMerge	43330.00	root		type: union
+    └─Projection	17.91	root		planner__core__casetest__index__index.tt2.c_decimal->Column#14, cast(isnull(planner__core__casetest__index__index.tt2.c_decimal), decimal(20,0) BINARY)->Column#15
+      └─IndexMerge	17.91	root		type: union
         ├─Selection(Build)	33333.33	cop[tikv]		eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)
         │ └─IndexRangeScan	33333333.33	cop[tikv]	table:tt2, index:c_str(c_str)	range:["zzzzzzzzzzzzzzzzzzz",+inf], keep order:false, stats:pseudo
         ├─Selection(Build)	10000.00	cop[tikv]		lt(7, planner__core__casetest__index__index.tt1.c_decimal)
         │ └─TableRangeScan	10000.00	cop[tikv]	table:tt2	range:[7,7], keep order:false, stats:pseudo
-        └─TableRowIDScan(Probe)	43330.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
+        └─Selection(Probe)	17.91	cop[tikv]		or(and(eq(planner__core__casetest__index__index.tt2.c_int, 7), lt(7, planner__core__casetest__index__index.tt1.c_decimal)), and(ge(planner__core__casetest__index__index.tt2.c_str, "zzzzzzzzzzzzzzzzzzz"), eq(planner__core__casetest__index__index.tt1.c_int, planner__core__casetest__index__index.tt2.c_int)))
+          └─TableRowIDScan	43330.00	cop[tikv]	table:tt2	keep order:false, stats:pseudo
 select c_int from tt1 where c_decimal > all (select /*+ use_index_merge(tt2) */ c_decimal from tt2 where tt2.c_int = 7 and tt2.c_int < tt1.c_decimal or tt2.c_str >= 'zzzzzzzzzzzzzzzzzzz' and tt1.c_int = tt2.c_int) order by 1;
 c_int
 6

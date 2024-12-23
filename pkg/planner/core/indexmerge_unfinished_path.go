@@ -430,11 +430,16 @@ func buildIntoAccessPath(
 	for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](allAlternativePaths) {
 		// A partial path can handle TableFilters only if it's a table path, and the filters can be pushed to TiKV.
 		// Otherwise, we should clear TableFilters and set KeepIndexMergeORSourceFilter to true.
-		if len(p.TableFilters) > 0 &&
-			(!expression.CanExprsPushDown(pushDownCtx, p.TableFilters, kv.TiKV) ||
-				!p.IsTablePath()) {
+		if len(p.TableFilters) > 0 {
+			// Note: Theoretically, we don't need to set KeepIndexMergeORSourceFilter to true if we can handle the
+			// TableFilters. But filters that contain non-handle columns will be unexpectedly removed in
+			// convertToPartialTableScan(). Not setting it to true will cause the final plan to miss those filters.
+			// The behavior related to convertToPartialTableScan() needs more investigation.
+			// Anyway, now we set it to true here, and it's also consistent with the previous implementation.
 			p.KeepIndexMergeORSourceFilter = true
-			p.TableFilters = nil
+			if !expression.CanExprsPushDown(pushDownCtx, p.TableFilters, kv.TiKV) || !p.IsTablePath() {
+				p.TableFilters = nil
+			}
 		}
 		// A partial path can handle IndexFilters if the filters can be pushed to TiKV.
 		if len(p.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, p.IndexFilters, kv.TiKV) {
