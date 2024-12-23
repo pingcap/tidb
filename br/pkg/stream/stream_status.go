@@ -98,6 +98,16 @@ func (t *TaskStatus) colorfulStatusString() string {
 	return statusOK("NORMAL")
 }
 
+func (t *TaskStatus) statusString() string {
+	if t.paused && len(t.LastErrors) > 0 {
+		return "ERROR"
+	}
+	if t.paused {
+		return "PAUSE"
+	}
+	return "NORMAL"
+}
+
 // GetCheckpoint calculates the checkpoint of the task.
 func (t TaskStatus) GetMinStoreCheckpoint() Checkpoint {
 	initialized := false
@@ -195,6 +205,7 @@ func (p *printByJSON) PrintTasks() {
 		Name         string           `json:"name"`
 		StartTS      uint64           `json:"start_ts,omitempty"`
 		EndTS        uint64           `json:"end_ts,omitempty"`
+		Status       string           `json:"status"`
 		TableFilter  []string         `json:"table_filter"`
 		Progress     []storeProgress  `json:"progress"`
 		Storage      string           `json:"storage"`
@@ -224,6 +235,7 @@ func (p *printByJSON) PrintTasks() {
 			Name:         t.Info.GetName(),
 			StartTS:      t.Info.GetStartTs(),
 			EndTS:        t.Info.GetEndTs(),
+			Status:       t.statusString(),
 			TableFilter:  t.Info.GetTableFilter(),
 			Progress:     sp,
 			Storage:      s.String(),
