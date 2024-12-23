@@ -303,7 +303,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
