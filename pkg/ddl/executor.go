@@ -889,31 +889,77 @@ func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, err
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
 func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
-	for _, v := range charsetOpts {
-		if v.Col != "" {
-			collation, err := collate.GetCollationByName(v.Col)
+	var tableChs, tableColl, schemaChs, schemaColl string
+	for i, v := range charsetOpts {
+		if v.Col != "" && i == 0 {
+			tableColl = v.Col
+		}
+		if v.Col != "" && i == 1 {
+			schemaColl = v.Col
+		}
+		if v.Chs != "" && i == 0 {
+			tableChs = v.Chs
+		}
+		if v.Chs != "" && i == 1 {
+			schemaChs = v.Chs
+		}
+	}
+
+	if tableChs != "" && tableColl != "" { // CHARACTER SET ... COLLATE ...
+		chs = tableChs
+		coll = tableColl
+	} else if tableChs != "" && tableColl == "" { // CHARACTER SET ...
+		chs = tableChs
+
+		if schemaColl != "" {
+			collation, err := collate.GetCollationByName(schemaColl)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			if v.Chs != "" && collation.CharsetName != v.Chs {
-				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.Col, v.Chs)
+			if collation.CharsetName == chs {
+				coll = schemaColl
 			}
-			return collation.CharsetName, v.Col, nil
 		}
-		if v.Chs != "" {
-			coll, err := GetDefaultCollation(v.Chs, utf8MB4DefaultColl)
+		if coll == "" {
+			cs, err := charset.GetCharsetInfo(chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.Chs, coll, nil
+			coll = cs.DefaultCollation
 		}
+
+		if chs == charset.CharsetUTF8MB4 {
+			utf8mb4Coll := getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
+			if utf8mb4Coll != "" {
+				coll = utf8mb4Coll
+			}
+		}
+	} else if tableChs == "" && tableColl != "" { // COLLATE ...
+		coll = tableColl
+		collation, err := collate.GetCollationByName(tableColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+		chs = collation.CharsetName
+
+	} else if tableChs == "" && tableColl == "" { // ...
+		chs = schemaChs
+		coll = schemaColl
 	}
-	chs, coll = charset.GetDefaultCharsetAndCollate()
-	utf8mb4Coll := getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
-	if utf8mb4Coll != "" {
-		return chs, utf8mb4Coll, nil
+
+	if chs == "" || coll == "" {
+		chs, coll = charset.GetDefaultCharsetAndCollate()
 	}
-	return chs, coll, nil
+
+	collation, err := collate.GetCollationByName(coll)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	if collation.CharsetName != chs {
+		return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
+	}
+
+	return
 }
 
 // IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
@@ -1582,14 +1628,6 @@ func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption,
 				chs = info.Name
 			} else if chs != info.Name {
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
-			}
-			if len(coll) == 0 {
-				defaultColl := getDefaultCollationForUTF8MB4(chs, defaultUTF8MB4Coll)
-				if len(defaultColl) == 0 {
-					coll = info.DefaultCollation
-				} else {
-					coll = defaultColl
-				}
 			}
 		case ast.TableOptionCollate:
 			info, err := collate.GetCollationByName(opt.StrValue)
