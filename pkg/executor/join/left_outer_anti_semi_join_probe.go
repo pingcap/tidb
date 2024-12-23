@@ -171,6 +171,7 @@ func (j *leftOuterAntiSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *ch
 			}
 			j.probeCollision++
 			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
+			continue
 		}
 		remainCap--
 		j.currentProbeRow++
