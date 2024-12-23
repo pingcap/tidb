@@ -72,6 +72,9 @@ func TestCrossDBBindingCache(t *testing.T) {
 func TestBindCache(t *testing.T) {
 	bindings := Bindings{{BindSQL: "SELECT * FROM t1"}}
 	kvSize := int(bindings.size())
+	defer func(v int64) {
+		variable.MemQuotaBindingCache.Store(v)
+	}(variable.MemQuotaBindingCache.Load())
 	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
 	bindCache := newBindCache(nil)
 	defer bindCache.Close()

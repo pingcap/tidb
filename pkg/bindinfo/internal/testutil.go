@@ -26,7 +26,7 @@ import (
 )
 
 // UtilCleanBindingEnv cleans the binding environment.
-func UtilCleanBindingEnv(tk *testkit.TestKit, dom *domain.Domain) {
+func UtilCleanBindingEnv(tk *testkit.TestKit, _ *domain.Domain) {
 	tk.MustExec("update mysql.bind_info set status='deleted' where source != 'builtin'")
 	tk.MustExec(`admin reload bindings`)
 	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
