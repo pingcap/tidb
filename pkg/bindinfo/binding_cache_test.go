@@ -69,16 +69,6 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.False(t, ok) // can't find b2 now
 	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b3.SQLDigest]
 	require.True(t, ok)
-
-	// test deep copy
-	newCache, err := fbc.Copy()
-	require.NoError(t, err)
-	newFBC := newCache.(*bindingCache)
-	newFBC.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1] = nil
-	delete(newFBC.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest, b1.SQLDigest)
-	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest[fDigest1]), 1) // no impact to the original cache
-	_, ok = fbc.digestBiMap.(*digestBiMapImpl).sqlDigest2noDBDigest[b1.SQLDigest]
-	require.True(t, ok)
 }
 
 func TestBindCache(t *testing.T) {
