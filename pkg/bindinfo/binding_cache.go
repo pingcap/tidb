@@ -181,6 +181,7 @@ func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) (B
 		Cost: func(value any) int64 {
 			return int64(value.(Bindings).size())
 		},
+		Metrics:            true,
 		IgnoreInternalCost: true,
 	})
 	c := bindingCache{
