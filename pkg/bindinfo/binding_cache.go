@@ -330,6 +330,9 @@ func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err erro
 	}
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
 	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
+	// NOTE: the Set might fail if the operation is too frequent, but binding update is a low-frequently operation, so
+	// this risk seems acceptable.
+	// TODO: handle the Set failure more gracefully.
 	c.cache.Set(sqlDigest, bindings, 0)
 	c.cache.Wait()
 	return
