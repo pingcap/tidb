@@ -237,14 +237,10 @@ func (s *CheckpointManager) AdvanceWatermark(imported bool) error {
 	if imported {
 		err := s.afterImport()
 		if err != nil {
-			s.logger.Error("checkpoint manager after import callback failed, unset ts", zap.Error(err))
-			s.unsetTS()
 			return err
 		}
 		err = s.updateCheckpoint()
 		if err != nil {
-			s.logger.Error("advance watermark update checkpoint failed, unset ts", zap.Error(err))
-			s.unsetTS()
 			return err
 		}
 		return nil
@@ -304,12 +300,6 @@ func (s *CheckpointManager) noUpdate() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.checkpoints) == 0 && s.minTaskIDFinished == 0
-}
-
-func (s *CheckpointManager) unsetTS() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.ts = 0
 }
 
 // Close closes the checkpoint manager.

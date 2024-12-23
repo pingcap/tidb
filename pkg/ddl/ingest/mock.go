@@ -204,7 +204,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 }
 
 // CreateWriter implements Engine.CreateWriter interface.
-func (m *MockEngineInfo) CreateWriter(id int, _ *backend.LocalWriterConfig) (Writer, error) {
+func (m *MockEngineInfo) CreateWriter(id int, _ *backend.LocalWriterConfig, _ CheckpointOperator) (Writer, error) {
 	logutil.DDLIngestLogger().Info("mock engine info create writer", zap.Int("id", id))
 	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }

@@ -1189,6 +1189,7 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 			select {
 			case <-workerCtx.Done():
 				j.done(b.jobWg)
+				b.releaseStoreLoad(j.region.Region.Peers)
 				return
 			case b.innerJobToWorkerCh <- j:
 			}
