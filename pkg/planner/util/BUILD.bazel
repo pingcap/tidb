@@ -46,7 +46,7 @@ go_test(
     srcs = [
         "main_test.go",
         "path_test.go",
-        "slice_recursive_flatten_iter_test",
+        "slice_recursive_flatten_iter_test.go",
     ],
     embed = [":util"],
     flaky = True,
