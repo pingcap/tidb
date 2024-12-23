@@ -15,6 +15,8 @@
 package cardinality
 
 import (
+	"math"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -173,12 +175,27 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
-		// If the table hasn't been modified, it's safe to return 0. Otherwise, the TopN could be stale - return 1.
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
+		//
+		// If the table hasn't been modified, it's safe to return 0.
 		if modifyCount == 0 {
 			return 0, nil
 		}
-		return 1, nil
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
+		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
+		if c.Histogram.NDV > 0 {
+			histNDV = float64(c.Histogram.NDV)
+		} else {
+			histNDV = math.Sqrt(max(c.NotNullCount(), float64(realtimeRowCount)))
+		}
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
+		totalRowCount := min(c.NotNullCount(), float64(realtimeRowCount)-c.NotNullCount())
+		return max(1, totalRowCount/histNDV), nil
 	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return c.Histogram.NotNullCount() / histNDV, nil
 }
 

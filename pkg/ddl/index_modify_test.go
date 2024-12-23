@@ -1422,3 +1422,29 @@ func TestAddVectorIndexRollback(t *testing.T) {
 
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
 }
+
+func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk2.MustExec("set @@global.tidb_enable_dist_task=0")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	// Test issue 57414.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
+	})
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col1, col2)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
+	tk.MustExec("admin check table t")
+}

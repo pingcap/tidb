@@ -1103,9 +1103,9 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 			return v, true
 		}
 		if (row != nil && !v.Not) || (row == nil && v.Not) {
-			er.ctxStackAppend(expression.NewOne(), types.EmptyName)
+			er.ctxStackAppend(expression.NewSignedOne(), types.EmptyName)
 		} else {
-			er.ctxStackAppend(expression.NewZero(), types.EmptyName)
+			er.ctxStackAppend(expression.NewSignedZero(), types.EmptyName)
 		}
 	}
 	return v, true

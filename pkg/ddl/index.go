@@ -21,7 +21,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"strings"
@@ -70,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1119,6 +1119,7 @@ SwitchIndexState:
 
 func checkIfTableReorgWorkCanSkip(
 	store kv.Storage,
+	sessCtx sessionctx.Context,
 	tbl table.Table,
 	job *model.Job,
 ) bool {
@@ -1126,21 +1127,30 @@ func checkIfTableReorgWorkCanSkip(
 		// Reorg work has begun.
 		return false
 	}
+	txn, err := sessCtx.Txn(false)
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if table is empty failed", zap.Error(err))
+		return false
+	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
-	return checkIfTableIsEmpty(ctx, store, tbl)
+	return checkIfTableIsEmpty(ctx, store, tbl, startTS)
 }
 
 func checkIfTableIsEmpty(
 	ctx *ReorgContext,
 	store kv.Storage,
 	tbl table.Table,
+	startTS uint64,
 ) bool {
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
 			pTbl := pTbl.GetPartition(pid)
-			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl) {
+			if !checkIfPhysicalTableIsEmpty(ctx, store, pTbl, startTS) {
 				return false
 			}
 		}
@@ -1148,15 +1158,17 @@ func checkIfTableIsEmpty(
 	}
 	//nolint:forcetypeassert
 	plainTbl := tbl.(table.PhysicalTable)
-	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl)
+	return checkIfPhysicalTableIsEmpty(ctx, store, plainTbl, startTS)
 }
 
 func checkIfPhysicalTableIsEmpty(
 	ctx *ReorgContext,
 	store kv.Storage,
 	tbl table.PhysicalTable,
+	startTS uint64,
 ) bool {
-	hasRecord, err := ExistsTableRow(ctx, store, math.MaxInt64, tbl)
+	hasRecord, err := existsTableRow(ctx, store, tbl, startTS)
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if table is empty failed", zap.Error(err))
 		return false
@@ -1166,6 +1178,7 @@ func checkIfPhysicalTableIsEmpty(
 
 func checkIfTempIndexReorgWorkCanSkip(
 	store kv.Storage,
+	sessCtx sessionctx.Context,
 	tbl table.Table,
 	allIndexInfos []*model.IndexInfo,
 	job *model.Job,
@@ -1179,6 +1192,14 @@ func checkIfTempIndexReorgWorkCanSkip(
 		// Reorg work has begun.
 		return false
 	}
+	txn, err := sessCtx.Txn(false)
+	validTxn := err == nil && txn != nil && txn.Valid()
+	intest.Assert(validTxn)
+	if !validTxn {
+		logutil.DDLLogger().Warn("check if temp index is empty failed", zap.Error(err))
+		return false
+	}
+	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
 	ctx.setDDLLabelForTopSQL(job.Query)
@@ -1190,7 +1211,7 @@ func checkIfTempIndexReorgWorkCanSkip(
 			globalIdxIDs = append(globalIdxIDs, idxInfo.ID)
 		}
 	}
-	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID, globalIdxIDs)
+	return checkIfTempIndexIsEmpty(ctx, store, tbl, firstIdxID, lastIdxID, globalIdxIDs, startTS)
 }
 
 func checkIfTempIndexIsEmpty(
@@ -1199,22 +1220,23 @@ func checkIfTempIndexIsEmpty(
 	tbl table.Table,
 	firstIdxID, lastIdxID int64,
 	globalIdxIDs []int64,
+	startTS uint64,
 ) bool {
 	tblMetaID := tbl.Meta().ID
 	if pTbl, ok := tbl.(table.PartitionedTable); ok {
 		for _, pid := range pTbl.GetAllPartitionIDs() {
-			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pid, firstIdxID, lastIdxID) {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, pid, firstIdxID, lastIdxID, startTS) {
 				return false
 			}
 		}
 		for _, globalIdxID := range globalIdxIDs {
-			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, globalIdxID, globalIdxID) {
+			if !checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, globalIdxID, globalIdxID, startTS) {
 				return false
 			}
 		}
 		return true
 	}
-	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, firstIdxID, lastIdxID)
+	return checkIfTempIndexIsEmptyForPhysicalTable(ctx, store, tblMetaID, firstIdxID, lastIdxID, startTS)
 }
 
 func checkIfTempIndexIsEmptyForPhysicalTable(
@@ -1222,15 +1244,17 @@ func checkIfTempIndexIsEmptyForPhysicalTable(
 	store kv.Storage,
 	pid int64,
 	firstIdxID, lastIdxID int64,
+	startTS uint64,
 ) bool {
 	start, end := encodeTempIndexRange(pid, firstIdxID, lastIdxID)
 	foundKey := false
 	idxPrefix := tablecodec.GenTableIndexPrefix(pid)
-	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, idxPrefix, math.MaxUint64, start, end,
+	err := iterateSnapshotKeys(ctx, store, kv.PriorityLow, idxPrefix, startTS, start, end,
 		func(_ kv.Handle, _ kv.Key, _ []byte) (more bool, err error) {
 			foundKey = true
 			return false, nil
 		})
+	intest.Assert(err == nil)
 	if err != nil {
 		logutil.DDLLogger().Info("check if temp index is empty failed", zap.Error(err))
 		return false
@@ -1274,7 +1298,7 @@ func pickBackfillType(job *model.Job) (model.ReorgType, error) {
 func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = variable.CloudStorageURI.Load()
-	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
+	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
@@ -1306,7 +1330,7 @@ func doReorgWorkForCreateIndex(
 		return false, ver, err
 	}
 	if !reorgTp.NeedMergeProcess() {
-		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if skipReorg {
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
@@ -1317,7 +1341,7 @@ func doReorgWorkForCreateIndex(
 	}
 	switch allIndexInfos[0].BackfillState {
 	case model.BackfillStateRunning:
-		skipReorg := checkIfTableReorgWorkCanSkip(w.store, tbl, job)
+		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if !skipReorg {
 			logutil.DDLLogger().Info("index backfill state running",
 				zap.Int64("job ID", job.ID), zap.String("table", tbl.Meta().Name.O),
@@ -1337,6 +1361,7 @@ func doReorgWorkForCreateIndex(
 				return false, ver, errors.Trace(err)
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTableReorgCanSkip")
 			logutil.DDLLogger().Info("table is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -1352,6 +1377,7 @@ func doReorgWorkForCreateIndex(
 				MockDMLExecutionStateBeforeMerge()
 			}
 		})
+		failpoint.InjectCall("BeforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
 			zap.String("table", tbl.Meta().Name.O),
@@ -1366,13 +1392,14 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
-		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, tbl, allIndexInfos, job)
+		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, w.sess.Session(), tbl, allIndexInfos, job)
 		if !skipReorg {
 			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
 			if !done {
 				return false, ver, err
 			}
 		} else {
+			failpoint.InjectCall("afterCheckTempIndexReorgCanSkip")
 			logutil.DDLLogger().Info("temp index is empty, skipping reorg work",
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
@@ -2024,14 +2051,6 @@ func (w *addIndexTxnWorker) checkHandleExists(idxInfo *model.IndexInfo, key kv.K
 	if hasBeenBackFilled {
 		return nil
 	}
-	if idxInfo.Global {
-		// 'handle' comes from reading directly from a partition, without partition id,
-		// so we can only compare the handle part of the key.
-		if ph, ok := h.(kv.PartitionHandle); ok && ph.Handle.Equal(handle) {
-			// table row has been back-filled already, OK to add the index entry
-			return nil
-		}
-	}
 	return ddlutil.GenKeyExistsErr(key, value, idxInfo, tblInfo)
 }
 
@@ -2369,7 +2388,7 @@ func (w *worker) addTableIndex(
 	// TODO: Support typeAddIndexMergeTmpWorker.
 	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
-			err := w.executeDistTask(t, reorgInfo)
+			err := w.executeDistTask(ctx, t, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -2436,7 +2455,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
 				bc, err = ingest.LitBackCtxMgr.Register(
-					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, reorgInfo.RealStartTS)
+					ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName, 1, 0, reorgInfo.RealStartTS)
 				if err != nil {
 					return err
 				}
@@ -2450,7 +2469,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
-func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) executeDistTask(stepCtx context.Context, t table.Table, reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
@@ -2501,7 +2520,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				return err
 			}
 			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2538,7 +2557,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 			defer close(done)
 			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, reorgInfo.ReorgMeta.TargetScope, metaData)
 			failpoint.InjectCall("pauseAfterDistTaskFinished")
-			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+			if err := w.isReorgRunnable(stepCtx, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.DDLLogger().Warn("job paused by user", zap.Error(err))
 					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
@@ -2559,7 +2578,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 				w.updateDistTaskRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
 			case <-checkFinishTk.C:
-				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if err = w.isReorgRunnable(stepCtx, true); err != nil {
 					if dbterror.ErrPausedDDLJob.Equal(err) {
 						if err = handle.PauseTask(w.workCtx, taskKey); err != nil {
 							logutil.DDLLogger().Error("pause task error", zap.String("task_key", taskKey), zap.Error(err))
@@ -2679,7 +2698,7 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	task, err := taskMgr.GetTaskByKey(w.workCtx, taskKey)
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.workCtx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task", zap.String("task_key", taskKey), zap.Error(err))
 		return

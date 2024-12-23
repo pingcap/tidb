@@ -211,14 +211,12 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	keyIndexMap := make(map[int]struct{})
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
-	hasFixedSizeKeyColumn := false
 	varLengthKeyNumber := 0
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
 		if prop.keyLength != chunk.VarElemLen {
 			meta.joinKeysLength += prop.keyLength
-			hasFixedSizeKeyColumn = true
 		} else {
 			meta.isJoinKeysFixedLength = false
 			varLengthKeyNumber++
@@ -327,20 +325,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 	}
 	if needUsedFlag {
 		meta.colOffsetInNullMap = 1
-		// the total row length should be larger than 4 byte since the smallest unit of atomic.LoadXXX is UInt32
-		if len(columnsNeedToBeSaved) > 0 {
-			// the smallest length of a column is 4 byte, so the total row length is enough
-			meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
-		} else {
-			// if no columns need to be converted to row format, then the key is not inlined
-			// 1. if any of the key columns is fixed length, then the row length is larger than 4 bytes(since the smallest length of a fixed length column is 4 bytes)
-			// 2. if all the key columns are variable length, there is no guarantee that the row length is larger than 4 byte, the nullmap should be 4 bytes alignment
-			if hasFixedSizeKeyColumn {
-				meta.nullMapLength = (len(columnsNeedToBeSaved) + 1 + 7) / 8
-			} else {
-				meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
-			}
-		}
+		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
+		// so atomic read/write is required. We want to keep this atomic operator inside the access of nullmap,
+		// then the nullMapLength should be 4 bytes alignment since the smallest unit of atomic.LoadUint32 is UInt32
+		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
 	} else {
 		meta.colOffsetInNullMap = 0
 		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8

@@ -115,10 +115,29 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 
 	// Cache the ret full rows in schemataRetriever
 	if !e.initialized {
-		is := sctx.GetInfoSchema().(infoschema.InfoSchema)
-		e.is = is
-
 		var err error
+		// InTxn() should be true in most of the cases.
+		// Because the transaction should have been activated in MemTableReaderExec Open().
+		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
+		// Because it could DATA RACE here and in Open() it's safe.
+		if sctx.GetSessionVars().InTxn() {
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			// When the excutor is built from tidb coprocessor request, the transaction is not valid.
+			// Then InTxn() is false.
+			//
+			// What's the difference between using latest infoschema and using snapshot infoschema?
+			// A query *should* use the infoschema of the txn start ts, but it's still safe to use the latest.
+			// If now it's 12:00:00, the ts of the latest infoschema might be 11:59:30 or 11:52:12 or anything.
+			// Say, default GC interval is 10min, the ts of the latest infoschema is 11:52:12.
+			// Then the valid lifetime range on infoschema API become [11:52:12, 12:12:12) using latest infoschema,
+			// but it should be [12:00:00, 12:10:00) if using the snapshot infoschema.
+			e.is = sctx.GetInfoSchema().(infoschema.InfoSchema)
+		}
+
 		switch e.table.Name.O {
 		case infoschema.TableSchemata:
 			err = e.setDataFromSchemata(sctx)
@@ -179,7 +198,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			infoschema.TableClientErrorsSummaryByHost:
 			err = e.setDataForClientErrorsSummary(sctx, e.table.Name.O)
 		case infoschema.TableAttributes:
-			err = e.setDataForAttributes(ctx, sctx, is)
+			err = e.setDataForAttributes(ctx, sctx, e.is)
 		case infoschema.TablePlacementPolicies:
 			err = e.setDataFromPlacementPolicies(sctx)
 		case infoschema.TableTrxSummary:
@@ -242,11 +261,26 @@ func getAutoIncrementID(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 ) int64 {
+	if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
+		if ok, v2 := infoschema.IsV2(raw.InfoSchema); ok {
+			isCached := v2.TableIsCached(tblInfo.ID)
+			if !isCached {
+				// Loading table info from kv storage invalidates the cached auto_increment id.
+				return 0
+			}
+		}
+	}
 	tbl, ok := is.TableByID(context.Background(), tblInfo.ID)
 	if !ok {
 		return 0
 	}
-	return tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType).Base() + 1
+	alloc := tbl.Allocators(sctx.GetTableCtx()).Get(autoid.AutoIncrementType)
+	if alloc == nil || alloc.Base() == 0 {
+		// It may not be loaded yet.
+		// To show global next autoID, one should use `show table x next_row_id`.
+		return 0
+	}
+	return alloc.Base() + 1
 }
 
 func hasPriv(ctx sessionctx.Context, priv mysql.PrivilegeType) bool {
@@ -714,6 +748,19 @@ func onlySchemaOrTableColumns(columns []*model.ColumnInfo) bool {
 	return false
 }
 
+func onlySchemaOrTableColPredicates(predicates map[string]set.StringSet) bool {
+	for str := range predicates {
+		switch str {
+		case "table_name":
+		case "table_schema":
+		case "table_catalog":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context) error {
 	var rows [][]types.Datum
 	checker := privilege.GetPrivilegeManager(sctx)
@@ -730,7 +777,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	//     select count(*) from INFORMATION_SCHEMA.TABLES
 	//     select table_schema, table_name from INFORMATION_SCHEMA.TABLES
 	// column pruning in general is not supported here.
-	if onlySchemaOrTableColumns(e.columns) {
+	if onlySchemaOrTableColumns(e.columns) && onlySchemaOrTableColPredicates(ex.ColPredicates) {
 		is := e.is
 		if raw, ok := is.(*infoschema.SessionExtendedInfoSchema); ok {
 			is = raw.InfoSchema
@@ -805,6 +852,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 		rows, err = e.setDataFromOneTable(sctx, loc, checker, schemas[i], table, rows, useStatsCache)
 		if err != nil {
 			return errors.Trace(err)
+		}
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
 		}
 	}
 	e.rows = rows
@@ -1013,7 +1063,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-				planBuilder, _ := plannercore.NewPlanBuilder().Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema, tbl, nil, nil)
 				return errors.Trace(err)
@@ -1175,6 +1225,10 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			continue
 		}
 		createTime := types.NewTime(types.FromGoTime(table.GetUpdateTime()), createTimeTp, types.DefaultFsp)
+
+		if ctx.Err() != nil {
+			return errors.Trace(ctx.Err())
+		}
 
 		var rowCount, dataLength, indexLength uint64
 		if useStatsCache {
@@ -1605,13 +1659,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor < len(e.runningJobs) {
 		num := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
-			e.appendJobToChunk(req, e.runningJobs[i], checker)
-			req.AppendString(12, e.runningJobs[i].Query)
-			if e.runningJobs[i].MultiSchemaInfo != nil {
-				for range e.runningJobs[i].MultiSchemaInfo.SubJobs {
-					req.AppendString(12, e.runningJobs[i].Query)
-				}
-			}
+			e.appendJobToChunk(req, e.runningJobs[i], checker, false)
 		}
 		e.cursor += num
 		count += num
@@ -1625,13 +1673,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 			return err
 		}
 		for _, job := range e.cacheJobs {
-			e.appendJobToChunk(req, job, checker)
-			req.AppendString(12, job.Query)
-			if job.MultiSchemaInfo != nil {
-				for range job.MultiSchemaInfo.SubJobs {
-					req.AppendString(12, job.Query)
-				}
-			}
+			e.appendJobToChunk(req, job, checker, false)
 		}
 		e.cursor += len(e.cacheJobs)
 	}
@@ -2884,7 +2926,7 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 		for _, info := range infoList {
 			// If you have the PROCESS privilege, you can see all running transactions.
 			// Otherwise, you can see only your own transactions.
-			if !hasProcessPriv && loginUser != nil && info.Username != loginUser.Username {
+			if !hasProcessPriv && loginUser != nil && info.ProcessInfo.Username != loginUser.Username {
 				continue
 			}
 			e.txnInfo = append(e.txnInfo, info)
@@ -3436,9 +3478,10 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 	if !ok {
 		return nil, errors.New("Get tiflash system tables can only run with tikv compatible storage")
 	}
-	// send request to tiflash, timeout is 1s
+	// send request to tiflash, use 5 minutes as per-request timeout
 	instanceID := e.instanceIDs[e.instanceIdx]
-	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, time.Second)
+	timeout := time.Duration(5*60) * time.Second
+	resp, err := tikvStore.GetTiKVClient().SendRequest(ctx, instanceID, &request, timeout)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

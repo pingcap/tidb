@@ -236,10 +236,12 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	return nil
 }
 
-// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// swapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+// this function should not be used directly, if you wants to swap columns between two chunks,
+// use ColumnSwapHelper.SwapColumns instead.
+func (c *Chunk) swapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
 		return errors.New(msgErrSelNotNil)
 	}

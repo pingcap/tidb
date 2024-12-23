@@ -82,6 +82,7 @@ go_library(
         "//pkg/statistics/handle/syncload",
         "//pkg/statistics/handle/usage",
         "//pkg/statistics/handle/usage/indexusage",
+        "//pkg/store",
         "//pkg/store/driver/error",
         "//pkg/store/helper",
         "//pkg/store/mockstore",

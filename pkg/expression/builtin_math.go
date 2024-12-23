@@ -1821,7 +1821,7 @@ func (b *builtinRadiansSig) evalReal(ctx EvalContext, row chunk.Row) (float64, b
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	return x * math.Pi / 180, false, nil
+	return x * (math.Pi / 180), false, nil
 }
 
 type sinFunctionClass struct {
@@ -1921,7 +1921,10 @@ func (c *truncateFunctionClass) getFunction(ctx BuildContext, args []Expression)
 		bf.tp.SetDecimalUnderLimit(calculateDecimal4RoundAndTruncate(ctx, args, argTp))
 		bf.tp.SetFlenUnderLimit(args[0].GetType(ctx.GetEvalCtx()).GetFlen() - args[0].GetType(ctx.GetEvalCtx()).GetDecimal() + bf.tp.GetDecimal())
 	}
-	bf.tp.AddFlag(args[0].GetType(ctx.GetEvalCtx()).GetFlag())
+	argFieldTp := args[0].GetType(ctx.GetEvalCtx())
+	if mysql.HasUnsignedFlag(argFieldTp.GetFlag()) {
+		bf.tp.AddFlag(mysql.UnsignedFlag)
+	}
 
 	var sig builtinFunc
 	switch argTp {

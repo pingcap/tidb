@@ -159,6 +159,12 @@ func (g *TTLTimersSyncer) GetLastSyncInfo() (time.Time, int64) {
 	return g.lastSyncTime, g.lastSyncVer
 }
 
+// GetCachedTimerRecord returns a cached timer by key
+func (g *TTLTimersSyncer) GetCachedTimerRecord(key string) (r *timerapi.TimerRecord, ok bool) {
+	r, ok = g.key2Timers[key]
+	return
+}
+
 // SyncTimers syncs timers with TTL tables
 func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSchema) {
 	g.lastSyncTime = g.nowFunc()
@@ -201,22 +207,25 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 			continue
 		}
 
+		timerID := timer.ID
 		if time.Since(timer.CreateTime) > g.delayDelete {
 			metrics.TTLSyncTimerCounter.Inc()
-			if _, err = g.cli.DeleteTimer(ctx, timer.ID); err != nil {
-				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
+			if _, err = g.cli.DeleteTimer(ctx, timerID); err != nil {
+				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timerID))
 			} else {
 				delete(g.key2Timers, key)
 			}
 		} else if timer.Enable {
 			metrics.TTLSyncTimerCounter.Inc()
-			if err = g.cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(false)); err != nil {
-				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
+			if err = g.cli.UpdateTimer(ctx, timerID, timerapi.WithSetEnable(false)); err != nil {
+				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timerID))
 			}
 
-			timer, err = g.cli.GetTimerByID(ctx, timer.ID)
-			if err != nil {
-				logutil.BgLogger().Error("failed to get timer", zap.Error(err), zap.String("timerID", timer.ID))
+			timer, err = g.cli.GetTimerByID(ctx, timerID)
+			if errors.ErrorEqual(err, timerapi.ErrTimerNotExist) {
+				delete(g.key2Timers, key)
+			} else if err != nil {
+				logutil.BgLogger().Error("failed to get timer", zap.Error(err), zap.String("timerID", timerID))
 			} else {
 				g.key2Timers[key] = timer
 			}

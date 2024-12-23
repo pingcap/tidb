@@ -486,19 +486,3 @@ func TestDeferFn(t *testing.T) {
 	require.True(t, d)
 	require.Len(t, df.data, 1)
 }
-
-func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
-	etcdStore, addrs, err := getEtcdAddrs(nil)
-	require.NoError(t, err)
-	require.Empty(t, addrs)
-	require.Nil(t, etcdStore)
-
-	etcdStore, addrs, err = getEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
-	require.NoError(t, err)
-	require.Equal(t, []string{"localhost:2379"}, addrs)
-	require.NotNil(t, etcdStore)
-
-	cli, err := NewEtcdCli(nil)
-	require.NoError(t, err)
-	require.Nil(t, cli)
-}

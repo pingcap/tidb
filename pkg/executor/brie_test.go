@@ -147,7 +147,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
 }
 
-func TestBRIEBuilderOPtions(t *testing.T) {
+func TestBRIEBuilderOptions(t *testing.T) {
 	sctx := mock.NewContext()
 	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
 	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
@@ -156,9 +156,10 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	ctx := context.Background()
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
+	require.NoError(t, err)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
-	err := os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
+	err = os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
 
 	require.NoError(t, err)
 	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
@@ -190,6 +191,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	require.NoError(t, builder.err)
 	e, ok := exec.(*BRIEExec)
 	require.True(t, ok)
+	require.False(t, e.backupCfg.Checksum)
 	require.Equal(t, uint(4), e.backupCfg.ChecksumConcurrency)
 	require.Equal(t, int32(4), e.backupCfg.CompressionLevel)
 	require.Equal(t, true, e.backupCfg.IgnoreStats)
@@ -223,6 +225,7 @@ func TestBRIEBuilderOPtions(t *testing.T) {
 	e, ok = exec.(*BRIEExec)
 	require.True(t, ok)
 	require.Equal(t, uint(4), e.restoreCfg.ChecksumConcurrency)
+	require.True(t, e.restoreCfg.Checksum)
 	require.True(t, e.restoreCfg.WaitTiflashReady)
 	require.True(t, e.restoreCfg.WithSysTable)
 	require.True(t, e.restoreCfg.LoadStats)

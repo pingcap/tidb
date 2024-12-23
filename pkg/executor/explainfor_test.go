@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -849,4 +850,25 @@ func TestExplainForJSON(t *testing.T) {
 	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
 	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
+}
+
+func TestIssue55669(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, primary key (a,b), key (b)) partition by range (b) (partition p0 values less than (1000000), partition pMax values less than (maxvalue))")
+	tk.MustQuery("select a,b from t where b between 1 and 10")
+	tkRootProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+
+	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
+	ok := false
+	for i := range rs {
+		if strings.HasSuffix(rs[i][4].(string), "partition:p0") {
+			ok = true
+		}
+	}
+	require.True(t, ok)
 }

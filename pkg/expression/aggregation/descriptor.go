@@ -228,7 +228,7 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
 // |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 | NULL |     NULL |
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
-func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
 	switch a.Name {
 	case ast.AggFuncCount:
 		return a.evalNullValueInOuterJoin4Count(ctx, schema)
@@ -236,7 +236,7 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, sche
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		return types.Datum{}, false
+		return types.Datum{}, false, nil
 	case ast.AggFuncBitAnd:
 		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
@@ -275,42 +275,54 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	}
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
 	for _, arg := range a.Args {
-		result := expression.EvaluateExprWithNull(ctx, schema, arg)
+		result, err := expression.EvaluateExprWithNull(ctx, schema, arg)
+		if err != nil {
+			return types.Datum{}, false, err
+		}
 		con, ok := result.(*expression.Constant)
 		if !ok || con.Value.IsNull() {
-			return types.Datum{}, ok
+			return types.Datum{}, ok, nil
 		}
 	}
-	return types.NewDatum(1), true
+	return types.NewDatum(1), true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
-	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	if err != nil {
+		return types.Datum{}, false, err
+	}
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.Datum{}, ok
+		return types.Datum{}, ok, nil
 	}
-	return con.Value, true
+	return con.Value, true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
-	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	if err != nil {
+		return types.Datum{}, false, err
+	}
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.NewDatum(uint64(math.MaxUint64)), true
+		return types.NewDatum(uint64(math.MaxUint64)), true, nil
 	}
-	return con.Value, true
+	return con.Value, true, nil
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool) {
-	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
+	if err != nil {
+		return types.Datum{}, false, err
+	}
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.NewDatum(0), true
+		return types.NewDatum(0), true, nil
 	}
-	return con.Value, true
+	return con.Value, true, nil
 }
 
 // UpdateNotNullFlag4RetType checks if we should remove the NotNull flag for the return type of the agg.

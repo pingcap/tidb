@@ -683,9 +683,9 @@ func (m *MemAwareHandleMap[V]) Range(fn func(h Handle, val V) bool) {
 			return
 		}
 	}
-	for _, v := range m.partitionInts {
+	for pid, v := range m.partitionInts {
 		for h, val := range v.M {
-			if !fn(IntHandle(h), val) {
+			if !fn(NewPartitionHandle(pid, IntHandle(h)), val) {
 				return
 			}
 		}
@@ -723,10 +723,13 @@ func (ph PartitionHandle) Copy() Handle {
 
 // Equal implements the Handle interface.
 func (ph PartitionHandle) Equal(h Handle) bool {
+	// Compare pid and handle if both sides are `PartitionHandle`.
 	if ph2, ok := h.(PartitionHandle); ok {
 		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
 	}
-	return false
+
+	// Otherwise, use underlying handle to do comparation.
+	return ph.Handle.Equal(h)
 }
 
 // Compare implements the Handle interface.

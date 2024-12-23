@@ -146,6 +146,14 @@ func TestHandle(t *testing.T) {
 	assert.Nil(t, err)
 	assert.Equal(t, "abc", d.GetString())
 	assert.Equal(t, "{100, abc}", ch.String())
+
+	ph1 := NewPartitionHandle(2, ih)
+	assert.True(t, ph1.Equal(ih))
+	assert.True(t, ih.Equal(ph1))
+
+	ph2 := NewPartitionHandle(1, ch2)
+	assert.True(t, ph2.Equal(ch2))
+	assert.True(t, ch2.Equal(ph2))
 }
 
 func TestPaddingHandle(t *testing.T) {

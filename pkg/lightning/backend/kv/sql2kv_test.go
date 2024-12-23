@@ -80,7 +80,7 @@ func TestEncode(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	logger := log.Logger{Logger: zap.NewNop()}
@@ -163,7 +163,7 @@ func TestDecode(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	decoder, err := lkv.NewTableKVDecoder(tbl, "`test`.`c1`", &encode.SessionOptions{
 		SQLMode:   mysql.ModeStrictAllTables,
@@ -217,7 +217,7 @@ func TestDecodeIndex(t *testing.T) {
 		State:      model.StatePublic,
 		PKIsHandle: false,
 	}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	if err != nil {
 		fmt.Printf("error: %v", err.Error())
 	}
@@ -262,7 +262,7 @@ func TestEncodeRowFormatV2(t *testing.T) {
 	c1 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("c1"), State: model.StatePublic, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeTiny)}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	rows := []types.Datum{
@@ -313,7 +313,7 @@ func TestEncodeTimestamp(t *testing.T) {
 	}
 	cols := []*model.ColumnInfo{c1}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -342,7 +342,7 @@ func TestEncodeTimestamp(t *testing.T) {
 
 func TestEncodeDoubleAutoIncrement(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id double not null auto_increment, unique key `u_id` (`id`));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -406,7 +406,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		},
 	} {
 		tblInfo := mockTableInfo(t, testTblInfo.CreateStmt)
-		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+		tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 		require.NoError(t, err)
 
 		encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -458,7 +458,7 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 
 func TestEncodeExpressionColumn(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id varchar(40) not null DEFAULT uuid(), unique key `u_id` (`id`));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
@@ -503,7 +503,7 @@ func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {
 
 func TestDefaultAutoRandoms(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (id bigint unsigned NOT NULL auto_random primary key clustered, a varchar(100));")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
@@ -541,7 +541,7 @@ func TestDefaultAutoRandoms(t *testing.T) {
 
 func TestShardRowId(t *testing.T) {
 	tblInfo := mockTableInfo(t, "create table t (s varchar(16)) shard_row_id_bits = 3;")
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,
@@ -656,7 +656,7 @@ func SetUpTest(b *testing.B) *benchSQL2KVSuite {
 	tableInfo.State = model.StatePublic
 
 	// Construct the corresponding KV encoder.
-	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tableInfo.SepAutoInc(), 0), tableInfo)
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(tableInfo.SepAutoInc()), tableInfo)
 	require.NoError(b, err)
 	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
 		Table: tbl,

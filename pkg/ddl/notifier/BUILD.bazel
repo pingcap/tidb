@@ -15,6 +15,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/owner",
+        "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/intest",

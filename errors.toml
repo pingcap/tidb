@@ -901,6 +901,11 @@ error = '''
 View's SELECT contains a '%s' clause
 '''
 
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
+'''
+
 ["ddl:1353"]
 error = '''
 In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
@@ -2164,6 +2169,11 @@ entry too large, the max entry size is %d, the size of data is %d
 ["kv:8026"]
 error = '''
 not implemented
+'''
+
+["kv:8178"]
+error = '''
+key is too large, the size of given key is %d
 '''
 
 ["kv:9007"]

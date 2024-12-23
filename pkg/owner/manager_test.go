@@ -25,13 +25,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	. "github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -42,44 +37,20 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-const testLease = 5 * time.Millisecond
-
 type testInfo struct {
-	store   kv.Storage
 	cluster *integration.ClusterV3
 	client  *clientv3.Client
-	ddl     DDL
 }
 
 func newTestInfo(t *testing.T) *testInfo {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 4})
-
-	cli := cluster.Client(0)
-	ic := infoschema.NewCache(nil, 2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d, _ := NewDDL(
-		context.Background(),
-		WithEtcdClient(cli),
-		WithStore(store),
-		WithLease(testLease),
-		WithInfoCache(ic),
-	)
-
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	return &testInfo{
-		store:   store,
 		cluster: cluster,
-		client:  cli,
-		ddl:     d,
+		client:  cluster.Client(0),
 	}
 }
 
 func (ti *testInfo) Close(t *testing.T) {
-	err := ti.ddl.Stop()
-	require.NoError(t, err)
-	err = ti.store.Close()
-	require.NoError(t, err)
 	ti.cluster.Terminate(t)
 }
 
@@ -101,41 +72,42 @@ func TestSingle(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
 	tInfo := newTestInfo(t)
-	client, d := tInfo.client, tInfo.ddl
+	client := tInfo.client
 	defer tInfo.Close(t)
-	ownerManager := d.OwnerManager()
+	ownerMgr := owner.NewOwnerManager(context.Background(), client, "ddl", "1", "/owner/key")
 	lis := &listener{}
-	ownerManager.SetListener(lis)
-	require.NoError(t, ownerManager.CampaignOwner())
-	isOwner := checkOwner(d, true)
+	ownerMgr.SetListener(lis)
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 	require.True(t, lis.val.Load())
 
 	// test for newSession failed
 	ctx := context.Background()
 	ctx, cancel := context.WithCancel(ctx)
-	manager := owner.NewOwnerManager(ctx, client, "ddl", "ddl_id", DDLOwnerKey)
+	ownerMgr2 := owner.NewOwnerManager(ctx, client, "ddl", "2", "/owner/key")
+	defer ownerMgr2.Close()
 	cancel()
 
-	err := manager.CampaignOwner()
+	err := ownerMgr2.CampaignOwner()
 	comment := fmt.Sprintf("campaigned result don't match, err %v", err)
 	require.True(t, terror.ErrorEqual(err, context.Canceled) || terror.ErrorEqual(err, context.DeadlineExceeded), comment)
 
-	isOwner = checkOwner(d, true)
+	isOwner = checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
 	// The test is used to exit campaign loop.
-	ownerManager.Cancel()
-	isOwner = checkOwner(d, false)
+	ownerMgr.Close()
+	isOwner = checkOwner(ownerMgr, false)
 	require.False(t, isOwner)
 	require.False(t, lis.val.Load())
 
 	time.Sleep(200 * time.Millisecond)
 
 	// err is ok to be not nil since we canceled the manager.
-	ownerID, _ := manager.GetOwnerID(ctx)
+	ownerID, _ := ownerMgr2.GetOwnerID(ctx)
 	require.Equal(t, "", ownerID)
-	op, _ := owner.GetOwnerOpValue(ctx, client, DDLOwnerKey, "log prefix")
+	op, _ := owner.GetOwnerOpValue(ctx, client, "/owner/key", "log prefix")
 	require.Equal(t, op, owner.OpNone)
 }
 
@@ -148,37 +120,38 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	tInfo := newTestInfo(t)
 	defer tInfo.Close(t)
 
-	require.NoError(t, tInfo.ddl.OwnerManager().CampaignOwner())
-	isOwner := checkOwner(tInfo.ddl, true)
+	ownerMgr := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "1", "/owner/key")
+	defer ownerMgr.Close()
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
 	// test set/get owner info
-	manager := tInfo.ddl.OwnerManager()
-	ownerID, err := manager.GetOwnerID(context.Background())
+	ownerID, err := ownerMgr.GetOwnerID(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, tInfo.ddl.GetID(), ownerID)
-	op, err := owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
+	require.Equal(t, ownerMgr.ID(), ownerID)
+	op, err := owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.False(t, op.IsSyncedUpgradingState())
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
+	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
-	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
+	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpSyncUpgradingState)
 	require.True(t, op.IsSyncedUpgradingState())
 	// update the same as the original value
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
+	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
-	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
+	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpSyncUpgradingState)
 	require.True(t, op.IsSyncedUpgradingState())
 	// test del owner key when SetOwnerOpValue
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("delOwnerKeyAndNotOwner")`))
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpNone)
+	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpNone)
 	require.Error(t, err, "put owner key failed, cmp is false")
-	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
+	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", "log prefix")
 	require.NotNil(t, err)
 	require.Equal(t, concurrency.ErrElectionNoLeader.Error(), err.Error())
 	require.Equal(t, op, owner.OpNone)
@@ -186,17 +159,17 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey"))
 
 	// Let ddl run for the owner again.
-	require.NoError(t, tInfo.ddl.OwnerManager().CampaignOwner())
-	isOwner = checkOwner(tInfo.ddl, true)
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner = checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 	// Mock the manager become not owner because the owner is deleted(like TTL is timeout).
 	// And then the manager campaigns the owner again, and become the owner.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("onlyDelOwnerKey")`))
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
+	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.Error(t, err, "put owner key failed, cmp is false")
-	isOwner = checkOwner(tInfo.ddl, true)
+	isOwner = checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
-	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
+	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey"))
@@ -209,24 +182,23 @@ func TestGetOwnerOpValueBeforeSet(t *testing.T) {
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockNotSetOwnerOp", `return(true)`))
 
-	_, dom := testkit.CreateMockStoreAndDomain(t)
-	ddl := dom.DDL()
-	require.NoError(t, ddl.OwnerManager().CampaignOwner())
-	isOwner := checkOwner(ddl, true)
+	ownerMgr := owner.NewMockManager(context.Background(), "1", nil, "/owner/key")
+	defer ownerMgr.Close()
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
 	// test set/get owner info
-	manager := ddl.OwnerManager()
-	ownerID, err := manager.GetOwnerID(context.Background())
+	ownerID, err := ownerMgr.GetOwnerID(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, ddl.GetID(), ownerID)
-	op, err := owner.GetOwnerOpValue(context.Background(), nil, DDLOwnerKey, "log prefix")
+	require.Equal(t, ownerMgr.ID(), ownerID)
+	op, err := owner.GetOwnerOpValue(context.Background(), nil, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/owner/MockNotSetOwnerOp"))
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
+	err = ownerMgr.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
-	op, err = owner.GetOwnerOpValue(context.Background(), nil, DDLOwnerKey, "log prefix")
+	op, err = owner.GetOwnerOpValue(context.Background(), nil, "/owner/key", "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpSyncUpgradingState)
 }
@@ -244,62 +216,43 @@ func TestCluster(t *testing.T) {
 	}()
 
 	tInfo := newTestInfo(t)
-	store, cluster, d := tInfo.store, tInfo.cluster, tInfo.ddl
 	defer tInfo.Close(t)
-	require.NoError(t, d.OwnerManager().CampaignOwner())
+	ownerMgr := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "1", "/owner/key")
+	require.NoError(t, ownerMgr.CampaignOwner())
 
-	isOwner := checkOwner(d, true)
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
-	cli1 := cluster.Client(1)
-	ic2 := infoschema.NewCache(nil, 2)
-	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d1, _ := NewDDL(
-		context.Background(),
-		WithEtcdClient(cli1),
-		WithStore(store),
-		WithLease(testLease),
-		WithInfoCache(ic2),
-	)
-	require.NoError(t, d1.OwnerManager().CampaignOwner())
+	ownerMgr2 := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "2", "/owner/key")
+	require.NoError(t, ownerMgr2.CampaignOwner())
 
-	isOwner = checkOwner(d1, false)
+	isOwner = checkOwner(ownerMgr2, false)
 	require.False(t, isOwner)
 
 	// Delete the leader key, the d1 become the owner.
-	cliRW := cluster.Client(2)
-	err := deleteLeader(cliRW, DDLOwnerKey)
+	err := deleteLeader(tInfo.client, "/owner/key")
 	require.NoError(t, err)
 
-	isOwner = checkOwner(d, false)
+	isOwner = checkOwner(ownerMgr, false)
 	require.False(t, isOwner)
 
-	d.OwnerManager().Cancel()
+	ownerMgr.Close()
 	// d3 (not owner) stop
-	cli3 := cluster.Client(3)
-	ic3 := infoschema.NewCache(nil, 2)
-	ic3.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d3, _ := NewDDL(
-		context.Background(),
-		WithEtcdClient(cli3),
-		WithStore(store),
-		WithLease(testLease),
-		WithInfoCache(ic3),
-	)
-	require.NoError(t, d3.OwnerManager().CampaignOwner())
+	ownerMgr3 := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "3", "/owner/key")
+	require.NoError(t, ownerMgr3.CampaignOwner())
 
-	isOwner = checkOwner(d3, false)
+	isOwner = checkOwner(ownerMgr3, false)
 	require.False(t, isOwner)
 
-	d3.OwnerManager().Cancel()
+	ownerMgr3.Close()
 	// Cancel the owner context, there is no owner.
-	d1.OwnerManager().Cancel()
+	ownerMgr2.Close()
 
-	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
+	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", "/owner/key", "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
+	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, tInfo.client, "/owner/key", "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
-	op, err := owner.GetOwnerOpValue(context.Background(), cliRW, DDLOwnerKey, logPrefix)
+	op, err := owner.GetOwnerOpValue(context.Background(), tInfo.client, "/owner/key", logPrefix)
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	require.Equal(t, op, owner.OpNone)
 }
@@ -311,18 +264,19 @@ func TestWatchOwner(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
 	tInfo := newTestInfo(t)
-	client, d := tInfo.client, tInfo.ddl
+	client := tInfo.client
 	defer tInfo.Close(t)
-	ownerManager := d.OwnerManager()
+	ownerMgr := owner.NewOwnerManager(context.Background(), client, "ddl", "1", "/owner/key")
+	defer ownerMgr.Close()
 	lis := &listener{}
-	ownerManager.SetListener(lis)
-	require.NoError(t, ownerManager.CampaignOwner())
-	isOwner := checkOwner(d, true)
+	ownerMgr.SetListener(lis)
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
 	// get the owner id.
 	ctx := context.Background()
-	id, err := ownerManager.GetOwnerID(ctx)
+	id, err := ownerMgr.GetOwnerID(ctx)
 	require.NoError(t, err)
 
 	// create etcd session.
@@ -330,7 +284,7 @@ func TestWatchOwner(t *testing.T) {
 	require.NoError(t, err)
 
 	// test the GetOwnerKeyInfo()
-	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, "/owner/key", id)
 	require.NoError(t, err)
 
 	// watch the ownerKey.
@@ -339,7 +293,7 @@ func TestWatchOwner(t *testing.T) {
 	watchDone := make(chan bool)
 	watched := false
 	go func() {
-		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		watchErr := owner.WatchOwnerForTest(ctx, ownerMgr, session, ownerKey, currRevision)
 		require.NoError(t, watchErr)
 		watchDone <- true
 	}()
@@ -351,14 +305,14 @@ func TestWatchOwner(t *testing.T) {
 	require.False(t, watched)
 
 	// delete the owner, and can watch the DELETE event.
-	err = deleteLeader(client, DDLOwnerKey)
+	err = deleteLeader(client, "/owner/key")
 	require.NoError(t, err)
 	watched = <-watchDone
 	require.True(t, watched)
 
 	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
 	go func() {
-		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		watchErr := owner.WatchOwnerForTest(ctx, ownerMgr, session, ownerKey, currRevision)
 		require.NoError(t, watchErr)
 		watchDone <- true
 	}()
@@ -374,47 +328,47 @@ func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
 	tInfo := newTestInfo(t)
-	client, d := tInfo.client, tInfo.ddl
+	client := tInfo.client
 	defer tInfo.Close(t)
-	ownerManager := d.OwnerManager()
+	ownerMgr := owner.NewOwnerManager(context.Background(), client, "ddl", "1", "/owner/key")
+	defer ownerMgr.Close()
 	lis := &listener{}
-	ownerManager.SetListener(lis)
-	require.NoError(t, ownerManager.CampaignOwner())
-	isOwner := checkOwner(d, true)
+	ownerMgr.SetListener(lis)
+	require.NoError(t, ownerMgr.CampaignOwner())
+	isOwner := checkOwner(ownerMgr, true)
 	require.True(t, isOwner)
 
 	// get the owner id.
 	ctx := context.Background()
-	id, err := ownerManager.GetOwnerID(ctx)
+	id, err := ownerMgr.GetOwnerID(ctx)
 	require.NoError(t, err)
 	session, err := concurrency.NewSession(client)
 	require.NoError(t, err)
 
 	// get the ownkey informations.
-	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, "/owner/key", id)
 	require.NoError(t, err)
 
 	// delete the ownerkey
-	err = deleteLeader(client, DDLOwnerKey)
+	err = deleteLeader(client, "/owner/key")
 	require.NoError(t, err)
 
 	// watch the ownerKey with the current revisoin.
 	watchDone := make(chan bool)
 	go func() {
-		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		watchErr := owner.WatchOwnerForTest(ctx, ownerMgr, session, ownerKey, currRevision)
 		require.NoError(t, watchErr)
 		watchDone <- true
 	}()
 	<-watchDone
 }
 
-func checkOwner(d DDL, fbVal bool) (isOwner bool) {
-	manager := d.OwnerManager()
+func checkOwner(ownerMgr owner.Manager, fbVal bool) (isOwner bool) {
 	// The longest to wait for 30 seconds to
 	// make sure that campaigning owners is completed.
 	for i := 0; i < 6000; i++ {
 		time.Sleep(5 * time.Millisecond)
-		isOwner = manager.IsOwner()
+		isOwner = ownerMgr.IsOwner()
 		if isOwner == fbVal {
 			break
 		}
@@ -446,13 +400,13 @@ func TestImmediatelyCancel(t *testing.T) {
 	integration.BeforeTestExternal(t)
 
 	tInfo := newTestInfo(t)
-	d := tInfo.ddl
 	defer tInfo.Close(t)
-	ownerManager := d.OwnerManager()
+	ownerMgr := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "1", "/owner/key")
+	defer ownerMgr.Close()
 	for i := 0; i < 10; i++ {
-		err := ownerManager.CampaignOwner()
+		err := ownerMgr.CampaignOwner()
 		require.NoError(t, err)
-		ownerManager.CampaignCancel()
+		ownerMgr.CampaignCancel()
 	}
 }
 

@@ -3021,7 +3021,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
 	tk.MustQuery("show stats_histograms").Sort().CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
 		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
-		"test t a 0 1 0 1 1 allEvicted",
+		"test t a 0 1 0 1 1 allLoaded",
 		"test t ia 1 1 0 0 0 allLoaded",
 		"test t ij_binary 1 15 0 0 0 allLoaded",
 		"test t ij_char 1 11 0 0 0 allLoaded",
@@ -3031,6 +3031,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	tk.MustQuery("show stats_topn").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, value, count
+		"test t  a 0 1 27",
 		"test t  ia 1 1 27",
 		"test t  ij_signed 1 0 27",
 		"test t  ij_signed 1 1 27",

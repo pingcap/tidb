@@ -180,6 +180,19 @@ func (h *ddlHandlerImpl) HandleDDLEvent(s *notifier.SchemaChangeEvent) error {
 		return h.statsWriter.UpdateStatsVersion()
 	case model.ActionAddIndex:
 		// No need to update the stats meta for the adding index event.
+	case model.ActionDropSchema:
+		miniDBInfo := s.GetDropSchemaInfo()
+		intest.Assert(miniDBInfo != nil)
+		for _, table := range miniDBInfo.Tables {
+			// Try best effort to update the stats meta version for gc.
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(table.ID); err != nil {
+				logutil.StatsLogger().Error(
+					"Failed to update stats meta version for gc",
+					zap.Int64("tableID", table.ID),
+					zap.Error(err),
+				)
+			}
+		}
 	default:
 		intest.Assert(false)
 		logutil.StatsLogger().Error("Unhandled schema change event", zap.Stringer("type", s))

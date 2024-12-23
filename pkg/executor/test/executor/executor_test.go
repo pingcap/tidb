@@ -2441,7 +2441,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	row = req.GetRow(0)
-	require.Equal(t, 12, row.Len())
+	require.Equal(t, 13, row.Len())
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	historyJobs, err := ddl.GetLastNHistoryDDLJobs(meta.NewMutator(txn), ddl.DefNumHistoryJobs)
@@ -2457,7 +2457,7 @@ func TestAdmin(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	row = req.GetRow(0)
-	require.Equal(t, 12, row.Len())
+	require.Equal(t, 13, row.Len())
 	require.Equal(t, historyJobs[0].ID, row.GetInt64(0))
 	require.NoError(t, err)
 

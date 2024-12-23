@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -288,4 +289,59 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	require.Equal(t, int64(3), modifyCount)
 	require.Equal(t, int64(4), count)
 	require.NoError(t, rows.Close())
+}
+
+func TestStatsPriorityQueueAPI(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	router := mux.NewRouter()
+	handler := optimizor.NewStatsPriorityQueueHandler(dom)
+	router.Handle("/stats/priority-queue", handler)
+
+	resp, err := client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, "priority queue not initialized", string(js))
+
+	// Init the queue.
+	handle := dom.StatsHandle()
+	require.False(t, handle.HandleAutoAnalyze())
+
+	resp, err = client.FetchStatus("/stats/priority-queue")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	js, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	var snapshot types.PriorityQueueSnapshot
+	err = json.Unmarshal(js, &snapshot)
+	require.NoError(t, err)
+	require.Empty(t, snapshot.CurrentJobs)
+	require.Empty(t, snapshot.MustRetryTables)
 }

@@ -47,7 +47,7 @@ run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DI
 # wait until the index creation is running
 retry_cnt=0
 while true; do
-    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization' AND JOB_TYPE = 'add index /* ingest */';"
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'running' AND SCHEMA_STATE = 'write reorganization' AND JOB_TYPE = 'add index';"
     if grep -Fq "1. row" $res_file; then
         break
     fi
@@ -71,7 +71,7 @@ touch $hint_sig_file_public
 # wait until the index creation is done
 retry_cnt=0
 while true; do
-    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'done' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index';"
     if grep -Fq "1. row" $res_file; then
         break
     fi
@@ -98,7 +98,7 @@ wait $sql_pid
 # wait until the index creation is done
 retry_cnt=0
 while true; do
-    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'synced' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index /* ingest */';"
+    run_sql "ADMIN SHOW DDL JOBS WHERE DB_NAME = 'test' AND TABLE_NAME = 'pairs' AND STATE = 'synced' AND SCHEMA_STATE = 'public' AND JOB_TYPE = 'add index';"
     if grep -Fq "1. row" $res_file; then
         break
     fi

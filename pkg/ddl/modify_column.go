@@ -975,10 +975,13 @@ func GetModifiableColumnJob(
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(sctx),
 		CtxVars:        []any{needChangeColData},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, sctx)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	args := &model.ModifyColumnArgs{

@@ -475,8 +475,12 @@ func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
-		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
-		taskID, step)
+		from (
+			select summary from mysql.tidb_background_subtask where task_key = %? and step = %?
+			union all
+			select summary from mysql.tidb_background_subtask_history where task_key = %? and step = %?
+		) as combined`,
+		taskID, step, taskID, step)
 	if err != nil {
 		return 0, err
 	}

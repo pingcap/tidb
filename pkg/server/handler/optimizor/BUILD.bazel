@@ -43,7 +43,7 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         ":optimizor",
         "//pkg/config",
@@ -56,6 +56,7 @@ go_test(
         "//pkg/server/internal/testutil",
         "//pkg/server/internal/util",
         "//pkg/session",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",

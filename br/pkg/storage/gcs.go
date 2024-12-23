@@ -431,7 +431,7 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			client.SetRetry(storage.WithErrorFunc(shouldRetry))
+			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
 			s.clients[i] = client
 			return nil
 		})

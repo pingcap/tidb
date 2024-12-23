@@ -33,7 +33,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -95,12 +97,13 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
+	config.GetGlobalConfig().Store = "tikv"
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
 	session.SetSchemaLease(time.Duration(*lease) * time.Second)
-
+	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -118,6 +121,7 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
+	ddl.CloseOwnerManager()
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())

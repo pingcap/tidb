@@ -18,6 +18,8 @@ go_test(
     race = "off",
     shard_count = 23,
     deps = [
+        "//pkg/config",
+        "//pkg/ddl",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",

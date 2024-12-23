@@ -409,7 +409,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
 
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0), s.tableInfo.Core)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc()), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -1445,7 +1445,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
-	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 

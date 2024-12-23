@@ -73,7 +73,7 @@ func getTableImporter(
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
 ) (*importer.TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
 		return nil, err

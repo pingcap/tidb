@@ -2499,13 +2499,13 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select addtime(cast('01:01:11' as time(4)), '00:00:01.013'), addtime(cast('01:01:11.00' " +
 		"as datetime(3)), '00:00:01')," + " addtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), addtime(cast" +
 		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
-	result.Check(testkit.Rows("01:01:12.0130 2001-01-11 00:00:01.000 00:00:01 2017-01-01 00:00:01.88"))
+	result.Check(testkit.Rows("01:01:12.0130 2001-01-11 00:00:01.000 2017-01-01 00:00:01 2017-01-01 00:00:01.88"))
 	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 5), addtime('2017-01-01 01:01:01', -5), addtime('2017-01-01 01:01:01', 0.0), addtime('2017-01-01 01:01:01', 1.34);")
 	result.Check(testkit.Rows("2017-01-01 01:01:06 2017-01-01 01:00:56 2017-01-01 01:01:01 2017-01-01 01:01:02.340000"))
 	result = tk.MustQuery("select addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), addtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
 	result.Check(testkit.Rows("2001-01-11 00:00:01.000 2001-01-11 00:00:01.00000"))
 	result = tk.MustQuery("select addtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
-	result.Check(testkit.Rows("00:00:01"))
+	result.Check(testkit.Rows("2001-01-11 00:00:01"))
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a datetime, b timestamp, c time)")
 	tk.MustExec(`insert into t values("2017-01-01 12:30:31", "2017-01-01 12:30:31", "01:01:01")`)
@@ -2529,7 +2529,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select subtime(cast('01:01:11' as time(4)), '00:00:01.013'), subtime(cast('01:01:11.00' " +
 		"as datetime(3)), '00:00:01')," + " subtime(cast('2017-01-01 01:01:11.12' as date), '00:00:01'), subtime(cast" +
 		"(cast('2017-01-01 01:01:11.12' as date) as datetime(2)), '00:00:01.88');")
-	result.Check(testkit.Rows("01:01:09.9870 2001-01-10 23:59:59.000 -00:00:01 2016-12-31 23:59:58.12"))
+	result.Check(testkit.Rows("01:01:09.9870 2001-01-10 23:59:59.000 2016-12-31 23:59:59 2016-12-31 23:59:58.12"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 5), subtime('2017-01-01 01:01:01', -5), subtime('2017-01-01 01:01:01', 0.0), subtime('2017-01-01 01:01:01', 1.34);")
 	result.Check(testkit.Rows("2017-01-01 01:00:56 2017-01-01 01:01:06 2017-01-01 01:01:01 2017-01-01 01:00:59.660000"))
 	result = tk.MustQuery("select subtime('01:01:11', '0:0:1.013'), subtime('01:01:11.00', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1'), subtime('2017-01-01 01:01:11.12', '0:0:1.120000');")
@@ -2537,7 +2537,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time)), subtime(cast('01:01:11.00' as datetime(3)), cast('00:00:01' as time(5)))")
 	result.Check(testkit.Rows("2001-01-10 23:59:59.000 2001-01-10 23:59:59.00000"))
 	result = tk.MustQuery("select subtime(cast('01:01:11.00' as date), cast('00:00:01' as time));")
-	result.Check(testkit.Rows("-00:00:01"))
+	result.Check(testkit.Rows("2001-01-10 23:59:59"))
 	result = tk.MustQuery("select subtime(a, b), subtime(cast(a as date), b), subtime(b,a), subtime(a,c), subtime(b," +
 		"c), subtime(c,a), subtime(c,b) from t;")
 	result.Check(testkit.Rows("<nil> <nil> <nil> 2017-01-01 11:29:30 2017-01-01 11:29:30 <nil> <nil>"))
@@ -2561,13 +2561,13 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery("select addtime('2017-01-01 01:01:01', 0b1), addtime('2017-01-01', b'1'), addtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select addtime('2017-01-01', 1), addtime('2017-01-01 01:01:01', 1), addtime(cast('2017-01-01' as date), 1)")
-	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 00:00:01"))
+	result.Check(testkit.Rows("2017-01-01 00:00:01 2017-01-01 01:01:02 2017-01-01 00:00:01"))
 	result = tk.MustQuery("select subtime(a, e), subtime(b, e), subtime(c, e), subtime(d, e) from t")
 	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01 01:01:01', 0b1), subtime('2017-01-01', b'1'), subtime('01:01:01', 0b1011)")
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 	result = tk.MustQuery("select subtime('2017-01-01', 1), subtime('2017-01-01 01:01:01', 1), subtime(cast('2017-01-01' as date), 1)")
-	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 -00:00:01"))
+	result.Check(testkit.Rows("2016-12-31 23:59:59 2017-01-01 01:01:00 2016-12-31 23:59:59"))
 
 	result = tk.MustQuery("select addtime(-32073, 0), addtime(0, -32073);")
 	result.Check(testkit.Rows("<nil> <nil>"))
@@ -3902,4 +3902,65 @@ func TestIssue44706(t *testing.T) {
 	tk.MustQuery("SELECT MIN(t0.c2) FROM t0 WHERE false").Check(testkit.Rows("<nil>"))
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT (NULL))))").Check(testkit.Rows())
 	tk.MustQuery("SELECT t0.c2 FROM t0 WHERE ((-1)<=(~ ('n') = ANY (SELECT MIN(t0.c2) FROM t0 WHERE false)))").Check(testkit.Rows())
+}
+
+func TestIssue55885(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_jg8o (c_s int not null unique ,c__qy double ,c_z int not null ,c_a90ol text not null);")
+	tk.MustExec("insert into t_jg8o (c_s, c__qy, c_z, c_a90ol) values" +
+		"(-975033779, 85.65, -355481284, 'gnip' ),(-2018599732, 85.86, 1617093413, 'm' )," +
+		"(-960107027, 4.6, -2042358076, 'y1q')," +
+		"(-3, 38.1, -1528586343, 'ex_2')," +
+		"(69386953, 32768.0, -62220810, 'tfkxjj5c')," +
+		"(587181689, -9223372036854775806.3, -1666156943, 'queemvgj')," +
+		"(-218561796, 85.2, -670390288, 'nf990nol')," +
+		"(858419954, 2147483646.0, -1649362344, 'won_9')," +
+		"(-1120115215, 22.100, 1509989939, 'w')," +
+		"(-1388119356, 94.32, -1694148464, 'gu4i4knyhm')," +
+		"(-1016230734, -4294967295.8, 1430313391, 's')," +
+		"(-1861825796, 36.52, -1457928755, 'j')," +
+		"(1963621165, 88.87, 18928603, 'gxbsloff' )," +
+		"(1492879828, cast(null as double), 759883041, 'zwue')," +
+		"(-1607192175, 12.36, 1669523024, 'qt5zch71a')," +
+		"(1534068569, 46.79, -392085130, 'bc')," +
+		"(155707446, 9223372036854775809.4, 1727199557, 'qyghenu9t6')," +
+		"(-1524976778, 75.99, 335492222, 'sdgde0z')," +
+		"(175403335, cast(null as double), -69711503, 'ja')," +
+		"(-272715456, 48.62, 753928713, 'ur')," +
+		"(-2035825967, 257.3, -1598426762, 'lmqmn')," +
+		"(-1178957955, 2147483648.100000, 1432554380, 'dqpb210')," +
+		"(-2056628646, 254.5, -1476177588, 'k41ajpt7x')," +
+		"(-914210874, 126.7, -421919910, 'x57ud7oy1')," +
+		"(-88586773, 1.2, 1568247510, 'drmxi8')," +
+		"(-834563269, -4294967296.7, 1163133933, 'wp')," +
+		"(-84490060, 54.13, -630289437, '_3_twecg5h')," +
+		" (267700893, 54.75, 370343042, 'n72')," +
+		"(552106333, 32766.2, 2365745, 's7tt')," +
+		"(643440707, 65536.8, -850412592, 'wmluxa9a')," +
+		"(1709853766, -4294967296.5, -21041749, 'obqj0uu5v')," +
+		"(-7, 80.88, 528792379, 'n5qr9m26i')," +
+		"(-456431629, 28.43, 1958788149, 'b')," +
+		"(-28841240, 11.86, -1089765168, 'pqg')," +
+		"(-807839288, 25.89, 504535500, 'cs3tkhs')," +
+		"(-52910064, 85.16, 354032882, '_ffjo67yxe')," +
+		"(1919869830, 81.81, -272247558, 'aj')," +
+		"(165434725, -2147483648.0, 11, 'xxnsf5')," +
+		"(3, -2147483648.7, 1616632952, 'g7t8tqyi')," +
+		"(1851859144, 70.73, -1105664209, 'qjfhjr');")
+
+	tk.MustQuery("SELECT subq_0.c3 as c1 FROM (select c_a90ol as c3, c_a90ol as c4, var_pop(cast(c__qy as double)) over (partition by c_a90ol, c_s order by c_z) as c5 from t_jg8o limit 65) as subq_0 LIMIT 37")
+}
+
+func TestIssue55886(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c_foveoe text, c_jbb text, c_cz text not null);")
+	tk.MustExec("create table t2(c_g7eofzlxn int);")
+	tk.MustExec("set collation_connection='latin1_bin';")
+	tk.MustQuery("with cte_0 AS (select 1 as c1, case when ref_0.c_jbb then inet6_aton(ref_0.c_foveoe) else ref_4.c_cz end as c5 from t1 as ref_0 join " +
+		" (t1 as ref_4 right outer join t2 as ref_5 on ref_5.c_g7eofzlxn != 1)), cte_4 as (select 1 as c1 from t2) select ref_34.c1 as c5 from" +
+		" cte_0 as ref_34 where exists (select 1 from cte_4 as ref_35 where ref_34.c1 <= case when ref_34.c5 then cast(1 as char) else ref_34.c5 end);")
 }

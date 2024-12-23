@@ -1284,6 +1284,8 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
 	require.Nil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
-	require.True(t, h.HandleAutoAnalyze())
+	require.Eventually(t, func() bool {
+		return h.HandleAutoAnalyze()
+	}, 3*time.Second, time.Millisecond*100)
 	require.NotNil(t, h.GetTableStats(tblInfo).GetIdx(idxInfo.ID))
 }

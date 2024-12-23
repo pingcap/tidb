@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -782,6 +783,23 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgMaxWriteSpeed, Value: strconv.Itoa(DefTiDBDDLReorgMaxWriteSpeed), Type: TypeStr,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			i64, err := units.RAMInBytes(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if i64 < 0 || i64 > units.PiB {
+				// Here we limit the max value to 1 PiB instead of math.MaxInt64, since:
+				// 1. it is large enough
+				// 2. units.RAMInBytes would first cast the size to a float, and may lose precision when the size is too large
+				return fmt.Errorf("invalid value for '%d', it should be within [%d, %d]", i64, 0, units.PiB)
+			}
+			DDLReorgMaxWriteSpeed.Store(i64)
+			return nil
+		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(DDLReorgMaxWriteSpeed.Load(), 10), nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLErrorCountLimit(TidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 		return nil
@@ -800,10 +818,11 @@ var defaultSysVars = []*SysVar{
 			return vars.ScatterRegion, nil
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
-				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
+			lowerVal := strings.ToLower(normalizedValue)
+			if lowerVal != ScatterOff && lowerVal != ScatterTable && lowerVal != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", lowerVal, ScatterOff, ScatterTable, ScatterGlobal)
 			}
-			return normalizedValue, nil
+			return lowerVal, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,

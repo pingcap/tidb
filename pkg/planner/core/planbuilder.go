@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -269,8 +270,10 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
-	//Check whether the current building query is a CTE
+	// Check whether the current building query is a CTE
 	isCTE bool
+	// CTE table name in lower case, it can be nil
+	nameMapCTE map[string]struct{}
 
 	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
 	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
@@ -1191,15 +1194,19 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			path := &util.AccessPath{Index: index}
 			if index.VectorInfo != nil {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
 				if !tblInfo.TiFlashReplica.Available {
 					continue
 				}
+				path := genTiFlashPath(tblInfo)
 				path.StoreType = kv.TiFlash
+				path.Index = index
+				publicPaths = append(publicPaths, path)
+				continue
 			}
+			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1576,6 +1583,11 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p := &AdminShowBDRRole{}
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
 		ret = p
+	case ast.AdminAlterDDLJob:
+		ret, err = b.buildAdminAlterDDLJob(ctx, as)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -2332,7 +2344,7 @@ func getModifiedIndexesInfoForAnalyze(
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
-func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -2362,6 +2374,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
 		if skip && !keep {
+			skipCol = append(skipCol, colInfo)
 			continue
 		}
 		result = append(result, colInfo)
@@ -2485,16 +2498,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if colsInfo, ok := colsInfoMap[physicalID]; ok {
 				execColsInfo = colsInfo
 			}
-			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+			var skipColsInfo []*model.ColumnInfo
+			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
-				HandleCols:  handleCols,
-				ColsInfo:    execColsInfo,
-				AnalyzeInfo: info,
-				TblInfo:     tbl.TableInfo,
-				Indexes:     indexes,
+				HandleCols:   handleCols,
+				ColsInfo:     execColsInfo,
+				AnalyzeInfo:  info,
+				TblInfo:      tbl.TableInfo,
+				Indexes:      indexes,
+				SkipColsInfo: skipColsInfo,
 			}
 			if newTask.HandleCols == nil {
 				extraCol := model.NewExtraHandleColInfo()
@@ -3155,6 +3170,7 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "COMMENTS", mysql.TypeVarchar, 65535))
 	return schema.col2Schema(), schema.names
 }
 
@@ -3640,7 +3656,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3654,7 +3670,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -4920,6 +4936,32 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	return data, nil
 }
 
+type userVariableChecker struct {
+	hasUserVariables bool
+}
+
+func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.VariableExpr); ok {
+		e.hasUserVariables = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// Check for UserVariables
+func checkForUserVariables(in ast.Node) error {
+	v := &userVariableChecker{hasUserVariables: false}
+	_, ok := in.Accept(v)
+	if !ok || v.hasUserVariables {
+		return dbterror.ErrViewSelectVariable
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -5067,6 +5109,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
@@ -5854,4 +5900,97 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 		}
 	}
 	return nil
+}
+
+func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
+	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
+	optionNames := make([]string, 0, len(as.AlterJobOptions))
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	for _, opt := range as.AlterJobOptions {
+		_, ok := allowedAlterDDLJobParams[opt.Name]
+		if !ok {
+			return nil, fmt.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)
+		}
+		alterDDLJobOpt := AlterDDLJobOpt{Name: opt.Name}
+		if opt.Value != nil {
+			alterDDLJobOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err = checkAlterDDLJobOptValue(&alterDDLJobOpt); err != nil {
+			return nil, err
+		}
+		options = append(options, &alterDDLJobOpt)
+		optionNames = append(optionNames, opt.Name)
+	}
+	p := &AlterDDLJob{
+		JobID:   as.JobNumber,
+		Options: options,
+	}
+	return p, nil
+}
+
+// check if the config value is valid.
+func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
+	switch opt.Name {
+	case AlterDDLJobThread:
+		thread, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
+			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
+				thread, opt.Name, variable.MaxConfigurableConcurrency)
+		}
+	case AlterDDLJobBatchSize:
+		batchSize, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		bs := int32(batchSize)
+		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
+			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
+				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
+		}
+	case AlterDDLJobMaxWriteSpeed:
+		speed, err := GetMaxWriteSpeedFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		if speed < 0 || speed > units.PiB {
+			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
+				strconv.FormatInt(speed, 10), opt.Name, 0, units.PiB)
+		}
+	}
+	return nil
+}
+
+// GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.
+func GetThreadOrBatchSizeFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value for %s is invalid, only integer is allowed", opt.Name)
+	}
+}
+
+// GetMaxWriteSpeedFromExpression gets the numeric value of the max write speed from the expression.
+func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, err error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETString:
+		speedStr := v.Value.GetString()
+		maxWriteSpeed, err = units.RAMInBytes(speedStr)
+		if err != nil {
+			return 0, errors.Annotate(err, "parse max_write_speed value error")
+		}
+	case types.ETInt:
+		maxWriteSpeed = v.Value.GetInt64()
+	default:
+		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
+	}
+	return maxWriteSpeed, nil
 }

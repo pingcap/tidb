@@ -112,6 +112,9 @@ var (
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
+
+	// Unlimited RPC receive message size for TiKV importer
+	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
 
 // ImportClientFactory is factory to create new import client for specific store.
@@ -165,6 +168,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		addr = store.GetAddress()
 	}
 	opts = append(opts,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(unlimitedRPCRecvMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -614,12 +618,7 @@ func NewBackend(
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
-	var writeLimiter StoreWriteLimiter
-	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
-	} else {
-		writeLimiter = noopStoreWriteLimiter{}
-	}
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
 		pdCli:     pdCli,
 		pdHTTPCli: pdHTTPCli,
@@ -1348,7 +1347,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
@@ -1584,10 +1583,23 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use OpenedEngine.SetTS to set a valid TS before import
+// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
+}
+
+// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// This is typically called after persisting the chosen TS of the engine to make
+// sure TS is not changed after task failover.
+func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
+	if e == nil {
+		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+	}
+	defer e.unlock()
+	e.engineMeta.TS = ts
+	return e.saveEngineMeta()
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.

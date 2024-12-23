@@ -16,6 +16,7 @@ package meta
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -1131,7 +1132,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 }
 
 // ListTables shows all tables in database.
-func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Mutator) ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1143,6 +1144,9 @@ func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
 		}
 
 		tbInfo := &model.TableInfo{}

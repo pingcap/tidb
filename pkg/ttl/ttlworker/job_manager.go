@@ -584,6 +584,18 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		now = now.In(tz)
 	}
 
+	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
+	// never be cancelled.
+	jobTables := m.readyForLockHBTimeoutJobTables(now)
+	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
+	// when the heart beat is not sent
+	for _, table := range jobTables {
+		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
+		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+		}
+	}
+
 	cancelJobs := false
 	cancelReason := ""
 	switch {
@@ -634,16 +646,6 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 			continue
 		}
 		m.removeJob(job)
-	}
-
-	jobTables := m.readyForLockHBTimeoutJobTables(now)
-	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
-	// when the heart beat is not sent
-	for _, table := range jobTables {
-		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
-			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
-		}
 	}
 }
 
