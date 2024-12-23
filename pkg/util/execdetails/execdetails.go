@@ -72,13 +72,14 @@ type P90Summary struct {
 	BackoffInfo map[string]*P90BackoffSummary
 }
 
+// CopExecDetails contains cop execution detail information.
 type CopExecDetails struct {
+	ScanDetail    util.ScanDetail
+	TimeDetail    util.TimeDetail
+	CalleeAddress string
 	BackoffTime   time.Duration
 	BackoffSleep  map[string]time.Duration
 	BackoffTimes  map[string]int
-	CalleeAddress string
-	ScanDetail    util.ScanDetail
-	TimeDetail    util.TimeDetail
 }
 
 // MaxDetailsNumsForOneQuery is the max number of details to keep for P90 for one query.
@@ -425,26 +426,25 @@ func (s *SyncExecDetails) MergeExecDetails(details *ExecDetails, commitDetails *
 	}
 }
 
+// MergeCopExecDetails merges a CopExecDetails into self.
 func (s *SyncExecDetails) MergeCopExecDetails(details *CopExecDetails, copTime time.Duration) {
 	if details == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if details != nil {
-		s.execDetails.CopTime += copTime
-		s.execDetails.BackoffTime += details.BackoffTime
-		s.execDetails.RequestCount++
-		s.mergeScanDetail(&details.ScanDetail)
-		s.mergeTimeDetail(details.TimeDetail)
-		detail := &DetailsNeedP90{
-			BackoffSleep:  details.BackoffSleep,
-			BackoffTimes:  details.BackoffTimes,
-			CalleeAddress: details.CalleeAddress,
-			TimeDetail:    details.TimeDetail,
-		}
-		s.detailsSummary.Merge(detail)
+	s.execDetails.CopTime += copTime
+	s.execDetails.BackoffTime += details.BackoffTime
+	s.execDetails.RequestCount++
+	s.mergeScanDetail(&details.ScanDetail)
+	s.mergeTimeDetail(details.TimeDetail)
+	detail := &DetailsNeedP90{
+		BackoffSleep:  details.BackoffSleep,
+		BackoffTimes:  details.BackoffTimes,
+		CalleeAddress: details.CalleeAddress,
+		TimeDetail:    details.TimeDetail,
 	}
+	s.detailsSummary.Merge(detail)
 }
 
 // mergeScanDetail merges scan details into self.
@@ -593,6 +593,7 @@ type basicCopRuntimeStats struct {
 	tiflashStats *TiflashStats
 }
 
+// TiflashStats contains tiflash execution stats.
 type TiflashStats struct {
 	scanContext TiFlashScanContext
 	waitSummary TiFlashWaitSummary
@@ -1637,7 +1638,7 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 	return 0, false
 }
 
-// RecordOneCopTask records a specific cop tasks's execution detail.
+// RecordCopStats records a specific cop tasks's execution detail.
 func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1675,6 +1676,8 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 	}
 	return planID
 }
+
+// RecordCopStats records a specific cop tasks's execution summary.
 func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
