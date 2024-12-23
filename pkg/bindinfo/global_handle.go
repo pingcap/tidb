@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -91,7 +94,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool util.SessionPool
 
-	crossDBBindingCache atomic.Value
+	bindingCache BindingCache
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -131,19 +134,10 @@ func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() BindingCache {
-	return h.crossDBBindingCache.Load().(BindingCache)
-}
-
-func (h *globalBindingHandle) setCache(c BindingCache) {
-	// TODO: update the global cache in-place instead of replacing it and remove this function.
-	h.crossDBBindingCache.Store(c)
-}
-
 // Reset is to reset the BindHandle and clean old info.
 func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
-	h.setCache(newBindCache(h.LoadBindingsFromStorage))
+	h.bindingCache = newBindCache(h.LoadBindingsFromStorage)
 	variable.RegisterStatistics(h)
 }
 
@@ -159,18 +153,12 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache BindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
-		newCache = newBindCache(h.LoadBindingsFromStorage)
 	} else {
 		lastUpdateTime = h.getLastUpdateTime()
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
-		newCache, err = h.getCache().Copy()
-		if err != nil {
-			return err
-		}
 	}
 
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
@@ -185,11 +173,10 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
-			h.setCache(newCache)
 
 			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
 			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
-			metrics.BindingCacheNumBindings.Set(float64(len(h.getCache().GetAllBindings())))
+			metrics.BindingCacheNumBindings.Set(float64(len(h.bindingCache.GetAllBindings())))
 		}()
 
 		for _, row := range rows {
@@ -210,10 +197,10 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 				continue
 			}
 
-			oldBinding := newCache.GetBinding(sqlDigest)
+			oldBinding := h.bindingCache.GetBinding(sqlDigest)
 			newBinding := removeDeletedBindings(merge(oldBinding, []Binding{binding}))
 			if len(newBinding) > 0 {
-				err = newCache.SetBinding(sqlDigest, newBinding)
+				err = h.bindingCache.SetBinding(sqlDigest, newBinding)
 				if err != nil {
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
@@ -221,7 +208,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
 				}
 			} else {
-				newCache.RemoveBinding(sqlDigest)
+				h.bindingCache.RemoveBinding(sqlDigest)
 			}
 		}
 		return nil
@@ -412,28 +399,28 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 
 // MatchGlobalBinding returns the matched binding for this statement.
 func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
-	return h.getCache().MatchingBinding(sctx, noDBDigest, tableNames)
+	return h.bindingCache.MatchingBinding(sctx, noDBDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
 func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
-	return h.getCache().GetAllBindings()
+	return h.bindingCache.GetAllBindings()
 }
 
 // SetBindingCacheCapacity reset the capacity for the bindingCache.
 // It will not affect already cached Bindings.
 func (h *globalBindingHandle) SetBindingCacheCapacity(capacity int64) {
-	h.getCache().SetMemCapacity(capacity)
+	h.bindingCache.SetMemCapacity(capacity)
 }
 
 // GetMemUsage returns the memory usage for the bind cache.
 func (h *globalBindingHandle) GetMemUsage() (memUsage int64) {
-	return h.getCache().GetMemUsage()
+	return h.bindingCache.GetMemUsage()
 }
 
 // GetMemCapacity returns the memory capacity for the bind cache.
 func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
-	return h.getCache().GetMemCapacity()
+	return h.bindingCache.GetMemCapacity()
 }
 
 // newBinding builds Bindings from a tuple in storage.
@@ -670,4 +657,17 @@ func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) 
 		return nil
 	})
 	return bindings, err
+}
+
+// exec is a helper function to execute sql and return RecordSet.
+func exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+	sqlExec := sctx.GetSQLExecutor()
+	return sqlExec.ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo), sql, args...)
+}
+
+// execRows is a helper function to execute sql and return rows and fields.
+func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
+	sqlExec := sctx.GetRestrictedSQLExecutor()
+	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
+		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
