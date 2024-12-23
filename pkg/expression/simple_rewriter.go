@@ -73,7 +73,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 		}
 
 		// Check database and table name match
-		if (dbName == "" || dbName == name.DBName.L) &&
+		if (dbName == "" || name.EqualDBNameString(dbName)) &&
 			(tblName == "" || tblName == name.TblName.L) {
 			if idx != -1 {
 				// Do not allow multiple non-redundant columns with the same name.

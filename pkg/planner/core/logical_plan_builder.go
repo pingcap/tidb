@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unique"
 
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
@@ -473,7 +474,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			var DBName pmodel.CIStr
+			if p.OutputNames()[0].DBName == nil {
+				DBName = pmodel.CIStr{}
+			} else {
+				DBName = p.OutputNames()[0].DBName.Value()
+			}
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -984,7 +991,12 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
 func (*PlanBuilder) buildProjectionFieldNameFromColumns(origField *ast.SelectField, colNameField *ast.ColumnNameExpr, name *types.FieldName) (colName, origColName, tblName, origTblName, dbName pmodel.CIStr) {
-	origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+	if name.DBName == nil {
+		dbName = pmodel.NewCIStr("")
+	} else {
+		dbName = name.DBName.Value()
+	}
+	origTblName, origColName = name.OrigTblName, name.OrigColName
 	if origField.AsName.L == "" {
 		colName = colNameField.Name.Name
 	} else {
@@ -1070,20 +1082,24 @@ func buildExpandFieldName(ctx expression.EvalContext, expr expression.Expression
 		// for case like: gid_, gpos_
 		colName = pmodel.NewCIStr(expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	} else if isCol {
+		if name.DBName != nil {
+			dbName = name.DBName.Value()
+		}
 		// col ref to original col, while its nullability may be changed.
-		origTblName, origColName, dbName = name.OrigTblName, name.OrigColName, name.DBName
+		origTblName, origColName = name.OrigTblName, name.OrigColName
 		colName = pmodel.NewCIStr("ex_" + name.ColName.O)
 		tblName = pmodel.NewCIStr("ex_" + name.TblName.O)
 	} else {
 		// Other: complicated expression.
 		colName = pmodel.NewCIStr("ex_" + expr.StringWithCtx(ctx, errors.RedactLogDisable))
 	}
+	dbNameUnique := unique.Make(dbName)
 	newName := &types.FieldName{
 		TblName:     tblName,
 		OrigTblName: origTblName,
 		ColName:     colName,
 		OrigColName: origColName,
-		DBName:      dbName,
+		DBName:      &dbNameUnique,
 	}
 	return newName
 }
@@ -1116,12 +1132,13 @@ func (b *PlanBuilder) buildProjectionField(ctx context.Context, p base.LogicalPl
 			return nil, nil, err
 		}
 	}
+	uniqueDBName := unique.Make(dbName)
 	name := &types.FieldName{
 		TblName:     tblName,
 		OrigTblName: origTblName,
 		ColName:     colName,
 		OrigColName: origColName,
-		DBName:      dbName,
+		DBName:      &uniqueDBName,
 	}
 	if isCol {
 		return col, name, nil

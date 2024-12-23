@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -129,13 +130,12 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 			return true
 		}
 
-		dbName := options.InputNames[0].DBName
 		if options.SourceTableDB.L != "" {
-			intest.Assert(dbName.L == options.SourceTableDB.L)
+			intest.Assert(options.InputNames[0].EqualDBName(options.SourceTableDB))
 		}
 
 		for _, name := range options.InputNames {
-			intest.Assert(name.DBName.L == dbName.L)
+			intest.Assert(options.InputNames[0].EqualDBNameWithFieldName(*name))
 		}
 		return true
 	})
@@ -2571,10 +2571,12 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		name = er.names[idx]
 	}
 
-	dbName := name.DBName
-	if dbName.O == "" {
+	var dbName pmodel.CIStr
+	if name.EqualDBNameString("") {
 		// if database name is not specified, use current database name
 		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbnameUnique := unique.Make(dbName)
+		name.DBName = &dbnameUnique
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:

@@ -16,6 +16,7 @@ package types
 
 import (
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -26,7 +27,7 @@ import (
 type FieldName struct {
 	OrigTblName model.CIStr
 	OrigColName model.CIStr
-	DBName      model.CIStr
+	DBName      *unique.Handle[model.CIStr]
 	TblName     model.CIStr
 	ColName     model.CIStr
 
@@ -40,6 +41,27 @@ type FieldName struct {
 	Redundant bool
 }
 
+func (name *FieldName) EqualDBName(dbName model.CIStr) bool {
+	if name.DBName == nil {
+		return dbName.L == ""
+	}
+	return name.DBName.Value().L == dbName.L
+}
+
+func (name *FieldName) EqualDBNameString(dbName string) bool {
+	if name.DBName == nil {
+		return dbName == ""
+	}
+	return name.DBName.Value().L == dbName
+}
+
+func (name *FieldName) EqualDBNameWithFieldName(b FieldName) bool {
+	if name.DBName == nil && b.DBName == nil {
+		return true
+	}
+	return name.EqualDBName(b.DBName.Value())
+}
+
 const emptyName = "EMPTY_NAME"
 
 // String implements Stringer interface.
@@ -48,8 +70,8 @@ func (name *FieldName) String() string {
 	if name.Hidden {
 		return emptyName
 	}
-	if name.DBName.L != "" {
-		builder.WriteString(name.DBName.L + ".")
+	if !name.EqualDBNameString("") {
+		builder.WriteString(name.DBName.Value().L + ".")
 	}
 	if name.TblName.L != "" {
 		builder.WriteString(name.TblName.L + ".")
@@ -63,8 +85,12 @@ func (name *FieldName) MemoryUsage() (sum int64) {
 	if name == nil {
 		return
 	}
-
-	sum = name.OrigTblName.MemoryUsage() + name.OrigColName.MemoryUsage() + name.DBName.MemoryUsage() +
+	DBNameMemUsage := int64(0)
+	if name.DBName != nil {
+		dbName := name.DBName.Value()
+		DBNameMemUsage = dbName.MemoryUsage()
+	}
+	sum = name.OrigTblName.MemoryUsage() + name.OrigColName.MemoryUsage() + DBNameMemUsage +
 		name.TblName.MemoryUsage() + name.ColName.MemoryUsage() + size.SizeOfBool*3
 	return
 }
@@ -85,7 +111,7 @@ var EmptyName = &FieldName{Hidden: true}
 // FindAstColName checks whether the given ast.ColumnName is appeared in this slice.
 func (s NameSlice) FindAstColName(name *ast.ColumnName) bool {
 	for _, fieldName := range s {
-		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.L) &&
+		if (name.Schema.L == "" || fieldName.EqualDBName(name.Schema)) &&
 			(name.Table.L == "" || name.Table.L == fieldName.TblName.L) &&
 			name.Name.L == fieldName.ColName.L {
 			return true

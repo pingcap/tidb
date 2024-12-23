@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -289,8 +290,8 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
 			if name.TblName.L != firstName.TblName.L ||
-				(name.DBName.L != "" && firstName.DBName.L != "" &&
-					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+				(!name.EqualDBNameString("") && !firstName.EqualDBNameString("") &&
+					name.DBName.Value().L != firstName.DBName.Value().L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -303,9 +304,13 @@ func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
 		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
 			qbOffset = parentOffset
 		}
-		dbName := firstName.DBName
-		if dbName.L == "" {
+		var dbName pmodel.CIStr
+		if firstName.EqualDBNameString("") {
 			dbName = pmodel.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+			tmp := unique.Make(dbName)
+			firstName.DBName = &tmp
+		} else {
+			dbName = firstName.DBName.Value()
 		}
 		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
