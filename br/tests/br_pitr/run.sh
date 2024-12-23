@@ -23,10 +23,15 @@ PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` 
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 TASK_NAME="br_pitr"
 
+restart_services_allowing_huge_index() {
+    echo "restarting services with huge indices enabled..."
+    stop_services
+    start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+    echo "restart services done..."
+}
+
 # start a new cluster
-echo "restart a services"
-stop_services
-start_services --tidb-cfg "$CUR/config/tidb-max-index-length.toml"
+restart_services_allowing_huge_index
 
 # prepare the data
 echo "prepare the data"
@@ -93,8 +98,7 @@ check_result() {
 }
 
 # start a new cluster
-echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
 # non-compliant operation
 echo "non compliant operation"
@@ -114,8 +118,7 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 check_result
 
 # start a new cluster for incremental + log
-echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#2"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -127,7 +130,7 @@ check_result
 
 # start a new cluster for incremental + log
 echo "restart services"
-restart_services
+restart_services_allowing_huge_index
 
 echo "run snapshot restore#3"
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$PREFIX/full" 
@@ -141,8 +144,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # start a new cluster for corruption
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 file_corruption() {
     echo "corrupt the whole log files"
@@ -168,8 +170,7 @@ if [ $restore_fail -ne 1 ]; then
 fi
 
 # start a new cluster for corruption
-echo "restart a services"
-restart_services
+restart_services_allowing_huge_index
 
 file_lost() {
     echo "lost the whole log files"
