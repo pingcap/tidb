@@ -188,7 +188,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	})
 	if !skipDeriveStats {
 		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil, true)
+		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
 		if err != nil {
 			return err
 		}
