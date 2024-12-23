@@ -328,8 +328,8 @@ func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err erro
 	for i := range bindings {
 		c.digestBiMap.Add(noDBDigests[i], sqlDigest)
 	}
-	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with noDBDigest2SQLDigest and
-	// sqlDigest2noDBDigest, but it's acceptable, just return cache-miss in that case.
+	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with digestBiMap,
+	// but it's acceptable, the optimizer will load the binding when cache-miss.
 	// NOTE: the Set might fail if the operation is too frequent, but binding update is a low-frequently operation, so
 	// this risk seems acceptable.
 	// TODO: handle the Set failure more gracefully.
