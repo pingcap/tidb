@@ -164,14 +164,13 @@ func (j *leftOuterAntiSemiJoinProbe) probeWithoutOtherCondition(_, joinedChk *ch
 	for remainCap > 0 && j.currentProbeRow < j.chunkRows {
 		if j.matchedRowsHeaders[j.currentProbeRow] != 0 {
 			candidateRow := tagHelper.toUnsafePointer(j.matchedRowsHeaders[j.currentProbeRow])
-			if isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
-				j.isMatchedRows[j.currentProbeRow] = true
-				j.matchedRowsHeaders[j.currentProbeRow] = 0
+			if !isKeyMatched(meta.keyMode, j.serializedKeys[j.currentProbeRow], candidateRow, meta) {
+				j.probeCollision++
+				j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
 				continue
 			}
-			j.probeCollision++
-			j.matchedRowsHeaders[j.currentProbeRow] = getNextRowAddress(candidateRow, tagHelper, j.matchedRowsHashValue[j.currentProbeRow])
-			continue
+			j.isMatchedRows[j.currentProbeRow] = true
+			j.matchedRowsHeaders[j.currentProbeRow] = 0
 		}
 		remainCap--
 		j.currentProbeRow++
