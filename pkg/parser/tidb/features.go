@@ -32,6 +32,13 @@ const (
 	FeatureIDTTL = "ttl"
 	// FeatureIDResourceGroup is the `resource group` feature.
 	FeatureIDResourceGroup = "resource_group"
+<<<<<<< HEAD
+=======
+	// FeatureIDGlobalIndex is the `Global Index` feature.
+	FeatureIDGlobalIndex = "global_index"
+	// FeatureIDPresplit is the pre-split feature.
+	FeatureIDPresplit = "pre_split"
+>>>>>>> 3735ed55a39 (parser: support pre-split global index add special comment support for pre_split index option (#58408))
 )
 
 var featureIDs = map[string]struct{}{
@@ -42,6 +49,11 @@ var featureIDs = map[string]struct{}{
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
+<<<<<<< HEAD
+=======
+	FeatureIDGlobalIndex:    {},
+	FeatureIDPresplit:       {},
+>>>>>>> 3735ed55a39 (parser: support pre-split global index add special comment support for pre_split index option (#58408))
 }
 
 // CanParseFeature is used to check if a feature can be parsed.
