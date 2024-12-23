@@ -119,14 +119,8 @@ func getSplitIdxKeysFromValueList(
 	}
 
 	if idxInfo.Global {
-		var idxTblID int64
-		if pi.NewTableID != 0 && idxInfo.State != model.StatePublic {
-			idxTblID = pi.NewTableID
-		} else {
-			idxTblID = tblInfo.ID
-		}
 		destKeys = make([][]byte, 0, len(byRows)+1)
-		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, idxTblID, byRows, destKeys)
+		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
 	}
 
 	destKeys = make([][]byte, 0, (len(byRows)+1)*len(pi.Definitions))

@@ -203,9 +203,9 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on;")
 
 	tk.MustExec("alter table t add index idx(b) pre_split_regions = (by (10000), (20000), (30000));")
-	nextId := nextIdxID()
-	checkSplitKeys(nextId, 0, false)
-	checkSplitKeys(tablecodec.TempIndexPrefix|nextId, 3, true)
+	nextID := nextIdxID()
+	checkSplitKeys(nextID, 0, false)
+	checkSplitKeys(tablecodec.TempIndexPrefix|nextID, 3, true)
 
 	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = off;")
 
