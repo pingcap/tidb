@@ -408,6 +408,11 @@ func TestGetRewriteRuleOfTable(t *testing.T) {
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 2))
 	}
+	{
+		rewriteRules := utils.GetRewriteRuleOfTable(2, 1, 100, map[int64]int64{1: 1, 2: 2}, true)
+		require.Equal(t, rewriteRules.Data[1].IgnoreAfterTimestamp, uint64(100))
+		require.Equal(t, rewriteRules.Data[2].IgnoreAfterTimestamp, uint64(100))
+	}
 }
 
 type fakeApplyFile struct {
