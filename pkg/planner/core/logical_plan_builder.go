@@ -474,13 +474,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			var DBName pmodel.CIStr
+			var dbName pmodel.CIStr
 			if p.OutputNames()[0].DBName == nil {
-				DBName = pmodel.CIStr{}
+				dbName = pmodel.CIStr{}
 			} else {
-				DBName = p.OutputNames()[0].DBName.Value()
+				dbName = p.OutputNames()[0].DBName.Value()
 			}
-			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: DBName, TableName: p.OutputNames()[0].TblName}
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: dbName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
