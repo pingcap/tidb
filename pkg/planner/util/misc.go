@@ -51,7 +51,9 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 
 // SliceRecursiveFlattenIter returns an iterator that recursively iterates over all elements of an any-dimensional slice
 // of any type.
-// Performance note: for all non-leaf slices, this function uses reflection to check the type and iterate over them.
+// Performance note:
+// For each non-leaf slice, this function uses reflection to iterate over them. For each slice, this function will use
+// reflection to check the dynamic type. Be careful when trying to use this function in performance-critical code.
 /*
 Example:
 	paths := [][][]*AccessPath{...}
