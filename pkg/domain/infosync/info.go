@@ -136,6 +136,14 @@ type ServerInfo struct {
 	DynamicServerInfo
 }
 
+// Clone the ServerInfo.
+func (info *ServerInfo) Clone() *ServerInfo {
+	return &ServerInfo{
+		StaticServerInfo:  info.StaticServerInfo,
+		DynamicServerInfo: *info.DynamicServerInfo.Clone(),
+	}
+}
+
 // Marshal `ServerInfo` into bytes.
 func (info *ServerInfo) Marshal() ([]byte, error) {
 	info.JSONServerID = info.ServerIDGetter()
@@ -181,6 +189,7 @@ type DynamicServerInfo struct {
 	Labels map[string]string `json:"labels"`
 }
 
+// Clone the DynamicServerInfo.
 func (d *DynamicServerInfo) Clone() *DynamicServerInfo {
 	labels := make(map[string]string, len(d.Labels))
 	for k, v := range d.Labels {
@@ -466,7 +475,8 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	if !changed {
 		return nil
 	}
-	is.setDynamicServerInfo(dynamicInfo)
+	info := is.getLocalServerInfo().Clone()
+	info.DynamicServerInfo = *dynamicInfo
 	serverInfo := is.getLocalServerInfo()
 	infoBuf, err := serverInfo.Marshal()
 	if err != nil {
@@ -477,6 +487,8 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	if err != nil {
 		return err
 	}
+	// update the dynamic info in the global info syncer after put etcd success.
+	is.setDynamicServerInfo(dynamicInfo)
 	return nil
 }
 
@@ -723,7 +735,7 @@ type TopologyInfo struct {
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo(info *ServerInfo) TopologyInfo {
+func (info *ServerInfo) asTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
@@ -748,7 +760,7 @@ func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 		return nil
 	}
 	info := is.info.Load()
-	topologyInfo := is.getTopologyInfo(info)
+	topologyInfo := info.asTopologyInfo()
 	infoBuf, err := json.Marshal(topologyInfo)
 	if err != nil {
 		return errors.Trace(err)

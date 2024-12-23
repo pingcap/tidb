@@ -85,7 +85,7 @@ func TestTopology(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
 	selfInfo := info.getLocalServerInfo()
-	require.Equal(t, info.getTopologyInfo(selfInfo), *topology)
+	require.Equal(t, selfInfo.asTopologyInfo(), *topology)
 
 	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
@@ -106,7 +106,7 @@ func TestTopology(t *testing.T) {
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
 	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.getTopologyInfo(info.getLocalServerInfo()), *topology)
+	require.Equal(t, info.getLocalServerInfo().asTopologyInfo(), *topology)
 
 	// check ttl key
 	ttlExists, err := info.ttlKeyExists(ctx)
