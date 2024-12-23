@@ -15,12 +15,12 @@
 package memo
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -95,21 +95,22 @@ func TestInsertGE(t *testing.T) {
 //
 //	--------------------┌ sort3 ┐  (XForm trigger group merge)
 //
-// ┌────────────────────┼───────┼──┐     ┌───────────┐
-// │                    │       ▼  │     │           │
-// │srcParentGroup   dstParentGroup│     │           │
-// │  ┌───────┐         ┌───────┐  │     │  ┌─────┐  │
-// │  │0      │         │1      │  │     │  │1┌─┐ │  │
-// │  │ limit1│         │ limit2│  │     │  │ └┼┘ │  │
-// │  └───┼───┘         └───┼───┘  │     │  └──┼──┘  │
-// │Memo  │                 │      ├────►│Memo │     │
-// │  ┌───▼───┐         ┌───▼───┐  │     │  ┌──▼──┐  │
-// │  │ 2:src │         │ 3:dst │  │     │  │ dst │  │
-// │  │ sort1 │         │ sort2 │  │     │  │3    │  │
-// │  └───┼───┘         └───┼───┘  │     │  └──┼──┘  │
-// │      │                 │      │     │     |     │
-// │    childG            childG   │     │   childG  │
-// └───────────────────────────────┘     └───────────┘
+// ┌────────────────────┼───────┼──┐     ┌──────────────────────┐
+// │                    │       ▼  │     │                      │
+// │srcParentGroup   dstParentGroup│     │                      │
+// │  ┌───────┐         ┌───────┐  │     │  ┌───────┐ ┌───────┐ │
+// │  │5      │         │6      │  │     │  │ 5     │ │ 6     │ │
+// │  │ limit1│         │ limit2│  │     │  │ limit1│ │ limit2│ │
+// │  └───┼───┘         └───┼───┘  │     │  └───┼───┘ └───┼───┘ │
+// │Memo  │                 │      ├────►│Memo  └────┼────┘     │
+// │  ┌───▼───┐         ┌───▼───┐  │     │       ┌───▼───┐      │
+// │  │ 3:src │         │ 4:dst │  │     │       │ 4:dst │      │
+// │  │ sort1 │         │ sort2 │  │     │       │ sort1 │      │
+// │  │       │         │       │  │     │       │ sort2 │      │
+// │  └───┼───┘         └───┼───┘  │     │       └───┼───┘      │
+// │      │                 │      │     │           |          │
+// │    childG            childG   │     │        childG        │
+// └───────────────────────────────┘     └──────────────────────┘
 func TestMergeGroup(t *testing.T) {
 	mm := NewMemo()
 	ctx := mock.NewContext()
@@ -127,6 +128,7 @@ func TestMergeGroup(t *testing.T) {
 	dstG := mm.NewGroup()
 	mm.InsertGroupExpression(mm.NewGroupExpression(sort2, []*Group{childG1}), dstG)
 
+	// since limit1 and limit2 have different offset, so they are not in the equivalent class at final.
 	limit1 := logicalop.LogicalLimit{Offset: 1}.Init(ctx, 0)
 	limit2 := logicalop.LogicalLimit{Offset: 2}.Init(ctx, 0)
 	srcParentGE := mm.NewGroupExpression(limit1, []*Group{srcG})
@@ -172,6 +174,17 @@ func TestMergeGroup(t *testing.T) {
 	require.Equal(t, dstG.GetLogicalExpressions().Len(), 2)
 	require.Equal(t, dstG.hash2GroupExpr.Size(), 2)
 	require.Equal(t, len(dstG.Operand2FirstExpr), 1)
+	mask = [2]bool{}
+	dstG.hash2ParentGroupExpr.Each(func(key *GroupExpression, val bool) {
+		if key.GetGroup().GetGroupID() == srcParentGroup.GetGroupID() {
+			mask[0] = true
+		}
+		if key.GetGroup().GetGroupID() == dstParentGroup.GetGroupID() {
+			mask[1] = true
+		}
+	})
+	require.True(t, mask[0])
+	require.True(t, mask[1])
 
 	// assert memo
 	require.Equal(t, mm.groups.Len(), 5)
