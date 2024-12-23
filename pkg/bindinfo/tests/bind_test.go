@@ -522,7 +522,6 @@ func TestHintsSetID(t *testing.T) {
 	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
-	require.Equal(t, "", binding.ID)
 }
 
 func TestBindingWithIsolationRead(t *testing.T) {

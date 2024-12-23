@@ -266,7 +266,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	dom.BindHandle().Reset()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
@@ -281,7 +280,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	dom.BindHandle().Reset()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
