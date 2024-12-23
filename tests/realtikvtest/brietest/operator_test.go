@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -83,7 +84,7 @@ func verifyGCNotStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 
 func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	cx := context.Background()
-	pdc, err := pd.NewClient(cfg.Config.PD, pd.SecurityOption{})
+	pdc, err := pd.NewClient(caller.TestComponent, cfg.Config.PD, pd.SecurityOption{})
 	t.NoError(err)
 	defer pdc.Close()
 	t.NoError(err)
