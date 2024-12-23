@@ -976,7 +976,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = ddl.GetCharsetAndCollateInTableOption(i, spec.Options)
 					if err != nil {
 						return err
 					}

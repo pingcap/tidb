@@ -1627,7 +1627,7 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -1917,7 +1917,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options)
 					if err != nil {
 						return err
 					}
