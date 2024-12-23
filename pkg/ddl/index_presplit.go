@@ -40,8 +40,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// TODO(tangenta): support global index.
-// Wrap the job.Query to with special comments.
 func preSplitIndexRegions(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -116,6 +114,11 @@ func getSplitIdxKeysFromValueList(
 ) (destKeys [][]byte, err error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
+		destKeys = make([][]byte, 0, len(byRows)+1)
+		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
+	}
+
+	if idxInfo.Global {
 		destKeys = make([][]byte, 0, len(byRows)+1)
 		return getSplitIdxPhysicalKeysFromValueList(sctx, tblInfo, idxInfo, tblInfo.ID, byRows, destKeys)
 	}
@@ -303,6 +306,20 @@ func evalSplitDatumFromArgs(
 			indexValues = append(indexValues, values)
 		}
 		return &splitArgs{byRows: indexValues}, nil
+	}
+
+	if len(opt.Lower) == 0 && len(opt.Upper) == 0 && opt.Num > 0 {
+		lowerVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		upperVals := make([]types.Datum, 0, len(idxInfo.Columns))
+		for i := 0; i < len(idxInfo.Columns); i++ {
+			lowerVals = append(lowerVals, types.MinNotNullDatum())
+			upperVals = append(upperVals, types.MaxValueDatum())
+		}
+		return &splitArgs{
+			betweenLower: lowerVals,
+			betweenUpper: upperVals,
+			regionsCnt:   int(opt.Num),
+		}, nil
 	}
 
 	// Split index regions by lower, upper value.
