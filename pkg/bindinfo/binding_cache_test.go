@@ -86,6 +86,6 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, err) // exceed the memory limit
 	require.NotNil(t, bindCache.GetBinding("digest2"))
 
-	require.Nil(t, bindCache.GetBinding("digest1")) // digest1 is evicted
+	require.Nil(t, bindCache.GetBinding("digest1"))    // digest1 is evicted
 	require.NotNil(t, bindCache.GetBinding("digest2")) // digest2 is still in the cache
 }
