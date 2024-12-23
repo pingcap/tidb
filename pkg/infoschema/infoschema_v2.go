@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/btree"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tidwall/btree"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -77,6 +77,8 @@ type versionAndTimestamp struct {
 }
 
 // Data is the core data struct of infoschema V2.
+// The btree library is concurrent safe for one writer and multiple reader, it's a copy-on-write implementation.
+// It's not safe for multiple writing concurrently.
 type Data struct {
 	// For the TableByName API, sorted by {dbName, tableName, schemaVersion} => tableID
 	//
@@ -183,16 +185,18 @@ type tableCacheKey struct {
 	schemaVersion int64
 }
 
+const btreeDegree = 16
+
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:              btree.NewBTreeG[*tableItem](compareByID),
-		byName:            btree.NewBTreeG[*tableItem](compareByName),
-		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
-		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
+		byID:              btree.NewG[*tableItem](btreeDegree, compareByID),
+		byName:            btree.NewG[*tableItem](btreeDegree, compareByName),
+		schemaMap:         btree.NewG[schemaItem](btreeDegree, compareSchemaItem),
+		schemaID2Name:     btree.NewG[schemaIDName](btreeDegree, compareSchemaByID),
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
-		pid2tid:           btree.NewBTreeG[partitionItem](comparePartitionItem),
-		tableInfoResident: btree.NewBTreeG[tableInfoItem](compareTableInfoItem),
+		pid2tid:           btree.NewG[partitionItem](btreeDegree, comparePartitionItem),
+		tableInfoResident: btree.NewG[tableInfoItem](btreeDegree, compareTableInfoItem),
 	}
 	ret.tableCache.SetStatusHook(newSieveStatusHookImpl())
 	return ret
@@ -209,17 +213,17 @@ func (isd *Data) SetCacheCapacity(capacity uint64) {
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
-	isd.byID.Set(&item)
-	isd.byName.Set(&item)
+	isd.byID.ReplaceOrInsert(&item)
+	isd.byName.ReplaceOrInsert(&item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
-			isd.pid2tid.Set(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
+			isd.pid2tid.ReplaceOrInsert(partitionItem{def.ID, item.schemaVersion, tbl.Meta().ID, false})
 		}
 	}
 	if infoschemacontext.HasSpecialAttributes(ti) {
-		isd.tableInfoResident.Set(tableInfoItem{
+		isd.tableInfoResident.ReplaceOrInsert(tableInfoItem{
 			dbName:        item.dbName,
 			tableID:       item.tableID,
 			schemaVersion: item.schemaVersion,
@@ -234,15 +238,15 @@ func (isd *Data) addSpecialDB(di *model.DBInfo, tables *schemaTables) {
 
 func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 	dbInfo.Deprecated.Tables = nil
-	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name})
-	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+	isd.schemaID2Name.ReplaceOrInsert(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name})
+	isd.schemaMap.ReplaceOrInsert(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
 }
 
 func (isd *Data) remove(item tableItem) {
 	item.tomb = true
-	isd.byID.Set(&item)
-	isd.byName.Set(&item)
-	isd.tableInfoResident.Set(tableInfoItem{
+	isd.byID.ReplaceOrInsert(&item)
+	isd.byName.ReplaceOrInsert(&item)
+	isd.tableInfoResident.ReplaceOrInsert(tableInfoItem{
 		dbName:        item.dbName,
 		tableID:       item.tableID,
 		schemaVersion: item.schemaVersion,
@@ -253,8 +257,8 @@ func (isd *Data) remove(item tableItem) {
 
 func (isd *Data) deleteDB(dbInfo *model.DBInfo, schemaVersion int64) {
 	item := schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo, tomb: true}
-	isd.schemaMap.Set(item)
-	isd.schemaID2Name.Set(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
+	isd.schemaMap.ReplaceOrInsert(item)
+	isd.schemaID2Name.ReplaceOrInsert(schemaIDName{schemaVersion: schemaVersion, id: dbInfo.ID, name: dbInfo.Name, tomb: true})
 }
 
 // resetBeforeFullLoad is called before a full recreate operation within builder.InitWithDBInfos().
@@ -284,7 +288,7 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64) 
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-		bt.Descend(pivot, func(item *tableItem) bool {
+		bt.DescendLessOrEqual(pivot, func(item *tableItem) bool {
 			if pivot.tableID == item.tableID {
 				return true // skip MVCC version
 			}
@@ -296,7 +300,7 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64) 
 			break
 		}
 		for _, item := range items {
-			bt.Set(&tableItem{
+			bt.ReplaceOrInsert(&tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -322,7 +326,7 @@ func resetByNameBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-		bt.Descend(pivot, func(item *tableItem) bool {
+		bt.DescendLessOrEqual(pivot, func(item *tableItem) bool {
 			if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
 				return true // skip MVCC version
 			}
@@ -334,7 +338,7 @@ func resetByNameBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64
 			break
 		}
 		for _, item := range items {
-			bt.Set(&tableItem{
+			bt.ReplaceOrInsert(&tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -354,7 +358,7 @@ func resetTableInfoResidentBeforeFullLoad(bt *btree.BTreeG[tableInfoItem], schem
 	}
 	items := make([]tableInfoItem, 0, bt.Len())
 	items = append(items, pivot)
-	bt.Descend(pivot, func(item tableInfoItem) bool {
+	bt.DescendLessOrEqual(pivot, func(item tableInfoItem) bool {
 		if pivot.dbName == item.dbName && pivot.tableID == item.tableID {
 			return true // skip MVCC version
 		}
@@ -363,7 +367,7 @@ func resetTableInfoResidentBeforeFullLoad(bt *btree.BTreeG[tableInfoItem], schem
 		return true
 	})
 	for _, item := range items {
-		bt.Set(tableInfoItem{
+		bt.ReplaceOrInsert(tableInfoItem{
 			dbName:        item.dbName,
 			tableID:       item.tableID,
 			schemaVersion: schemaVersion,
@@ -379,7 +383,7 @@ func resetSchemaMapBeforeFullLoad(bt *btree.BTreeG[schemaItem], schemaVersion in
 	}
 	items := make([]schemaItem, 0, bt.Len())
 	items = append(items, pivot)
-	bt.Descend(pivot, func(item schemaItem) bool {
+	bt.DescendLessOrEqual(pivot, func(item schemaItem) bool {
 		if pivot.Name() == item.Name() {
 			return true // skip MVCC version
 		}
@@ -388,7 +392,7 @@ func resetSchemaMapBeforeFullLoad(bt *btree.BTreeG[schemaItem], schemaVersion in
 		return true
 	})
 	for _, item := range items {
-		bt.Set(schemaItem{
+		bt.ReplaceOrInsert(schemaItem{
 			dbInfo:        item.dbInfo,
 			schemaVersion: schemaVersion,
 			tomb:          true,
@@ -403,7 +407,7 @@ func resetSchemaID2NameBeforeFullLoad(bt *btree.BTreeG[schemaIDName], schemaVers
 	}
 	items := make([]schemaIDName, 0, bt.Len())
 	items = append(items, pivot)
-	bt.Descend(pivot, func(item schemaIDName) bool {
+	bt.DescendLessOrEqual(pivot, func(item schemaIDName) bool {
 		if pivot.id == item.id {
 			return true // skip MVCC version
 		}
@@ -412,7 +416,7 @@ func resetSchemaID2NameBeforeFullLoad(bt *btree.BTreeG[schemaIDName], schemaVers
 		return true
 	})
 	for _, item := range items {
-		bt.Set(schemaIDName{
+		bt.ReplaceOrInsert(schemaIDName{
 			id:            item.id,
 			name:          item.name,
 			schemaVersion: schemaVersion,
@@ -434,7 +438,7 @@ func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion i
 	items := make([]partitionItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-		bt.Descend(pivot, func(item partitionItem) bool {
+		bt.DescendLessOrEqual(pivot, func(item partitionItem) bool {
 			if pivot.partitionID == item.partitionID {
 				return true // skip MVCC version
 			}
@@ -446,7 +450,7 @@ func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion i
 			break
 		}
 		for _, item := range items {
-			bt.Set(partitionItem{
+			bt.ReplaceOrInsert(partitionItem{
 				partitionID:   item.partitionID,
 				tableID:       item.tableID,
 				schemaVersion: schemaVersion,
@@ -557,7 +561,7 @@ func search(bt *btree.BTreeG[*tableItem], schemaVersion int64, end tableItem, ma
 	var ok bool
 	var target *tableItem
 	// Iterate through the btree, find the query item whose schema version is the largest one (latest).
-	bt.Descend(&end, func(item *tableItem) bool {
+	bt.DescendLessOrEqual(&end, func(item *tableItem) bool {
 		if !matchFn(&end, item) {
 			return false
 		}
@@ -679,7 +683,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 		return
 	}
 	var pivot *tableItem
-	is.byName.Descend(maxv, func(item *tableItem) bool {
+	is.byName.DescendLessOrEqual(maxv, func(item *tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -779,7 +783,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 	var h tableByNameHelper
 	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Descend(&h.end, h.onItem)
+	is.byName.DescendLessOrEqual(&h.end, h.onItem)
 
 	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
@@ -908,7 +912,7 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmode
 	// Ascend is much more difficult than Descend.
 	// So the data is taken out first and then dedup in Descend order.
 	var tableItems []*tableItem
-	is.byName.Ascend(&tableItem{dbName: schema}, func(item *tableItem) bool {
+	is.byName.AscendGreaterOrEqual(&tableItem{dbName: schema}, func(item *tableItem) bool {
 		if item.dbName.L != schema.L {
 			return false
 		}
@@ -957,7 +961,7 @@ func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok
 
 	var dbInfo model.DBInfo
 	dbInfo.Name = schema
-	is.Data.schemaMap.Descend(schemaItem{
+	is.Data.schemaMap.DescendLessOrEqual(schemaItem{
 		dbInfo:        &dbInfo,
 		schemaVersion: math.MaxInt64,
 	}, func(item schemaItem) bool {
@@ -979,7 +983,7 @@ func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok
 
 func (is *infoschemaV2) allSchemas(visit func(*model.DBInfo)) {
 	var last *model.DBInfo
-	is.Data.schemaMap.Reverse(func(item schemaItem) bool {
+	is.Data.schemaMap.Descend(func(item schemaItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
 			return true
@@ -1026,7 +1030,7 @@ func (is *infoschemaV2) SchemaExists(schema pmodel.CIStr) bool {
 func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
 	var ok bool
 	var pi partitionItem
-	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
+	is.pid2tid.DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
 				return false
@@ -1095,7 +1099,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	}
 	var ok bool
 	var name pmodel.CIStr
-	is.Data.schemaID2Name.Descend(schemaIDName{
+	is.Data.schemaID2Name.DescendLessOrEqual(schemaIDName{
 		id:            id,
 		schemaVersion: math.MaxInt64,
 	}, func(item schemaIDName) bool {
@@ -1377,7 +1381,7 @@ func (b *Builder) applyDropTableV2(diff *model.SchemaDiff, dbInfo *model.DBInfo,
 
 	if pi := table.Meta().GetPartitionInfo(); pi != nil {
 		for _, def := range pi.Definitions {
-			b.infoData.pid2tid.Set(partitionItem{def.ID, diff.Version, table.Meta().ID, true})
+			b.infoData.pid2tid.ReplaceOrInsert(partitionItem{def.ID, diff.Version, table.Meta().ID, true})
 		}
 	}
 
@@ -1472,7 +1476,7 @@ func (is *infoschemaV2) ListTablesWithSpecialAttribute(filter infoschemacontext.
 	var currDB string
 	var lastTableID int64
 	var res infoschemacontext.TableInfoResult
-	is.Data.tableInfoResident.Reverse(func(item tableInfoItem) bool {
+	is.Data.tableInfoResident.Descend(func(item tableInfoItem) bool {
 		if item.schemaVersion > is.infoSchema.schemaMetaVersion {
 			// Skip the versions that we are not looking for.
 			return true
