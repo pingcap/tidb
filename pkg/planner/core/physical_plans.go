@@ -1056,14 +1056,26 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
 	copyColumn := make([]*model.ColumnInfo, len(columns))
 	copy(copyColumn, columns)
-	var extraColumn *expression.Column
-	var extraColumnModel *model.ColumnInfo
-	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
-		extraColumn = schema.Columns[len(schema.Columns)-1]
-		extraColumnModel = copyColumn[len(copyColumn)-1]
-		schema.Columns = schema.Columns[:len(schema.Columns)-1]
-		copyColumn = copyColumn[:len(copyColumn)-1]
+
+	oldNumColumns := len(schema.Columns)
+	numExtraColumns := 0
+	for i := oldNumColumns - 1; i >= 0; i-- {
+		cid := schema.Columns[i].ID
+		// All columns with negative cid should be placed at last.
+		if cid < 0 {
+			break
+		}
+		numExtraColumns++
 	}
+
+	extraColumns := make([]*expression.Column, numExtraColumns)
+	copy(extraColumns, schema.Columns[oldNumColumns-numExtraColumns:])
+	schema.Columns = schema.Columns[:oldNumColumns-numExtraColumns]
+
+	extraColumnModels := make([]*model.ColumnInfo, numExtraColumns)
+	copy(extraColumnModels, copyColumn[len(copyColumn)-numExtraColumns:])
+	copyColumn = copyColumn[:len(copyColumn)-numExtraColumns]
+
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {
@@ -1078,10 +1090,9 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 			}
 		}
 	}
-	if extraColumn != nil {
-		schema.Columns = append(schema.Columns, extraColumn)
-		copyColumn = append(copyColumn, extraColumnModel) // nozero
-	}
+
+	schema.Columns = append(schema.Columns, extraColumns...)
+	copyColumn = append(copyColumn, extraColumnModels...)
 	return copyColumn
 }
 
