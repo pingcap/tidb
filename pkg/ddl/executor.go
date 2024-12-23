@@ -894,35 +894,44 @@ func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, err
 //   - ALTER TABLE ... ADD COLUMN
 //   - ALTER TABLE ... MODIFY COLUMN
 func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
-	var tableChs, tableColl, schemaChs, schemaColl string
+	// for CREATE TABLE:
+	//   objectChs: Table character set, if specified
+	//   objectColl: Table collation, if specified
+	//   tempChs: Schema character set
+	//   tempColl: Schema collation
+	// for CREATE SCHEMA:
+	//   objectChs: schema character set, if specified
+	//   objectColl: schema collation, if specified
+	//   tempChs, tempColl: empty
+	var objectChs, objectColl, templChs, templColl string
 	for i, v := range charsetOpts {
 		if v.Col != "" && i == 0 {
-			tableColl = v.Col
+			objectColl = v.Col
 		}
 		if v.Col != "" && i == 1 {
-			schemaColl = v.Col
+			templColl = v.Col
 		}
 		if v.Chs != "" && i == 0 {
-			tableChs = v.Chs
+			objectChs = v.Chs
 		}
 		if v.Chs != "" && i == 1 {
-			schemaChs = v.Chs
+			templChs = v.Chs
 		}
 	}
 
-	if tableChs != "" && tableColl != "" { // CHARACTER SET ... COLLATE ...
-		chs = tableChs
-		coll = tableColl
-	} else if tableChs != "" && tableColl == "" { // CHARACTER SET ...
-		chs = tableChs
+	if objectChs != "" && objectColl != "" { // CHARACTER SET ... COLLATE ...
+		chs = objectChs
+		coll = objectColl
+	} else if objectChs != "" && objectColl == "" { // CHARACTER SET ...
+		chs = objectChs
 
-		if schemaColl != "" {
-			collation, err := collate.GetCollationByName(schemaColl)
+		if templColl != "" {
+			collation, err := collate.GetCollationByName(templColl)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
 			if collation.CharsetName == chs {
-				coll = schemaColl
+				coll = templColl
 			}
 		}
 		if coll == "" {
@@ -939,17 +948,17 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 				coll = utf8mb4Coll
 			}
 		}
-	} else if tableChs == "" && tableColl != "" { // COLLATE ...
-		coll = tableColl
-		collation, err := collate.GetCollationByName(tableColl)
+	} else if objectChs == "" && objectColl != "" { // COLLATE ...
+		coll = objectColl
+		collation, err := collate.GetCollationByName(objectColl)
 		if err != nil {
 			return "", "", errors.Trace(err)
 		}
 		chs = collation.CharsetName
 
-	} else if tableChs == "" && tableColl == "" { // ...
-		chs = schemaChs
-		coll = schemaColl
+	} else if objectChs == "" && objectColl == "" { // ...
+		chs = templChs
+		coll = templColl
 	}
 
 	if chs == "" || coll == "" {
