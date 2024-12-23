@@ -778,7 +778,7 @@ func GetModifiableColumnJob(
 		Version:               col.Version,
 	})
 
-	if err = ProcessColumnCharsetAndCollation(NewMetaBuildContextWithSctx(sctx), col, newCol, t.Meta(), specNewColumn, schema); err != nil {
+	if err = ProcessColumnCharsetAndCollation(NewMetaBuildContextWithSctx(sctx), col, newCol, t.Meta(), specNewColumn); err != nil {
 		return nil, err
 	}
 
@@ -1074,7 +1074,7 @@ func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 }
 
 // ProcessColumnCharsetAndCollation process column charset and collation
-func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
+func ProcessColumnCharsetAndCollation(ctx *metabuild.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef) error {
 	var chs, coll string
 	var err error
 	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
