@@ -158,6 +158,8 @@ type BindingCache interface {
 	GetMemCapacity() int64
 	// Size returns the number of items in the cache.
 	Size() int
+	// Close closes the cache.
+	Close()
 }
 
 // bindingCache uses the LRU cache to store the bindings.
@@ -359,4 +361,9 @@ func (c *bindingCache) GetMemCapacity() int64 {
 
 func (c *bindingCache) Size() int {
 	return int(c.cache.Metrics.KeysAdded() - c.cache.Metrics.KeysEvicted())
+}
+
+// Close closes the cache.
+func (c *bindingCache) Close() {
+	c.cache.Close()
 }
