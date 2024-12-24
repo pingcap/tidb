@@ -377,8 +377,8 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
+			t.handleRootTaskConds(ctx, newTask)
 		}
-		t.handleRootTaskConds(ctx, newTask)
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
