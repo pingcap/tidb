@@ -259,11 +259,11 @@ Projection_14	6.40	root		1->Column#10, Column#9
 └─Projection_15	6.40	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column#9
   └─HashAgg_16	6.40	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
     └─HashJoin_19	10.00	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#13)]
-      ├─Selection_20(Build)	8.00	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
+      ├─Selection_20(Build)	8.00	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
       │ └─IndexMerge_27	10.00	root		type: union
       │   ├─Selection_25(Build)	0.00	cop[tikv]		
       │   │ └─IndexRangeScan_24	10.00	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo
       │   └─TableRowIDScan_26(Probe)	10.00	cop[tikv]	table:t4a8656d1	keep order:false, stats:pseudo
-      └─Projection_34(Probe)	10000.00	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
-        └─TableReader_36	10000.00	root		data:TableFullScan_35
-          └─TableFullScan_35	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
+      └─Projection_36(Probe)	10000.00	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#13
+        └─TableReader_38	10000.00	root		data:TableFullScan_37
+          └─TableFullScan_37	10000.00	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
