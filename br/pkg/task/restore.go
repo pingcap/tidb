@@ -864,7 +864,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// pre-set TiDB config for restore
-	restoreDBConfig := enableTiDBConfig()
+	restoreDBConfig := tweakLocalConfForRestore()
 	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
@@ -1146,6 +1146,7 @@ func filterRestoreFiles(
 	return
 }
 
+<<<<<<< HEAD
 // restorePreWork executes some prepare work before restore.
 // TODO make this function returns a restore post work.
 func restorePreWork(ctx context.Context, client *restore.Client, mgr *conn.Mgr, switchToImport bool) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
@@ -1182,8 +1183,11 @@ func restorePostWork(
 }
 
 // enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
+=======
+// tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
+>>>>>>> 384f858a6c8 (br/stream: allow pitr to create oversized indices (#58433))
 // return a function that could restore the config to origin.
-func enableTiDBConfig() func() {
+func tweakLocalConfForRestore() func() {
 	restoreConfig := config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		// set max-index-length before execute DDLs and create tables
