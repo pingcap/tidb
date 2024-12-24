@@ -467,7 +467,7 @@ func (s *jobScheduler) mustReloadSchemas() {
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
 func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *systable.JobW) {
-	failpoint.InjectCall("beforeDeliveryJob", jobW)
+	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
 	injectFailPointForGetJob(jobW.Job)
 	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
 	s.runningJobs.addRunning(jobID, involvedSchemaInfos)
@@ -484,7 +484,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *systable.
 			if r != nil {
 				logutil.DDLLogger().Error("panic in deliveryJob", zap.Any("recover", r), zap.Stack("stack"))
 			}
-			failpoint.InjectCall("afterDeliveryJob", jobW)
+			failpoint.InjectCall("afterDeliveryJob", jobW.Job)
 			// Because there is a gap between `allIDs()` and `checkRunnable()`,
 			// we append unfinished job to pending atomically to prevent `getJob()`
 			// choosing another runnable job that involves the same schema object.
@@ -505,7 +505,7 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *systable.
 			// or the job is finished by another owner.
 			// TODO for JobStateRollbackDone we have to query 1 additional time when the
 			// job is already moved to history.
-			failpoint.InjectCall("beforeRefreshJob", jobW)
+			failpoint.InjectCall("beforeRefreshJob", jobW.Job)
 			for {
 				jobW, err = s.sysTblMgr.GetJobByID(s.schCtx, jobID)
 				failpoint.InjectCall("mockGetJobByIDFail", &err)
