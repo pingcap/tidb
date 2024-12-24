@@ -445,3 +445,7 @@ func (p *immutable) DefaultRoles() []defaultRoleRecord {
 func (p *immutable) RoleGraph() map[string]roleGraphEdgesTable {
 	return p.roleGraph
 }
+
+func (h *Handle) CheckFullData(t *testing.T, value bool) {
+	require.True(t, h.fullData.Load() == value)
+}

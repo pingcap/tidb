@@ -1884,6 +1884,7 @@ type Handle struct {
 	// Only load the active user's data to save memory
 	// username => struct{}
 	activeUsers sync.Map
+	fullData    atomic.Bool
 }
 
 // NewHandle returns a Handle.
@@ -1900,6 +1901,10 @@ func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
 	if p := ctx.Value("mock"); p != nil {
 		visited := p.(*bool)
 		*visited = true
+	}
+	if h.fullData.Load() {
+		// All users data are in-memory, nothing to do
+		return nil
 	}
 
 	_, exist := h.activeUsers.Load(user)
@@ -1934,8 +1939,20 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
-// UpdateAll loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
+	var priv MySQLPrivilege
+	err := priv.LoadAll(h.sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.priv.Store(&priv)
+	h.fullData.Store(true)
+	return nil
+}
+
+// UpdateAll loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAllActive() error {
+	h.fullData.Store(false)
 	userList := make([]string, 0, 20)
 	h.activeUsers.Range(func(key, _ any) bool {
 		userList = append(userList, key.(string))
@@ -1953,6 +1970,7 @@ func (h *Handle) UpdateAll() error {
 
 // Update loads the privilege info from kv storage for the list of users.
 func (h *Handle) Update(userList []string) error {
+	h.fullData.Store(false)
 	needReload := false
 	for _, user := range userList {
 		if _, ok := h.activeUsers.Load(user); ok {
