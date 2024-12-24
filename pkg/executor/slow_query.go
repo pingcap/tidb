@@ -752,7 +752,7 @@ func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false
 			}
-			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			timeValue := types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeTimestamp, types.MaxFsp)
 			return checker.isTimeValid(timeValue)
 		}
 		return true
@@ -926,9 +926,9 @@ func ParseTime(s string) (time.Time, error) {
 }
 
 type logFile struct {
-	file       *os.File  // The opened file handle
-	start      time.Time // The start time of the log file
-	compressed bool      // The file is compressed or not
+	file       *os.File   // The opened file handle
+	start      types.Time // The start time of the log file
+	compressed bool       // The file is compressed or not
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
@@ -996,12 +996,27 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
+<<<<<<< HEAD
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
 		notInAllTimeRanges := true
 		for _, tr := range e.checker.timeRanges {
 			if start.Compare(tr.endTime) <= 0 {
 				notInAllTimeRanges = false
 				break
+=======
+		tz := sctx.GetSessionVars().Location()
+		start := types.NewTime(types.FromGoTime(fileStartTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+		if e.checker.enableTimeCheck {
+			notInAllTimeRanges := true
+			for _, tr := range e.checker.timeRanges {
+				if start.Compare(tr.endTime) <= 0 {
+					notInAllTimeRanges = false
+					break
+				}
+			}
+			if notInAllTimeRanges {
+				return nil
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 			}
 		}
 		if notInAllTimeRanges {
@@ -1016,12 +1031,26 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			if err != nil {
 				return handleErr(err)
 			}
+<<<<<<< HEAD
 			end := types.NewTime(types.FromGoTime(fileEndTime), mysql.TypeDatetime, types.MaxFsp)
 			inTimeRanges := false
 			for _, tr := range e.checker.timeRanges {
 				if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
 					inTimeRanges = true
 					break
+=======
+			if e.checker.enableTimeCheck {
+				end := types.NewTime(types.FromGoTime(fileEndTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+				inTimeRanges := false
+				for _, tr := range e.checker.timeRanges {
+					if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+						inTimeRanges = true
+						break
+					}
+				}
+				if !inTimeRanges {
+					return nil
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 				}
 			}
 			if !inTimeRanges {
@@ -1034,7 +1063,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		}
 		logFiles = append(logFiles, logFile{
 			file:       file,
-			start:      fileStartTime,
+			start:      start,
 			compressed: compressed,
 		})
 		skip = true
@@ -1057,9 +1086,9 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			ret = append(ret, file)
 			continue
 		}
-		start := types.NewTime(types.FromGoTime(logFiles[i].start), mysql.TypeDatetime, types.MaxFsp)
+		start := logFiles[i].start
 		// use next file.start as endTime
-		end := types.NewTime(types.FromGoTime(logFiles[i+1].start), mysql.TypeDatetime, types.MaxFsp)
+		end := logFiles[i+1].start
 		inTimeRanges := false
 		for _, tr := range e.checker.timeRanges {
 			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
