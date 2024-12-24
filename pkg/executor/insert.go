@@ -29,11 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-<<<<<<< HEAD
-=======
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
->>>>>>> 5ac0b2e033b (executor: change the evaluation order of columns in `Update` and `Insert` statements (#57123))
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -191,9 +187,6 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-<<<<<<< HEAD
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, autoColIdx int) error {
-=======
 func (e *InsertExec) updateDupRow(
 	ctx context.Context,
 	idxInBatch int,
@@ -201,10 +194,8 @@ func (e *InsertExec) updateDupRow(
 	row toBeCheckedRow,
 	handle kv.Handle,
 	_ []*expression.Assignment,
-	dupKeyCheck table.DupKeyCheckMode,
 	autoColIdx int,
 ) error {
->>>>>>> 5ac0b2e033b (executor: change the evaluation order of columns in `Update` and `Insert` statements (#57123))
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -403,20 +394,14 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 }
 
 // doDupRowUpdate updates the duplicate row.
-<<<<<<< HEAD
-func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, autoColIdx int) error {
-=======
 func (e *InsertExec) doDupRowUpdate(
 	ctx context.Context,
 	handle kv.Handle,
 	oldRow, newRow, extraCols []types.Datum,
 	assigns []*expression.Assignment,
 	idxInBatch int,
-	dupKeyMode table.DupKeyCheckMode,
 	autoColIdx int,
 ) error {
->>>>>>> 5ac0b2e033b (executor: change the evaluation order of columns in `Update` and `Insert` statements (#57123))
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -430,25 +415,6 @@ func (e *InsertExec) doDupRowUpdate(
 	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
-<<<<<<< HEAD
-	// Update old row when the key is duplicated.
-	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sc := e.Ctx().GetSessionVars().StmtCtx
-	warnCnt := int(sc.WarningCount())
-	for _, col := range cols {
-		if col.LazyErr != nil {
-			return col.LazyErr
-		}
-		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
-		if err1 != nil {
-			return err1
-		}
-		c := col.Col.ToInfo()
-		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.Ctx(), val, c, false, false)
-		if err1 != nil {
-			return err1
-=======
 	// Only evaluate non-generated columns here,
 	// other fields will be evaluated in updateRecord.
 	var generated, nonGenerated []*expression.Assignment
@@ -458,7 +424,6 @@ func (e *InsertExec) doDupRowUpdate(
 			generated = append(generated, assign)
 		} else {
 			nonGenerated = append(nonGenerated, assign)
->>>>>>> 5ac0b2e033b (executor: change the evaluation order of columns in `Update` and `Insert` statements (#57123))
 		}
 	}
 
@@ -479,20 +444,15 @@ func (e *InsertExec) doDupRowUpdate(
 		return err
 	}
 
-<<<<<<< HEAD
-	newData := e.row4Update[:len(oldRow)]
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades)
-=======
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
 	sctx := e.Ctx()
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	for _, assign := range nonGenerated {
 		var val types.Datum
 		if assign.LazyErr != nil {
 			return assign.LazyErr
 		}
-		val, err := assign.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
+		val, err := assign.Expr.Eval(e.evalBuffer4Dup.ToRow())
 		if err != nil {
 			return err
 		}
@@ -512,18 +472,13 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, ignored, err := updateRecord(
+	_, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,
 		0, generated, e.evalBuffer4Dup, errorHandler,
 		assignFlag, e.Table,
-		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
+		true, e.memTracker, e.fkChecks, e.fkCascades)
 
-	if ignored {
-		return nil
-	}
-
->>>>>>> 5ac0b2e033b (executor: change the evaluation order of columns in `Update` and `Insert` statements (#57123))
 	if err != nil {
 		return errors.Trace(err)
 	}
