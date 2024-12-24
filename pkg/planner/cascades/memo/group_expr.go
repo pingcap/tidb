@@ -15,6 +15,8 @@
 package memo
 
 import (
+	"unsafe"
+
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -151,12 +153,16 @@ func (e *GroupExpression) mergeTo(target *GroupExpression) {
 	e.GetGroup().Delete(e)
 	// rule mask | OR
 	target.mask.InPlaceUnion(e.mask)
-	// clear work
+	// clear parentGE refs work
 	for _, childG := range e.Inputs {
 		childG.removeParentGEs(e)
 	}
 	e.Inputs = e.Inputs[:0]
 	e.group = nil
+}
+
+func (e *GroupExpression) addr() uintptr {
+	return uintptr(unsafe.Pointer(e))
 }
 
 // DeriveLogicalProp derive the new group's logical property from a specific GE.

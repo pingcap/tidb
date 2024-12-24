@@ -17,6 +17,7 @@ package memo
 import (
 	"container/list"
 	"fmt"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
@@ -44,14 +45,33 @@ type Group struct {
 	hash2GroupExpr *hashmap.Map[*GroupExpression, *list.Element]
 
 	// hash2ParentGroupExpr is reverted pointer back from current Group to parent referred GEs.
-	// uint64 means *list.Element's addr, list.Element means the pos in global memo group expression's list.
-	hash2ParentGroupExpr *hashmap.Map[*GroupExpression, bool]
+	// in group merge case, the src group parent GE may be changed as one GE of exact the same
+	// hash64 and equals with one in dst parent group GE. In this case, we re-insert this tmp
+	// GE back to parent GE's owner group without registering in the hash2GlobalGroupExpr because
+	// of existence already and another group merge of this two will be triggered later.
+	// But for maintenance parent GE refs here, we should keep both two links: one is from dst
+	// back to tmp GE, one is from dst back to existedGE. since this two has exactly the hash and
+	// equals, we use the ref address as the hash key, the GE as its value here.
+	//
+	//  G1:ge1   G2:ge2         G1:tmpGE  G2:ge2
+	//   ▲         ▲                 ▲     ▲
+	//   │         │                  \    │        tmpGE.equals(ge2), wait for another group merge G1 and G2 recursively.
+	//   │         │                    \  │
+	//  srcG ---> dstG          srcG ---> dstG
+	//
+	hash2ParentGroupExpr *hashmap.Map[uintptr, *GroupExpression]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
 
 	// explored indicates whether this group has been explored.
 	explored bool
+}
+
+// GroupPair is a pair of *Group
+type GroupPair struct {
+	first  *Group
+	second *Group
 }
 
 // ******************************************* start of HashEqual methods *******************************************
@@ -198,25 +218,28 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 
 // removeParentGEs remove the current Group's parent GE ref which is pointed to parent.
 func (g *Group) removeParentGEs(parent *GroupExpression) {
-	_, ok := g.hash2ParentGroupExpr.Get(parent)
+	addr := uintptr(unsafe.Pointer(parent))
+	_, ok := g.hash2ParentGroupExpr.Get(addr)
 	intest.Assert(ok)
-	g.hash2ParentGroupExpr.Remove(parent)
+	g.hash2ParentGroupExpr.Remove(addr)
 }
 
 // addParentGEs is used to maintain the reverted parent pointer from Group to parent GEs.
 func (g *Group) addParentGEs(parent *GroupExpression) {
-	_, ok := g.hash2ParentGroupExpr.Get(parent)
+	addr := uintptr(unsafe.Pointer(parent))
+	_, ok := g.hash2ParentGroupExpr.Get(addr)
 	intest.Assert(!ok)
-	g.hash2ParentGroupExpr.Put(parent, true)
+	g.hash2ParentGroupExpr.Put(addr, parent)
 }
 
 // mergeTo will merge src group's element into target group.
 func (g *Group) mergeTo(target *Group) {
 	// maintain target group's parent GE refs, except the triggering src GE.
-	g.hash2ParentGroupExpr.Each(func(key *GroupExpression, val bool) {
-		target.hash2ParentGroupExpr.Put(key, true)
+	g.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+		target.hash2ParentGroupExpr.Put(key, val)
 	})
-	// maintain the ge migration.
+	// maintain the ge migration, two groups may have the equivalent two,
+	// check the duplication when inserting, merge their GE's state together.
 	g.ForEachGE(func(ge *GroupExpression) bool {
 		existedElem, ok := target.hash2GroupExpr.Get(ge)
 		if ok {
@@ -225,8 +248,18 @@ func (g *Group) mergeTo(target *Group) {
 			intest.Assert(ge != existedGE)
 			ge.mergeTo(existedGE)
 		} else {
+			// change the owner group inside.
+			// since ge's is migrated from src group, the underlying parentGE
+			// ref from child groups is not necessary to change.
 			target.Insert(ge)
 		}
+		// note:
+		// 1: for distinct ge among two groups: since ge's global register info, mm.hash2GlobalGroupExpr has already done
+		// when inserting themselves into src group or dst group, nothing to do here. childG's parentGERefs is also maintained
+		// before, nothing to do here.
+		// 2: for the duplicated ge in two groups, which is the root cause for a recursive group merge of this two groups, as
+		// the same way, mm.hash2GlobalGroupExpr is done once before, the re-inserted ge doesn't do it again, so nothing to do
+		// here. childG's parentGERefs is done for re-inserted GE, but it's cleared ge.MergeTo(existedGE) here.
 		return true
 	})
 	g.Clear()
@@ -263,6 +296,17 @@ func (g *Group) Check() {
 		_, ok := hashMap[v.Value.(*GroupExpression).hash64]
 		intest.Assert(ok)
 	}
+	// assert the parent GE ref.
+	g.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+		found := false
+		for _, childG := range val.Inputs {
+			if childG.GetGroupID() == g.GetGroupID() {
+				found = true
+				break
+			}
+		}
+		intest.Assert(found)
+	})
 }
 
 // NewGroup creates a new Group with given logical prop.
@@ -280,13 +324,13 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 				return t.GetHash64()
 			},
 		),
-		hash2ParentGroupExpr: hashmap.New[*GroupExpression, bool](
+		hash2ParentGroupExpr: hashmap.New[uintptr, *GroupExpression](
 			4,
-			func(a, b *GroupExpression) bool {
-				return a.Equals(b)
+			func(a, b uintptr) bool {
+				return a == b
 			},
-			func(t *GroupExpression) uint64 {
-				return t.GetHash64()
+			func(t uintptr) uint64 {
+				return uint64(t)
 			},
 		),
 	}

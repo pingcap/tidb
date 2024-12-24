@@ -239,9 +239,8 @@ func (mm *Memo) mergeGroup(src, dst *Group) {
 	if !needMerge {
 		return
 	}
-	// step1: remove src group from the global register map and list
+	// step1: remove src group from the global register map and list, it may have been merged.
 	srcGroupElem, ok := mm.groupID2Group[src.GetGroupID()]
-	intest.Assert(ok)
 	if !ok {
 		return
 	}
@@ -251,45 +250,53 @@ func (mm *Memo) mergeGroup(src, dst *Group) {
 	if src.GetGroupID() == mm.rootGroup.GetGroupID() {
 		mm.rootGroup = dst
 	}
+	// record <src, dst> pair for latter call if any.
+	lazyCallPair := make([]*GroupPair, 0)
 	// step2: change src group's parent GE's child group id and reinsert them.
 	// for each src group's parent groupExpression, we need modify their input group.
-	src.hash2ParentGroupExpr.Each(func(key *GroupExpression, val bool) {
-		if key.group.Equals(dst) {
+	src.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+		if val.group.Equals(dst) {
 			// child GE in child group is equivalent with one in parent Group.
 			return
 		}
 		// when GE's child group is changed, its hash64 is changed as well, re-insert them.
-		mm.hash2GlobalGroupExpr.Remove(key)
+		mm.hash2GlobalGroupExpr.Remove(val)
 		// keep the original owner group, otherwise, it will be set to nil when delete the key from it.
-		parentOwnerG := key.GetGroup()
-		parentOwnerG.Delete(key)
-		reInsertGE := mm.replaceGEChild(key, src, dst)
+		parentOwnerG := val.GetGroup()
+		parentOwnerG.Delete(val)
+		// parentGE's input group has been modified, reinsert them.
+		reInsertGE := mm.replaceGEChild(val, src, dst)
+		// insert it back to group, but we are not sure if they are a global equivalent one, check below.
+		// in group merge recursive case, when a re-inserted parent GE has a global equivalent one, we
+		// temporarily add them back to group to keep the GE's state.
 		parentOwnerG.Insert(reInsertGE)
 
-		// parentGE's input group has been modified, reinsert them.
 		existedGE, ok := mm.hash2GlobalGroupExpr.Get(reInsertGE)
 		if ok {
 			intest.Assert(existedGE.GetGroup() != nil)
 			// group expression is already in the Memo's groupExpressions, this indicates that reInsertGE is a redundant
 			// group Expression, and it should be removed. With the concern that this redundant group expression may be
-			// already in the TaskScheduler stack for some pushed task types, we should set it be abandoned for a signal.
+			// already in the TaskScheduler stack for some already pushed task types, we should set it be skipped for a signal.
 			reInsertGE.SetAbandoned()
 			if existedGE.GetGroup().Equals(reInsertGE.GetGroup()) {
 				// equiv one and re-insert one are in same group, merge them.
 				reInsertGE.mergeTo(existedGE)
 			} else {
 				// the reinsertGE and existedGE share the same hash64 while not in the same group, it triggers another
-				// group merge action. do it recursively here.
-				mm.mergeGroup(reInsertGE.GetGroup(), existedGE.GetGroup())
+				// group merge action upward. we don't do it recursively here, cause parentOwnerG is not state complete yet.
+				// register group pair for lazy call.
+				lazyCallPair = append(lazyCallPair, &GroupPair{first: reInsertGE.GetGroup(), second: existedGE.GetGroup()})
 			}
 		} else {
-			// no global equiv one, just put it into memo's global group expression map.
-			//reInsertGE.GetGroup().Insert(reInsertGE)
 			mm.hash2GlobalGroupExpr.Put(reInsertGE, reInsertGE)
 		}
 	})
-	// step3: merge two groups' element together, and remove it from memo's global map and list.
+	// step3: merge two groups' element together.
 	src.mergeTo(dst)
+	// step4: call the lazy call for group merge if any after dst group state is complete.
+	for _, pair := range lazyCallPair {
+		mm.mergeGroup(pair.first, pair.second)
+	}
 }
 
 func (mm *Memo) replaceGEChild(ge *GroupExpression, old, new *Group) *GroupExpression {
