@@ -366,7 +366,7 @@ func mergeContinuousSelections(p base.PhysicalPlan) {
 				break
 			}
 			sel.Conditions = append(sel.Conditions, tmp.Conditions...)
-			slices.Compact(sel.Conditions)
+			sel.Conditions = slices.Compact(sel.Conditions)
 			sel.SetChild(0, tmp.Children()[0])
 		}
 	}
