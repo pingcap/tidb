@@ -507,6 +507,9 @@ func (s *BaseScheduler) scheduleSubTask(
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(adjustedEligibleNodes)
+		//if len(metas) == 1 {
+		//	pos = int(task.ID % 2)
+		//}
 		instanceID := adjustedEligibleNodes[pos]
 		s.logger.Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
