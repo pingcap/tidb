@@ -103,7 +103,8 @@ type jobContext struct {
 	jobArgs model.JobArgs
 
 	// TODO reorg part of code couple this struct so much, remove it later.
-	oldDDLCtx *ddlCtx
+	oldDDLCtx     *ddlCtx
+	lockStartTime time.Time
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -351,11 +352,6 @@ func JobNeedGC(job *model.Job) bool {
 // finishDDLJob deletes the finished DDL job in the ddl queue and puts it to history queue.
 // If the DDL job need to handle in background, it will prepare a background job.
 func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
-	startTime := time.Now()
-	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
-	}()
-
 	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.workCtx, job)
 		if err != nil {
@@ -473,6 +469,10 @@ func (w *ReorgContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
+	start := time.Now()
+	defer func() {
+		metrics.DDLHandleJobDoneOpHist.Observe(time.Since(start).Seconds())
+	}()
 	if err := w.checkBeforeCommit(); err != nil {
 		return err
 	}
@@ -565,6 +565,10 @@ func (w *worker) transitOneJobStep(
 	}
 	failpoint.InjectCall("beforeRunOneJobStep", job)
 
+	start := time.Now()
+	defer func() {
+		metrics.DDLTransitOneStepOpHist.Observe(time.Since(start).Seconds())
+	}()
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
@@ -572,13 +576,13 @@ func (w *worker) transitOneJobStep(
 	failpoint.InjectCall("afterRunOneJobStep", job)
 
 	if job.IsCancelled() {
-		defer jobCtx.unlockSchemaVersion(job.ID)
+		defer jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		w.sess.Reset()
 		return 0, w.handleJobDone(jobCtx, job)
 	}
 
 	if err = w.checkBeforeCommit(); err != nil {
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 
@@ -598,19 +602,19 @@ func (w *worker) transitOneJobStep(
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(job.ID)
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.workCtx)
-	jobCtx.unlockSchemaVersion(job.ID)
+	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -788,7 +792,7 @@ func (w *worker) runOneJobStep(
 		job.RealStartTS = jobCtx.metaMut.StartTS
 	}
 	defer func() {
-		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerRunDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
+		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLRunOneStep, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
 	}()
 
 	if job.IsCancelling() {

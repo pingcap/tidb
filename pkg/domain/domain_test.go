@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -423,7 +424,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 

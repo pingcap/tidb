@@ -36,6 +36,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -139,7 +140,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 	// Or else it's the task without region, which always happens in high layer task without table.
 	// In that case
 	if originalTask != nil {
-		sender := NewRegionBatchRequestSender(c.store.GetRegionCache(), c.store.GetTiKVClient(), param.EnableCollectExecutionInfo)
+		sender := NewRegionBatchRequestSender(c.store.GetRegionCache(), c.store.GetTiKVClient(), c.store.store.GetOracle(), param.EnableCollectExecutionInfo)
 		rpcResp, retry, _, err = sender.SendReqToAddr(bo, originalTask.ctx, originalTask.regionInfos, wrappedReq, tikv.ReadTimeoutMedium)
 		// No matter what the rpc error is, we won't retry the mpp dispatch tasks.
 		// TODO: If we want to retry, we must redo the plan fragment cutting and task scheduling.
@@ -309,7 +310,7 @@ func (c *mppStoreCnt) getMPPStoreCount(ctx context.Context, pdClient pd.Client, 
 
 	// update mpp store cache
 	cnt := 0
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 
 	failpoint.Inject("mppStoreCountPDError", func(value failpoint.Value) {
 		if value.(bool) {

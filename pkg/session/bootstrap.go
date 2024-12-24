@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -463,7 +465,9 @@ const (
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
-		KEY (update_time)
+		KEY (update_time),
+		INDEX idx_schema_table_state (table_schema, table_name, state),
+		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
 	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
@@ -805,6 +809,29 @@ func bootstrap(s sessiontypes.Session) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func getFunctionName(f func(sessiontypes.Session, int64)) (string, error) {
+	if f == nil {
+		return "", errors.New("function is nil")
+	}
+
+	funcPtr := reflect.ValueOf(f).Pointer()
+	if funcPtr == 0 {
+		return "", errors.New("invalid function pointer")
+	}
+
+	fullName := runtime.FuncForPC(funcPtr).Name()
+	if fullName == "" {
+		return "", errors.New("unable to retrieve function name")
+	}
+
+	parts := strings.Split(fullName, ".")
+	if len(parts) == 0 {
+		return "", errors.New("invalid function name structure")
+	}
+
+	return parts[len(parts)-1], nil
 }
 
 const (
@@ -1212,11 +1239,14 @@ const (
 	// version 240
 	// Add index on user field for some mysql tables.
 	version240 = 240
+
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version241 = 241
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version240
+var currentBootstrapVersion int64 = version241
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1557,7 +1587,13 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		funcName, err := getFunctionName(upgrade)
+		terror.MustNil(err)
 		upgrade(s, ver)
+		logutil.BgLogger().Info("upgrade in progress, a version has just been completed or be skipped.",
+			zap.Int64("old-start-version", ver),
+			zap.String("in-progress-version", funcName),
+			zap.Int64("latest-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
@@ -3297,11 +3333,28 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+const (
+	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
+	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
+	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
+	// simpler index directly for non-partitioned tables.
+	addAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
+	// addAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
+	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
+)
+
 func upgradeToVer240(s sessiontypes.Session, ver int64) {
 	if ver >= version240 {
 		return
 	}
+	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
+}
 
+func upgradeToVer241(s sessiontypes.Session, ver int64) {
+	if ver >= version241 {
+		return
+	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)

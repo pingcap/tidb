@@ -155,9 +155,8 @@ TableReader	10000.00	root		data:TableFullScan
 └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select /*+ USE_INDEX_MERGE(t, a, b, c) */ * from t where 1 or t.a = 1 or t.b = 2;
 id	estRows	task	access object	operator info
-TableReader	10000.00	root		data:Selection
-└─Selection	10000.00	cop[tikv]		or(1, or(eq(planner__core__casetest__index__index.t.a, 1), eq(planner__core__casetest__index__index.t.b, 2)))
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1, t2, t3, t4;
 create table t1(a int, b int, primary key (a), key idx_t1_b (b));
 create table t2(a int, b int, primary key (a), key idx_t1_b (b));
@@ -222,30 +221,26 @@ insert into t value (6, 0), (7, -1), (8, -2), (9, -3), (10, -4);
 analyze table t;
 desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and b+2>1);
 id	estRows	task	access object	operator info
-IndexMerge	8.00	root		type: union
+IndexMerge	1.90	root		type: union
 ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
-├─Selection(Build)	1.00	cop[tikv]		1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
-└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	1.90	cop[tikv]	table:t	keep order:false
 show warnings;
 Level	Code	Message
 desc format='brief' select /*+ use_index_merge(t) */ * from t where a =1 or (b=1 and length(b)=1);
 id	estRows	task	access object	operator info
-IndexMerge	8.00	root		type: union
+IndexMerge	1.90	root		type: union
 ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
-├─Selection(Build)	1.00	cop[tikv]		1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
-└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	1.90	cop[tikv]	table:t	keep order:false
 show warnings;
 Level	Code	Message
 desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(a)=1) or (b=1 and length(b)=1);
 id	estRows	task	access object	operator info
-IndexMerge	8.00	root		type: union
-├─Selection(Build)	1.00	cop[tikv]		1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
-├─Selection(Build)	1.00	cop[tikv]		1
-│ └─IndexRangeScan	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
-└─TableRowIDScan(Probe)	8.00	cop[tikv]	table:t	keep order:false
+IndexMerge	1.90	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:a(a)	range:[1,1], keep order:false
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:b(b)	range:[1,1], keep order:false
+└─TableRowIDScan(Probe)	1.90	cop[tikv]	table:t	keep order:false
 show warnings;
 Level	Code	Message
 desc format='brief' select /*+ use_index_merge(t) */ * from t where (a=1 and length(b)=1) or (b=1 and length(a)=1);

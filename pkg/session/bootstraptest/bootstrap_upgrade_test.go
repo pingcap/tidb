@@ -608,7 +608,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 
 	wg.Wait()
 	// Make sure the second add index operation is successful.
-	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id >=%d order by job_id", jobID)
+	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id >=%d and table_name in ('upgrade_tbl', 'upgrade_tbl1') order by job_id", jobID)
 	rows, err := execute(context.Background(), seLatestV, sql)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(rows), 2)
@@ -624,15 +624,7 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 			idxFinishTS = runJob.BinlogInfo.FinishedTS
 		} else {
 			// The second add index op.
-			// notice: upgrade `tidb_runaway_queries` table will happened in `upgradeToVer212` function which is before the second add index op.
-			// upgradeToVer240 the order is
-			// add index upgrade_tbl1
-			// add index user
-			// add index global priv
-			// add index db
-			// ...
-			// add index upgrade_tbl1
-			if strings.Contains(runJob.TableName, "upgrade_tbl") || strings.Contains(runJob.TableName, "tidb_runaway_queries") || runJob.Type == model.ActionAddIndex {
+			if strings.Contains(runJob.TableName, "upgrade_tbl") {
 				require.Greater(t, runJob.BinlogInfo.FinishedTS, idxFinishTS)
 			} else {
 				// The upgrade DDL ops. These jobs' finishedTS must less than add index ops.

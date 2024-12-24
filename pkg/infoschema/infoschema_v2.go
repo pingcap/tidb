@@ -85,13 +85,13 @@ type Data struct {
 	//
 	// It means as long as we can find an item in it, the item is available, even through the
 	// schema version maybe smaller than required.
-	byName *btree.BTreeG[tableItem]
+	byName *btree.BTreeG[*tableItem]
 
 	// For the TableByID API, sorted by {tableID, schemaVersion} => dbID
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
 	// It provides the tableID => databaseID mapping.
 	// This mapping MUST be synced with byName.
-	byID *btree.BTreeG[tableItem]
+	byID *btree.BTreeG[*tableItem]
 
 	// For the SchemaByName API, sorted by {dbName, schemaVersion} => model.DBInfo
 	// Stores the full data in memory.
@@ -186,8 +186,8 @@ type tableCacheKey struct {
 // NewData creates an infoschema V2 data struct.
 func NewData() *Data {
 	ret := &Data{
-		byID:              btree.NewBTreeG[tableItem](compareByID),
-		byName:            btree.NewBTreeG[tableItem](compareByName),
+		byID:              btree.NewBTreeG[*tableItem](compareByID),
+		byName:            btree.NewBTreeG[*tableItem](compareByName),
 		schemaMap:         btree.NewBTreeG[schemaItem](compareSchemaItem),
 		schemaID2Name:     btree.NewBTreeG[schemaIDName](compareSchemaByID),
 		tableCache:        newSieve[tableCacheKey, table.Table](1024 * 1024 * size.MB),
@@ -209,8 +209,8 @@ func (isd *Data) SetCacheCapacity(capacity uint64) {
 }
 
 func (isd *Data) add(item tableItem, tbl table.Table) {
-	isd.byID.Set(item)
-	isd.byName.Set(item)
+	isd.byID.Set(&item)
+	isd.byName.Set(&item)
 	isd.tableCache.Set(tableCacheKey{item.tableID, item.schemaVersion}, tbl)
 	ti := tbl.Meta()
 	if pi := ti.GetPartitionInfo(); pi != nil {
@@ -240,8 +240,8 @@ func (isd *Data) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
 
 func (isd *Data) remove(item tableItem) {
 	item.tomb = true
-	isd.byID.Set(item)
-	isd.byName.Set(item)
+	isd.byID.Set(&item)
+	isd.byName.Set(&item)
 	isd.tableInfoResident.Set(tableInfoItem{
 		dbName:        item.dbName,
 		tableID:       item.tableID,
@@ -271,7 +271,7 @@ func (isd *Data) resetBeforeFullLoad(schemaVersion int64) {
 	resetPID2TIDBeforeFullLoad(isd.pid2tid, schemaVersion)
 }
 
-func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
+func resetByIDBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64) {
 	pivot, ok := bt.Max()
 	if !ok {
 		return
@@ -281,10 +281,10 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
 	if bt.Len() < batchSize {
 		batchSize = bt.Len()
 	}
-	items := make([]tableItem, 0, batchSize)
+	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-		bt.Descend(pivot, func(item tableItem) bool {
+		bt.Descend(pivot, func(item *tableItem) bool {
 			if pivot.tableID == item.tableID {
 				return true // skip MVCC version
 			}
@@ -296,7 +296,7 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
 			break
 		}
 		for _, item := range items {
-			bt.Set(tableItem{
+			bt.Set(&tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -309,7 +309,7 @@ func resetByIDBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
 	}
 }
 
-func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64) {
+func resetByNameBeforeFullLoad(bt *btree.BTreeG[*tableItem], schemaVersion int64) {
 	pivot, ok := bt.Max()
 	if !ok {
 		return
@@ -319,10 +319,10 @@ func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64)
 	if bt.Len() < batchSize {
 		batchSize = bt.Len()
 	}
-	items := make([]tableItem, 0, batchSize)
+	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
-		bt.Descend(pivot, func(item tableItem) bool {
+		bt.Descend(pivot, func(item *tableItem) bool {
 			if pivot.dbName == item.dbName && pivot.tableName == item.tableName {
 				return true // skip MVCC version
 			}
@@ -334,7 +334,7 @@ func resetByNameBeforeFullLoad(bt *btree.BTreeG[tableItem], schemaVersion int64)
 			break
 		}
 		for _, item := range items {
-			bt.Set(tableItem{
+			bt.Set(&tableItem{
 				dbName:        item.dbName,
 				dbID:          item.dbID,
 				tableName:     item.tableName,
@@ -457,7 +457,7 @@ func resetPID2TIDBeforeFullLoad(bt *btree.BTreeG[partitionItem], schemaVersion i
 	}
 }
 
-func compareByID(a, b tableItem) bool {
+func compareByID(a, b *tableItem) bool {
 	if a.tableID < b.tableID {
 		return true
 	}
@@ -468,7 +468,7 @@ func compareByID(a, b tableItem) bool {
 	return a.schemaVersion < b.schemaVersion
 }
 
-func compareByName(a, b tableItem) bool {
+func compareByName(a, b *tableItem) bool {
 	if a.dbName.L < b.dbName.L {
 		return true
 	}
@@ -553,12 +553,12 @@ func NewInfoSchemaV2(r autoid.Requirement, factory func() (pools.Resource, error
 	}
 }
 
-func search(bt *btree.BTreeG[tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (tableItem, bool) {
+func search(bt *btree.BTreeG[*tableItem], schemaVersion int64, end tableItem, matchFn func(a, b *tableItem) bool) (*tableItem, bool) {
 	var ok bool
-	var target tableItem
+	var target *tableItem
 	// Iterate through the btree, find the query item whose schema version is the largest one (latest).
-	bt.Descend(end, func(item tableItem) bool {
-		if !matchFn(&end, &item) {
+	bt.Descend(&end, func(item *tableItem) bool {
+		if !matchFn(&end, item) {
 			return false
 		}
 		if item.schemaVersion > schemaVersion {
@@ -594,7 +594,7 @@ func (is *infoschemaV2) CloneAndUpdateTS(startTS uint64) *infoschemaV2 {
 	return &tmp
 }
 
-func (is *infoschemaV2) searchTableItemByID(tableID int64) (tableItem, bool) {
+func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 	eq := func(a, b *tableItem) bool { return a.tableID == b.tableID }
 	return search(
 		is.byID,
@@ -679,7 +679,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 		return
 	}
 	var pivot *tableItem
-	is.byName.Descend(maxv, func(item tableItem) bool {
+	is.byName.Descend(maxv, func(item *tableItem) bool {
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
@@ -688,7 +688,7 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 			// skip MVCC version, this db.table has been visited already
 			return true
 		}
-		pivot = &item
+		pivot = item
 		if !item.tomb {
 			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
 		}
@@ -743,10 +743,10 @@ type tableByNameHelper struct {
 	end           tableItem
 	schemaVersion int64
 	found         bool
-	res           tableItem
+	res           *tableItem
 }
 
-func (h *tableByNameHelper) onItem(item tableItem) bool {
+func (h *tableByNameHelper) onItem(item *tableItem) bool {
 	if item.dbName.L != h.end.dbName.L || item.tableName.L != h.end.tableName.L {
 		h.found = false
 		return false
@@ -779,7 +779,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 	var h tableByNameHelper
 	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
-	is.byName.Descend(h.end, h.onItem)
+	is.byName.Descend(&h.end, h.onItem)
 
 	if !h.found {
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
@@ -907,8 +907,8 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmode
 
 	// Ascend is much more difficult than Descend.
 	// So the data is taken out first and then dedup in Descend order.
-	var tableItems []tableItem
-	is.byName.Ascend(tableItem{dbName: schema}, func(item tableItem) bool {
+	var tableItems []*tableItem
+	is.byName.Ascend(&tableItem{dbName: schema}, func(item *tableItem) bool {
 		if item.dbName.L != schema.L {
 			return false
 		}
@@ -923,7 +923,7 @@ func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmode
 	tblInfos := make([]*model.TableNameInfo, 0, len(tableItems))
 	var curr *tableItem
 	for i := len(tableItems) - 1; i >= 0; i-- {
-		item := &tableItems[i]
+		item := tableItems[i]
 		if curr == nil || curr.tableName != tableItems[i].tableName {
 			curr = item
 			if !item.tomb {

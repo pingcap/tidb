@@ -2614,3 +2614,92 @@ func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
 func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
+
+func TestTiDBUpgradeToVer240(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver239 := version239
+	seV239 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver239))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV239, ver239)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
+	res := MustExecToRecodeSet(t, seV239, "show create table mysql.analyze_jobs")
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+
+	// Check that the indexes still exist after upgrading to the new version and that no errors occurred during the upgrade.
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	res = MustExecToRecodeSet(t, seCurVer, "show create table mysql.analyze_jobs")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
+	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
+}
+
+// testExampleAFunc is a example func for TestGetFuncName
+func testExampleAFunc(s sessiontypes.Session, i int64) {}
+
+// testExampleBFunc is a example func for TestGetFuncName
+func testExampleBFunc(s sessiontypes.Session, i int64) {}
+
+func TestGetFuncName(t *testing.T) {
+	// Test case 1: Pass a valid function
+	t.Run("Valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleAFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleAFunc" {
+			t.Errorf("Expected function name 'testExampleAFunc', got: %s", name)
+		}
+	})
+
+	// Test case 2: Pass another valid function
+	t.Run("Another valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleBFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleBFunc" {
+			t.Errorf("Expected function name 'testExampleBFunc', got: %s", name)
+		}
+	})
+
+	// Test case 3: Pass nil as the function
+	t.Run("Nil function", func(t *testing.T) {
+		name, err := getFunctionName(nil)
+		if err == nil {
+			t.Fatalf("Expected an error, got nil")
+		}
+		if name != "" {
+			t.Errorf("Expected empty function name, got: %s", name)
+		}
+		if err.Error() != "function is nil" {
+			t.Errorf("Expected error 'function is nil', got: %v", err)
+		}
+	})
+}

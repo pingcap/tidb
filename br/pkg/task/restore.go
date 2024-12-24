@@ -984,7 +984,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// pre-set TiDB config for restore
-	restoreDBConfig := enableTiDBConfig()
+	restoreDBConfig := tweakLocalConfForRestore()
 	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
@@ -1323,10 +1323,6 @@ func Exhaust(ec <-chan error) []error {
 }
 
 func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
-	// Tasks from br clp client use other checks to validate
-	if g.GetClient() != glue.ClientSql {
-		return nil
-	}
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
@@ -1411,9 +1407,9 @@ func filterRestoreFiles(
 	return
 }
 
-// enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
+// tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
 // return a function that could restore the config to origin.
-func enableTiDBConfig() func() {
+func tweakLocalConfForRestore() func() {
 	restoreConfig := config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		// set max-index-length before execute DDLs and create tables
