@@ -1054,8 +1054,8 @@ func (ts *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error)
 // ExpandVirtualColumn expands the virtual column's dependent columns to ts's schema and column.
 func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
-	copyColumn := make([]*model.ColumnInfo, len(columns))
-	copy(copyColumn, columns)
+	copyColumn := make([]*model.ColumnInfo, 0, len(columns))
+	copyColumn = append(copyColumn, columns...)
 
 	oldNumColumns := len(schema.Columns)
 	numExtraColumns := 0
