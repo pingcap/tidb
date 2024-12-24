@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime"
 	"runtime/debug"
 	"runtime/pprof"
 	"syscall"
+	"time"
 
 	"github.com/pingcap/tidb/lightning/pkg/server"
 	"github.com/pingcap/tidb/lightning/pkg/web"
@@ -34,6 +36,24 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 )
+
+func bToMb(b uint64) uint64 {
+	return b / (1024 * 1024)
+}
+
+func TrackSysMemUsage(ctx context.Context) {
+	tick := time.NewTicker(3 * time.Second)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			fmt.Printf("HeapInUse = %v MiB, HeapAlloc = %v MiB\n", bToMb(m.HeapInuse), bToMb(m.HeapAlloc))
+		}
+	}
+}
 
 func main() {
 	go func() {
@@ -54,6 +74,11 @@ func main() {
 		return
 	}
 	defer pprof.StopCPUProfile()
+
+	// Track heap in use
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go TrackSysMemUsage(ctx)
 
 	globalCfg := config.Must(config.LoadGlobalConfig(os.Args[1:], nil))
 	logToFile := globalCfg.App.File != "" && globalCfg.App.File != "-"
