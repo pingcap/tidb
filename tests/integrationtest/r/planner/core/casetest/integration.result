@@ -184,14 +184,13 @@ Projection	9990.00	root		planner__core__casetest__integration.t.b
 desc format = 'brief' select t1.a from t t1 order by (t1.b = 1 and exists (select 1 from t t2 where t1.b = t2.b)) limit 1;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__casetest__integration.t.a
-└─Projection	1.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11
-  └─TopN	1.00	root		Column#13, offset:0, count:1
-    └─Projection	10000.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11, and(eq(planner__core__casetest__integration.t.b, 1), Column#11)->Column#13
-      └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)]
-        ├─TableReader(Build)	10000.00	root		data:TableFullScan
-        │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-        └─TableReader(Probe)	10000.00	root		data:TableFullScan
-          └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TopN	1.00	root		Column#13, offset:0, count:1
+  └─Projection	10000.00	root		planner__core__casetest__integration.t.a, planner__core__casetest__integration.t.b, Column#11, and(eq(planner__core__casetest__integration.t.b, 1), Column#11)->Column#13
+    └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__integration.t.b, planner__core__casetest__integration.t.b)]
+      ├─TableReader(Build)	10000.00	root		data:TableFullScan
+      │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+      └─TableReader(Probe)	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 desc format = 'brief' select * from (select b+b as x from t) t1, t t2 where t1.x=t2.b order by t1.x limit 1;
 id	estRows	task	access object	operator info
 TopN	1.00	root		Column#4, offset:0, count:1
@@ -276,12 +275,11 @@ c
 2
 explain format = 'brief' select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		Column#3->Column#4
-└─Limit	1.00	root		offset:0, count:1
-  └─StreamAgg	1.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
-    └─Sort	1.25	root		planner__core__casetest__integration.t.a
-      └─TableReader	1.25	root		data:TableFullScan
-        └─TableFullScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	1.00	root		offset:0, count:1
+└─StreamAgg	1.00	root		group by:planner__core__casetest__integration.t.a, funcs:count(1)->Column#3, funcs:firstrow(planner__core__casetest__integration.t.a)->planner__core__casetest__integration.t.a
+  └─Sort	1.25	root		planner__core__casetest__integration.t.a
+    └─TableReader	1.25	root		data:TableFullScan
+      └─TableFullScan	1.25	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ stream_agg() */ count(*) c from t group by a order by a limit 1;
 c
 2

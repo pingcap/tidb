@@ -150,6 +150,3 @@ globalindex__analyze	t	p2	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	
 globalindex__analyze	t	p3	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
 globalindex__analyze	t	p3	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
-globalindex__analyze	t	p4	b	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	73	0	73	0
-globalindex__analyze	t	p4	b	1	<update_time>	1	0	<avg_col_size>	0	allLoaded	73	0	73	0
-globalindex__analyze	t	p4	d	0	<update_time>	1	0	<avg_col_size>	1	allLoaded	74	0	74	0
