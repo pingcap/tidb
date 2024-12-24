@@ -34,6 +34,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1570,7 +1571,10 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	}
 
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case <-done:
@@ -1584,6 +1588,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		testUpdateLabels()
 	}
 	close(done)
+	wg.Wait()
 
 	// reset the global variable
 	config.UpdateGlobal(func(conf *config.Config) {
