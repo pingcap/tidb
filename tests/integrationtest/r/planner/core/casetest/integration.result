@@ -986,7 +986,7 @@ select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'de' or c2 = '10' and fro
 explain format=brief select /*+ use_index_merge(t1) */ 1 from t1 where c1 = 'ab' or c2 = '10' and char_length(left(c1, 10)) = 10;
 id	estRows	task	access object	operator info
 Projection	17.99	root		1->Column#5
-└─Selection	0.00	root		or(eq(planner__core__casetest__integration.t1.c1, "ab"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(char_length(left(planner__core__casetest__integration.t1.c1, 10)), 10))), or(eq(planner__core__casetest__integration.t1.c1, "ab"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(char_length(left(planner__core__casetest__integration.t1.c1, 10)), 10)))
+└─Selection	0.04	root		or(eq(planner__core__casetest__integration.t1.c1, "ab"), and(eq(planner__core__casetest__integration.t1.c2, "10"), eq(char_length(left(planner__core__casetest__integration.t1.c1, 10)), 10)))
   └─IndexMerge	19.99	root		type: union
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c1(c1)	range:["ab","ab"], keep order:false, stats:pseudo
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c2(c2)	range:["10","10"], keep order:false, stats:pseudo
@@ -1019,7 +1019,7 @@ select /*+ use_index_merge( tt2 ) */ 1 from tt2 where tt2.c1 in (-3896405) or tt
 explain format=brief select /*+ use_index_merge(tt3) */ 1 from tt3 where c1 < -10 or c2 < 10 and reverse(c3) = '2';
 id	estRows	task	access object	operator info
 Projection	5098.44	root		1->Column#5
-└─Selection	1440.65	root		or(lt(planner__core__casetest__integration.tt3.c1, -10), and(lt(planner__core__casetest__integration.tt3.c2, 10), eq(reverse(cast(planner__core__casetest__integration.tt3.c3, var_string(20))), "2"))), or(lt(planner__core__casetest__integration.tt3.c1, -10), and(lt(planner__core__casetest__integration.tt3.c2, 10), eq(reverse(cast(planner__core__casetest__integration.tt3.c3, var_string(20))), "2")))
+└─Selection	2825.66	root		or(lt(planner__core__casetest__integration.tt3.c1, -10), and(lt(planner__core__casetest__integration.tt3.c2, 10), eq(reverse(cast(planner__core__casetest__integration.tt3.c3, var_string(20))), "2")))
   └─IndexMerge	5542.21	root		type: union
     ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:tt3, index:c1(c1)	range:[-inf,-10), keep order:false, stats:pseudo
     ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:tt3, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
