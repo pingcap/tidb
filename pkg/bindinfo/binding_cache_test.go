@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func bindingNoDBDigest(t *testing.T, b Binding) string {
+func bindingNoDBDigest(t *testing.T, b *Binding) string {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(b.BindSQL, b.Charset, b.Collation)
 	require.NoError(t, err)
@@ -34,16 +34,16 @@ func bindingNoDBDigest(t *testing.T, b Binding) string {
 
 func TestCrossDBBindingCache(t *testing.T) {
 	fbc := newBindCache(nil).(*bindingCache)
-	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
+	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
-	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
-	b3 := Binding{BindSQL: "SELECT * FROM db2.t3", SQLDigest: "b3"}
+	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
+	b3 := &Binding{BindSQL: "SELECT * FROM db2.t3", SQLDigest: "b3"}
 	fDigest3 := bindingNoDBDigest(t, b3)
 
 	// add 3 bindings and b1 and b2 have the same noDBDigest
-	require.NoError(t, fbc.SetBinding(b1.SQLDigest, []Binding{b1}))
-	require.NoError(t, fbc.SetBinding(b2.SQLDigest, []Binding{b2}))
-	require.NoError(t, fbc.SetBinding(b3.SQLDigest, []Binding{b3}))
+	require.NoError(t, fbc.SetBinding(b1.SQLDigest, []*Binding{b1}))
+	require.NoError(t, fbc.SetBinding(b2.SQLDigest, []*Binding{b2}))
+	require.NoError(t, fbc.SetBinding(b3.SQLDigest, []*Binding{b3}))
 	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest), 2) // b1 and b2 have the same noDBDigest
 	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest1)), 2)
 	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest3)), 1)
@@ -70,8 +70,8 @@ func TestCrossDBBindingCache(t *testing.T) {
 }
 
 func TestBindCache(t *testing.T) {
-	bindings := Bindings{{BindSQL: "SELECT * FROM t1"}}
-	kvSize := int(bindings.size())
+	bindings := []*Binding{{BindSQL: "SELECT * FROM t1"}}
+	kvSize := int(bindings[0].size())
 	defer func(v int64) {
 		variable.MemQuotaBindingCache.Store(v)
 	}(variable.MemQuotaBindingCache.Load())

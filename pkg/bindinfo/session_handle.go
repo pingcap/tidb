@@ -40,10 +40,10 @@ type SessionBindingHandle interface {
 	DropSessionBinding(sqlDigests []string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
+	MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool)
 
 	// GetAllSessionBindings return all bindings.
-	GetAllSessionBindings() (bindings Bindings)
+	GetAllSessionBindings() (bindings []*Binding)
 
 	// Close closes the SessionBindingHandle.
 	Close()
@@ -54,12 +54,12 @@ type SessionBindingHandle interface {
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
 	mu       sync.RWMutex
-	bindings map[string]Bindings // sqlDigest --> Bindings
+	bindings map[string][]*Binding // sqlDigest --> Bindings
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
-	return &sessionBindingHandle{bindings: make(map[string]Bindings)}
+	return &sessionBindingHandle{bindings: make(map[string][]*Binding)}
 }
 
 // CreateSessionBinding creates a Bindings to the cache.
@@ -83,7 +83,7 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 		binding.UpdateTime = now
 
 		// update the BindMeta to the cache.
-		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = []Binding{*binding}
+		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = []*Binding{binding}
 	}
 	return nil
 }
@@ -99,7 +99,7 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	p := parser.New()
@@ -133,7 +133,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDB
 }
 
 // GetAllSessionBindings return all session bind info.
-func (h *sessionBindingHandle) GetAllSessionBindings() (bindings Bindings) {
+func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []*Binding) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, bind := range h.bindings {
@@ -148,7 +148,7 @@ func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionc
 	if len(bindings) == 0 {
 		return nil
 	}
-	bytes, err := json.Marshal([]Binding(bindings))
+	bytes, err := json.Marshal(bindings)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		return nil
 	}
 
-	var records []Binding
+	var records []*Binding
 	// Key "Bindings" only exists in old versions.
 	if _, ok := m[0]["Bindings"]; ok {
 		err = h.decodeOldStyleSessionStates(bindingBytes, &records)
@@ -185,27 +185,27 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		if err = prepareHints(sctx, &record); err != nil {
+		if err = prepareHints(sctx, record); err != nil {
 			return err
 		}
-		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = []Binding{record}
+		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = []*Binding{record}
 	}
 	return nil
 }
 
 // Before v8.0.0, the data structure is different. We need to adapt to the old structure so that the sessions
 // can be migrated from an old version to a new version.
-func (*sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]Binding) error {
+func (*sessionBindingHandle) decodeOldStyleSessionStates(bindingBytes []byte, bindings *[]*Binding) error {
 	type bindRecord struct {
 		OriginalSQL string
 		Db          string
-		Bindings    []Binding
+		Bindings    []*Binding
 	}
 	var records []bindRecord
 	if err := json.Unmarshal(bindingBytes, &records); err != nil {
 		return err
 	}
-	*bindings = make([]Binding, 0, len(records))
+	*bindings = make([]*Binding, 0, len(records))
 	for _, record := range records {
 		for _, binding := range record.Bindings {
 			binding.OriginalSQL = record.OriginalSQL
