@@ -369,5 +369,7 @@ func (c *bindingCache) Size() int {
 
 // Close closes the cache.
 func (c *bindingCache) Close() {
+	c.cache.Clear()
 	c.cache.Close()
+	c.cache.Wait()
 }
