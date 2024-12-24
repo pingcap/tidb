@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	session "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	model "github.com/pingcap/tidb/pkg/meta/model"
 	gomock "go.uber.org/mock/gomock"
 )
 
