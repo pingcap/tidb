@@ -933,7 +933,7 @@ func (s *session) CommitTxn(ctx context.Context) error {
 			logutil.BgLogger().Panic("check lastCommitTS failed",
 				zap.Uint64("sessionLastCommitTS", s.sessionVars.LastCommitTS),
 				zap.Uint64("txnLastCommitTS", s.txn.lastCommitTS),
-				zap.String("sql", s.sessionVars.StmtCtx.OriginalSQL),
+				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
 			)
 		} else {
 			s.sessionVars.LastCommitTS = s.txn.lastCommitTS

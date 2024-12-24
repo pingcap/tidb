@@ -251,7 +251,7 @@ type Transaction interface {
 	IsReadOnly() bool
 	// StartTS returns the transaction start timestamp.
 	StartTS() uint64
-	// CommitTS returns the transaction commit timestamp.
+	// CommitTS returns the transaction commit timestamp if it is committed; otherwise it returns 0.
 	CommitTS() uint64
 	// Valid returns if the transaction is valid.
 	// A transaction become invalid after commit or rollback.
