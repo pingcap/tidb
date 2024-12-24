@@ -52,7 +52,10 @@ type topNChunkHeap struct {
 func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool, fieldTypes []*types.FieldType) {
 	h.memTracker = memTracker
 
-	h.rowChunks = chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
+	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
+	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
+	ch := topnExec.Children(0)
+	h.rowChunks = chunk.NewList(ch.RetFieldTypes(), ch.InitCap(), ch.MaxChunkSize())
 	h.rowChunks.GetMemTracker().AttachTo(h.memTracker)
 	h.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 
@@ -112,11 +115,13 @@ func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (h *topNChunkHeap) doCompaction(topnExec *TopNExec) error {
-	newRowChunks := chunk.NewList(exec.RetTypes(topnExec), topnExec.InitCap(), topnExec.MaxChunkSize())
+	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
+	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
+	ch := topnExec.Children(0)
+	newRowChunks := chunk.NewList(exec.RetTypes(ch), ch.InitCap(), ch.MaxChunkSize())
 	newRowPtrs := make([]chunk.RowPtr, 0, h.rowChunks.Len())
 	for _, rowPtr := range h.rowPtrs {
-		newRowPtr := newRowChunks.AppendRow(h.rowChunks.GetRow(rowPtr))
-		newRowPtrs = append(newRowPtrs, newRowPtr)
+		newRowPtrs = append(newRowPtrs, newRowChunks.AppendRow(h.rowChunks.GetRow(rowPtr)))
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	h.memTracker.ReplaceChild(h.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())

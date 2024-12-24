@@ -929,7 +929,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
 		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))
 		bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns))
-		for _, col := range childPlan.Schema().Columns {
+		for _, col := range newGlobalTopN.Schema().Columns {
 			newCol := col.Clone().(*expression.Column)
 			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
 			bottomProjExprs = append(bottomProjExprs, newCol)
@@ -2458,11 +2458,11 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
 	p.schema = expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...))
 
-	failpoint.Inject("CheckMPPWindowSchemaLength", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("CheckMPPWindowSchemaLength")); _err_ == nil {
 		if len(p.Schema().Columns) != len(mpp.Plan().Schema().Columns)+len(p.WindowFuncDescs) {
 			panic("mpp physical window has incorrect schema length")
 		}
-	})
+	}
 
 	return attachPlan2Task(p, mpp)
 }

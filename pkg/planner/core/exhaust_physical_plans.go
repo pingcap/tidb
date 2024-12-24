@@ -872,11 +872,11 @@ func buildIndexJoinInner2TableScan(
 		lastColMng = indexJoinResult.lastColManager
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng))
+			return constructIndexHashJoin(p, prop, outerIdx, innerTask, nil, keyOff2IdxOff, path, lastColMng)
 		}
-	})
+	}
 	joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, lastColMng, true)...)
 	// We can reuse the `innerTask` here since index nested loop hash join
 	// do not need the inner child to promise the order.
@@ -923,11 +923,11 @@ func buildIndexJoinInner2IndexScan(
 		}
 	}
 	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, innerJoinKeys, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
-			failpoint.Return(constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager))
+			return constructIndexHashJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)
 		}
-	})
+	}
 	if innerTask != nil {
 		joins = append(joins, constructIndexJoin(p, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
 		// We can reuse the `innerTask` here since index nested loop hash join
@@ -1865,11 +1865,11 @@ func tryToGetMppHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProper
 	}
 
 	// set preferredBuildIndex for test
-	failpoint.Inject("mockPreferredBuildIndex", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockPreferredBuildIndex")); _err_ == nil {
 		if !p.SCtx().GetSessionVars().InRestrictedSQL {
 			preferredBuildIndex = val.(int)
 		}
-	})
+	}
 
 	baseJoin.InnerChildIdx = preferredBuildIndex
 	childrenProps := make([]*property.PhysicalProperty, 2)
@@ -1951,12 +1951,12 @@ func choosePartitionKeys(keys []*property.MPPPartitionColumn, matches []int) []*
 // If the hint is not figured, we will pick all candidates.
 func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalJoin)
-	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockOnlyEnableIndexHashJoin")); _err_ == nil {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
 			indexJoins, _ := tryToGetIndexJoin(p, prop)
-			failpoint.Return(indexJoins, true, nil)
+			return indexJoins, true, nil
 		}
-	})
+	}
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
@@ -2181,6 +2181,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	// If we can generate MPP task and there's vector distance function in the order by column.
@@ -2219,6 +2220,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	return ret

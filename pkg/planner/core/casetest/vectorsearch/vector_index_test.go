@@ -176,13 +176,12 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection                root         test.t.vec",
-		" └─TopN                    root         ?",
-		"   └─TableReader           root         ",
-		"     └─ExchangeSender      cop[tiflash] ",
-		"       └─TopN              cop[tiflash] ?",
-		"         └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"           └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
+		" TopN                    root         ?",
+		" └─TableReader           root         ",
+		"   └─ExchangeSender      cop[tiflash] ",
+		"     └─TopN              cop[tiflash] ?",
+		"       └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"         └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
 	}, p1)
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
@@ -206,12 +205,11 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	p2, _ := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection              root test.t.vec",
-		" └─TopN                  root ?",
-		"   └─TableReader         root ",
-		"     └─TopN              cop  ?",
-		"       └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+		" TopN                  root ?",
+		" └─TableReader         root ",
+		"   └─TopN              cop  ?",
+		"     └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p2)
 	tbl.Meta().TiFlashReplica.Available = true
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")

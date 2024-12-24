@@ -65,6 +65,9 @@ type TopNExec struct {
 	isSpillTriggeredInStage2ForTest bool
 
 	Concurrency int
+
+	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	ColumnIdxsUsedByChild []int
 }
 
 // Open implements the Executor Open interface.
@@ -240,7 +243,12 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok || row.err != nil {
 				return row.err
 			}
-			req.AppendRow(row.row)
+			// Be carefule, if inline projection occurs.
+			// TopN's schema may be not match child executor's output columns.
+			// We should extract only the required columns from child's executor.
+			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+			// cauz it may destroy the correctness of executor's `keyColumns`.
+			req.AppendRowByColIdxs(row.row, e.ColumnIdxsUsedByChild)
 		}
 	}
 	return nil
@@ -618,14 +626,14 @@ func (e *TopNExec) GetInMemoryThenSpillFlagForTest() bool {
 }
 
 func injectTopNRandomFail(triggerFactor int32) {
-	failpoint.Inject("TopNRandomFail", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("TopNRandomFail")); _err_ == nil {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < triggerFactor {
 				panic("panic is triggered by random fail")
 			}
 		}
-	})
+	}
 }
 
 // InitTopNExecForTest initializes TopN executors, only for test.

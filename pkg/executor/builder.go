@@ -858,7 +858,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) exec.Executor {
 		outputNames:  v.OutputNames(),
 	}
 
-	failpoint.Inject("assertExecutePrepareStatementStalenessOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertExecutePrepareStatementStalenessOption")); _err_ == nil {
 		vs := strings.Split(val.(string), "_")
 		assertTS, assertReadReplicaScope := vs[0], vs[1]
 		staleread.AssertStmtStaleness(b.ctx, true)
@@ -871,7 +871,7 @@ func (b *executorBuilder) buildExecute(v *plannercore.Execute) exec.Executor {
 			assertReadReplicaScope != b.readReplicaScope {
 			panic("execute prepare statement have wrong staleness option")
 		}
-	})
+	}
 
 	return e
 }
@@ -2488,11 +2488,27 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
-	return &sortexec.TopNExec{
+	t := &sortexec.TopNExec{
 		SortExec:    sortExec,
 		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
+	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	if columnIdxsUsedByChild != nil && columnMissing {
+		// In the expected cases colMissing will never happen.
+		// However, suppose that childSchema contains generatedCol and is cloned by selfSchema.
+		// Then childSchema.generatedCol.UniqueID will not be equal to selfSchema.generatedCol.UniqueID.
+		// In this case, colMissing occurs, but it is not wrong.
+		// So here we cancel the inline projection, take all of columns from child.
+		// If the inline projection directly generates some error causes colMissing,
+		// notice that the error feedback given would be inaccurate.
+		columnIdxsUsedByChild = nil
+		// TODO: If there is valid verification logic, please uncomment the following code
+		// b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildTopN` exectutor, columns should not missing in the child schema")
+		// return nil
+	}
+	t.ColumnIdxsUsedByChild = columnIdxsUsedByChild
+	return t
 }
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
@@ -2810,9 +2826,9 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -2883,21 +2899,21 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	count, modifyCount, err := statsHandle.StatsMetaCountAndModifyCount(task.TableID.GetStatisticsID())
 	if err != nil {
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectBaseCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseCount")); _err_ == nil {
 		count = int64(val.(int))
-	})
-	failpoint.Inject("injectBaseModifyCount", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("injectBaseModifyCount")); _err_ == nil {
 		modifyCount = int64(val.(int))
-	})
+	}
 	sampleRate := new(float64)
 	var sampleRateReason string
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
@@ -3061,9 +3077,9 @@ func (b *executorBuilder) buildAnalyzeColumnsPushdown(
 		b.err = err
 		return nil
 	}
-	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectAnalyzeSnapshot")); _err_ == nil {
 		startTS = uint64(val.(int))
-	})
+	}
 	concurrency := adaptiveAnlayzeDistSQLConcurrency(context.Background(), b.ctx)
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
@@ -3176,6 +3192,32 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		}
 	}
 	return e
+}
+
+// retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns.
+//
+//	E.g. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2].
+//	`columnMissing` indicates whether one or more columns in `selfSchema` are not found in `childSchema`.
+//	And `-1` in `columnIdxsUsedByChild` indicates the column not found.
+//	If columnIdxsUsedByChild == nil, means selfSchema and childSchema are equal.
+func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) ([]int, bool) {
+	equalSchema := (selfSchema.Len() == childSchema.Len())
+	columnMissing := false
+	columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
+	for selfIdx, selfCol := range selfSchema.Columns {
+		colIdxInChild := childSchema.ColumnIndex(selfCol)
+		if !columnMissing && colIdxInChild == -1 {
+			columnMissing = true
+		}
+		if equalSchema && selfIdx != colIdxInChild {
+			equalSchema = false
+		}
+		columnIdxsUsedByChild = append(columnIdxsUsedByChild, colIdxInChild)
+	}
+	if equalSchema {
+		columnIdxsUsedByChild = nil
+	}
+	return columnIdxsUsedByChild, columnMissing
 }
 
 // markChildrenUsedCols compares each child with the output schema, and mark
@@ -3680,16 +3722,16 @@ func (b *executorBuilder) buildMPPGather(v *plannercore.PhysicalTableReader) exe
 // buildTableReader builds a table reader executor. It first build a no range table reader,
 // and then update it ranges from table scan plan.
 func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) exec.Executor {
-	failpoint.Inject("checkUseMPP", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkUseMPP")); _err_ == nil {
 		if !b.ctx.GetSessionVars().InRestrictedSQL && val.(bool) != useMPPExecution(b.ctx, v) {
 			if val.(bool) {
 				b.err = errors.New("expect mpp but not used")
 			} else {
 				b.err = errors.New("don't expect mpp but we used it")
 			}
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	// https://github.com/pingcap/tidb/issues/50358
 	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
 		v.SetSchema(v.GetTablePlan().Schema())
@@ -4886,11 +4928,11 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
-	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("buildProjectionForIndexJoinPanic")); _err_ == nil {
 		if v, ok := val.(bool); ok && v {
 			panic("buildProjectionForIndexJoinPanic")
 		}
-	})
+	}
 	err = e.open(ctx)
 	if err != nil {
 		return nil, err
@@ -4988,9 +5030,9 @@ func buildKvRangesForIndexJoin(dctx *distsqlctx.DistSQLContext, pctx *rangerctx.
 		}
 	}
 	if len(kvRanges) != 0 && memTracker != nil {
-		failpoint.Inject("testIssue49033", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("testIssue49033")); _err_ == nil {
 			panic("testIssue49033")
-		})
+		}
 		memTracker.Consume(int64(2 * cap(kvRanges[0].StartKey) * len(kvRanges)))
 	}
 	if len(tmpDatumRanges) != 0 && memTracker != nil {
@@ -5343,12 +5385,12 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		sctx.IndexNames = append(sctx.IndexNames, plan.TblInfo.Name.O+":"+plan.IndexInfo.Name.O)
 	}
 
-	failpoint.Inject("assertBatchPointReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertBatchPointReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if e.Ctx().GetSessionVars().GetReplicaRead().IsClosestRead() && assertScope != b.readReplicaScope {
 			panic("batch point get replica option fail")
 		}
-	})
+	}
 
 	snapshotTS, err := b.getSnapshotTS()
 	if err != nil {
