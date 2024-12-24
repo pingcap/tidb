@@ -436,7 +436,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 			continue
 		}
 
-		s.deliveryJob(wk, targetPool, systable.NewJobW(&job, jobBinary))
+		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
@@ -466,7 +466,7 @@ func (s *jobScheduler) mustReloadSchemas() {
 // deliveryJob deliver the job to the worker to run it asynchronously.
 // the worker will run the job until it's finished, paused or another owner takes
 // over and finished it.
-func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *systable.JobW) {
+func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, jobW *model.JobW) {
 	failpoint.InjectCall("beforeDeliveryJob", jobW.Job)
 	injectFailPointForGetJob(jobW.Job)
 	jobID, involvedSchemaInfos := jobW.ID, jobW.GetInvolvingSchemaInfo()
@@ -554,7 +554,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
-func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *systable.JobW) error {
+func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *model.JobW) error {
 	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it

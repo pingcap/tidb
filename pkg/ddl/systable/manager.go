@@ -31,26 +31,11 @@ var (
 	ErrNotFound = errors.New("not found")
 )
 
-// JobW is a wrapper of model.Job, it contains the job and the binary representation
-// of the job.
-type JobW struct {
-	*model.Job
-	Bytes []byte
-}
-
-// NewJobW creates a new JobW.
-func NewJobW(job *model.Job, bytes []byte) *JobW {
-	return &JobW{
-		Job:   job,
-		Bytes: bytes,
-	}
-}
-
 // Manager is the interface for DDL job/MDL storage layer, it provides the methods
 // to access the job/MDL related tables.
 type Manager interface {
 	// GetJobByID gets the job by ID, returns ErrNotFound if the job does not exist.
-	GetJobByID(ctx context.Context, jobID int64) (*JobW, error)
+	GetJobByID(ctx context.Context, jobID int64) (*model.JobW, error)
 	// GetJobBytesByIDWithSe gets the job binary by ID with the given session.
 	GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error)
 	// GetMDLVer gets the MDL version by job ID, returns ErrNotFound if the MDL info does not exist.
@@ -88,7 +73,7 @@ func (mgr *manager) withNewSession(fn func(se *session.Session) error) error {
 	return fn(ddlse)
 }
 
-func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*JobW, error) {
+func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*model.JobW, error) {
 	job := model.Job{}
 	var jobBytes []byte
 	if err := mgr.withNewSession(func(se *session.Session) error {
@@ -105,7 +90,7 @@ func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*JobW, error) 
 	}); err != nil {
 		return nil, err
 	}
-	return NewJobW(&job, jobBytes), nil
+	return model.NewJobW(&job, jobBytes), nil
 }
 
 func (*manager) GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error) {

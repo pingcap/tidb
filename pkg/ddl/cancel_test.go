@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -392,7 +391,7 @@ func TestCancelJobBeforeRun(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 
 	counter := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *systable.JobW) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
 		if counter == 0 && jobW.TableName == "t" {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobW.ID))
 			counter++

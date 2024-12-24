@@ -14,7 +14,7 @@ import (
 	reflect "reflect"
 
 	session "github.com/pingcap/tidb/pkg/ddl/session"
-	systable "github.com/pingcap/tidb/pkg/ddl/systable"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -47,10 +47,10 @@ func (m *MockManager) ISGOMOCK() struct{} {
 }
 
 // GetJobByID mocks base method.
-func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*systable.JobW, error) {
+func (m *MockManager) GetJobByID(arg0 context.Context, arg1 int64) (*model.JobW, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetJobByID", arg0, arg1)
-	ret0, _ := ret[0].(*systable.JobW)
+	ret0, _ := ret[0].(*model.JobW)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

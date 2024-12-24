@@ -530,7 +530,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 // non-zero, caller should wait for other nodes to catch up.
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
-	jobW *systable.JobW,
+	jobW *model.JobW,
 	sysTblMgr systable.Manager,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
