@@ -903,9 +903,11 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 	//   objectChs: schema character set, if specified
 	//   objectColl: schema collation, if specified
 	//   tempChs, tempColl: empty
-	var templChs, templColl string
-	objectChs := charsetOpts[0].Chs
-	objectColl := charsetOpts[0].Col
+	var templChs, templColl, objectChs, objectColl string
+	if len(charsetOpts) > 0 {
+		objectChs = charsetOpts[0].Chs
+		objectColl = charsetOpts[0].Col
+	}
 	if len(charsetOpts) > 1 {
 		templChs = charsetOpts[1].Chs
 		templColl = charsetOpts[1].Col
