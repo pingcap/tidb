@@ -612,7 +612,6 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 // Close closes the binding cache.
 func (h *globalBindingHandle) CloseCache() {
 	h.bindingCache.Close()
-	h.bindingCache = nil
 }
 
 // LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.

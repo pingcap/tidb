@@ -175,7 +175,7 @@ type bindingCache struct {
 
 func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)) BindingCache {
 	cache, _ := ristretto.NewCache(&ristretto.Config{
-		NumCounters: 1e7,
+		NumCounters: 1e6,
 		MaxCost:     variable.MemQuotaBindingCache.Load(),
 		BufferItems: 64,
 		Cost: func(value any) int64 {
