@@ -372,9 +372,6 @@ func (s *etcdSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestV
 			notifyCh := make(chan struct{})
 			var unmatchedNodeID atomic.Pointer[string]
 			matchFn := func(nodeVersions map[string]int64) bool {
-				if len(nodeVersions) < len(updatedMap) {
-					return false
-				}
 				for tidbID := range updatedMap {
 					if nodeVer, ok := nodeVersions[tidbID]; !ok || nodeVer < latestVer {
 						id := tidbID
