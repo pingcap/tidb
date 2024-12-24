@@ -70,12 +70,11 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 }
 
 func TestSessionBinding(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -95,8 +94,8 @@ func TestSessionBinding(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoError(t, err)
 
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		binding, matched := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+		binding, matched := handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.True(t, matched)
 		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
@@ -132,8 +131,8 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		_, matched = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+		_, matched = handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
 	}
 }

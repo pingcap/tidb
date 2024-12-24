@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"strconv"
 	"strings"
 	"sync"
@@ -1618,4 +1619,180 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 	tk.MustQuery("select table_id, current_job_owner_hb_time from mysql.tidb_ttl_table_status").Sort().Check(testkit.Rows(
 		fmt.Sprintf("%d %s", testTable1.Meta().ID, now.Add(-2*time.Hour).In(tkTZ).Format(time.DateTime)),
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.In(tkTZ).Format(time.DateTime))))
+}
+
+var _ fault = &faultWithProbability{}
+
+type faultWithProbability struct {
+	percent float64
+}
+
+func (f *faultWithProbability) shouldFault(sql string) bool {
+	return rand.Float64() < f.percent
+}
+
+func newFaultWithProbability(percent float64) *faultWithProbability {
+	return &faultWithProbability{percent: percent}
+}
+
+func accelerateHeartBeat(t *testing.T, tk *testkit.TestKit) func() {
+	tk.MustExec("ALTER TABLE mysql.tidb_ttl_table_status MODIFY COLUMN current_job_owner_hb_time TIMESTAMP(6)")
+	tk.MustExec("ALTER TABLE mysql.tidb_ttl_task MODIFY COLUMN owner_hb_time TIMESTAMP(6)")
+	ttlworker.SetTimeFormat(time.DateTime + ".999999")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/heartbeat-interval", fmt.Sprintf("return(%d)", time.Millisecond*100)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-heartbeat-interval", fmt.Sprintf("return(%d)", time.Millisecond*100)))
+	return func() {
+		tk.MustExec("ALTER TABLE mysql.tidb_ttl_table_status MODIFY COLUMN current_job_owner_hb_time TIMESTAMP")
+		tk.MustExec("ALTER TABLE mysql.tidb_ttl_task MODIFY COLUMN owner_hb_time TIMESTAMP")
+		ttlworker.SetTimeFormat(time.DateTime)
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/heartbeat-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-heartbeat-interval"))
+	}
+}
+
+func TestJobManagerWithFault(t *testing.T) {
+	// TODO: add a flag `-long` to enable this test
+	t.Skip("skip this test because it'll need to run for a long time")
+
+	defer boostJobScheduleForTest(t)()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+
+	tk := testkit.NewTestKit(t, store)
+	defer accelerateHeartBeat(t, tk)()
+	tk.MustExec("set @@global.tidb_ttl_running_tasks=32")
+
+	managerCount := 20
+	testDuration := 10 * time.Minute
+	faultPercent := 0.5
+
+	leader := atomic.NewString("")
+	isLeaderFactory := func(id string) func() bool {
+		return func() bool {
+			return leader.Load() == id
+		}
+	}
+
+	type managerWithPool struct {
+		m    *ttlworker.JobManager
+		pool util.SessionPool
+	}
+	managers := make([]managerWithPool, 0, managerCount)
+	for i := 0; i < managerCount; i++ {
+		pool := wrapPoolForTest(dom.SysSessionPool())
+		faultPool := newFaultSessionPool(pool)
+
+		id := fmt.Sprintf("test-ttl-job-manager-%d", i)
+		m := ttlworker.NewJobManager(id, faultPool, store, nil, isLeaderFactory(id))
+		managers = append(managers, managerWithPool{
+			m:    m,
+			pool: faultPool,
+		})
+
+		m.Start()
+	}
+
+	stopTestCh := make(chan struct{})
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	fault := newFaultWithFilter(func(sql string) bool {
+		// skip some local only sql, ref `getSession()` in `session.go`
+		if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") ||
+			strings.ToUpper(sql) == "COMMIT" || strings.ToUpper(sql) == "ROLLBACK" {
+			return false
+		}
+
+		return true
+	}, newFaultWithProbability(faultPercent))
+	go func() {
+		defer wg.Done()
+
+		faultTicker := time.NewTicker(time.Second)
+		for {
+			select {
+			case <-stopTestCh:
+				// Recover all sessions
+				for _, m := range managers {
+					m.pool.(*faultSessionPool).setFault(nil)
+				}
+
+				return
+			case <-faultTicker.C:
+				// Recover all sessions
+				for _, m := range managers {
+					m.pool.(*faultSessionPool).setFault(nil)
+				}
+
+				faultCount := rand.Int() % managerCount
+				logutil.BgLogger().Info("inject fault", zap.Int("faultCount", faultCount))
+				rand.Shuffle(managerCount, func(i, j int) {
+					managers[i], managers[j] = managers[j], managers[i]
+				})
+				// the first non-faultt manager is the leader
+				leader.Store(managers[faultCount].m.ID())
+				logutil.BgLogger().Info("set leader", zap.String("leader", leader.Load()))
+				for i := 0; i < faultCount; i++ {
+					m := managers[i]
+					logutil.BgLogger().Info("inject fault", zap.String("id", m.m.ID()))
+					m.pool.(*faultSessionPool).setFault(fault)
+				}
+			}
+		}
+	}()
+
+	// run the workload goroutine
+	testStart := time.Now()
+	for time.Since(testStart) < testDuration {
+		// create a new table
+		tk.MustExec("use test")
+		tk.MustExec("DROP TABLE if exists t")
+		tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, created_at DATETIME) TTL = created_at + INTERVAL 1 HOUR TTL_ENABLE='OFF'")
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		require.NoError(t, err)
+		logutil.BgLogger().Info("create table", zap.Int64("table_id", tbl.Meta().ID))
+
+		// insert some data
+		for i := 0; i < 5; i++ {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, '%s')", i, time.Now().Add(-time.Hour*2).Format(time.DateTime)))
+		}
+		for i := 0; i < 5; i++ {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t VALUES (%d, '%s')", i+5, time.Now().Format(time.DateTime)))
+		}
+
+		tk.MustExec("ALTER TABLE t TTL_ENABLE='ON'")
+
+		start := time.Now()
+		require.Eventually(t, func() bool {
+			rows := tk.MustQuery("SELECT COUNT(*) FROM t").Rows()
+			if len(rows) == 1 && rows[0][0].(string) == "5" {
+				return true
+			}
+
+			logutil.BgLogger().Info("get row count", zap.String("count", rows[0][0].(string)))
+			return false
+		}, time.Second*5, time.Millisecond*100)
+
+		require.Eventually(t, func() bool {
+			rows := tk.MustQuery("SELECT current_job_state FROM mysql.tidb_ttl_table_status").Rows()
+			if len(rows) == 1 && rows[0][0].(string) == "<nil>" {
+				return true
+			}
+
+			tableStatus := tk.MustQuery("SELECT * FROM mysql.tidb_ttl_table_status").String()
+			logutil.BgLogger().Info("get job state", zap.String("tidb_ttl_table_status", tableStatus))
+			return false
+		}, time.Second*5, time.Millisecond*100)
+
+		logutil.BgLogger().Info("finish workload", zap.Duration("duration", time.Since(start)))
+	}
+
+	logutil.BgLogger().Info("test finished")
+	stopTestCh <- struct{}{}
+	close(stopTestCh)
+
+	wg.Wait()
 }

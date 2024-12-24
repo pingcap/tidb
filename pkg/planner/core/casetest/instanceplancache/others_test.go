@@ -637,3 +637,17 @@ func TestInstancePlanCacheView(t *testing.T) {
 		testkit.Rows("select a from t where a<=? Select root 1 3",
 			"select a from t where a=? and b=? Select root (1, 2) 3"))
 }
+
+func TestInstancePlanCacheIssue58395(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`CREATE TABLE t3 (c datetime, PRIMARY KEY (c))`)
+	tk.MustExec(`prepare p4 from "select * from t3 where c in (?, ? , '2033-11-23')"`)
+	tk.MustExec(`set @i0 = '2027-12-17', @i1 = '1986-12-03'`)
+	tk.MustQuery(`execute p4 using @i0, @i1`) // no error
+
+	tk.MustExec(`set @i0 = 'a', @i1 = 'b'`)
+	tk.MustExec(`execute p4 using @i0, @i1`)
+}

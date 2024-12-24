@@ -120,18 +120,6 @@ func (e *GroupExpression) Equals(other any) bool {
 	return true
 }
 
-// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
-	return &GroupExpression{
-		group:       nil,
-		Inputs:      inputs,
-		LogicalPlan: lp,
-		hash64:      0,
-		// todo: add rule set length
-		mask: bitset.New(1),
-	}
-}
-
 // Init initializes the GroupExpression with the given group and hasher.
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
@@ -179,19 +167,18 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	//  todo: functional dependency
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
-	// only for those new created logical op from XForm, we should rebuild their stats;
-	// in memo init phase, all logical ops has maintained their stats already, just use them.
-	if tmpStats == nil {
-		skipDeriveStats := false
-		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
-			skipDeriveStats = val.(bool)
-		})
-		if !skipDeriveStats {
-			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
-			if err != nil {
-				return err
-			}
+	// the leaves node may have already had their stats in join reorder est phase, while
+	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
+	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
+	skipDeriveStats := false
+	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+		skipDeriveStats = val.(bool)
+	})
+	if !skipDeriveStats {
+		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
+		if err != nil {
+			return err
 		}
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema

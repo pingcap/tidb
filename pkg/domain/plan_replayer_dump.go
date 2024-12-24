@@ -623,7 +623,7 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
+func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
 		for _, hint := range bindData {

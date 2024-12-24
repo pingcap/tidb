@@ -496,10 +496,10 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), nil
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
@@ -529,7 +529,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			p.StatsInfo().ColNDVs[id] = c
 		}
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), nil
 	}
 	count := p.EqualCondOutCnt
@@ -549,7 +549,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		RowCount: count,
 		ColNDVs:  colNDVs,
 	})
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 	return p.StatsInfo(), nil
 }
 
@@ -1190,14 +1190,15 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 	return nil
 }
 
-func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+// logical join group ndv is just to output the corresponding child's groupNDV is asked previously and only outer side is cared.
+func (p *LogicalJoin) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
 	outerIdx := int(-1)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		outerIdx = 0
 	} else if p.JoinType == RightOuterJoin {
 		outerIdx = 1
 	}
-	if outerIdx >= 0 && len(colGroups) > 0 {
+	if outerIdx >= 0 {
 		return childStats[outerIdx].GroupNDVs
 	}
 	return nil
