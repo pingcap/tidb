@@ -765,3 +765,12 @@ KEY `idx_65` (`col_36`(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );
 1	col_1101	col_1102	col_1103	col_1104
+drop table if exists lrr_test;
+create table lrr_test( `COL1` tinyint(16),`COL3` bigint(20) DEFAULT NULL,KEY `UM_COL` (`COL1`,`COL3`));
+insert into lrr_test(col3) values(-825024501864323944);
+insert into lrr_test values(-2,2295421130981788987);
+prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
+set @a=NULL, @b=-2;
+execute stmt using @a,@b;
+COL1	COL3	COL1	COL3
+-2	2295421130981788987	-2	2295421130981788987
