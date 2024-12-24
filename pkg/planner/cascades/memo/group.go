@@ -265,6 +265,7 @@ func (g *Group) mergeTo(target *Group) {
 	g.Clear()
 }
 
+// Clear clean and release the group element in the container.
 func (g *Group) Clear() {
 	// clean the list.
 	g.hash2GroupExpr.Each(func(key *GroupExpression, val *list.Element) {
@@ -277,6 +278,7 @@ func (g *Group) Clear() {
 	g.logicalProp = nil
 }
 
+// Check is used in test for self check.
 func (g *Group) Check() {
 	intest.Assert(g.groupID > 0)
 	intest.Assert(g.logicalExpressions.Len() == g.hash2GroupExpr.Size())
