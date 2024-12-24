@@ -822,12 +822,19 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+<<<<<<< HEAD
 github.com/tidwall/btree v1.7.0 h1:L1fkJH/AuEh5zBnnBbmTwQ5Lt+bRJ5A8EWecslvo9iI=
 github.com/tidwall/btree v1.7.0/go.mod h1:twD9XRA5jj9VUQGELzDO4HPQTNJsoWWfYEL+EUQ2cKY=
 github.com/tikv/client-go/v2 v2.0.8-0.20250113074216-d66e460ff577 h1:9uW3zya97o4gXvF4AvqJV9Dpb61Gk76CxGD/C3/bFvk=
 github.com/tikv/client-go/v2 v2.0.8-0.20250113074216-d66e460ff577/go.mod h1:p9zPFlKBrxhp3b/cBmKBWL9M0X4HtJjgi1ThUtQYF7o=
 github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31 h1:oAYc4m5Eu1OY9ogJ103VO47AYPHvhtzbUPD8L8B67Qk=
 github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31/go.mod h1:W5a0sDadwUpI9k8p7M77d3jo253ZHdmua+u4Ho4Xw8U=
+=======
+github.com/tikv/client-go/v2 v2.0.8-0.20241223070848-fd950fcf9fcc h1:VLq5SWaQ6xbdI8B0tBeWm44ZPuznaRjRcC9YRVaffKw=
+github.com/tikv/client-go/v2 v2.0.8-0.20241223070848-fd950fcf9fcc/go.mod h1:H+EqIN/3fOXhVgzZT91Bk1XF1kfvlBZCYcpMIC8FNbg=
+github.com/tikv/pd/client v0.0.0-20241220053006-461b86adc78d h1:V/LfOrlfS4Ct+AHvjbxVXAZZgqjcpuc53m0wxk0xYF4=
+github.com/tikv/pd/client v0.0.0-20241220053006-461b86adc78d/go.mod h1:Dsiy6gxwRqsqgJPfDSxDbdG+qFvk0cNzvHax0TOPj2Q=
+>>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a h1:A6uKudFIfAEpoPdaal3aSqGxBzLyU8TqyXImLwo6dIo=
 github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a/go.mod h1:mkjARE7Yr8qU23YcGMSALbIxTQ9r9QBVahQOBRfU460=
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=

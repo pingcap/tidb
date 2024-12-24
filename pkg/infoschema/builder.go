@@ -965,8 +965,13 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
+<<<<<<< HEAD
 			b.infoData.byID.Set(item)
 			b.infoData.byName.Set(item)
+=======
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
+>>>>>>> e403d8f7366 (infoschema: replace the btree library for v2 implementation (#58466))
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)
