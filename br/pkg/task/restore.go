@@ -824,9 +824,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	archiveSize := client.ArchiveSize()
+	archiveSize := metautil.ArchiveTablesSize(tables)
 	if cfg.CheckRequirements {
-		if err := checkDiskSpace(ctx, client, mgr, tables, archiveSize); err != nil {
+		if err := checkDiskSpace(ctx, mgr, tables, archiveSize); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -1210,7 +1210,7 @@ func EstimateTikvUsage(archiveSize uint64, replicaCnt uint64, storeCnt uint64) u
 	return archiveSize * replicaCnt / storeCnt
 }
 
-func EstimateTiflashUsage(physicalSizes map[int64]uint64, tables []*metautil.Table, storeCnt uint64) uint64 {
+func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 	if storeCnt == 0 {
 		return 0
 	}
@@ -1219,12 +1219,7 @@ func EstimateTiflashUsage(physicalSizes map[int64]uint64, tables []*metautil.Tab
 		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
 			continue
 		}
-		tableBytes := physicalSizes[table.Info.ID]
-		if table.Info.Partition != nil {
-			for i := range table.Info.Partition.Definitions {
-				tableBytes += physicalSizes[table.Info.Partition.Definitions[i].ID]
-			}
-		}
+		tableBytes := metautil.ArchiveTableSize(table)
 		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
 	}
 	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
@@ -1246,7 +1241,7 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	return nil
 }
 
-func checkDiskSpace(ctx context.Context, client *snapclient.SnapClient, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64) error {
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64) error {
 	maxReplica, err := getMaxReplica(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -1278,7 +1273,7 @@ func checkDiskSpace(ctx context.Context, client *snapclient.SnapClient, mgr *con
 	// number calculated from tpcc testing with variable data sizes.  1.4 is a
 	// relative conservative value.
 	tikvUsage := preserve(EstimateTikvUsage(archiveSize, maxReplica, tikvCnt), 1.1)
-	tiflashUsage := preserve(EstimateTiflashUsage(client.PhysicalSizes(), tables, tiflashCnt), 1.4)
+	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
 
 	err = utils.WithRetry(ctx, func() error {

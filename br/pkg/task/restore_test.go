@@ -524,7 +524,7 @@ func TestTiflashUsage(t *testing.T) {
 	}
 
 	var storeCnt uint64 = 3
-	ret := task.EstimateTiflashUsage(physicalSizes, tables, storeCnt)
+	ret := task.EstimateTiflashUsage(tables, storeCnt)
 	require.Equal(t, 8*pb/3, ret)
 }
 

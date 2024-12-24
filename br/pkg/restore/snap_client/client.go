@@ -625,8 +625,6 @@ func (rc *SnapClient) skipFilesOfTable(table *metautil.Table) {
 				}
 			}
 		}
-		// remove the size of physical ID
-		delete(rc.schemaFilesStats.PhysicalSizes, physicalID)
 	}
 }
 
@@ -662,18 +660,6 @@ func (rc *SnapClient) FilterRestoreFiles(tableFilter filter.Filter) (tables []*m
 		}
 	}
 	return
-}
-
-func (rc *SnapClient) ArchiveSize() uint64 {
-	totalSize := uint64(0)
-	for _, size := range rc.schemaFilesStats.PhysicalSizes {
-		totalSize += size
-	}
-	return totalSize
-}
-
-func (rc *SnapClient) PhysicalSizes() map[int64]uint64 {
-	return rc.schemaFilesStats.PhysicalSizes
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.

@@ -240,6 +240,30 @@ func ArchiveSize(files []*backuppb.File) uint64 {
 	return total
 }
 
+// ArchiveTablesSize return the size of archive table
+func ArchiveTablesSize(tables []*Table) uint64 {
+	totalSize := uint64(0)
+	for _, table := range tables {
+		totalSize += ArchiveTableSize(table)
+	}
+	return totalSize
+}
+
+// ArchiveTableSize return the size of archive table
+func ArchiveTableSize(table *Table) uint64 {
+	totalSize := uint64(0)
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			if len(file.TableMetas) > 0 {
+				totalSize += file.GetSize_() / uint64(len(file.TableMetas))
+			} else {
+				totalSize += file.GetSize_()
+			}
+		}
+	}
+	return totalSize
+}
+
 type ChecksumStats struct {
 	Crc64Xor   uint64
 	TotalKvs   uint64
@@ -420,13 +444,11 @@ func mergePhysicalRangeLink(physicalRangeMap map[int64]int64) ([]TableIDSpan, er
 }
 
 type SchemaFilesStats struct {
-	PhysicalSizes        map[int64]uint64
 	SortedPhysicalRanges []TableIDSpan
 }
 
 func newSchemaFilesStats() *SchemaFilesStats {
 	return &SchemaFilesStats{
-		PhysicalSizes:        make(map[int64]uint64),
 		SortedPhysicalRanges: nil,
 	}
 }
@@ -536,43 +558,55 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					log.Error("tableID must not equal to 0", logutil.File(file))
 					return nil, errors.Annotate(berrors.ErrInvalidRange, "the table ID of the file end key can not be 0")
 				}
-				if len(file.TableMetas) > 1 {
+				if len(file.TableMetas) > 0 {
 					firstTableID, lastTableID := file.TableMetas[0].PhysicalId, file.TableMetas[len(file.TableMetas)-1].PhysicalId
 					if firstTableID <= 0 || lastTableID <= 0 {
 						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
 							"table meta physical id can not less(equal) than(to) 0, firstTableID: %d, lastTableID: %d",
 							firstTableID, lastTableID)
 					}
-					// Any table whose table id is in (firstTableID, lastTableID] should be restored together
-					// with the table whose table id is firstTableID. However, maybe there is another
-					// SST file whose table range is [firstTableID0, lastTableID]. That's because
-					// region data was so large that SST file was split when backup.
-					// The firstTableID is the physical id of the first table meta.
-					// Notice that startTableID <= firstTableID <= lastTableID <= endTableID. That's because
-					// part of data may be overlapped by another backup response.
-					oldLastTableID := physicalRangeMap[firstTableID]
-					if oldLastTableID == 0 {
-						// uninitialized physical range
-						physicalRangeMap[firstTableID] = lastTableID
-					} else if oldLastTableID != lastTableID {
-						// The backup file is bad. It has valid data over from firstTableID0 to endTableID0, and another
-						// valid data over from firstTableID0 to endTableID1.
-						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
-							"the file is over table id range [%d, %d] while another file over table id range [%d, %d]",
-							firstTableID, oldLastTableID, firstTableID, lastTableID)
-					}
-				} else if startTableID != endTableID {
-					log.Error("start key and end key are not from the same table", logutil.File(file))
-					return nil, errors.Annotate(berrors.ErrInvalidRange, "start key and end key are not from the same table")
-				}
-				if len(file.TableMetas) == 0 {
-					fileMap[startTableID] = append(fileMap[startTableID], file)
-					schemaFilesStats.PhysicalSizes[startTableID] += file.Size_
-				} else {
-					for _, tableMeta := range file.TableMetas {
+					// startTableID <= firstTableID <= lastTableID <= endTableID
+					maxTableID := startTableID
+					for i, tableMeta := range file.TableMetas {
+						if tableMeta.PhysicalId < maxTableID {
+							return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+								"table meta physical id is not increasing: tableMetas[%d].PhysicalID is %d while the previous physical ID is %d",
+								i, tableMeta.PhysicalId, maxTableID)
+						}
+						maxTableID = tableMeta.PhysicalId
 						fileMap[tableMeta.PhysicalId] = append(fileMap[tableMeta.PhysicalId], file)
-						schemaFilesStats.PhysicalSizes[tableMeta.PhysicalId] += uint64(float64(tableMeta.TotalBytes) / float64(file.TotalBytes) * float64(file.Size_))
 					}
+					if endTableID < maxTableID {
+						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+							"table meta physical id is not increasing: file range end key physical ID is %d while the previous physical ID is %d",
+							endTableID, maxTableID)
+					}
+					if len(file.TableMetas) > 1 {
+						// Any table whose table id is in (firstTableID, lastTableID] should be restored together
+						// with the table whose table id is firstTableID. However, maybe there is another
+						// SST file whose table range is [firstTableID0, lastTableID]. That's because
+						// region data was so large that SST file was split when backup.
+						// The firstTableID is the physical id of the first table meta.
+						// Notice that startTableID <= firstTableID <= lastTableID <= endTableID. That's because
+						// part of data may be overlapped by another backup response.
+						oldLastTableID := physicalRangeMap[firstTableID]
+						if oldLastTableID == 0 {
+							// uninitialized physical range
+							physicalRangeMap[firstTableID] = lastTableID
+						} else if oldLastTableID != lastTableID {
+							// The backup file is bad. It has valid data over from firstTableID0 to endTableID0, and another
+							// valid data over from firstTableID0 to endTableID1.
+							return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+								"the file is over table id range [%d, %d] while another file over table id range [%d, %d]",
+								firstTableID, oldLastTableID, firstTableID, lastTableID)
+						}
+					}
+				} else {
+					if startTableID != endTableID {
+						log.Error("start key and end key are not from the same table", logutil.File(file))
+						return nil, errors.Annotate(berrors.ErrInvalidRange, "start key and end key are not from the same table")
+					}
+					fileMap[startTableID] = append(fileMap[startTableID], file)
 				}
 			}
 		}
