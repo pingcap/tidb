@@ -224,6 +224,9 @@ func sortedExplainExpressionList(ctx EvalContext, exprs []Expression, normalized
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
+		if expr == nil {
+			continue
+		}
 		if ignoreInlist {
 			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo4InList())
 		} else if normalized {
