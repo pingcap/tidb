@@ -246,8 +246,8 @@ func (e *UpdateExec) exec(
 		bAssignFlag[i] = flag >= 0
 	}
 
-	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
-		return handleUpdateError(sctx, assign.ColName, assign.Col.ToInfo(), rowIdx, err)
+	errorHandler := func(_ sessionctx.Context, assign *expression.Assignment, _ *types.Datum, err error) error {
+		return handleUpdateError(assign.ColName, rowIdx, err)
 	}
 
 	for i, content := range e.tblColPosInfos {
@@ -434,7 +434,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *model.ColumnInfo, rowIdx int, err error) error {
+func handleUpdateError(colName model.CIStr, rowIdx int, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -453,18 +453,13 @@ func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mo
 func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for _, assign := range e.OrderedList {
-		var colInfo *model.ColumnInfo
-		if cols[assign.Col.Index] != nil {
-			colInfo = cols[assign.Col.Index].ColumnInfo
-		}
-
 		tblIdx := e.assignFlag[assign.Col.Index]
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
 			continue
 		}
 		con := assign.Expr.(*expression.Constant)
 		val, err := con.Eval(emptyRow)
-		if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
+		if err = handleUpdateError(assign.ColName, rowIdx, err); err != nil {
 			return nil, err
 		}
 
@@ -472,7 +467,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 		// No need to cast `_tidb_rowid` column value.
 		if cols[assign.Col.Index] != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
-			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
+			if err = handleUpdateError(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
@@ -500,7 +495,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 		if cols[assign.Col.Index] != nil {
 			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
-			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
+			if err = handleUpdateError(assign.ColName, rowIdx, err); err != nil {
 				return nil, err
 			}
 		}
