@@ -159,3 +159,13 @@ func TestIssues57583(t *testing.T) {
 		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
 		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t0(c0 BOOL UNSIGNED NOT NULL DEFAULT false , c1 NUMERIC ZEROFILL NOT NULL , c2 TEXT(33) , c3 TINYINT ZEROFILL  AS (c0) VIRTUAL UNIQUE )PARTITION BY RANGE(c3) ( PARTITION p0 VALUES LESS THAN (910), PARTITION p1 VALUES LESS THAN (1820),PARTITION p2 VALUES LESS THAN (2730),PARTITION p23 VALUES LESS THAN MAXVALUE);")
+	tk.MustExec("INSERT IGNORE  INTO t0(c1, c0) VALUES (NULL, NULL);")
+	tk.MustExec("analyze table t0;")
+	tk.MustQuery("explain SELECT t0.c1 FROM t0 WHERE t0.c3 IN (SELECT c3 FROM t0 WHERE t0.c3 BETWEEN 12877 AND 14560) AND t0.c3 IN (SELECT c3 FROM t0 WHERE t0.c3 BETWEEN 13650 AND 15255);").Check(testkit.Rows())
+}
