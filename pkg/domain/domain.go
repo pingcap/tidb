@@ -1954,7 +1954,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
 	switch {
-	case variable.AccelerateUserCreationUpdate.Load() == false:
+	case !variable.AccelerateUserCreationUpdate.Load():
 		err = h.UpdateAll()
 	case event.All:
 		err = h.UpdateAllActive()
