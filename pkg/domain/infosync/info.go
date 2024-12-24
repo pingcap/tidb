@@ -136,11 +136,11 @@ type ServerInfo struct {
 	DynamicServerInfo
 }
 
-// Clone the ServerInfo.
-func (info *ServerInfo) Clone() *ServerInfo {
+// clone the ServerInfo.
+func (info *ServerInfo) clone() *ServerInfo {
 	return &ServerInfo{
 		StaticServerInfo:  info.StaticServerInfo,
-		DynamicServerInfo: *info.DynamicServerInfo.Clone(),
+		DynamicServerInfo: *info.DynamicServerInfo.clone(),
 	}
 }
 
@@ -184,13 +184,13 @@ type StaticServerInfo struct {
 }
 
 // DynamicServerInfo is server dynamic information.
-// It will be updated when tidb-server running. So take care it may be changed when TiDb is running.
+// It will be updated when tidb-server running. Take care it may be changed when TiDB is running.
 type DynamicServerInfo struct {
 	Labels map[string]string `json:"labels"`
 }
 
-// Clone the DynamicServerInfo.
-func (d *DynamicServerInfo) Clone() *DynamicServerInfo {
+// clone the DynamicServerInfo.
+func (d *DynamicServerInfo) clone() *DynamicServerInfo {
 	labels := make(map[string]string, len(d.Labels))
 	for k, v := range d.Labels {
 		labels[k] = v
@@ -464,7 +464,7 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	dynamicInfo := is.getDynamicServerInfo()
+	dynamicInfo := is.cloneDynamicServerInfo()
 	changed := false
 	for k, v := range labels {
 		if dynamicInfo.Labels[k] != v {
@@ -475,7 +475,7 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	if !changed {
 		return nil
 	}
-	info := is.getLocalServerInfo().Clone()
+	info := is.getLocalServerInfo().clone()
 	info.DynamicServerInfo = *dynamicInfo
 	infoBuf, err := info.Marshal()
 	if err != nil {
@@ -1549,9 +1549,9 @@ func (is *InfoSyncer) getLocalServerInfo() *ServerInfo {
 	return is.info.Load()
 }
 
-// getDynamicServerInfo returns a clone of the dynamic server info.
-func (is *InfoSyncer) getDynamicServerInfo() *DynamicServerInfo {
-	return is.info.Load().DynamicServerInfo.Clone()
+// cloneDynamicServerInfo returns a clone of the dynamic server info.
+func (is *InfoSyncer) cloneDynamicServerInfo() *DynamicServerInfo {
+	return is.info.Load().DynamicServerInfo.clone()
 }
 
 // setDynamicServerInfo updates the dynamic server info.
