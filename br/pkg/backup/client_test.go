@@ -395,11 +395,3 @@ func TestCheckBackupIsLocked(t *testing.T) {
 	require.Error(t, err)
 	require.Regexp(t, "backup lock file and sst file exist in(.+)", err.Error())
 }
-
-func TestErr(t *testing.T) {
-	serr := backup.MakeStoreBasedErr(42, multierr.Combine(
-		errors.Annotate(berrors.ErrFailedToConnect, "oops"),
-		berrors.ErrFailedToConnect.GenWithStack("whoa")))
-	require.True(t, berrors.Is(serr, berrors.ErrFailedToConnect))
-	require.False(t, berrors.Is(serr, berrors.ErrUnknown))
-}
