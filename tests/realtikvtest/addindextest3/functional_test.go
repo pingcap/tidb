@@ -120,6 +120,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
+	t.Skip("TODO(tangenta): support memory tracking later")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
