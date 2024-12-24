@@ -2535,9 +2535,9 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
+		statsOwner = owner.NewMockManager(do.ctx, id, do.store, ownerKey)
 	} else {
-		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
+		statsOwner = owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
 	}
 	return statsOwner
 }
