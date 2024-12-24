@@ -48,12 +48,8 @@ var (
 	_ functionClass = &aesEncryptFunctionClass{}
 	_ functionClass = &compressFunctionClass{}
 	_ functionClass = &decodeFunctionClass{}
-	_ functionClass = &desDecryptFunctionClass{}
-	_ functionClass = &desEncryptFunctionClass{}
 	_ functionClass = &encodeFunctionClass{}
-	_ functionClass = &encryptFunctionClass{}
 	_ functionClass = &md5FunctionClass{}
-	_ functionClass = &oldPasswordFunctionClass{}
 	_ functionClass = &passwordFunctionClass{}
 	_ functionClass = &randomBytesFunctionClass{}
 	_ functionClass = &sha1FunctionClass{}
@@ -425,22 +421,6 @@ func (b *builtinDecodeSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 	return decodeStr, false, err
 }
 
-type desDecryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *desDecryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_DECRYPT")
-}
-
-type desEncryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *desEncryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_ENCRYPT")
-}
-
 type encodeFunctionClass struct {
 	baseFunctionClass
 }
@@ -489,22 +469,6 @@ func (b *builtinEncodeSig) evalString(ctx EvalContext, row chunk.Row) (string, b
 
 	dataStr, err := encrypt.SQLEncode(decodeStr, passwordStr)
 	return dataStr, false, err
-}
-
-type encryptFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *encryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "ENCRYPT")
-}
-
-type oldPasswordFunctionClass struct {
-	baseFunctionClass
-}
-
-func (c *oldPasswordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
 type passwordFunctionClass struct {

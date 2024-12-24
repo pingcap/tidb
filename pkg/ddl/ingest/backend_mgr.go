@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -167,7 +167,7 @@ func hasUniqueIndex(job *model.Job) (bool, error) {
 func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (*local.Backend, error) {
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -210,7 +211,7 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 			logutil.Key("end", v.Region.EndKey),
 			zap.Uint64("id", v.Region.Id))
 	}
-	resp, err := c.client.ScatterRegions(ctx, regionsID, pd.WithSkipStoreLimit())
+	resp, err := c.client.ScatterRegions(ctx, regionsID, opt.WithSkipStoreLimit())
 	if err != nil {
 		return err
 	}

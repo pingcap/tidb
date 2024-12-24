@@ -39,12 +39,8 @@ const (
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
-	// Invalid is the bind info's invalid status.
-	Invalid = "invalid"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
-	// Capture indicates the binding is captured by TiDB automatically.
-	Capture = "capture"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest
@@ -72,7 +68,7 @@ type Binding struct {
 	SQLDigest  string
 	PlanDigest string
 
-	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
 }
 
@@ -114,21 +110,6 @@ func (br Bindings) Copy() Bindings {
 	return nbr
 }
 
-// HasAvailableBinding checks if there are any available bindings in bind record.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func HasAvailableBinding(br Bindings) bool {
-	if br == nil {
-		return false
-	}
-	for _, binding := range br {
-		if binding.IsBindingAvailable() {
-			return true
-		}
-	}
-	return false
-}
-
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
@@ -148,7 +129,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isFuzzyBinding(bindingStmt)
+	isFuzzy := isCrossDBBinding(bindingStmt)
 	if isFuzzy {
 		dbName = "*" // ues '*' for universal bindings
 	}

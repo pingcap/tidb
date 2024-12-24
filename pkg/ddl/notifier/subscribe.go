@@ -166,61 +166,82 @@ func (n *DDLNotifier) start() {
 	}
 }
 
-func (n *DDLNotifier) processEvents(ctx context.Context) error {
-	sysSession, err := n.sysSessionPool.Get()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer n.sysSessionPool.Put(sysSession)
+// ProcessEventsBatchSize is the number of events to process in a SQL query. It's
+// exposed for testing.
+var ProcessEventsBatchSize = 1024
 
-	session := sess.NewSession(sysSession.(sessionctx.Context))
-	changes, err := n.store.List(ctx, session)
+func (n *DDLNotifier) processEvents(ctx context.Context) error {
+	s, err := n.sysSessionPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer n.sysSessionPool.Put(s)
+	sess4List := sess.NewSession(s.(sessionctx.Context))
+	result, closeFn := n.store.List(ctx, sess4List)
+	defer closeFn()
+
+	s2, err := n.sysSessionPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer n.sysSessionPool.Put(s2)
+	sess4Process := sess.NewSession(s2.(sessionctx.Context))
 
 	// we should ensure deliver order of events to a handler, so if a handler returns
 	// error for previous events it should not receive later events.
 	skipHandlers := make(map[HandlerID]struct{})
-	for _, change := range changes {
-		for handlerID, handler := range n.handlers {
-			if _, ok := skipHandlers[handlerID]; ok {
-				continue
-			}
-			if err2 := n.processEventForHandler(ctx, session, change, handlerID, handler); err2 != nil {
-				skipHandlers[handlerID] = struct{}{}
 
-				if !goerr.Is(err2, ErrNotReadyRetryLater) {
-					logutil.Logger(ctx).Error("Error processing change",
-						zap.Int64("ddlJobID", change.ddlJobID),
-						zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
-						zap.Stringer("handler", handlerID),
-						zap.Error(err2))
+	changes := make([]*SchemaChange, ProcessEventsBatchSize)
+
+	for {
+		count, err2 := result.Read(changes)
+		if err2 != nil {
+			return errors.Trace(err2)
+		}
+		if count == 0 {
+			break
+		}
+
+		for _, change := range changes[:count] {
+			for handlerID, handler := range n.handlers {
+				if _, ok := skipHandlers[handlerID]; ok {
+					continue
 				}
-				continue
-			}
-		}
+				if err3 := n.processEventForHandler(ctx, sess4Process, change, handlerID, handler); err3 != nil {
+					skipHandlers[handlerID] = struct{}{}
 
-		if intest.InTest {
-			if n.handlersBitMap == 0 {
-				// There are unit tests that directly check the system table while no subscriber
-				// is registered. We continue the loop to skip DELETE the events in table so
-				// tests can check them.
-				continue
+					if !goerr.Is(err3, ErrNotReadyRetryLater) {
+						logutil.Logger(ctx).Error("Error processing change",
+							zap.Int64("ddlJobID", change.ddlJobID),
+							zap.Int64("subJobID", change.subJobID),
+							zap.Stringer("handler", handlerID),
+							zap.Error(err3))
+					}
+					continue
+				}
 			}
-		}
 
-		if change.processedByFlag == n.handlersBitMap {
-			if err2 := n.store.DeleteAndCommit(
-				ctx,
-				session,
-				change.ddlJobID,
-				int(change.multiSchemaChangeSeq),
-			); err2 != nil {
-				logutil.Logger(ctx).Error("Error deleting change",
-					zap.Int64("ddlJobID", change.ddlJobID),
-					zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
-					zap.Error(err2))
+			if intest.InTest {
+				if n.handlersBitMap == 0 {
+					// There are unit tests that directly check the system table while no subscriber
+					// is registered. We continue the loop to skip DELETE the events in table so
+					// tests can check them.
+					continue
+				}
+			}
+
+			if change.processedByFlag == n.handlersBitMap {
+				if err3 := n.store.DeleteAndCommit(
+					ctx,
+					sess4List,
+					change.ddlJobID,
+					int(change.subJobID),
+				); err3 != nil {
+					logutil.Logger(ctx).Error("Error deleting change",
+						zap.Int64("ddlJobID", change.ddlJobID),
+						zap.Int64("subJobID", change.subJobID),
+						zap.Error(err3))
+				}
 			}
 		}
 	}
@@ -233,7 +254,7 @@ const slowHandlerLogThreshold = time.Second * 5
 func (n *DDLNotifier) processEventForHandler(
 	ctx context.Context,
 	session *sess.Session,
-	change *schemaChange,
+	change *SchemaChange,
 	handlerID HandlerID,
 	handler SchemaChangeHandler,
 ) (err error) {
@@ -260,7 +281,7 @@ func (n *DDLNotifier) processEventForHandler(
 		logutil.Logger(ctx).Warn("Slow process event",
 			zap.Stringer("handler", handlerID),
 			zap.Int64("ddlJobID", change.ddlJobID),
-			zap.Int64("multiSchemaChangeSeq", change.multiSchemaChangeSeq),
+			zap.Int64("subJobID", change.subJobID),
 			zap.Stringer("event", change.event),
 			zap.Duration("duration", time.Since(now)))
 	}
@@ -270,7 +291,7 @@ func (n *DDLNotifier) processEventForHandler(
 		ctx,
 		session,
 		change.ddlJobID,
-		change.multiSchemaChangeSeq,
+		change.subJobID,
 		newFlag,
 	); err != nil {
 		return errors.Trace(err)

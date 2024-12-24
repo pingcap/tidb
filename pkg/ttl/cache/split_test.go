@@ -36,16 +36,18 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 )
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,
@@ -59,13 +61,13 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 type mockPDClient struct {
 	t *testing.T
 	pd.Client
-	regions       []*pd.Region
+	regions       []*router.Region
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	if len(c.regions) == 0 {
-		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
+		return []*router.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
 
 	if !c.regionsSorted {
@@ -75,11 +77,11 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 		c.regionsSorted = true
 	}
 
-	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
+	regions := []*router.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
 	regions = append(regions, c.regions...)
 	regions = append(regions, newMockRegion(2, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
 
-	result := make([]*pd.Region, 0)
+	result := make([]*router.Region, 0)
 	for _, r := range regions {
 		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
 			continue
@@ -165,7 +167,7 @@ func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
+	s.pdClient.regions = append(s.pdClient.regions, &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: key,

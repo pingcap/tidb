@@ -743,10 +743,6 @@ func NewIndexIngestOperator(
 				writers = append(writers, writer)
 			}
 
-			indexIDs := make([]int64, len(indexes))
-			for i := 0; i < len(indexes); i++ {
-				indexIDs[i] = indexes[i].Meta().ID
-			}
 			return &indexIngestLocalWorker{
 				indexIngestBaseWorker: indexIngestBaseWorker{
 					ctx:     ctx,
@@ -760,7 +756,6 @@ func NewIndexIngestOperator(
 					srcChunkPool: srcChunkPool,
 					reorgMeta:    reorgMeta,
 				},
-				indexIDs:       indexIDs,
 				backendCtx:     backendCtx,
 				rowCntListener: rowCntListener,
 			}
@@ -790,7 +785,6 @@ func (w *indexIngestExternalWorker) HandleTask(ck IndexRecordChunk, send func(In
 
 type indexIngestLocalWorker struct {
 	indexIngestBaseWorker
-	indexIDs       []int64
 	backendCtx     ingest.BackendCtx
 	rowCntListener RowCountListener
 }

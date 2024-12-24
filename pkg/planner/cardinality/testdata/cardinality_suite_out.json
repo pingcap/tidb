@@ -24,52 +24,52 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 791.004166655054
+        "Count": 775.7583333101078
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 247.04782734719248
+        "Count": 486.59565469438496
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 226.14487557169574
+        "Count": 444.78975114339147
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 205.24192379619902
+        "Count": 402.98384759239804
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 184.33897202070227
+        "Count": 361.17794404140454
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 142.53306846970884
+        "Count": 277.5661369394177
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 214.85728161292752
+        "Count": 422.21456322585504
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 131.2454745109406
+        "Count": 254.9909490218812
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 47.650389770374105
+        "Count": 87.80077954074821
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 7.5
+        "Count": 12.5
       },
       {
         "Start": 300,
@@ -79,12 +79,12 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1249.196869573942
+        "Count": 1692.1437391478842
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 1502.495833344946
+        "Count": 1507.5
       },
       {
         "Start": 300,
@@ -94,17 +94,17 @@
       {
         "Start": 200,
         "End": 300,
-        "Count": 466.52882098990807
+        "Count": 925.5576419798161
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 382.91701388792114
+        "Count": 758.3340277758423
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 1188.7788209899081
+        "Count": 1678.5576419798163
       },
       {
         "Start": 200,
@@ -114,12 +114,12 @@
       {
         "Start": 0,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 591.1104135718685
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 299.3052067859343
+        "Count": 591.1104135718685
       },
       {
         "Start": -100,
@@ -242,24 +242,24 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 300",
         "Result": [
-          "TableReader 10.00 root  data:Selection",
-          "└─Selection 10.00 cop[tikv]  le(test.t.a, 300)",
+          "TableReader 5.00 root  data:Selection",
+          "└─Selection 5.00 cop[tikv]  le(test.t.a, 300)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "TableReader 1010.00 root  data:Selection",
-          "└─Selection 1010.00 cop[tikv]  le(test.t.a, 500)",
+          "TableReader 1005.00 root  data:Selection",
+          "└─Selection 1005.00 cop[tikv]  le(test.t.a, 500)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "TableReader 5.00 root  data:Selection",
-          "└─Selection 5.00 cop[tikv]  gt(test.t.a, 900)",
+          "TableReader 1.00 root  data:Selection",
+          "└─Selection 1.00 cop[tikv]  gt(test.t.a, 900)",
           "  └─TableFullScan 3000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -2557,22 +2557,8 @@
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 0,
-                            "rDatum": "KindInt64 -1500"
-                          },
-                          {
-                            "commonPrefix": 0,
-                            "lScalar": -1.7976931348623157e+308,
-                            "rScalar": -1500,
-                            "unsigned": false
-                          },
-                          {
-                            "boundL": -7000,
-                            "boundR": 11000,
-                            "histL": -1000,
-                            "histR": 5000,
-                            "lPercent": 0.8402777777777778,
-                            "rPercent": 0,
-                            "rowCount": 1294.0277777777778
+                            "rDatum": "KindInt64 -1500",
+                            "realtimeRowCount": 3080
                           },
                           {
                             "Result": 0
@@ -2855,22 +2841,8 @@
                               {
                                 "lDatum": "KindBytes \\x01",
                                 "modifyCount": 0,
-                                "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
-                              },
-                              {
-                                "commonPrefix": 0,
-                                "lScalar": 72057594037927940,
-                                "rScalar": 252201579132747780,
-                                "unsigned": false
-                              },
-                              {
-                                "boundL": 252201579132747740,
-                                "boundR": 252201579132747840,
-                                "histL": 252201579132747780,
-                                "histR": 252201579132747800,
-                                "lPercent": 1,
-                                "rPercent": 0,
-                                "rowCount": 1540
+                                "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
+                                "realtimeRowCount": 3080
                               },
                               {
                                 "Result": 0
@@ -3587,7 +3559,8 @@
                           {
                             "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
-                            "rDatum": "KindInt64 -1500"
+                            "rDatum": "KindInt64 -1500",
+                            "realtimeRowCount": 3080
                           },
                           {
                             "commonPrefix": 0,
@@ -3602,7 +3575,7 @@
                             "histR": 999,
                             "lPercent": 0.5613744375005636,
                             "rPercent": 0,
-                            "rowCount": 555.760693125558
+                            "rowCount": 1105.760693125558
                           },
                           {
                             "Result": 100
@@ -3917,7 +3890,8 @@
                           {
                             "lDatum": "KindBytes \\x01",
                             "modifyCount": 100,
-                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+                            "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$",
+                            "realtimeRowCount": 3080
                           },
                           {
                             "commonPrefix": 0,
@@ -3926,13 +3900,22 @@
                             "unsigned": false
                           },
                           {
-                            "Result": 0
+                            "boundL": 252201579132747780,
+                            "boundR": 252201579132747780,
+                            "histL": 252201579132747780,
+                            "histR": 252201579132747780,
+                            "lPercent": 0,
+                            "rPercent": 0,
+                            "rowCount": 1
+                          },
+                          {
+                            "Result": 1
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 0,
+                          "RowCount": 1,
                           "Type": "Range"
                         }
                       }
