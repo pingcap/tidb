@@ -287,6 +287,7 @@ go_test(
         "//pkg/ddl/schematracker",
         "//pkg/ddl/serverstate",
         "//pkg/ddl/session",
+        "//pkg/ddl/systable",
         "//pkg/ddl/testargsv1",
         "//pkg/ddl/testutil",
         "//pkg/ddl/util",

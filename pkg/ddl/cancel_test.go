@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/systable"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -377,4 +378,27 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 0, len(tbl.Meta().Indices))
+}
+
+func TestCancelJobBeforeRun(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+
+	// Prepare schema.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+
+	counter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *systable.JobW) {
+		if counter == 0 && jobW.TableName == "t" {
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobW.ID))
+			counter++
+		}
+	})
+
+	tk.MustGetErrCode("truncate table t", errno.ErrCancelledDDLJob)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 }
