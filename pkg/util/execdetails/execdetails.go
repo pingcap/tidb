@@ -1677,7 +1677,7 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 	return planID
 }
 
-// RecordCopStats records a specific cop tasks's execution summary.
+// RecordOneCopTask records a specific cop tasks's execution summary.
 func (e *RuntimeStatsColl) RecordOneCopTask(planID int, storeType kv.StoreType, summary *tipb.ExecutorExecutionSummary) int {
 	// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 	// summary, use it overwrite the planID
