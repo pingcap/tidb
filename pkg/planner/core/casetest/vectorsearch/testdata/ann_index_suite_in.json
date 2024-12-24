@@ -44,5 +44,41 @@
       "explain select * from t1 where store_id between 80 and 120 order by vec_cosine_distance(vec, '[1,1,1]') limit 1",
       "explain select * from t1 partition (p0) order by vec_cosine_distance(vec, '[1,1,1]') limit 1"
     ]
+  },
+  {
+    "name": "TestVectorSearchWithPKAuto",
+    "cases": [
+      "explain select id from t1",
+
+      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+      "explain select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
+    ]
+  },
+  {
+    "name": "TestVectorSearchWithPKForceTiKV",
+    "cases": [
+      "explain select id from t1",
+
+      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]')",
+      "explain select * from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+      "explain select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
+
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
+      "explain select *, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10",
+      "explain select id, vec_cosine_distance(vec, '[1,1,1]') as d, a, b from t1 order by d limit 10",
+      "explain select id, a, b, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d limit 10"
+    ]
   }
 ]
