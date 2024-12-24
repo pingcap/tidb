@@ -71,11 +71,11 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 
 func TestSessionBinding(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+	defer dom.Close()
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")

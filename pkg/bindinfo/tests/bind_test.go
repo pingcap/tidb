@@ -467,6 +467,7 @@ func TestStmtHints(t *testing.T) {
 
 func TestHintsSetID(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer dom.Close()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -482,7 +483,7 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
 	_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
 	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
@@ -490,7 +491,7 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
 	_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
 	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
@@ -498,7 +499,7 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
 	_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
 	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
@@ -506,7 +507,7 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
 	_, noDBDigest = norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
 	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
@@ -514,7 +515,7 @@ func TestHintsSetID(t *testing.T) {
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	err = tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
@@ -634,6 +635,7 @@ func TestGCBindRecord(t *testing.T) {
 
 func TestBindSQLDigest(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer dom.Close()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -680,7 +682,7 @@ func TestBindSQLDigest(t *testing.T) {
 	}
 	for _, c := range cases {
 		stmtsummary.StmtSummaryByDigestMap.Clear()
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show global bindings`).Rows()
@@ -771,7 +773,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	h := dom.BindHandle()
 	// global scope
 	for _, c := range cases {
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		h.LoadFromStorageToCache(true)
@@ -788,7 +790,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 
 	// session scope
 	for _, c := range cases {
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		sql := "create binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
 		res := tk.MustQuery(`show bindings`).Rows()
