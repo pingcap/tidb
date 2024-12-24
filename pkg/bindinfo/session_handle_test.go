@@ -70,8 +70,7 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 }
 
 func TestSessionBinding(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer dom.Close()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
