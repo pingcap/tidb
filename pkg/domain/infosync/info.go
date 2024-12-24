@@ -477,8 +477,7 @@ func UpdateServerLabel(ctx context.Context, labels map[string]string) error {
 	}
 	info := is.getLocalServerInfo().Clone()
 	info.DynamicServerInfo = *dynamicInfo
-	serverInfo := is.getLocalServerInfo()
-	infoBuf, err := serverInfo.Marshal()
+	infoBuf, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
