@@ -141,13 +141,13 @@ func (b *digestBiMapImpl) SQLDigest2NoDBDigest(sqlDigest string) string {
 // BindingCache is the interface for the cache of the SQL plan bindings.
 type BindingCache interface {
 	// MatchingBinding supports cross-db matching on bindings.
-	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (bindings Binding, isMatched bool)
+	MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (binding *Binding, isMatched bool)
 	// GetBinding gets the binding for the specified sqlDigest.
-	GetBinding(sqlDigest string) Bindings
+	GetBinding(sqlDigest string) []*Binding
 	// GetAllBindings gets all the bindings in the cache.
-	GetAllBindings() Bindings
+	GetAllBindings() []*Binding
 	// SetBinding sets the binding for the specified sqlDigest.
-	SetBinding(sqlDigest string, meta Bindings) (err error)
+	SetBinding(sqlDigest string, bindings []*Binding) (err error)
 	// RemoveBinding removes the binding for the specified sqlDigest.
 	RemoveBinding(sqlDigest string)
 	// SetMemCapacity sets the memory capacity for the cache.
@@ -170,16 +170,20 @@ type bindingCache struct {
 	cache       *ristretto.Cache // the underlying cache to store the bindings.
 
 	// loadBindingFromStorageFunc is used to load binding from storage if cache miss.
-	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)
+	loadBindingFromStorageFunc func(sctx sessionctx.Context, sqlDigest string) ([]*Binding, error)
 }
 
-func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) (Bindings, error)) BindingCache {
+func newBindCache(bindingLoad func(sctx sessionctx.Context, sqlDigest string) ([]*Binding, error)) BindingCache {
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
 		MaxCost:     variable.MemQuotaBindingCache.Load(),
 		BufferItems: 64,
 		Cost: func(value any) int64 {
-			return int64(value.(Bindings).size())
+			var cost int64
+			for _, binding := range value.([]*Binding) {
+				cost += int64(binding.size())
+			}
+			return cost
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
@@ -196,7 +200,7 @@ func (c *bindingCache) shouldMetric() bool {
 	return c.loadBindingFromStorageFunc != nil // only metric for GlobalBindingCache, whose loadBindingFromStorageFunc is not nil.
 }
 
-func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	matchedBinding, isMatched, missingSQLDigest := c.getFromMemory(sctx, noDBDigest, tableNames)
 	if len(missingSQLDigest) == 0 {
 		if c.shouldMetric() && isMatched {
@@ -215,7 +219,7 @@ func (c *bindingCache) MatchingBinding(sctx sessionctx.Context, noDBDigest strin
 	return
 }
 
-func (c *bindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool, missingSQLDigest []string) {
+func (c *bindingCache) getFromMemory(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool, missingSQLDigest []string) {
 	if c.Size() == 0 {
 		return
 	}
@@ -290,20 +294,20 @@ func (c *bindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest [
 // GetBinding gets the Bindings from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
+func (c *bindingCache) GetBinding(sqlDigest string) []*Binding {
 	v, ok := c.cache.Get(sqlDigest)
 	if !ok {
 		return nil
 	}
-	return v.(Bindings)
+	return v.([]*Binding)
 }
 
 // GetAllBindings return all the bindings from the bindingCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindingCache) GetAllBindings() Bindings {
+func (c *bindingCache) GetAllBindings() []*Binding {
 	sqlDigests := c.digestBiMap.All()
-	bindings := make(Bindings, 0, len(sqlDigests))
+	bindings := make([]*Binding, 0, len(sqlDigests))
 	for _, sqlDigest := range sqlDigests {
 		bindings = append(bindings, c.GetBinding(sqlDigest)...)
 	}
@@ -312,7 +316,7 @@ func (c *bindingCache) GetAllBindings() Bindings {
 
 // SetBinding sets the Bindings to the cache.
 // The function is thread-safe.
-func (c *bindingCache) SetBinding(sqlDigest string, bindings Bindings) (err error) {
+func (c *bindingCache) SetBinding(sqlDigest string, bindings []*Binding) (err error) {
 	// prepare noDBDigests for all bindings
 	noDBDigests := make([]string, 0, len(bindings))
 	p := parser.New()
