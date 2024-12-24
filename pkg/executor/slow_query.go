@@ -731,7 +731,7 @@ func (e *slowQueryRetriever) setColumnValue(sctx sessionctx.Context, row []types
 				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false
 			}
-			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			timeValue := types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeTimestamp, types.MaxFsp)
 			return checker.isTimeValid(timeValue)
 		}
 		return true
@@ -909,8 +909,14 @@ func ParseTime(s string) (time.Time, error) {
 }
 
 type logFile struct {
+<<<<<<< HEAD
 	file       *os.File  // The opened file handle
 	start, end time.Time // The start/end time of the log file
+=======
+	file       *os.File   // The opened file handle
+	start      types.Time // The start time of the log file
+	compressed bool       // The file is compressed or not
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 }
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
@@ -977,18 +983,34 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 		if err != nil {
 			return handleErr(err)
 		}
+<<<<<<< HEAD
 		start := types.NewTime(types.FromGoTime(fileStartTime), mysql.TypeDatetime, types.MaxFsp)
 		notInAllTimeRanges := true
 		for _, tr := range e.checker.timeRanges {
 			if start.Compare(tr.endTime) <= 0 {
 				notInAllTimeRanges = false
 				break
+=======
+		tz := sctx.GetSessionVars().Location()
+		start := types.NewTime(types.FromGoTime(fileStartTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+		if e.checker.enableTimeCheck {
+			notInAllTimeRanges := true
+			for _, tr := range e.checker.timeRanges {
+				if start.Compare(tr.endTime) <= 0 {
+					notInAllTimeRanges = false
+					break
+				}
+			}
+			if notInAllTimeRanges {
+				return nil
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 			}
 		}
 		if notInAllTimeRanges {
 			return nil
 		}
 
+<<<<<<< HEAD
 		// Get the file end time.
 		fileEndTime, err := e.getFileEndTime(ctx, file)
 		if err != nil {
@@ -1000,6 +1022,28 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
 				inTimeRanges = true
 				break
+=======
+		// If we want to get the end time from a compressed file,
+		// we need uncompress the whole file which is very slow and consume a lot of memory.
+		if !compressed {
+			// Get the file end time.
+			fileEndTime, err := e.getFileEndTime(ctx, file)
+			if err != nil {
+				return handleErr(err)
+			}
+			if e.checker.enableTimeCheck {
+				end := types.NewTime(types.FromGoTime(fileEndTime.In(tz)), mysql.TypeDatetime, types.MaxFsp)
+				inTimeRanges := false
+				for _, tr := range e.checker.timeRanges {
+					if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+						inTimeRanges = true
+						break
+					}
+				}
+				if !inTimeRanges {
+					return nil
+				}
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 			}
 		}
 		if !inTimeRanges {
@@ -1010,9 +1054,15 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return handleErr(err)
 		}
 		logFiles = append(logFiles, logFile{
+<<<<<<< HEAD
 			file:  file,
 			start: fileStartTime,
 			end:   fileEndTime,
+=======
+			file:       file,
+			start:      start,
+			compressed: compressed,
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 		})
 		skip = true
 		return nil
@@ -1027,7 +1077,32 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	slices.SortFunc(logFiles, func(i, j logFile) int {
 		return i.start.Compare(j.start)
 	})
+<<<<<<< HEAD
 	return logFiles, err
+=======
+	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
+	var ret []logFile
+	for i, file := range logFiles {
+		if i == len(logFiles)-1 || !file.compressed || !e.checker.enableTimeCheck {
+			ret = append(ret, file)
+			continue
+		}
+		start := logFiles[i].start
+		// use next file.start as endTime
+		end := logFiles[i+1].start
+		inTimeRanges := false
+		for _, tr := range e.checker.timeRanges {
+			if !(start.Compare(tr.endTime) > 0 || end.Compare(tr.startTime) < 0) {
+				inTimeRanges = true
+				break
+			}
+		}
+		if inTimeRanges {
+			ret = append(ret, file)
+		}
+	}
+	return ret, err
+>>>>>>> f2db9c4eac5 (executor: fix time zone issue when querying slow log (#58455))
 }
 
 func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File) (time.Time, error) {
