@@ -2577,6 +2577,8 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 		dbnameUnique := unique.Make(dbName)
 		name.DBName = &dbnameUnique
+	} else {
+		dbName = name.DBName.Value()
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:
