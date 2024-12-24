@@ -28,6 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
+>>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -43,25 +48,52 @@ var globalDelRateLimiter = newDelRateLimiter()
 
 type delRateLimiter struct {
 	sync.Mutex
+	// limiter limits the rate of delete operation.
+	// limit.Limit() has a range [1.0, +rate.Inf].
+	// When the value of system variable `tidb_ttl_delete_rate_limit` is `0`, `limit.Limit()` returns `rate.Inf`.
 	limiter *rate.Limiter
-	limit   atomic.Int64
+	// limit is the rate limit of the limiter that is the same value of system variable `tidb_ttl_delete_rate_limit`.
+	// When it is 0, it means unlimited and `limiter.Limit()` will return `rate.Inf`.
+	limit atomic.Int64
 }
 
+<<<<<<< HEAD
 func newDelRateLimiter() *delRateLimiter {
 	limiter := &delRateLimiter{}
 	limiter.limiter = rate.NewLimiter(0, 1)
+=======
+func newDelRateLimiter() delRateLimiter {
+	limiter := &defaultDelRateLimiter{}
+	limiter.limiter = rate.NewLimiter(rate.Inf, 1)
+>>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
 	limiter.limit.Store(0)
 	return limiter
 }
 
+<<<<<<< HEAD
 func (l *delRateLimiter) Wait(ctx context.Context) error {
+=======
+type beforeWaitLimiterForTestType struct{}
+
+var beforeWaitLimiterForTest = &beforeWaitLimiterForTestType{}
+
+func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
+>>>>>>> 392fb75453e (ttl: fix the infinite waiting for delRateLimiter when `tidb_ttl_delete_rate_limit` changes (#58485))
 	limit := l.limit.Load()
 	if variable.TTLDeleteRateLimit.Load() != limit {
 		limit = l.reset()
 	}
 
-	if limit == 0 {
+	intest.Assert(limit >= 0)
+	if limit <= 0 {
 		return ctx.Err()
+	}
+
+	if intest.InTest {
+		intest.Assert(l.limiter.Limit() > 0)
+		if fn, ok := ctx.Value(beforeWaitLimiterForTest).(func()); ok {
+			fn()
+		}
 	}
 
 	return l.limiter.Wait(ctx)
@@ -73,7 +105,13 @@ func (l *delRateLimiter) reset() (newLimit int64) {
 	newLimit = variable.TTLDeleteRateLimit.Load()
 	if newLimit != l.limit.Load() {
 		l.limit.Store(newLimit)
-		l.limiter.SetLimit(rate.Limit(newLimit))
+		rateLimit := rate.Inf
+		if newLimit > 0 {
+			// When `TTLDeleteRateLimit > 0`, use the setting as the rate limit.
+			// Otherwise, use `rate.Inf` to make it unlimited.
+			rateLimit = rate.Limit(newLimit)
+		}
+		l.limiter.SetLimit(rateLimit)
 	}
 	return
 }
