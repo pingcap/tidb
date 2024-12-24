@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -148,9 +149,10 @@ func TestBindParse(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
-	dur, err := binding.SinceUpdateTime()
+
+	dur, err := binding.UpdateTime.GoTime(time.Local)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, int64(dur), int64(0))
+	require.GreaterOrEqual(t, int64(time.Since(dur)), int64(0))
 
 	// Test fields with quotes or slashes.
 	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`

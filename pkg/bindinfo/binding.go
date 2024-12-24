@@ -15,7 +15,7 @@
 package bindinfo
 
 import (
-	"time"
+	"sort"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -72,33 +72,9 @@ type Binding struct {
 	TableNames []*ast.TableName `json:"-"`
 }
 
-func (b *Binding) isSame(rb *Binding) bool {
-	if b.ID != "" && rb.ID != "" {
-		return b.ID == rb.ID
-	}
-	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
-	return b.BindSQL == rb.BindSQL
-}
-
 // IsBindingEnabled returns whether the binding is enabled.
 func (b *Binding) IsBindingEnabled() bool {
 	return b.Status == Enabled || b.Status == Using
-}
-
-// IsBindingAvailable returns whether the binding is available.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func (b *Binding) IsBindingAvailable() bool {
-	return b.IsBindingEnabled() || b.Status == Disabled
-}
-
-// SinceUpdateTime returns the duration since last update time. Export for test.
-func (b *Binding) SinceUpdateTime() (time.Duration, error) {
-	updateTime, err := b.UpdateTime.GoTime(time.Local)
-	if err != nil {
-		return 0, err
-	}
-	return time.Since(updateTime), nil
 }
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
@@ -155,42 +131,32 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	return nil
 }
 
-// `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindings, rBindings []*Binding) []*Binding {
-	if lBindings == nil {
-		return rBindings
-	}
-	if rBindings == nil {
-		return lBindings
-	}
-	result := lBindings
-	for i := range rBindings {
-		rbind := rBindings[i]
-		found := false
-		for j, lbind := range lBindings {
-			if lbind.isSame(rbind) {
-				found = true
-				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result[j] = rbind
-				}
-				break
-			}
-		}
-		if !found {
-			result = append(result, rbind)
+func pickCachedBinding(bindings ...*Binding) *Binding {
+	// filter nil pointers in the binding slice
+	n := 0
+	for _, b := range bindings {
+		if b != nil {
+			bindings[n] = b
+			n++
 		}
 	}
-	return result
-}
+	bindings = bindings[:n]
 
-func removeDeletedBindings(br []*Binding) []*Binding {
-	result := make([]*Binding, 0, len(br))
-	for _, binding := range br {
-		if binding.Status != deleted {
-			result = append(result, binding)
-		}
+	if len(bindings) == 0 {
+		return nil
 	}
-	return result
+	sort.Slice(bindings, func(i, j int) bool {
+		cmp := bindings[i].UpdateTime.Compare(bindings[j].UpdateTime)
+		if cmp != 0 {
+			return cmp > 0
+		}
+		return bindings[i].CreateTime.Compare(bindings[j].CreateTime) > 0
+	})
+	latestBinding := bindings[0]
+	if latestBinding.Status == deleted {
+		return nil
+	}
+	return latestBinding
 }
 
 // size calculates the memory size of a bind info.

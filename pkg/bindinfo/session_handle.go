@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -102,33 +101,22 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigests []string) error {
 func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	p := parser.New()
-	leastWildcards := len(tableNames) + 1
-	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	// session bindings in most cases is only used for test, so there should be many session bindings, so match
 	// them one by one is acceptable.
+	possibleBindings := make([]*Binding, 0, 2)
 	for _, bindings := range h.bindings {
 		for _, binding := range bindings {
-			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+			bindingNoDBDigest, err := noDBDigestFromBinding(binding)
 			if err != nil {
 				continue
 			}
-			_, bindingNoDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
 			if noDBDigest != bindingNoDBDigest {
 				continue
 			}
-			numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-			if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
-				continue // cross-db binding is disabled, skip this binding
-			}
-			if matched && numWildcards < leastWildcards {
-				matchedBinding = binding
-				isMatched = true
-				leastWildcards = numWildcards
-				break
-			}
+			possibleBindings = append(possibleBindings, binding)
 		}
 	}
+	matchedBinding, isMatched = crossDBMatchBindings(sctx, tableNames, possibleBindings)
 	return
 }
 
