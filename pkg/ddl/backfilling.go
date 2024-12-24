@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -194,21 +195,47 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		id = int(backfillContextID.Add(1))
 	}
 
+	colOrIdxName := ""
+	switch rInfo.Job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		args, err := model.GetModifyIndexArgs(rInfo.Job)
+		if err != nil {
+			logutil.DDLLogger().Error("Fail to get ModifyIndexArgs", zap.String("label", label), zap.String("schemaName", schemaName), zap.String("tableName", tbl.Meta().Name.String()))
+		} else {
+			colOrIdxName = getIdxNamesFromArgs(args)
+		}
+	case model.ActionModifyColumn:
+		oldCol, _ := getOldAndNewColumnsForUpdateColumn(tbl, rInfo.currElement.ID)
+		if oldCol != nil {
+			colOrIdxName = oldCol.Name.String()
+		}
+	}
+
 	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
 	return &backfillCtx{
-		id:         id,
-		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
-		warnings:   warnHandler,
-		exprCtx:    exprCtx,
-		tblCtx:     tblCtx,
-		loc:        exprCtx.GetEvalCtx().Location(),
-		schemaName: schemaName,
-		table:      tbl,
-		batchCnt:   batchCnt,
-		jobContext: jobCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel(label, schemaName, tbl.Meta().Name.String())),
+		id:            id,
+		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
+		warnings:      warnHandler,
+		exprCtx:       exprCtx,
+		tblCtx:        tblCtx,
+		loc:           exprCtx.GetEvalCtx().Location(),
+		schemaName:    schemaName,
+		table:         tbl,
+		batchCnt:      batchCnt,
+		jobContext:    jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
 	}, nil
+}
+
+func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
+	var sb strings.Builder
+	for i, idx := range args.IndexArgs {
+		if i > 0 {
+			sb.WriteString("+")
+		}
+		sb.WriteString(idx.IndexName.O)
+	}
+	return sb.String()
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
@@ -686,6 +713,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	idxCnt := len(reorgInfo.elements)
 	indexIDs := make([]int64, 0, idxCnt)
 	indexInfos := make([]*model.IndexInfo, 0, idxCnt)
+	var indexNames strings.Builder
 	uniques := make([]bool, 0, idxCnt)
 	hasUnique := false
 	for _, e := range reorgInfo.elements {
@@ -699,6 +727,10 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 			return errors.Errorf("index info not found: %d", e.ID)
 		}
 		indexInfos = append(indexInfos, indexInfo)
+		if indexNames.Len() > 0 {
+			indexNames.WriteString("+")
+		}
+		indexNames.WriteString(indexInfo.Name.O)
 		uniques = append(uniques, indexInfo.Unique)
 		hasUnique = hasUnique || indexInfo.Unique
 	}
@@ -736,8 +768,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	rowCntListener := &localRowCntListener{
 		prevPhysicalRowCnt: reorgCtx.getRowCount(),
 		reorgCtx:           reorgCtx,
-		counter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", job.SchemaName, job.TableName)),
+		counter:            metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, job.SchemaName, job.TableName, indexNames.String()),
 	}
 
 	sctx, err := sessPool.Get()

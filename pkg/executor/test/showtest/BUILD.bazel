@@ -8,7 +8,7 @@ go_test(
         "show_test.go",
     ],
     flaky = True,
-    shard_count = 27,
+    shard_count = 24,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

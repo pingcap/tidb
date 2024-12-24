@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -40,6 +41,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"go.uber.org/zap"
 )
+
+// HeavyFunctionNameMap stores function names that is worth to do HeavyFunctionOptimize.
+// Currently this only applies to Vector data types and their functions. The HeavyFunctionOptimize
+// eliminate the usage of the function in TopN operators to avoid vector distance re-calculation
+// of TopN in the root task.
+var HeavyFunctionNameMap = map[string]struct{}{
+	"vec_cosine_distance":        {},
+	"vec_l1_distance":            {},
+	"vec_l2_distance":            {},
+	"vec_negative_inner_product": {},
+	"vec_dims":                   {},
+	"vec_l2_norm":                {},
+}
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
 	switch v := t.(type) {
@@ -861,7 +875,29 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan) *PhysicalTopN {
+func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
+	var newGlobalTopN *PhysicalTopN
+
+	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
+	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
+	// the ByItems in order to reuse the function result.
+	byItemIndex := make([]int, 0)
+	for i, byItem := range p.ByItems {
+		if ContainHeavyFunction(byItem.Expr) {
+			byItemIndex = append(byItemIndex, i)
+		}
+	}
+	if fixValue && len(byItemIndex) > 0 {
+		x, err := p.Clone(p.SCtx())
+		if err != nil {
+			return nil, nil
+		}
+		newGlobalTopN = x.(*PhysicalTopN)
+		// the projecton's construction cannot be create if the AllowProjectionPushDown is disable.
+		if storeTp == kv.TiKV && !p.SCtx().GetSessionVars().AllowProjectionPushDown {
+			newGlobalTopN = nil
+		}
+	}
 	newByItems := make([]*util.ByItems, 0, len(p.ByItems))
 	for _, expr := range p.ByItems {
 		newByItems = append(newByItems, expr.Clone())
@@ -875,13 +911,100 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan) *PhysicalT
 	// Strictly speaking, for the row count of pushed down TopN, we should multiply newCount with "regionNum",
 	// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+
+	// Add a extra physicalProjection to save the distance column, a example like :
+	// select id from t order by vec_distance(vec, '[1,2,3]') limit x
+	// The Plan will be modified like:
+	//
+	// Original: DataSource(id, vec) -> TopN(by vec->dis) -> Projection(id)
+	//                                  └─Byitem: vec_distance(vec, '[1,2,3]')
+	//                                  └─Schema: id, vec
+	//
+	// New:      DataSource(id, vec) -> Projection(id, vec->dis) -> TopN(by dis) -> Projection(id)
+	//                                  └─Byitem: dis
+	//                                  └─Schema: id, dis
+	//
+	// Note that for plan now, TopN has its own schema and does not use the schema of children.
+	if newGlobalTopN != nil {
+		// create a new PhysicalProjection to calculate the distance columns, and add it into plan route
+		bottomProjSchemaCols := make([]*expression.Column, 0, len(childPlan.Schema().Columns))
+		bottomProjExprs := make([]expression.Expression, 0, len(childPlan.Schema().Columns))
+		for _, col := range childPlan.Schema().Columns {
+			newCol := col.Clone().(*expression.Column)
+			bottomProjSchemaCols = append(bottomProjSchemaCols, newCol)
+			bottomProjExprs = append(bottomProjExprs, newCol)
+		}
+		type DistanceColItem struct {
+			Index       int
+			DistanceCol *expression.Column
+		}
+		distanceCols := make([]DistanceColItem, 0)
+		for _, idx := range byItemIndex {
+			bottomProjExprs = append(bottomProjExprs, newGlobalTopN.ByItems[idx].Expr)
+			distanceCol := &expression.Column{
+				UniqueID: newGlobalTopN.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  newGlobalTopN.ByItems[idx].Expr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+			}
+			distanceCols = append(distanceCols, DistanceColItem{
+				Index:       idx,
+				DistanceCol: distanceCol,
+			})
+		}
+		for _, dis := range distanceCols {
+			bottomProjSchemaCols = append(bottomProjSchemaCols, dis.DistanceCol)
+		}
+
+		bottomProj := PhysicalProjection{
+			Exprs: bottomProjExprs,
+		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
+		bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
+		bottomProj.SetChildren(childPlan)
+
+		topN := PhysicalTopN{
+			ByItems:     newByItems,
+			PartitionBy: newPartitionBy,
+			Count:       newCount,
+		}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
+		// mppTask's topN
+		for _, expr := range distanceCols {
+			topN.ByItems[expr.Index].Expr = expr.DistanceCol
+		}
+
+		// rootTask's topn, need reuse the distance col
+		for _, expr := range distanceCols {
+			newGlobalTopN.ByItems[expr.Index].Expr = expr.DistanceCol
+		}
+		topN.SetChildren(bottomProj)
+
+		return topN, newGlobalTopN
+	}
+
 	topN := PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
 	}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
-	return topN
+	return topN, newGlobalTopN
+}
+
+// ContainHeavyFunction check if the expr contains a function that need to do HeavyFunctionOptimize. Currently this only applies
+// to Vector data types and their functions. The HeavyFunctionOptimize eliminate the usage of the function in TopN operators
+// to avoid vector distance re-calculation of TopN in the root task.
+func ContainHeavyFunction(expr expression.Expression) bool {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok {
+		return false
+	}
+	if _, ok := HeavyFunctionNameMap[sf.FuncName.L]; ok {
+		return true
+	}
+	for _, arg := range sf.GetArgs() {
+		if ContainHeavyFunction(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
@@ -978,18 +1101,46 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
 		var pushedDownTopN *PhysicalTopN
+		var newGlobalTopN *PhysicalTopN
 		if !copTask.indexPlanFinished && p.canPushToIndexPlan(copTask.indexPlan, cols) {
-			pushedDownTopN = p.getPushedDownTopN(copTask.indexPlan)
+			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.indexPlan, copTask.getStoreType())
 			copTask.indexPlan = pushedDownTopN
+			if newGlobalTopN != nil {
+				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+				// Skip TopN with partition on the root. This is a derived topN and window function
+				// will take care of the filter.
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
 		} else {
 			// It works for both normal index scan and index merge scan.
 			copTask.finishIndexPlan()
-			pushedDownTopN = p.getPushedDownTopN(copTask.tablePlan)
+			pushedDownTopN, newGlobalTopN = p.getPushedDownTopN(copTask.tablePlan, copTask.getStoreType())
 			copTask.tablePlan = pushedDownTopN
+			if newGlobalTopN != nil {
+				rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+				// Skip TopN with partition on the root. This is a derived topN and window function
+				// will take care of the filter.
+				if len(p.GetPartitionBy()) > 0 {
+					return t
+				}
+				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
 		}
 	} else if mppTask, ok := t.(*MppTask); ok && needPushDown && p.canPushDownToTiFlash(mppTask) {
-		pushedDownTopN := p.getPushedDownTopN(mppTask.p)
+		pushedDownTopN, newGlobalTopN := p.getPushedDownTopN(mppTask.p, kv.TiFlash)
 		mppTask.p = pushedDownTopN
+		if newGlobalTopN != nil {
+			rootTask := t.ConvertToRootTask(newGlobalTopN.SCtx())
+			// Skip TopN with partition on the root. This is a derived topN and window function
+			// will take care of the filter.
+			if len(p.GetPartitionBy()) > 0 {
+				return t
+			}
+			return attachPlan2Task(newGlobalTopN, rootTask)
+		}
 	}
 	rootTask := t.ConvertToRootTask(p.SCtx())
 	// Skip TopN with partition on the root. This is a derived topN and window function
