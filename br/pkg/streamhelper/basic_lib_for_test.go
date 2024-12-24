@@ -100,17 +100,10 @@ type fakeCluster struct {
 	regions   []*region
 	testCtx   *testing.T
 
-<<<<<<< HEAD
-	onGetClient        func(uint64) error
-	serviceGCSafePoint uint64
-	currentTS          uint64
-=======
 	onGetClient               func(uint64) error
-	onClearCache              func(uint64) error
-	serviceGCSafePoint        uint64
-	serviceGCSafePointDeleted bool
-	currentTS                 uint64
->>>>>>> 545b4a3a443 (advancer: fix the incorrect gc safepoint behaviours (#52835))
+ 	serviceGCSafePoint        uint64
+ 	serviceGCSafePointDeleted bool
+ 	currentTS                 uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
