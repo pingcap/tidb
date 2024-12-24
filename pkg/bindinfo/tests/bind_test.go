@@ -467,7 +467,6 @@ func TestStmtHints(t *testing.T) {
 
 func TestHintsSetID(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer dom.Close()
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -634,8 +633,7 @@ func TestGCBindRecord(t *testing.T) {
 }
 
 func TestBindSQLDigest(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer dom.Close()
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
