@@ -370,15 +370,14 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 		p.PlanPartInfo = t.physPlanPartInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.SetPlan(p)
-		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
 			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.SetPlan(proj)
-			t.handleRootTaskConds(ctx, newTask)
 		}
+		t.handleRootTaskConds(ctx, newTask)
 		return newTask
 	}
 	if t.indexPlan != nil && t.tablePlan != nil {
