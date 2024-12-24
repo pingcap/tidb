@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -70,9 +71,13 @@ func TestCrossDBBindingCache(t *testing.T) {
 
 func TestBindCache(t *testing.T) {
 	bindings := Bindings{{BindSQL: "SELECT * FROM t1"}}
-	kvSize := len("digest1") + int(bindings.size())
+	kvSize := int(bindings.size())
+	defer func(v int64) {
+		variable.MemQuotaBindingCache.Store(v)
+	}(variable.MemQuotaBindingCache.Load())
 	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
 	bindCache := newBindCache(nil)
+	defer bindCache.Close()
 
 	err := bindCache.SetBinding("digest1", bindings)
 	require.Nil(t, err)
@@ -83,9 +88,16 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, bindCache.GetBinding("digest2"))
 
 	err = bindCache.SetBinding("digest3", bindings)
-	require.NotNil(t, err) // exceed the memory limit
-	require.NotNil(t, bindCache.GetBinding("digest2"))
+	require.Nil(t, err)
+	require.NotNil(t, bindCache.GetBinding("digest3"))
 
-	require.Nil(t, bindCache.GetBinding("digest1"))    // digest1 is evicted
-	require.NotNil(t, bindCache.GetBinding("digest2")) // digest2 is still in the cache
+	require.Eventually(t, func() bool {
+		hit := 0
+		for _, digest := range []string{"digest1", "digest2", "digest3"} {
+			if bindCache.GetBinding(digest) != nil {
+				hit++
+			}
+		}
+		return hit == 2
+	}, time.Second*5, time.Millisecond*100)
 }
