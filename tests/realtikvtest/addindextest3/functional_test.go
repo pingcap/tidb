@@ -89,10 +89,13 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
-		realJob = job.Clone()
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			realJob = job.Clone()
+		}
 	})
 	tk.MustExec("alter table t add index idx(a);")
+	require.NotNil(t, realJob)
 
 	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
 	require.NoError(t, err)

@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"math"
 	"testing"
 	"time"
 
@@ -62,6 +63,8 @@ func TestDoneTaskKeeper(t *testing.T) {
 }
 
 func TestPickBackfillType(t *testing.T) {
+	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
