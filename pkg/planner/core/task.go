@@ -2458,11 +2458,11 @@ func (p *PhysicalWindow) attach2TaskForMPP(mpp *MppTask) base.Task {
 	columns := p.Schema().Clone().Columns[len(p.Schema().Columns)-len(p.WindowFuncDescs):]
 	p.schema = expression.MergeSchema(mpp.Plan().Schema(), expression.NewSchema(columns...))
 
-	if _, _err_ := failpoint.Eval(_curpkg_("CheckMPPWindowSchemaLength")); _err_ == nil {
+	failpoint.Inject("CheckMPPWindowSchemaLength", func() {
 		if len(p.Schema().Columns) != len(mpp.Plan().Schema().Columns)+len(p.WindowFuncDescs) {
 			panic("mpp physical window has incorrect schema length")
 		}
-	}
+	})
 
 	return attachPlan2Task(p, mpp)
 }
