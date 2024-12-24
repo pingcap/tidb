@@ -108,7 +108,7 @@ func (mgr *manager) GetJobByID(ctx context.Context, jobID int64) (*JobW, error) 
 	return NewJobW(&job, jobBytes), nil
 }
 
-func (mgr *manager) GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error) {
+func (*manager) GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, jobID int64) ([]byte, error) {
 	sql := fmt.Sprintf(`select job_meta from mysql.tidb_ddl_job where job_id = %d`, jobID)
 	rows, err := se.Execute(ctx, sql, "get-job-by-id")
 	if err != nil {
