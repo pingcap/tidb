@@ -411,3 +411,36 @@ func TestVectorSearchWithPKForceTiKV(t *testing.T) {
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 	}
 }
+
+func TestVectorSearchHeavyFunction(t *testing.T) {
+	tk := prepareVectorSearchWithPK(t)
+	res := tk.MustQuery("explain select id from t1 order by MOD(a, 3) limit 10").Rows()
+	for _, r := range res {
+		fmt.Println(r)
+	}
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	suiteData := GetANNIndexSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
