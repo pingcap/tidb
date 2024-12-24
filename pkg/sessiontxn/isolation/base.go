@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -316,7 +317,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		logutil.BgLogger().Panic("check session lastCommitTS failed",
 			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
 			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
-			zap.String("sql", sessVars.StmtCtx.OriginalSQL),
+			zap.String("sql", redact.String(sessVars.EnableRedactLog, sessVars.StmtCtx.OriginalSQL)),
 		)
 	}
 
