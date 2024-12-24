@@ -70,7 +70,6 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// skip if the table is empty or the stats is not valid
 		return
 	}
 

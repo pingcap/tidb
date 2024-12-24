@@ -521,8 +521,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 }
 
 func TestReloadBindings(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
@@ -533,11 +532,7 @@ func TestReloadBindings(t *testing.T) {
 	require.Equal(t, 1, len(rows))
 	rows = tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Rows()
 	require.Equal(t, 1, len(rows))
-	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, 1, len(rows))
-	tk.MustExec("admin reload bindings")
+	tk.MustExec(`drop global binding for select * from t`)
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, 0, len(rows))
 }
@@ -612,3 +607,30 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 func (p *mockSessionPool) Put(pools.Resource) {}
 
 func (p *mockSessionPool) Close() {}
+
+func TestShowBindingDigestField(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int, key(id))")
+	tk.MustExec("create table t2(id int, key(id))")
+	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
+	result := tk.MustQuery("show bindings;")
+	rows := result.Rows()[0]
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show bindings;")
+	require.Equal(t, len(result.Rows()), 0)
+
+	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show global bindings;")
+	rows = result.Rows()[0]
+	require.Equal(t, len(rows), 11)
+	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
+	result = tk.MustQuery("show global bindings;")
+	require.Equal(t, len(result.Rows()), 0)
+}

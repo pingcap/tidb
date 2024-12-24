@@ -103,6 +103,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1662,7 +1663,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return nil
 	}
 
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return err
 	}
