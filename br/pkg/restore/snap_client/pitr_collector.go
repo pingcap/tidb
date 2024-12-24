@@ -12,11 +12,13 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -79,19 +81,22 @@ func (c *pitrCollector) close() error {
 
 }
 
-func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) error {
+func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) (func() error, error) {
 	if !c.enabled {
-		return nil
+		return nil, nil
 	}
 
 	if err := c.prepareMigIfNeeded(ctx); err != nil {
-		return err
+		return nil, err
 	}
 
+	begin := time.Now()
 	eg, ectx := errgroup.WithContext(ctx)
+	fileCount := 0
 	for _, fileSet := range fileSets {
 		for _, file := range fileSet.SSTFiles {
 			file := file
+			fileCount += 1
 			eg.Go(func() error {
 				if err := c.putSST(ectx, file); err != nil {
 					return errors.Annotatef(err, "failed to put sst %s", file.GetName())
@@ -110,12 +115,23 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 		}
 	}
 
-	err := eg.Wait()
+	err := c.persistExtraBackupMeta(ctx)
 	if err != nil {
-		return err
+		return nil, errors.Annotatef(err, "failed to persist backup meta when finishing batch")
 	}
 
-	return errors.Annotatef(c.persistExtraBackupMeta(ctx), "failed to persist backup meta when finishing batch")
+	waitDone := func() error {
+		err := eg.Wait()
+		if err != nil {
+			logutil.CL(ctx).Warn("Failed to upload SSTs for future PiTR.", logutil.ShortError(err))
+			return err
+		}
+
+		logutil.CL(ctx).Info("Uploaded a batch of SSTs for future PiTR.",
+			zap.Duration("take", time.Since(begin)), zap.Int("file-count", fileCount))
+		return nil
+	}
+	return waitDone, nil
 }
 
 func (c *pitrCollector) doWithExtraBackupMetaLock(f func()) {
@@ -143,6 +159,8 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 		return nil
 	}
 
+	begin := time.Now()
+
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)
 
@@ -160,6 +178,8 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 
 	f.Name = out
 	c.doWithExtraBackupMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
+
+	metrics.RestoreUploadSSTForPiTRSeconds.Observe(time.Since(begin).Seconds())
 	return nil
 }
 
@@ -189,7 +209,7 @@ func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) 
 	c.extraBackupMetaLock.Lock()
 	defer c.extraBackupMetaLock.Unlock()
 
-	log.Info("Persisting extra backup meta.", zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()))
+	logutil.CL(ctx).Info("Persisting extra backup meta.", zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()))
 	msg := c.extraBackupMeta.genMsg()
 	bs, err := msg.Marshal()
 	if err != nil {
@@ -300,7 +320,6 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 		return nil, errors.Trace(err)
 	}
 	coll.restoreStorage = restoreStrg
-
 	coll.resetCommitting()
 	return coll, nil
 }

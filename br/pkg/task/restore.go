@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -671,6 +672,11 @@ func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	return cfg
 }
 
+func printRestoreMetrics() {
+	log.Info("Metric: import_file_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreImportFileSeconds)))
+	log.Info("Metric: upload_sst_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTForPiTRSeconds)))
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
@@ -703,6 +709,8 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
+
+	defer printRestoreMetrics()
 
 	var restoreError error
 	if IsStreamRestore(cmdName) {
