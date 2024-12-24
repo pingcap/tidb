@@ -547,9 +547,12 @@ func (w *worker) transitOneJobStep(
 	// if they don't overlap, we query and check inside our txn to detect the conflict.
 	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
 	if err != nil {
+		// TODO maybe we can unify where to rollback, they are scatting around.
+		w.sess.Rollback()
 		return 0, err
 	}
 	if !bytes.Equal(currBytes, jobW.Bytes) {
+		w.sess.Rollback()
 		return 0, errors.New("job meta changed by others")
 	}
 
