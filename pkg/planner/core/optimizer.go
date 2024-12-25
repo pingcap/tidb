@@ -262,7 +262,7 @@ func doOptimize(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	if sctx.GetSessionVars().GetSessionVars().EnableCascadesPlannerV2 {
+	if sctx.GetSessionVars().GetSessionVars().EnableCascadesPlanner {
 		return OptimizeV2(ctx, sctx, flag, logic)
 	}
 	return OptimizeV1(ctx, sctx, flag, logic)

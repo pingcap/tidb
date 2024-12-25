@@ -1113,9 +1113,6 @@ type SessionVars struct {
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
-	// EnableCascadesPlannerV2 enables the cascades planner.
-	EnableCascadesPlannerV2 bool
-
 	// EnableWindowFunction enables the window function.
 	EnableWindowFunction bool
 
