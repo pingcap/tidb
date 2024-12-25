@@ -584,7 +584,7 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 		}
 	}
 	if len(ds.PossibleAccessPaths) == regularPathCount {
-		return "IndexMerge is inapplicable or disabled. No available index.", nil
+		return "IndexMerge is inapplicable or disabled. ", nil
 	}
 	return "", nil
 }

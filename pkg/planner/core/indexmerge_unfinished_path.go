@@ -241,9 +241,8 @@ func initUnfinishedPathsFromExpr(
 	return ret
 }
 
-// handleTopLevelANDList is expected to be used together with
-// genUnfinishedPathFromORList() to handle the expression like ... AND (... OR ... OR ...) AND ...
-// for mv index.
+// handleTopLevelANDList is expected to be used together with genUnfinishedPathFromORList() to handle the expression
+// like ... AND (... OR ... OR ...) AND ... for mv index.
 // It will try to collect possible access filters from other items in the top level AND list and try to merge them into
 // the unfinishedAccessPath from genUnfinishedPathFromORList(), and try to build it into a valid
 // util.AccessPath.
@@ -385,7 +384,7 @@ func buildIntoAccessPath(
 				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
 					continue
 				}
-				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.idxColHasUsableFilter) > 0
+				needSelection = len(remainingFilters) > 0
 			} else {
 				// case 2: non-mv index
 				var path *util.AccessPath
