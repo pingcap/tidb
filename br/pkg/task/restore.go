@@ -778,7 +778,23 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
 	}
+<<<<<<< HEAD
 	if err = CheckRestoreDBAndTable(client, cfg); err != nil {
+=======
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
+		cfg.UseCheckpoint = false
+	}
+	var checkpointFirstRun = true
+	if cfg.UseCheckpoint {
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		checkpointFirstRun = !existsCheckpointMetadata
+	}
+	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
+>>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 		return err
 	}
 	files, tables, dbs := filterRestoreFiles(client, cfg)
@@ -786,7 +802,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+<<<<<<< HEAD
 	archiveSize := reader.ArchiveSize(ctx, files)
+=======
+	if cfg.CheckRequirements && checkpointFirstRun {
+		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	archiveSize := metautil.ArchiveSize(files)
+>>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -795,6 +821,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 
+<<<<<<< HEAD
 	if client.IsIncremental() {
 		// don't support checkpoint for the ddl restore
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, so unuse checkpoint.")
@@ -802,6 +829,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	restoreSchedulers, schedulersConfig, err := restorePreWork(ctx, client, mgr, true)
+=======
+	// for full + log restore. should check the cluster is empty.
+	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
+		return checkInfo.FullRestoreCheckErr
+	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	restoreSchedulers, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+>>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -820,6 +856,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
+<<<<<<< HEAD
 	var checkpointTaskName string
 	var checkpointFirstRun bool = true
 	if cfg.UseCheckpoint {
@@ -833,6 +870,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
+=======
+>>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
