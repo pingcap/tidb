@@ -816,7 +816,7 @@ HashJoin	12.50	root		inner join, equal:[eq(planner__core__casetest__index__index
 └─TableReader(Probe)	7992.00	root		data:Selection
   └─Selection	7992.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), planner__core__casetest__index__index.t1.c)))
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-SHOW WARNINGS
+SHOW WARNINGS;
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
 DROP table if exists t;

@@ -1582,7 +1582,7 @@ Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(92233720368547758
 select 1 / '2007' div 1;
 1 / '2007' div 1
 0
-set sql_mode=default
+set sql_mode=default;
 DROP TABLE IF EXISTS table_string;
 CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);
 INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);

@@ -125,7 +125,7 @@ This query finds which supplier should be selected to place an order for a given
 The Minimum Cost Supplier Query finds, in a given region, for each part of a certain type and size, the supplier who
 can supply it at minimum cost. If several suppliers in that region offer the desired part type and size at the same
 (minimum) cost, the query lists the parts from suppliers with the 100 highest account balances. For each supplier,
-the query lists the supplier's account balance, name and nation; the part's number and manufacturer; the supplier's
+the query lists the supplier's account balance, name and nation, the part's number and manufacturer, the supplier's
 address, phone number and comment information.
 Planner enhancement: join reorder.
 */
@@ -1102,7 +1102,7 @@ HashAgg	1.00	root		funcs:sum(Column#28)->Column#27
 Q20 Potential Part Promotion Query
 The Potential Part Promotion Query identifies suppliers in a particular nation having selected parts that may be candidates
 for a promotional offer.
-The Potential Part Promotion query identifies suppliers who have an excess of a given part available; an excess is
+The Potential Part Promotion query identifies suppliers who have an excess of a given part available, an excess is
 defined to be more than 50% of the parts like the given part that the supplier shipped in a given year for a given
 nation. Only parts whose names share a certain naming convention are considered.
 */
