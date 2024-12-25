@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -72,33 +71,15 @@ type Binding struct {
 	TableNames []*ast.TableName `json:"-"`
 }
 
-func (b *Binding) isSame(rb *Binding) bool {
-	if b.ID != "" && rb.ID != "" {
-		return b.ID == rb.ID
-	}
-	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
-	return b.BindSQL == rb.BindSQL
-}
-
 // IsBindingEnabled returns whether the binding is enabled.
 func (b *Binding) IsBindingEnabled() bool {
 	return b.Status == Enabled || b.Status == Using
 }
 
-// IsBindingAvailable returns whether the binding is available.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func (b *Binding) IsBindingAvailable() bool {
-	return b.IsBindingEnabled() || b.Status == Disabled
-}
-
-// SinceUpdateTime returns the duration since last update time. Export for test.
-func (b *Binding) SinceUpdateTime() (time.Duration, error) {
-	updateTime, err := b.UpdateTime.GoTime(time.Local)
-	if err != nil {
-		return 0, err
-	}
-	return time.Since(updateTime), nil
+// size calculates the memory size of a bind info.
+func (b *Binding) size() float64 {
+	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	return float64(res)
 }
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
@@ -155,46 +136,53 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	return nil
 }
 
-// `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindings, rBindings []*Binding) []*Binding {
-	if lBindings == nil {
-		return rBindings
-	}
-	if rBindings == nil {
-		return lBindings
-	}
-	result := lBindings
-	for i := range rBindings {
-		rbind := rBindings[i]
-		found := false
-		for j, lbind := range lBindings {
-			if lbind.isSame(rbind) {
-				found = true
-				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result[j] = rbind
-				}
-				break
-			}
-		}
-		if !found {
-			result = append(result, rbind)
-		}
-	}
-	return result
-}
+// pickCachedBinding picks the best binding to cache.
+func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) *Binding {
+	bindings := make([]*Binding, 0, len(bindingsFromStorage)+1)
+	bindings = append(bindings, cachedBinding)
+	bindings = append(bindings, bindingsFromStorage...)
 
-func removeDeletedBindings(br []*Binding) []*Binding {
-	result := make([]*Binding, 0, len(br))
-	for _, binding := range br {
+	// filter nil
+	n := 0
+	for _, binding := range bindings {
+		if binding != nil {
+			bindings[n] = binding
+			n++
+		}
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	// filter bindings whose update time is not equal to maxUpdateTime
+	maxUpdateTime := bindings[0].UpdateTime
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) > 0 {
+			maxUpdateTime = binding.UpdateTime
+		}
+	}
+	n = 0
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) == 0 {
+			bindings[n] = binding
+			n++
+		}
+	}
+	bindings = bindings[:n]
+
+	// filter deleted bindings
+	n = 0
+	for _, binding := range bindings {
 		if binding.Status != deleted {
-			result = append(result, binding)
+			bindings[n] = binding
+			n++
 		}
 	}
-	return result
-}
+	bindings = bindings[:n]
 
-// size calculates the memory size of a bind info.
-func (b *Binding) size() float64 {
-	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
-	return float64(res)
+	if len(bindings) == 0 {
+		return nil
+	}
+	// should only have one binding.
+	return bindings[0]
 }

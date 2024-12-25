@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -91,6 +92,33 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 		return binding, matched, metrics.ScopeGlobal
 	}
 
+	return
+}
+
+func noDBDigestFromBinding(binding *Binding) (string, error) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+	if err != nil {
+		return "", err
+	}
+	_, bindingNoDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+	return bindingNoDBDigest, nil
+}
+
+func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, bindings []*Binding) (matchedBinding *Binding, isMatched bool) {
+	leastWildcards := len(tableNames) + 1
+	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, binding := range bindings {
+		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
+			continue // cross-db binding is disabled, skip this binding
+		}
+		if matched && numWildcards < leastWildcards {
+			matchedBinding = binding
+			isMatched = true
+			leastWildcards = numWildcards
+		}
+	}
 	return
 }
 
