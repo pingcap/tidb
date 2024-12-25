@@ -1044,7 +1044,7 @@ func TestAppendRowsByColIdxs(t *testing.T) {
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
 	strFmt := "%d.12345"
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		chk.AppendNull(0)
 		chk.AppendInt64(1, int64(i))
 		str := fmt.Sprintf(strFmt, i)
@@ -1060,14 +1060,14 @@ func TestAppendRowsByColIdxs(t *testing.T) {
 	chk2 := newChunk(0, 0, 40)
 	require.Equal(t, numCols, chk.NumCols())
 	rows := make([]Row, numRows)
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		rows[i] = chk.GetRow(i)
 	}
 	wide := chk2.AppendRowsByColIdxs(rows, colsIdx)
 	require.Equal(t, 10, chk2.NumRows())
 	require.Equal(t, numRows*len(colsIdx), wide)
 
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		row := chk2.GetRow(i)
 		str := fmt.Sprintf(strFmt, i)
 		require.False(t, row.IsNull(0))
