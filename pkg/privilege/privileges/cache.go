@@ -1951,7 +1951,7 @@ func (h *Handle) UpdateAll() error {
 	return nil
 }
 
-// UpdateAll loads all the active users' privilege info from kv storage.
+// UpdateAllActive loads all the active users' privilege info from kv storage.
 func (h *Handle) UpdateAllActive() error {
 	h.fullData.Store(false)
 	userList := make([]string, 0, 20)
