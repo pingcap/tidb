@@ -1283,7 +1283,7 @@ select * from select_limit limit 18446744073709551615 offset 3;
 id	name
 4	hello
 select * from select_limit limit 18446744073709551616 offset 3;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 53 near "18446744073709551616 offset 3" 
 drop table if exists select_order_test;
 create table select_order_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
 insert INTO select_order_test VALUES (1, "hello");
@@ -3142,9 +3142,9 @@ select c > a from t;
 c > a
 0
 load stats;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 11 near ";" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 10 near "" 
 load stats ./xxx.json;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 12 near "./xxx.json" 
 drop database if exists test_show;
 create database test_show;
 use test_show;
@@ -3526,7 +3526,7 @@ Error 1406 (22001): Data too long for column 'c1' at row 1
 insert into t values ('123');
 insert into t values ('1234');
 insert into t values ('12345);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 30 near "'12345);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near "'12345)" 
 drop table if exists t;
 create table t (c1 bit(62));
 insert into t values ('12345678');
@@ -3616,7 +3616,7 @@ create table t2(a int, b int, c int);
 insert into t2 values (11, 8, (select not b));
 Error 1054 (42S22): Unknown column 'b' in 'field list'
 insert into t2 set a = 11, b = 8, c = (select b));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ");" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 49 near ")" 
 insert into t2 values(1, 1, (select b from t2));
 select * from t2;
 a	b	c
@@ -4086,7 +4086,7 @@ admin show bdr role;
 BDR_ROLE
 
 admin set bdr role test_err;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err" 
 admin show bdr role;
 BDR_ROLE
 
