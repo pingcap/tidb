@@ -215,6 +215,11 @@ func (m *JobManager) ID() string {
 	return m.id
 }
 
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
+}
+
 // CheckFinishedJob is an exported version of checkFinishedJob
 func (m *JobManager) CheckFinishedJob(se session.Session) {
 	m.checkFinishedJob(se)
