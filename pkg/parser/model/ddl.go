@@ -1035,3 +1035,95 @@ type AffectedOption struct {
 	OldTableID  int64 `json:"old_table_id"`
 	OldSchemaID int64 `json:"old_schema_id"`
 }
+<<<<<<< HEAD:pkg/parser/model/ddl.go
+=======
+
+// HistoryInfo is used for binlog.
+type HistoryInfo struct {
+	SchemaVersion int64
+	DBInfo        *DBInfo
+	TableInfo     *TableInfo
+	FinishedTS    uint64
+
+	// MultipleTableInfos is like TableInfo but only for operations updating multiple tables.
+	MultipleTableInfos []*TableInfo
+}
+
+// AddDBInfo adds schema version and schema information that are used for binlog.
+// dbInfo is added in the following operations: create database, drop database.
+func (h *HistoryInfo) AddDBInfo(schemaVer int64, dbInfo *DBInfo) {
+	h.SchemaVersion = schemaVer
+	h.DBInfo = dbInfo
+}
+
+// AddTableInfo adds schema version and table information that are used for binlog.
+// tblInfo is added except for the following operations: create database, drop database.
+func (h *HistoryInfo) AddTableInfo(schemaVer int64, tblInfo *TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.TableInfo = tblInfo
+}
+
+// SetTableInfos is like AddTableInfo, but will add multiple table infos to the binlog.
+func (h *HistoryInfo) SetTableInfos(schemaVer int64, tblInfos []*TableInfo) {
+	h.SchemaVersion = schemaVer
+	h.MultipleTableInfos = make([]*TableInfo, len(tblInfos))
+	copy(h.MultipleTableInfos, tblInfos)
+}
+
+// Clean cleans history information.
+func (h *HistoryInfo) Clean() {
+	h.SchemaVersion = 0
+	h.DBInfo = nil
+	h.TableInfo = nil
+	h.MultipleTableInfos = nil
+}
+
+// TimeZoneLocation represents a single time zone.
+type TimeZoneLocation struct {
+	Name     string `json:"name"`
+	Offset   int    `json:"offset"` // seconds east of UTC
+	location *time.Location
+}
+
+// GetLocation gets the timezone location.
+func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
+	if tz.location != nil {
+		return tz.location, nil
+	}
+
+	var err error
+	if tz.Offset == 0 {
+		tz.location, err = time.LoadLocation(tz.Name)
+	} else {
+		tz.location = time.FixedZone(tz.Name, tz.Offset)
+	}
+	return tz.location, err
+}
+
+// TraceInfo is the information for trace.
+type TraceInfo struct {
+	// ConnectionID is the id of the connection
+	ConnectionID uint64 `json:"connection_id"`
+	// SessionAlias is the alias of session
+	SessionAlias string `json:"session_alias"`
+}
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
+}
+
+func init() {
+	SetJobVerInUse(JobVersion1)
+}
+>>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495)):pkg/meta/model/job.go

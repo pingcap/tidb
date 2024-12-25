@@ -204,8 +204,21 @@ func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
+<<<<<<< HEAD
 func TestCancel(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
+=======
+func TestCancelVariousJobs(t *testing.T) {
+	var enterCnt, exitCnt atomic.Int32
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) { exitCnt.Add(1) })
+	waitDDLWorkerExited := func() {
+		require.Eventually(t, func() bool {
+			return enterCnt.Load() == exitCnt.Load()
+		}, 10*time.Second, 10*time.Millisecond)
+	}
+	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+>>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495))
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -352,6 +365,7 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	require.Equal(t, 0, len(tbl.Meta().Indices))
 }
 
+<<<<<<< HEAD
 func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)
@@ -365,4 +379,27 @@ func TestSubmitJobAfterDDLIsClosed(t *testing.T) {
 	require.NoError(t, err)
 	require.Error(t, ddlErr)
 	require.Equal(t, "context canceled", ddlErr.Error())
+=======
+func TestCancelJobBeforeRun(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+
+	// Prepare schema.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+
+	counter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+		if counter == 0 && jobW.TableName == "t" {
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobW.ID))
+			counter++
+		}
+	})
+
+	tk.MustGetErrCode("truncate table t", errno.ErrCancelledDDLJob)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+>>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495))
 }

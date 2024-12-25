@@ -169,8 +169,13 @@ func TestCreateViewConcurrently(t *testing.T) {
 			counterErr = fmt.Errorf("create view job should not run concurrently")
 			return
 		}
+<<<<<<< HEAD:pkg/ddl/ddl_api_test.go
 	}
 	ddl.AfterDeliverToWorkerForTest = func(job *model.Job) {
+=======
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) {
+>>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495)):pkg/ddl/executor_test.go
 		if job.Type == model.ActionCreateView {
 			counter--
 		}
