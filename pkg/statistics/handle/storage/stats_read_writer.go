@@ -163,6 +163,12 @@ func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, phys
 	return
 }
 
+// func  (s *statsReadWriter) UpdateColSizeFromStroage(tbl *statistics.Table) error {
+// return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+// return UpdateColSizeFromStorage(sctx, tbl)
+// }, util.FlagWrapTxn)
+// }
+
 // SaveStatsToStorage saves the stats to storage.
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.

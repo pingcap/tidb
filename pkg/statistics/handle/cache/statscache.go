@@ -191,8 +191,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the table is not updated, we can skip it.
 		if oldTbl, ok := s.Get(physicalID); ok &&
 			oldTbl.Version >= version &&
-			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS &&
-			latestHistUpdateVersion != 0 && oldTbl.LastStatsFullUpdateVersion >= latestHistUpdateVersion {
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := s.statsHandle.TableStatsFromStorage(
