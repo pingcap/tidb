@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -497,12 +496,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	}
 
 	core.RecheckCTE(logic)
-
-	// Handle the logical plan statement, use cascades planner if enabled.
-	if sessVars.GetEnableCascadesPlanner() {
-		finalPlan, cost, err := old.DefaultOptimizer.FindBestPlan(sctx, logic)
-		return finalPlan, names, cost, err
-	}
 
 	beginOpt := time.Now()
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)

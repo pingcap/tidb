@@ -181,4 +181,4 @@ load stats 's/explain_complex_stats_tbl_009.json';
 
 explain format = 'brief' select sum(a) from (select * from tbl_001 union all select * from tbl_002 union all select * from tbl_003 union all select * from tbl_004 union all select * from tbl_005 union all select * from tbl_006 union all select * from tbl_007 union all select * from tbl_008 union all select * from tbl_009) x group by b;
 
-set @@sql_mode=default
+set @@sql_mode=default;

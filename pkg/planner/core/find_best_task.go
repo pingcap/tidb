@@ -1019,6 +1019,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
+		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.

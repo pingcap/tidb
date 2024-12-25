@@ -340,15 +340,12 @@ func buildIntoAccessPath(
 	if indexMergePath == nil || len(indexMergePath.orBranches) == 0 {
 		return nil
 	}
-
 	// 1. Use the collected usable filters to build partial paths for each alternative of each OR branch.
 	allAlternativePaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
 
 	// for each OR branch
 	for _, orBranch := range indexMergePath.orBranches {
-		var (
-			alternativesForORBranch [][]*util.AccessPath
-		)
+		var alternativesForORBranch [][]*util.AccessPath
 
 		// for each alternative of this OR branch
 		for i, unfinishedPath := range orBranch {
@@ -407,6 +404,7 @@ func buildIntoAccessPath(
 				oneAlternative = []*util.AccessPath{path}
 			}
 			needSelection = needSelection || unfinishedPath.needKeepFilter
+
 			if needSelection {
 				// only need to set one of the paths to true
 				oneAlternative[0].KeepIndexMergeORSourceFilter = true

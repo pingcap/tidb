@@ -1796,3 +1796,51 @@ func TestJobManagerWithFault(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestTimerJobAfterDropTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, dom)
+
+	pool := wrapPoolForTest(dom.SysSessionPool())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 1 HOUR")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	m := ttlworker.NewJobManager("test-job-manager", pool, store, nil, func() bool { return true })
+
+	se, err := ttlworker.GetSessionForTest(pool)
+	require.NoError(t, err)
+	defer se.Close()
+
+	// First, schedule the job. The row in the `tidb_ttl_table_status` and `tidb_ttl_job_history` will be created
+	jobID := "test-job-id"
+
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	err = m.SubmitJob(se, tbl.Meta().ID, tbl.Meta().ID, jobID)
+	require.NoError(t, err)
+	now := se.Now()
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_job_history").Check(testkit.Rows("1"))
+
+	// Drop the table, then the `m` somehow lost heartbeat for 2*heartbeat interval, and GC TTL jobs
+	tk.MustExec("drop table t")
+
+	now = now.Add(time.Hour * 2)
+	m.DoGC(context.Background(), se, now)
+	tk.MustQuery("select count(*) from mysql.tidb_ttl_table_status").Check(testkit.Rows("0"))
+	tk.MustQuery("select status from mysql.tidb_ttl_job_history").Check(testkit.Rows("cancelled"))
+
+	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+	require.NoError(t, m.InfoSchemaCache().Update(se))
+	m.CheckNotOwnJob()
+	require.Len(t, m.RunningJobs(), 0)
+
+	// The adapter should not return the job
+	adapter := ttlworker.NewManagerJobAdapter(store, pool, nil)
+	job, err := adapter.GetJob(context.Background(), tbl.Meta().ID, tbl.Meta().ID, jobID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.True(t, job.Finished)
+}
