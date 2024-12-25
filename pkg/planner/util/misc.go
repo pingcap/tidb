@@ -78,14 +78,14 @@ func sliceRecursiveFlattenIterHelper[E any, Slice any](
 	})
 	// Case 1: Input slice is []E, which means it's already the lowest level.
 	if leafSlice, isLeafSlice := any(s).([]E); isLeafSlice {
-		i := startIdx
+		idx := startIdx
 		for _, v := range leafSlice {
-			if !yield(i, v) {
-				return i + 1, true
+			if !yield(idx, v) {
+				return idx + 1, true
 			}
-			i++
+			idx++
 		}
-		return i, false
+		return idx, false
 	}
 	// Case 2: Otherwise, element of Slice is still a slice, we need to flatten it recursively.
 	idx := startIdx
