@@ -101,15 +101,6 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
-// Bindings represents a sql bind record retrieved from the storage.
-type Bindings []Binding
-
-// Copy get the copy of bindings
-func (br Bindings) Copy() Bindings {
-	nbr := append(make(Bindings, 0, len(br)), br...)
-	return nbr
-}
-
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
@@ -165,19 +156,19 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 }
 
 // `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindings, rBindings Bindings) Bindings {
+func merge(lBindings, rBindings []*Binding) []*Binding {
 	if lBindings == nil {
 		return rBindings
 	}
 	if rBindings == nil {
 		return lBindings
 	}
-	result := lBindings.Copy()
+	result := lBindings
 	for i := range rBindings {
 		rbind := rBindings[i]
 		found := false
 		for j, lbind := range lBindings {
-			if lbind.isSame(&rbind) {
+			if lbind.isSame(rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
 					result[j] = rbind
@@ -192,23 +183,14 @@ func merge(lBindings, rBindings Bindings) Bindings {
 	return result
 }
 
-func removeDeletedBindings(br Bindings) Bindings {
-	result := make(Bindings, 0, len(br))
+func removeDeletedBindings(br []*Binding) []*Binding {
+	result := make([]*Binding, 0, len(br))
 	for _, binding := range br {
 		if binding.Status != deleted {
 			result = append(result, binding)
 		}
 	}
 	return result
-}
-
-// size calculates the memory size of a Bindings.
-func (br Bindings) size() float64 {
-	mem := float64(0)
-	for _, binding := range br {
-		mem += binding.size()
-	}
-	return mem
 }
 
 // size calculates the memory size of a bind info.

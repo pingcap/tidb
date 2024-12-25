@@ -50,10 +50,10 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
+	MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
-	GetAllGlobalBindings() (bindings Bindings)
+	GetAllGlobalBindings() (bindings []*Binding)
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
@@ -86,6 +86,9 @@ type GlobalBindingHandle interface {
 
 	// GetMemCapacity returns the memory capacity for the bind cache.
 	GetMemCapacity() (memCapacity int64)
+
+	// Close closes the binding cache.
+	CloseCache()
 
 	variable.Statistics
 }
@@ -198,7 +201,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			oldBinding := h.bindingCache.GetBinding(sqlDigest)
-			newBinding := removeDeletedBindings(merge(oldBinding, []Binding{binding}))
+			newBinding := removeDeletedBindings(merge(oldBinding, []*Binding{binding}))
 			if len(newBinding) > 0 {
 				err = h.bindingCache.SetBinding(sqlDigest, newBinding)
 				if err != nil {
@@ -398,12 +401,12 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool) {
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, noDBDigest string, tableNames []*ast.TableName) (matchedBinding *Binding, isMatched bool) {
 	return h.bindingCache.MatchingBinding(sctx, noDBDigest, tableNames)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
-func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
+func (h *globalBindingHandle) GetAllGlobalBindings() (bindings []*Binding) {
 	return h.bindingCache.GetAllBindings()
 }
 
@@ -424,13 +427,13 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 }
 
 // newBinding builds Bindings from a tuple in storage.
-func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error) {
+func newBinding(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
 		status = Enabled
 	}
-	binding := Binding{
+	binding := &Binding{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(row.GetString(2)),
 		BindSQL:     row.GetString(1),
@@ -444,7 +447,7 @@ func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error)
 		PlanDigest:  row.GetString(10),
 	}
 	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err := prepareHints(sctx, &binding)
+	err := prepareHints(sctx, binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
 }
@@ -606,8 +609,13 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 	return m, nil
 }
 
+// Close closes the binding cache.
+func (h *globalBindingHandle) CloseCache() {
+	h.bindingCache.Close()
+}
+
 // LoadBindingsFromStorageToCache loads global bindings from storage to the memory cache.
-func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, sqlDigest string) (Bindings, error) {
+func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, sqlDigest string) ([]*Binding, error) {
 	if sqlDigest == "" {
 		return nil, nil
 	}
@@ -624,7 +632,7 @@ func (h *globalBindingHandle) LoadBindingsFromStorage(sctx sessionctx.Context, s
 		if bindings == nil {
 			return nil, nil
 		}
-		return bindings.(Bindings), nil
+		return bindings.([]*Binding), nil
 	case <-time.After(timeout):
 		return nil, errors.New("load bindings from storage timeout")
 	}
@@ -634,14 +642,14 @@ func (h *globalBindingHandle) loadBindingsFromStorageInternal(sqlDigest string) 
 	failpoint.Inject("load_bindings_from_storage_internal_timeout", func() {
 		time.Sleep(time.Second)
 	})
-	var bindings Bindings
+	var bindings []*Binding
 	selectStmt := fmt.Sprintf("SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info where sql_digest = '%s'", sqlDigest)
 	err := h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
 		}
-		bindings = make([]Binding, 0, len(rows))
+		bindings = make([]*Binding, 0, len(rows))
 		for _, row := range rows {
 			// Skip the builtin record which is designed for binding synchronization.
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
