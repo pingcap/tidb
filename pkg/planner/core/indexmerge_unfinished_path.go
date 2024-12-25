@@ -20,8 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // unfinishedAccessPath collects usable filters in preparation for building an OR type IndexMerge access path.
@@ -55,6 +59,7 @@ type unfinishedAccessPath struct {
 	needKeepFilter bool
 
 	// Similar to AccessPath.PartialIndexPaths, each element in the slice is for one OR branch.
+	// It will build into AccessPath.PartialAlternativeIndexPaths.
 	orBranches []unfinishedAccessPathList
 }
 
@@ -300,26 +305,19 @@ func buildIntoAccessPath(
 	if indexMergePath == nil || len(indexMergePath.orBranches) == 0 {
 		return nil
 	}
-	var needSelectionGlobal bool
-
-	// 1. Generate one or more partial access path for each partial unfinished path (access filter on mv index may
-	// produce several partial paths).
-	partialPaths := make([]*util.AccessPath, 0, len(indexMergePath.orBranches))
+	// 1. Use the collected usable filters to build partial paths for each alternative of each OR branch.
+	allAlternativePaths := make([][][]*util.AccessPath, 0, len(indexMergePath.orBranches))
 
 	// for each OR branch
 	for _, orBranch := range indexMergePath.orBranches {
-		type alternative struct {
-			paths         []*util.AccessPath
-			needSelection bool
-		}
-		var alternativesForORBranch []alternative
+		var alternativesForORBranch [][]*util.AccessPath
 
 		// for each alternative of this OR branch
 		for i, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
-			var paths []*util.AccessPath
+			var oneAlternative []*util.AccessPath
 			var needSelection bool
 			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
 				// case 1: mv index
@@ -342,14 +340,14 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				paths, isIntersection, ok, err = buildPartialPaths4MVIndex(
+				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndex(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
 					unfinishedPath.index,
 					ds.TableStats.HistColl,
 				)
-				if err != nil || !ok || (isIntersection && len(paths) > 1) {
+				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
 					continue
 				}
 				needSelection = len(remainingFilters) > 0 || len(unfinishedPath.idxColHasUsableFilter) > 0
@@ -368,39 +366,41 @@ func buildIntoAccessPath(
 				if path == nil {
 					continue
 				}
-				paths = []*util.AccessPath{path}
+				oneAlternative = []*util.AccessPath{path}
 			}
 			needSelection = needSelection || unfinishedPath.needKeepFilter
 
-			alternativesForORBranch = append(alternativesForORBranch, alternative{paths, needSelection})
+			if needSelection {
+				// only need to set one of the paths to true
+				oneAlternative[0].KeepIndexMergeORSourceFilter = true
+			}
+			alternativesForORBranch = append(alternativesForORBranch, oneAlternative)
 		}
 		if len(alternativesForORBranch) == 0 {
 			return nil
 		}
-
-		bestAlternative := slices.MinFunc(
-			alternativesForORBranch, func(a, b alternative) int {
-				return cmpAlternativesByRowCount(a.paths, b.paths)
-			})
-		if len(bestAlternative.paths) == 0 {
-			return nil
-		}
-		// Succeeded to get valid path(s) for this partial path.
-		partialPaths = append(partialPaths, bestAlternative.paths...)
-		needSelectionGlobal = needSelectionGlobal || bestAlternative.needSelection
+		allAlternativePaths = append(allAlternativePaths, alternativesForORBranch)
 	}
 
-	// 2. Collect the final table filter
-	// We always put all filters in the top level AND list except for the OR list into the final table filters.
-	// Whether to put the OR list into the table filters also depends on the needSelectionGlobal.
-	tableFilter := slices.Clone(allConds)
-	if !needSelectionGlobal {
-		tableFilter = slices.Delete(tableFilter, orListIdxInAllConds, orListIdxInAllConds+1)
+	// 2. TODO
+
+	// 3. Build the final access path.
+	possiblePath := &util.AccessPath{
+		PartialAlternativeIndexPaths: allAlternativePaths,
+		TableFilters:                 slices.Delete(slices.Clone(allConds), orListIdxInAllConds, orListIdxInAllConds+1),
+		IndexMergeORSourceFilter:     allConds[orListIdxInAllConds],
 	}
 
-	// 3. Build the final access path
-	ret := buildPartialPathUp4MVIndex(partialPaths, false, tableFilter, ds.TableStats.HistColl)
-	return ret
+	// For estimation, we need the decided partial paths. So we use a simple heuristic to choose the partial paths by
+	// comparing the row count just for estimation here.
+	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
+	for _, oneORBranch := range allAlternativePaths {
+		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternativesByRowCount)
+		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
+	}
+	possiblePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, pathsForEstimate)
+
+	return possiblePath
 }
 
 func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
@@ -419,4 +419,40 @@ func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
 	lhsRowCount := getMaxRowCountFromPaths(a)
 	rhsRowCount := getMaxRowCountFromPaths(b)
 	return cmp.Compare(lhsRowCount, rhsRowCount)
+}
+
+func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*util.AccessPath) float64 {
+	accessConds := make([]expression.Expression, 0, len(decidedPartialPaths))
+	containMVPath := false
+	for _, p := range decidedPartialPaths {
+		if isMVIndexPath(p) {
+			containMVPath = true
+		}
+		indexCondsForP := p.AccessConds[:]
+		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+		if len(indexCondsForP) > 0 {
+			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
+		}
+	}
+	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
+	var sel float64
+	if containMVPath {
+		sel = cardinality.CalcTotalSelectivityForMVIdxPath(ds.TableStats.HistColl,
+			decidedPartialPaths,
+			false,
+		)
+	} else {
+		var err error
+		sel, _, err = cardinality.Selectivity(
+			ds.SCtx(),
+			ds.TableStats.HistColl,
+			[]expression.Expression{accessDNF},
+			nil,
+		)
+		if err != nil {
+			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+			sel = cost.SelectionFactor
+		}
+	}
+	return sel * ds.TableStats.RowCount
 }

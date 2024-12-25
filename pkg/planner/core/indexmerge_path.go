@@ -928,11 +928,15 @@ func generateIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt in
 		}
 
 		var mvIndexPartialPathCnt, normalIndexPartialPathCnt int
-		for _, path := range finishedIndexMergePath.PartialIndexPaths {
-			if isMVIndexPath(path) {
-				mvIndexPartialPathCnt++
-			} else {
-				normalIndexPartialPathCnt++
+		for _, oneAlternative := range finishedIndexMergePath.PartialAlternativeIndexPaths {
+			for _, paths := range oneAlternative {
+				for _, path := range paths {
+					if isMVIndexPath(path) {
+						mvIndexPartialPathCnt++
+					} else {
+						normalIndexPartialPathCnt++
+					}
+				}
 			}
 		}
 
