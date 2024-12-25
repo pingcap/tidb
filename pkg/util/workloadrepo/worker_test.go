@@ -114,6 +114,8 @@ func TestMultipleWorker(t *testing.T) {
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
 	wrk2 := setupWorker(ctx, t, addr, dom, "worker2", true)
+	wrk1.changeSnapshotInterval(nil, "3600")
+	wrk2.changeSnapshotInterval(nil, "3600")
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
 
@@ -127,6 +129,23 @@ func TestMultipleWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select instance_id, count(*) from workload_schema.hist_memory_usage group by instance_id").Rows()
 		return len(res) >= 2
+	}, time.Minute, time.Second)
+
+	// no snapshot for now
+	res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
+	require.Len(t, res, 0)
+
+	// manually trigger snapshot by sending a tick to all workers
+	wrk1.snapshotChan <- struct{}{}
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
+		return len(res) == 1
+	}, time.Minute, time.Second)
+
+	wrk2.snapshotChan <- struct{}{}
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
+		return len(res) == 2
 	}, time.Minute, time.Second)
 }
 

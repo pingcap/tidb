@@ -21,9 +21,12 @@ import (
 )
 
 const (
-	ownerKey  = "/tidb/workloadrepo/owner"
-	promptKey = "workloadrepo"
-	snapIDKey = "/tidb/workloadrepo/snap_id"
+	ownerKey       = "/tidb/workloadrepo/owner"
+	promptKey      = "workloadrepo"
+	snapIDKey      = "/tidb/workloadrepo/snap_id"
+	snapCommandKey = "/tidb/workloadrepo/snap_command"
+
+	snapCommandTake = "take_snapshot"
 
 	etcdOpTimeout   = 5 * time.Second
 	snapshotRetries = 5

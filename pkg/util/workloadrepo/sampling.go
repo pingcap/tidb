@@ -38,7 +38,7 @@ func (w *worker) samplingTable(ctx context.Context, rt *repositoryTable) {
 	}
 
 	if _, err := runQuery(ctx, sess, rt.insertStmt, w.instanceID); err != nil {
-		logutil.BgLogger().Info("workload repository sampling failed: could not run insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
+		//logutil.BgLogger().Info("workload repository sampling failed: could not run insert statement", zap.String("tbl", rt.destTable), zap.NamedError("err", err))
 	}
 }
 
