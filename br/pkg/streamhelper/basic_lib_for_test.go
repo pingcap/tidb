@@ -101,9 +101,9 @@ type fakeCluster struct {
 	testCtx   *testing.T
 
 	onGetClient               func(uint64) error
- 	serviceGCSafePoint        uint64
- 	serviceGCSafePointDeleted bool
- 	currentTS                 uint64
+	serviceGCSafePoint        uint64
+	serviceGCSafePointDeleted bool
+	currentTS                 uint64
 }
 
 func (r *region) splitAt(newID uint64, k string) *region {
