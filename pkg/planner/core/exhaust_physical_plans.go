@@ -389,8 +389,10 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		if !forceLeftToBuild {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
-		}
-		if !forceRightToBuild {
+		} else if !forceRightToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, true))
+		} else {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
 			joins = append(joins, getHashJoin(p, prop, 1, true))
 		}
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
