@@ -67,7 +67,9 @@ func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessC
 			}
 			if leftFilter != nil && !filterVector[filterIndex] {
 				if isLeftOuter {
-					// Filtered by left filter, append 0 for matched flag
+					// Filtered by left filter
+					// Left Outer Semi Join: append 0 for matched flag
+					// Left Outer Anti Semi Join: append 1 for matched flag
 					appendToResultChk(leftChunk.GetRow(leftIndex), chunk.Row{}, leftUsedColumns, nil, resultChk)
 					if isAnti {
 						resultChk.AppendInt64(len(leftUsedColumns), 1)
