@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"os"
 	"testing"
 	"time"
@@ -235,16 +236,21 @@ func TestMemReader(t *testing.T) {
 	ss := NewStmtSummary4Test(3)
 	defer ss.Close()
 
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-	ss.Add(GenerateStmtExecInfo4Test("digest4"))
-	ss.Add(GenerateStmtExecInfo4Test("digest4"))
-	ss.Add(GenerateStmtExecInfo4Test("digest5"))
-	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ssAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		ss.Add(k, info)
+	}
+
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest4"))
+	ssAdd(GenerateStmtExecInfo4Test("digest4"))
+	ssAdd(GenerateStmtExecInfo4Test("digest5"))
+	ssAdd(GenerateStmtExecInfo4Test("digest5"))
 	reader := NewMemReader(ss, columns, "", timeLocation, nil, false, nil, nil)
 	rows := reader.Rows()
 	require.Len(t, rows, 4) // 3 rows + 1 other
@@ -455,4 +461,14 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 		results = append(results, rows...)
 	}
 	return results
+}
+
+func genStmtSummaryByDigestKey(info *stmtsummary.StmtExecInfo) *stmtsummary.StmtSummaryByDigestKey {
+	return &stmtsummary.StmtSummaryByDigestKey{
+		SchemaName:        info.SchemaName,
+		Digest:            info.Digest,
+		PrevDigest:        info.PrevSQLDigest,
+		PlanDigest:        info.PlanDigest,
+		ResourceGroupName: info.ResourceGroupName,
+	}
 }

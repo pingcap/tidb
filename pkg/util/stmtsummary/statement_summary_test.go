@@ -166,7 +166,7 @@ func TestAddStatement(t *testing.T) {
 		tableNames:    "db1.tb1,db2.tb2",
 		history:       history,
 	}
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	summary, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	require.True(t, matchStmtSummaryByDigest(summary.(*stmtSummaryByDigest), &expectedSummary))
@@ -318,7 +318,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
 
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	require.True(t, matchStmtSummaryByDigest(summary.(*stmtSummaryByDigest), &expectedSummary))
@@ -445,7 +445,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
 
-	ssMap.AddStatement(stmtExecInfo3)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo3), stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	require.True(t, matchStmtSummaryByDigest(summary.(*stmtSummaryByDigest), &expectedSummary))
@@ -460,7 +460,7 @@ func TestAddStatement(t *testing.T) {
 		PlanDigest:        stmtExecInfo4.PlanDigest,
 		ResourceGroupName: stmtExecInfo4.ResourceGroupName,
 	}
-	ssMap.AddStatement(stmtExecInfo4)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo4), stmtExecInfo4)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -474,7 +474,7 @@ func TestAddStatement(t *testing.T) {
 		PlanDigest:        stmtExecInfo4.PlanDigest,
 		ResourceGroupName: stmtExecInfo5.ResourceGroupName,
 	}
-	ssMap.AddStatement(stmtExecInfo5)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo5), stmtExecInfo5)
 	require.Equal(t, 3, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -488,7 +488,7 @@ func TestAddStatement(t *testing.T) {
 		PlanDigest:        stmtExecInfo6.PlanDigest,
 		ResourceGroupName: stmtExecInfo6.ResourceGroupName,
 	}
-	ssMap.AddStatement(stmtExecInfo6)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo6), stmtExecInfo6)
 	require.Equal(t, 4, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -513,7 +513,7 @@ func TestAddStatement(t *testing.T) {
 		PlanDigest:        stmtExecInfo7.PlanDigest,
 		ResourceGroupName: stmtExecInfo7.ResourceGroupName,
 	}
-	ssMap.AddStatement(stmtExecInfo7)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo7), stmtExecInfo7)
 	require.Equal(t, 5, ssMap.summaryMap.Size())
 	v, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -735,6 +735,16 @@ func generateAnyExecInfo() *StmtExecInfo {
 	return stmtExecInfo
 }
 
+func genStmtSummaryByDigestKey(info *StmtExecInfo) *StmtSummaryByDigestKey {
+	return &StmtSummaryByDigestKey{
+		SchemaName:        info.SchemaName,
+		Digest:            info.Digest,
+		PrevDigest:        info.PrevSQLDigest,
+		PlanDigest:        info.PlanDigest,
+		ResourceGroupName: info.ResourceGroupName,
+	}
+}
+
 type mockLazyInfo struct {
 	originalSQL string
 	plan        string
@@ -883,7 +893,7 @@ func TestToDatum(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 1, len(datums))
@@ -938,7 +948,7 @@ func TestToDatum(t *testing.T) {
 	require.NoError(t, err)
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.Digest = "bandit sei"
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	datums = reader.GetStmtSummaryCurrentRows()
 	expectedEvictedDatum := []any{n, e, "", "<nil>", "<nil>", "",
@@ -996,7 +1006,7 @@ func TestAddStatementParallel(t *testing.T) {
 		// Add 32 times with different digest.
 		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-			ssMap.AddStatement(stmtExecInfo1)
+			ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 		}
 
 		// There would be 32 summaries.
@@ -1035,7 +1045,7 @@ func TestMaxStmtCount(t *testing.T) {
 	loops := 100
 	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	}
 
 	// Summary count should be MaxStmtCount.
@@ -1059,7 +1069,7 @@ func TestMaxStmtCount(t *testing.T) {
 	require.Nil(t, ssMap.SetMaxStmtCount(50))
 	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	}
 	require.Equal(t, 50, sm.Size())
 
@@ -1067,7 +1077,7 @@ func TestMaxStmtCount(t *testing.T) {
 	require.Nil(t, ssMap.SetMaxStmtCount(10))
 	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	}
 	require.Equal(t, 10, sm.Size())
 }
@@ -1090,7 +1100,7 @@ func TestMaxSQLLength(t *testing.T) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = str
 	stmtExecInfo1.NormalizedSQL = str
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 
 	key := &StmtSummaryByDigestKey{
 		SchemaName:        stmtExecInfo1.SchemaName,
@@ -1133,7 +1143,7 @@ func TestSetMaxStmtCountParallel(t *testing.T) {
 		// Add 32 times with different digest.
 		for i := range loops {
 			stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-			ssMap.AddStatement(stmtExecInfo1)
+			ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 		}
 	}
 	for range threads {
@@ -1173,7 +1183,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	reader := newStmtSummaryReaderForTest(ssMap)
 	datums := reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, 0)
@@ -1181,7 +1191,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	err = ssMap.SetEnabled(true)
 	require.NoError(t, err)
 
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 1, len(datums))
 
@@ -1191,7 +1201,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	stmtExecInfo2.LazyInfo.(*mockLazyInfo).originalSQL = "original_sql2"
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 2, len(datums))
 
@@ -1199,7 +1209,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	err = ssMap.SetEnabled(false)
 	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now + 60
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, 0)
 
@@ -1211,7 +1221,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	require.NoError(t, err)
 
 	ssMap.beginTimeForCurInterval = now + 60
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	datums = reader.GetStmtSummaryCurrentRows()
 	require.Equal(t, 1, len(datums))
 
@@ -1239,7 +1249,7 @@ func TestEnableSummaryParallel(t *testing.T) {
 			// Sometimes enable it and sometimes disable it.
 			err := ssMap.SetEnabled(i%2 == 0)
 			require.NoError(t, err)
-			ssMap.AddStatement(stmtExecInfo1)
+			ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 			// Try to read it.
 			reader.GetStmtSummaryHistoryRows()
 		}
@@ -1265,18 +1275,18 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	stmts := ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
 	stmtExecInfo1.NormalizedSQL = "select ?"
 	stmtExecInfo1.Digest = "digest1"
 	stmtExecInfo1.StmtCtx.StmtType = "Select"
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 0, len(stmts))
 
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	stmts = ssMap.GetMoreThanCntBindableStmt(1)
 	require.Equal(t, 1, len(stmts))
 }
@@ -1307,7 +1317,7 @@ func TestRefreshCurrentSummary(t *testing.T) {
 		PlanDigest:        stmtExecInfo1.PlanDigest,
 		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1317,7 +1327,7 @@ func TestRefreshCurrentSummary(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now - 1900
 	ssElement.beginTime = now - 1900
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1330,7 +1340,7 @@ func TestRefreshCurrentSummary(t *testing.T) {
 	require.NoError(t, err)
 	ssMap.beginTimeForCurInterval = now - 20
 	ssElement.beginTime = now - 20
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 3, value.(*stmtSummaryByDigest).history.Len())
 }
 
@@ -1360,7 +1370,7 @@ func TestSummaryHistory(t *testing.T) {
 	}
 	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
 		value, ok := ssMap.summaryMap.Get(key)
 		require.True(t, ok)
@@ -1398,14 +1408,14 @@ func TestSummaryHistory(t *testing.T) {
 	// insert first digest
 	for i := range 6 {
 		ssMap.beginTimeForCurInterval = now + int64(i)*10
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 		require.Equal(t, 1, ssMap.summaryMap.Size())
 		require.Equal(t, 0, ssMap.other.history.Len())
 	}
 	// insert another digest to evict it
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.Digest = "bandit digest"
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	// length of `other` should not longer than historySize.
 	require.Equal(t, 5, ssMap.other.history.Len())
@@ -1424,7 +1434,7 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.PrevSQL = "prevSQL"
 	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	key := &StmtSummaryByDigestKey{
 		SchemaName:        stmtExecInfo1.SchemaName,
 		Digest:            stmtExecInfo1.Digest,
@@ -1437,7 +1447,7 @@ func TestPrevSQL(t *testing.T) {
 	require.True(t, ok)
 
 	// same prevSQL
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 
 	// different prevSQL
@@ -1445,7 +1455,7 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo2.PrevSQL = "prevSQL1"
 	stmtExecInfo2.PrevSQLDigest = "prevSQLDigest1"
 	key.PrevDigest = stmtExecInfo2.PrevSQLDigest
-	ssMap.AddStatement(stmtExecInfo2)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo2), stmtExecInfo2)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1457,7 +1467,7 @@ func TestEndTime(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now - 100
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	key := &StmtSummaryByDigestKey{
 		SchemaName:        stmtExecInfo1.SchemaName,
 		Digest:            stmtExecInfo1.Digest,
@@ -1478,7 +1488,7 @@ func TestEndTime(t *testing.T) {
 		err := ssMap.SetRefreshInterval(1800)
 		require.NoError(t, err)
 	}()
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 1, ssbd.history.Len())
 	ssElement = ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	require.Equal(t, now-100, ssElement.beginTime)
@@ -1486,7 +1496,7 @@ func TestEndTime(t *testing.T) {
 
 	err = ssMap.SetRefreshInterval(60)
 	require.NoError(t, err)
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, 2, ssbd.history.Len())
 	now2 := time.Now().Unix()
 	ssElement = ssbd.history.Front().Value.(*stmtSummaryByDigestElement)
@@ -1507,7 +1517,7 @@ func TestPointGet(t *testing.T) {
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.PlanDigest = ""
 	stmtExecInfo1.LazyInfo.(*mockLazyInfo).plan = fakePlanDigestGenerator()
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	key := &StmtSummaryByDigestKey{
 		SchemaName:        stmtExecInfo1.SchemaName,
 		Digest:            stmtExecInfo1.Digest,
@@ -1521,7 +1531,7 @@ func TestPointGet(t *testing.T) {
 	ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
 	require.Equal(t, int64(1), ssElement.execCount)
 
-	ssMap.AddStatement(stmtExecInfo1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	require.Equal(t, int64(2), ssElement.execCount)
 }
 
@@ -1533,7 +1543,7 @@ func TestAccessPrivilege(t *testing.T) {
 
 	for i := range loops {
 		stmtExecInfo1.Digest = fmt.Sprintf("digest%d", i)
-		ssMap.AddStatement(stmtExecInfo1)
+		ssMap.AddStatement(genStmtSummaryByDigestKey(stmtExecInfo1), stmtExecInfo1)
 	}
 
 	user := &auth.UserIdentity{Username: "user"}

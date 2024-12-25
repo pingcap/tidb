@@ -77,10 +77,10 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	sei1 := generateAnyExecInfo()
 
 	sei0.SchemaName = "I'll occupy this cache! :("
-	ssMap.AddStatement(sei0)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(sei0), sei0)
 	n := ssMap.beginTimeForCurInterval
 	sei1.SchemaName = "sorry, it's mine now. =)"
-	ssMap.AddStatement(sei1)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(sei1), sei1)
 
 	expectedEvictedCount := []any{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
@@ -105,7 +105,8 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + interval
 	// insert one statement per interval.
 	for range 50 {
-		ssMap.AddStatement(generateAnyExecInfo())
+		info := generateAnyExecInfo()
+		ssMap.AddStatement(genStmtSummaryByDigestKey(info), info)
 		ssMap.beginTimeForCurInterval += interval * 2
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -120,14 +121,14 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	ssMap.beginTimeForCurInterval += interval * 2
 	banditSei := generateAnyExecInfo()
 	banditSei.SchemaName = "Kick you out >:("
-	ssMap.AddStatement(banditSei)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(banditSei), banditSei)
 
 	evictedCountDatums := ssMap.ToEvictedCountDatum()
 	require.Equal(t, 25, len(evictedCountDatums))
 
 	// update begin time
 	banditSei.SchemaName = "Yet another kicker"
-	ssMap.AddStatement(banditSei)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(banditSei), banditSei)
 
 	evictedCountDatums = ssMap.ToEvictedCountDatum()
 	// test young digest
@@ -273,14 +274,15 @@ func TestEvictedCountDetailed(t *testing.T) {
 			digest := val.(*stmtSummaryByDigest)
 			require.Equal(t, i, digest.history.Len())
 		}
-		ssMap.AddStatement(generateAnyExecInfo())
+		info := generateAnyExecInfo()
+		ssMap.AddStatement(genStmtSummaryByDigestKey(info), info)
 		ssMap.beginTimeForCurInterval += interval
 	}
 	ssMap.beginTimeForCurInterval -= interval
 
 	banditSei := generateAnyExecInfo()
 	banditSei.SchemaName = "kick you out >:("
-	ssMap.AddStatement(banditSei)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(banditSei), banditSei)
 	evictedCountDatums := ssMap.ToEvictedCountDatum()
 	n := ssMap.beginTimeForCurInterval
 	for _, evictedCountDatum := range evictedCountDatums {
@@ -301,7 +303,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 		types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(2),
 	}
-	ssMap.AddStatement(banditSei)
+	ssMap.AddStatement(genStmtSummaryByDigestKey(banditSei), banditSei)
 	evictedCountDatums = ssMap.ToEvictedCountDatum()
 	match(t, evictedCountDatums[0], expectedDatum...)
 	ssMap.Clear()

@@ -15,6 +15,7 @@
 package stmtsummary
 
 import (
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,15 +24,20 @@ import (
 func TestStmtWindow(t *testing.T) {
 	ss := NewStmtSummary4Test(5)
 	defer ss.Close()
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-	ss.Add(GenerateStmtExecInfo4Test("digest4"))
-	ss.Add(GenerateStmtExecInfo4Test("digest5"))
-	ss.Add(GenerateStmtExecInfo4Test("digest6"))
-	ss.Add(GenerateStmtExecInfo4Test("digest7"))
+	ssAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		ss.Add(k, info)
+	}
+
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest4"))
+	ssAdd(GenerateStmtExecInfo4Test("digest5"))
+	ssAdd(GenerateStmtExecInfo4Test("digest6"))
+	ssAdd(GenerateStmtExecInfo4Test("digest7"))
 	require.Equal(t, 5, ss.window.lru.Size())
 	require.Equal(t, 2, ss.window.evicted.count())
 	require.Equal(t, int64(4), ss.window.evicted.other.ExecCount) // digest1 digest1 digest2 digest2
@@ -46,18 +52,22 @@ func TestStmtSummary(t *testing.T) {
 	defer ss.Close()
 
 	w := ss.window
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
-	ss.Add(GenerateStmtExecInfo4Test("digest4"))
-	ss.Add(GenerateStmtExecInfo4Test("digest5"))
+	ssAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		ss.Add(k, info)
+	}
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest4"))
+	ssAdd(GenerateStmtExecInfo4Test("digest5"))
 	require.Equal(t, 3, w.lru.Size())
 	require.Equal(t, 2, w.evicted.count())
 
 	ss.rotate(timeNow())
 
-	ss.Add(GenerateStmtExecInfo4Test("digest6"))
-	ss.Add(GenerateStmtExecInfo4Test("digest7"))
+	ssAdd(GenerateStmtExecInfo4Test("digest6"))
+	ssAdd(GenerateStmtExecInfo4Test("digest7"))
 	w = ss.window
 	require.Equal(t, 2, w.lru.Size())
 	require.Equal(t, 0, w.evicted.count())
@@ -71,21 +81,25 @@ func TestStmtSummaryFlush(t *testing.T) {
 	ss := NewStmtSummary4Test(1000)
 	ss.storage = storage
 
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		ss.Add(k, info)
+	}
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
 
 	ss.rotate(timeNow())
 
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
 
 	ss.rotate(timeNow())
 
-	ss.Add(GenerateStmtExecInfo4Test("digest1"))
-	ss.Add(GenerateStmtExecInfo4Test("digest2"))
-	ss.Add(GenerateStmtExecInfo4Test("digest3"))
+	ssAdd(GenerateStmtExecInfo4Test("digest1"))
+	ssAdd(GenerateStmtExecInfo4Test("digest2"))
+	ssAdd(GenerateStmtExecInfo4Test("digest3"))
 
 	ss.Close()
 
