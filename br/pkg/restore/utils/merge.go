@@ -137,7 +137,7 @@ func GenerateNewKeyRange(files []*backuppb.File, rewriteRules map[int64]*Rewrite
 		file.StartKey = newStartKey
 		file.EndKey = newEndKey
 	}
-	return &rtree.Range{StartKey: rewritedStartKey, EndKey: rewritedEndKey}, nil
+	return &rtree.Range{StartKey: rewritedStartKey, EndKey: rewritedEndKey, Files: files}, nil
 }
 
 // MergeAndRewriteFileRanges returns ranges of the files are merged based on
@@ -156,7 +156,7 @@ func MergeAndRewriteFileRanges(
 	}
 	totalBytes := uint64(0)
 	totalKvs := uint64(0)
-	totalFiles := len(files)
+	totalFiles := 0
 	writeCFFile := 0
 	defaultCFFile := 0
 
@@ -193,6 +193,7 @@ NEXTFILE:
 		} else if file.Cf == DefaultCFName || strings.Contains(file.GetName(), DefaultCFName) {
 			defaultCFFile++
 		}
+		totalFiles++
 	}
 	if writeCFFile == 0 && defaultCFFile == 0 {
 		return []rtree.RangeStats{}, nil, errors.Annotatef(berrors.ErrRestoreInvalidBackup,

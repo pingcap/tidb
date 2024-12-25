@@ -51,8 +51,6 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 				Files:         createdTable.OldTable.FilesOfPhysicals[oldID],
 			})
 		}
-		// take the physical files
-		createdTable.OldTable.FilesOfPhysicals = nil
 	}
 	// sort the physical table by downstream stream physical id
 	sort.Slice(physicalTables, func(a, b int) bool {
@@ -229,8 +227,6 @@ func SortAndValidateFileRanges(
 			}
 			minPhysicalID = min(minPhysicalID, table.NewPhysicalID)
 			mergedFiles = append(mergedFiles, table.Files...)
-			// take the files
-			table.Files = nil
 			rewriteRules[table.OldPhysicalID] = table.RewriteRules
 		}
 		// Merge small ranges to reduce split and scatter regions.

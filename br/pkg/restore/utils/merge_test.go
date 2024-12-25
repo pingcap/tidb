@@ -399,6 +399,9 @@ func TestGenerateNewKeyRange(t *testing.T) {
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(5)), file.EndKey)
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1001)), newRg.StartKey)
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1005)), newRg.EndKey)
+	require.Len(t, newRg.Files, 1)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1)), newRg.Files[0].StartKey)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(5)), newRg.Files[0].EndKey)
 
 	file = &backuppb.File{
 		StartKey: tablecodec.GenTableRecordPrefix(1),
@@ -422,6 +425,9 @@ func TestGenerateNewKeyRange(t *testing.T) {
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(5)), file.EndKey)
 	require.Equal(t, []byte(tablecodec.EncodeTableIndexPrefix(1002, 0)), newRg.StartKey)
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1005)), newRg.EndKey)
+	require.Len(t, newRg.Files, 1)
+	require.Equal(t, []byte(tablecodec.EncodeTableIndexPrefix(2, 0)), newRg.Files[0].StartKey)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(5)), newRg.Files[0].EndKey)
 
 	file = &backuppb.File{
 		StartKey: tablecodec.GenTableRecordPrefix(1),
@@ -445,6 +451,9 @@ func TestGenerateNewKeyRange(t *testing.T) {
 	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(4)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), file.EndKey)
 	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1001)), newRg.StartKey)
 	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(1004)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), newRg.EndKey)
+	require.Len(t, newRg.Files, 1)
+	require.Equal(t, []byte(tablecodec.GenTableRecordPrefix(1)), newRg.Files[0].StartKey)
+	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(4)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), newRg.Files[0].EndKey)
 
 	file = &backuppb.File{
 		StartKey: tablecodec.GenTableRecordPrefix(1),
@@ -464,4 +473,7 @@ func TestGenerateNewKeyRange(t *testing.T) {
 	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(4)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), file.EndKey)
 	require.Equal(t, []byte(tablecodec.EncodeTableIndexPrefix(1003, 0)), newRg.StartKey)
 	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(1004)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), newRg.EndKey)
+	require.Len(t, newRg.Files, 1)
+	require.Equal(t, []byte(tablecodec.EncodeTableIndexPrefix(3, 0)), newRg.Files[0].StartKey)
+	require.Equal(t, append([]byte(tablecodec.EncodeTablePrefix(4)), []byte("\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF")...), newRg.Files[0].EndKey)
 }

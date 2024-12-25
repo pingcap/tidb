@@ -315,7 +315,7 @@ func (table *Table) CalculateChecksumStatsOnFiles() ChecksumStats {
 		for _, file := range files {
 			if len(file.TableMetas) > 0 {
 				for _, tableMeta := range file.TableMetas {
-					if physicalID == tableMeta.PhysicalId {
+					if tableMeta != nil && physicalID == tableMeta.PhysicalId {
 						stats.Crc64Xor ^= tableMeta.Crc64Xor
 						stats.TotalKvs += tableMeta.TotalKvs
 						stats.TotalBytes += tableMeta.TotalBytes
