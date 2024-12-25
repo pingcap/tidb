@@ -1714,8 +1714,7 @@ type SessionVars struct {
 	ScatterRegion string
 
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
-	CacheStmtExecInfo *stmtsummary.StmtExecInfo
-	// CacheStmtExecInfoKey is a cache too.
+	CacheStmtExecInfo    *stmtsummary.StmtExecInfo
 	CacheStmtExecInfoKey *stmtsummary.StmtSummaryByDigestKey
 }
 
