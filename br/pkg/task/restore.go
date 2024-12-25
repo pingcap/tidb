@@ -809,6 +809,18 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
 	}
+	if client.IsIncremental() {
+		// don't support checkpoint for the ddl restore
+		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
+		cfg.UseCheckpoint = false
+	}
+	var checkpointFirstRun = true
+	if cfg.UseCheckpoint {
+		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		checkpointFirstRun = !existsCheckpointMetadata
+	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
 		return err
 	}
@@ -817,7 +829,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	if cfg.CheckRequirements {
+	if cfg.CheckRequirements && checkpointFirstRun {
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
 		}
@@ -835,12 +847,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// for full + log restore. should check the cluster is empty.
 	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
 		return checkInfo.FullRestoreCheckErr
-	}
-
-	if client.IsIncremental() {
-		// don't support checkpoint for the ddl restore
-		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
-		cfg.UseCheckpoint = false
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
@@ -863,6 +869,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("finish removing pd scheduler")
 	}()
 
+<<<<<<< HEAD
 	var checkpointFirstRun = true
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
@@ -871,6 +878,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
+=======
+>>>>>>> 444a1b9dab1 (br: precheck disk space only when checkpoint first run (#58525))
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
