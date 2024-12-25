@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -124,31 +123,18 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
-}
-
-func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
-	job := &s.taskMeta.Job
-	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	ctx := s.BaseTaskExecutor.Ctx()
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, s.d.store, job).
-		WithImportDistributedLock(s.d.etcdCli).
-		Build()
-	if err != nil {
-		return nil, err
-	}
-	return bCtx, nil
 }
 
 type backfillDistExecutor struct {

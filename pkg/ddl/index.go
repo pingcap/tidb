@@ -2433,15 +2433,8 @@ func (w *worker) addTableIndex(
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) error {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
 	var bc ingest.BackendCtx
-	var err error
-	defer func() {
-		if bc != nil {
-			bc.Close()
-		}
-	}()
-
 	for _, elem := range reorgInfo.elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
 		if indexInfo == nil {
@@ -2454,6 +2447,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 				if err != nil {
 					return err
 				}
+				defer bc.Close()
 			}
 			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			if err != nil {

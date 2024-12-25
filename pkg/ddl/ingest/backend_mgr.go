@@ -89,6 +89,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	if err != nil {
 		return nil, err
 	}
+	jobSortPath := filepath.Join(sortPath, encodeBackendTag(job.ID))
 	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
 		job.Type == model.ActionAddIndex)
 	intest.Assert(job.ReorgMeta != nil)
@@ -100,7 +101,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := genConfig(ctx, sortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
+	cfg, err := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
 	if err != nil {
 		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", job.ID), zap.Error(err))
 		return nil, err
