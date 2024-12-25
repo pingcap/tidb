@@ -5,9 +5,17 @@ import "github.com/prometheus/client_golang/prometheus"
 var (
 	RestoreImportFileSeconds       prometheus.Histogram
 	RestoreUploadSSTForPiTRSeconds prometheus.Histogram
+	// RestoreTableCreatedCount counts how many tables created.
+	RestoreTableCreatedCount prometheus.Counter
 )
 
 func InitBRMetrics() {
+	RestoreTableCreatedCount = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: "BR",
+		Name:      "table_created",
+		Help:      "The count of tables have been created.",
+	})
+
 	RestoreImportFileSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "br",
