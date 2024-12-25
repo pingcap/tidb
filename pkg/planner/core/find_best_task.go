@@ -1341,6 +1341,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				return -cmp.Compare(lIsGlobalIndex, rIsGlobalIndex)
 			})
 		}
+<<<<<<< HEAD
 		lowestCountAfterAccessIdx := matchIdxes[0]
 		determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneORBranch[lowestCountAfterAccessIdx])
 		partialPathMatchResults = append(partialPathMatchResults, altMatchResults[lowestCountAfterAccessIdx])
@@ -1350,13 +1351,70 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			indexID = -1
 		} else {
 			indexID = oneORBranch[lowestCountAfterAccessIdx].Index.ID
+=======
+		allMatchIdxes = append(allMatchIdxes, idxWrapper{matchIdxes, pathIdx})
+	}
+	// sort allMatchIdxes by its element length.
+	// index merge:                index merge:
+	//  path1: {pk, index1}  ==>    path2: {pk}
+	//  path2: {pk}                 path1: {pk, index1}
+	// here for the fixed choice pk of path2, let it be the first one to choose, left choice of index1 to path1.
+	slices.SortStableFunc(allMatchIdxes, func(a, b idxWrapper) int {
+		lhsLen := len(a.matchIdx)
+		rhsLen := len(b.matchIdx)
+		return cmp.Compare(lhsLen, rhsLen)
+	})
+	useMVIndex := false
+	for _, matchIdxes := range allMatchIdxes {
+		// since matchIdxes are ordered by matchIdxes's length,
+		// we should use matchIdxes.pathIdx to locate where it comes from.
+		alternatives := path.PartialAlternativeIndexPaths[matchIdxes.pathIdx]
+		found := false
+		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
+		// By this way, a distinguished one is better.
+		for _, oneIdx := range matchIdxes.matchIdx {
+			var indexID int64
+			if alternatives[oneIdx][0].IsTablePath() {
+				indexID = -1
+			} else {
+				indexID = alternatives[oneIdx][0].Index.ID
+				// For MV index, we just choose the first (best) one, and we don't need to check to avoid choosing the
+				// same index.
+				if alternatives[oneIdx][0].Index.MVIndex {
+					useMVIndex = true
+					determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+						util.SliceDeepClone(alternatives[oneIdx])...)
+					found = true
+					break
+				}
+			}
+			if _, ok := usedIndexMap[indexID]; !ok {
+				// try to avoid all index partial paths are all about a single index.
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+					util.SliceDeepClone(alternatives[oneIdx])...)
+				usedIndexMap[indexID] = struct{}{}
+				found = true
+				break
+			}
+		}
+		if !found {
+			// just pick the same name index (just using the first one is ok), in case that there may be some other
+			// picked distinctive index path for other partial paths latter.
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+				util.SliceDeepClone(alternatives[matchIdxes.matchIdx[0]])...)
+			// uedIndexMap[oneORBranch[oneIdx].Index.ID] = struct{}{} must already be colored.
+>>>>>>> 94cf40a1e0d (planner: switch to `AccessPath.PartialAlternativeIndexPaths` for IndexMerge OR path with MV index (#58448))
 		}
 		// record the lowestCountAfterAccessIdx's chosen index.
 		usedIndexMap[indexID] = struct{}{}
 	}
+<<<<<<< HEAD
 	// since all the choice is done, check the all single index limitation, skip check for mv index.
 	// since ds index merge hints will prune other path ahead, lift the all single index limitation here.
 	if len(usedIndexMap) == 1 && len(ds.IndexMergeHints) <= 0 {
+=======
+	if len(usedIndexMap) == 1 && !useMVIndex {
+>>>>>>> 94cf40a1e0d (planner: switch to `AccessPath.PartialAlternativeIndexPaths` for IndexMerge OR path with MV index (#58448))
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, nil, false, property.PropNotMatched
 	}
@@ -1369,6 +1427,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
+		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
@@ -1376,6 +1435,12 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
+	for _, p := range determinedIndexPartialPaths {
+		if p.KeepIndexMergeORSourceFilter {
+			shouldKeepCurrentFilter = true
+			break
+		}
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for _, path := range determinedIndexPartialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
@@ -1403,21 +1468,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 
 	// step3: after the index merge path is determined, compute the countAfterAccess as usual.
-	accessConds := make([]expression.Expression, 0, len(determinedIndexPartialPaths))
-	for _, p := range determinedIndexPartialPaths {
-		indexCondsForP := p.AccessConds[:]
-		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
-		if len(indexCondsForP) > 0 {
-			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
-		}
-	}
-	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{accessDNF}, nil)
-	if err != nil {
-		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = cost.SelectionFactor
-	}
-	indexMergePath.CountAfterAccess = sel * ds.TableStats.RowCount
+	indexMergePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, determinedIndexPartialPaths)
 	if noSortItem {
 		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
 		// countAfterAccess, here the returned matchProperty should be PropNotMatched.
