@@ -89,7 +89,6 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 		ret = append(ret, ei)
 		bc.engines[indexID] = ei
 	}
-	bc.memRoot.Consume(numIdx * structSizeEngineInfo)
 	bc.tbl = tbl
 
 	logutil.Logger(bc.ctx).Info(LitInfoOpenEngine, zap.Int64("job ID", bc.jobID),
@@ -119,7 +118,6 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	if len(bc.engines) == 0 {
 		return nil
 	}
-	numIdx := int64(len(bc.engines))
 	for _, ei := range bc.engines {
 		ei.Close(opt&OptCleanData != 0)
 	}
@@ -139,8 +137,6 @@ func (bc *litBackendCtx) FinishAndUnregisterEngines(opt UnregisterOpt) error {
 	}
 
 	bc.engines = make(map[int64]*engineInfo, 10)
-
-	bc.memRoot.Release(numIdx * structSizeEngineInfo)
 
 	return nil
 }
