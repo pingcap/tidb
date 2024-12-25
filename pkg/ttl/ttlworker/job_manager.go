@@ -67,7 +67,16 @@ const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE cr
 const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE current_job_status IS NULL`
 const ttlTableStatusGCWithIDTemplate = ttlTableStatusGCWithoutIDTemplate + ` AND table_id NOT IN (%s)`
 
+<<<<<<< HEAD
 const timeFormat = time.DateTime
+=======
+// don't remove the rows for non-exist tables directly. Instead, set them to cancelled. In some special situations, the TTL job may still be able
+// to finish correctly. If that happen, the status will be updated from 'cancelled' to 'finished' in `(*ttlJob).finish`
+const ttlJobHistoryGCNonExistTableTemplate = `UPDATE mysql.tidb_ttl_job_history SET status = 'cancelled'
+	WHERE table_id NOT IN (SELECT table_id FROM mysql.tidb_ttl_table_status) AND status = 'running'`
+
+var timeFormat = time.DateTime
+>>>>>>> 2a72e7f012b (ttl: set the job history status to `cancelled` if it's removed in GC and it's still running (#58539))
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []any) {
 	return insertNewTableIntoStatusTemplate, []any{tableID, parentTableID}
@@ -1051,6 +1060,10 @@ func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
 
 	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCNonExistTableTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history for non-exist table", zap.Error(err))
 	}
 }
 
