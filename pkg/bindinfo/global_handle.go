@@ -201,9 +201,9 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			oldBinding := h.bindingCache.GetBinding(sqlDigest)
-			newBinding := removeDeletedBindings(merge(oldBinding, []*Binding{binding}))
-			if len(newBinding) > 0 {
-				err = h.bindingCache.SetBinding(sqlDigest, newBinding)
+			cachedBinding := pickCachedBinding(oldBinding, binding)
+			if cachedBinding != nil {
+				err = h.bindingCache.SetBinding(sqlDigest, cachedBinding)
 				if err != nil {
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
