@@ -40,8 +40,8 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// StmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type StmtSummaryByDigestKey struct {
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	SchemaName string
 	Digest     string
@@ -58,7 +58,7 @@ type StmtSummaryByDigestKey struct {
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *StmtSummaryByDigestKey) Hash() []byte {
+func (key *StmtDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
 		length := len(key.SchemaName) + len(key.Digest) + len(key.PrevDigest) + len(key.PlanDigest) + len(key.ResourceGroupName)
 		if cap(key.hash) < length {
@@ -73,7 +73,8 @@ func (key *StmtSummaryByDigestKey) Hash() []byte {
 	return key.hash
 }
 
-func (key *StmtSummaryByDigestKey) ResetHash() {
+// ResetHash resets the hash value.
+func (key *StmtDigestKey) ResetHash() {
 	key.hash = key.hash[:0]
 }
 
@@ -315,13 +316,13 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*StmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
-func (ssMap *stmtSummaryByDigestMap) AddStatement(key *StmtSummaryByDigestKey, sei *StmtExecInfo) {
+func (ssMap *stmtSummaryByDigestMap) AddStatement(key *StmtDigestKey, sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
 

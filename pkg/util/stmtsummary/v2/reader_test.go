@@ -463,8 +463,8 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 	return results
 }
 
-func genStmtSummaryByDigestKey(info *stmtsummary.StmtExecInfo) *stmtsummary.StmtSummaryByDigestKey {
-	return &stmtsummary.StmtSummaryByDigestKey{
+func genStmtSummaryByDigestKey(info *stmtsummary.StmtExecInfo) *stmtsummary.StmtDigestKey {
+	return &stmtsummary.StmtDigestKey{
 		SchemaName:        info.SchemaName,
 		Digest:            info.Digest,
 		PrevDigest:        info.PrevSQLDigest,

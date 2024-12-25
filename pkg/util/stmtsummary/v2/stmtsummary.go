@@ -239,7 +239,7 @@ func (s *StmtSummary) SetRefreshInterval(v uint32) error {
 // of StmtSummary. Before adding, it will check whether the current window has
 // expired, and if it has expired, the window will be persisted asynchronously
 // and a new window will be created to replace the current one.
-func (s *StmtSummary) Add(k *stmtsummary.StmtSummaryByDigestKey, info *stmtsummary.StmtExecInfo) {
+func (s *StmtSummary) Add(k *stmtsummary.StmtDigestKey, info *stmtsummary.StmtExecInfo) {
 	if s.closed.Load() {
 		return
 	}
@@ -423,7 +423,7 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
-		w.evicted.add(k.(*stmtsummary.StmtSummaryByDigestKey), r.StmtRecord)
+		w.evicted.add(k.(*stmtsummary.StmtDigestKey), r.StmtRecord)
 	})
 	return w
 }
@@ -456,7 +456,7 @@ func newStmtEvicted() *stmtEvicted {
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtsummary.StmtSummaryByDigestKey, record *StmtRecord) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
 	if key == nil || record == nil {
 		return
 	}
@@ -495,7 +495,7 @@ func (*mockStmtStorage) sync() error {
 /* Public proxy functions between v1 and v2 */
 
 // Add wraps GlobalStmtSummary.Add and stmtsummary.StmtSummaryByDigestMap.AddStatement.
-func Add(key *stmtsummary.StmtSummaryByDigestKey, stmtExecInfo *stmtsummary.StmtExecInfo) {
+func Add(key *stmtsummary.StmtDigestKey, stmtExecInfo *stmtsummary.StmtExecInfo) {
 	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
 		GlobalStmtSummary.Add(key, stmtExecInfo)
 	} else {

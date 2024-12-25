@@ -2019,10 +2019,10 @@ func (a *ExecStmt) SummaryStmt(succ bool, execDetail execdetails.ExecDetails) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	if sessVars.CacheStmtExecInfoKey == nil {
-		sessVars.CacheStmtExecInfoKey = &stmtsummary.StmtSummaryByDigestKey{}
+	if sessVars.CacheStmtDigestKey == nil {
+		sessVars.CacheStmtDigestKey = &stmtsummary.StmtDigestKey{}
 	}
-	key := sessVars.CacheStmtExecInfoKey
+	key := sessVars.CacheStmtDigestKey
 	key.ResetHash()
 	key.SchemaName = stmtExecInfo.SchemaName
 	key.Digest = stmtExecInfo.Digest
