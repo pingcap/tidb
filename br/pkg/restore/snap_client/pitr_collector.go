@@ -41,7 +41,8 @@ type pitrCollector struct {
 	putMigOnce          sync.Once
 
 	// Delegates.
-	tso func(ctx context.Context) (uint64, error)
+	tso            func(ctx context.Context) (uint64, error)
+	restoreSuccess func() bool
 }
 
 type extraBackupMeta struct {
@@ -65,7 +66,7 @@ func (c *pitrCollector) close() error {
 	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if !summary.Succeed() {
+	if !c.restoreSuccess() {
 		log.Warn("Backup not success, put a half-finished metadata to the log backup.",
 			zap.Stringer("uuid", c.restoreUUID))
 		return errors.Annotatef(c.persistExtraBackupMeta(cx), "failed to persist the meta")
@@ -115,11 +116,6 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 		}
 	}
 
-	err := c.persistExtraBackupMeta(ctx)
-	if err != nil {
-		return nil, errors.Annotatef(err, "failed to persist backup meta when finishing batch")
-	}
-
 	waitDone := func() error {
 		err := eg.Wait()
 		if err != nil {
@@ -129,6 +125,11 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 
 		logutil.CL(ctx).Info("Uploaded a batch of SSTs for future PiTR.",
 			zap.Duration("take", time.Since(begin)), zap.Int("file-count", fileCount))
+
+		err = c.persistExtraBackupMeta(ctx)
+		if err != nil {
+			return errors.Annotatef(err, "failed to persist backup meta when finishing batch")
+		}
 		return nil
 	}
 	return waitDone, nil
@@ -320,6 +321,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 		return nil, errors.Trace(err)
 	}
 	coll.restoreStorage = restoreStrg
+	coll.restoreSuccess = summary.Succeed
 	coll.resetCommitting()
 	return coll, nil
 }
