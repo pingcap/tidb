@@ -1656,7 +1656,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
         "Plan": [
           "TableReader_28 8000.00 root  MppVersion: 2, data:ExchangeSender_27",
           "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
@@ -1669,7 +1669,7 @@
         "Warn": null
       },
       {
-        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 2. anti semi join, one join key + other condition + hint",
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
         "Plan": [
           "TableReader_28 8000.00 root  MppVersion: 2, data:ExchangeSender_27",
           "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
