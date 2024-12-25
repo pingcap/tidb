@@ -149,7 +149,7 @@ func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	}
 }
 
-func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
+func (*readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	return nil
 }

@@ -2447,6 +2447,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 				if err != nil {
 					return err
 				}
+				//nolint:revive,all_revive
 				defer bc.Close()
 			}
 			err = bc.CollectRemoteDuplicateRows(indexInfo.ID, t)

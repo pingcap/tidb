@@ -154,7 +154,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
-func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
+func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	return nil
 }
