@@ -1074,16 +1074,17 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 		RetType:  retType,
 		Function: f,
 	}
-	return optimizeReadonlyVar(ctx, sf), nil
+	return convertReadonlyVarToConst(ctx, sf), nil
 }
 
-// optimizeReadonlyVar tries to convert the readonly user variables to constants.
-func optimizeReadonlyVar(ctx BuildContext, getVar *ScalarFunction) Expression {
+// convertReadonlyVarToConst tries to convert the readonly user variables to constants.
+func convertReadonlyVarToConst(ctx BuildContext, getVar *ScalarFunction) Expression {
 	arg0, isConst := getVar.GetArgs()[0].(*Constant)
 	if !isConst || arg0.DeferredExpr != nil {
 		return getVar
 	}
-	isReadonly := ctx.IsReadonlyUserVar(arg0.Value.GetString())
+	varName := arg0.Value.GetString()
+	isReadonly := ctx.IsReadonlyUserVar(varName)
 	if !isReadonly {
 		return getVar
 	}
@@ -1092,7 +1093,7 @@ func optimizeReadonlyVar(ctx BuildContext, getVar *ScalarFunction) Expression {
 		intest.Assert(false, "readonly user variable should not meet error when executing.")
 		return getVar
 	}
-	d, ok := ctx.GetEvalCtx().GetUserVarsReader().GetUserVarVal(arg0.Value.GetString())
+	d, ok := ctx.GetEvalCtx().GetUserVarsReader().GetUserVarVal(varName)
 	if ok && d.Kind() == types.KindBinaryLiteral {
 		v.SetBinaryLiteral(v.GetBytes())
 	}
