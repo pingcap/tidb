@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -240,18 +239,11 @@ func (s *StmtSummary) SetRefreshInterval(v uint32) error {
 // of StmtSummary. Before adding, it will check whether the current window has
 // expired, and if it has expired, the window will be persisted asynchronously
 // and a new window will be created to replace the current one.
-func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
+func (s *StmtSummary) Add(k *stmtsummary.StmtSummaryByDigestKey, info *stmtsummary.StmtExecInfo) {
 	if s.closed.Load() {
 		return
 	}
 
-	k := &stmtKey{
-		schemaName:        info.SchemaName,
-		digest:            info.Digest,
-		prevDigest:        info.PrevSQLDigest,
-		planDigest:        info.PlanDigest,
-		resourceGroupName: info.ResourceGroupName,
-	}
 	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
 
 	// Add info to the current statistics window.
@@ -431,7 +423,7 @@ func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
-		w.evicted.add(k.(*stmtKey), r.StmtRecord)
+		w.evicted.add(k.(*stmtsummary.StmtSummaryByDigestKey), r.StmtRecord)
 	})
 	return w
 }
@@ -444,36 +436,6 @@ func (w *stmtWindow) clear() {
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
 	sync() error
-}
-
-// stmtKey defines key for stmtElement.
-type stmtKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
-	// `hash` is the hash value of this object.
-	hash []byte
-}
-
-// Hash implements SimpleLRUCache.Key.
-// Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
-// `prevSQL` is included in the key To distinguish different transactions.
-func (k *stmtKey) Hash() []byte {
-	if len(k.hash) == 0 {
-		k.hash = make([]byte, 0, len(k.schemaName)+len(k.digest)+len(k.prevDigest)+len(k.planDigest)+len(k.resourceGroupName))
-		k.hash = append(k.hash, hack.Slice(k.digest)...)
-		k.hash = append(k.hash, hack.Slice(k.schemaName)...)
-		k.hash = append(k.hash, hack.Slice(k.prevDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.planDigest)...)
-		k.hash = append(k.hash, hack.Slice(k.resourceGroupName)...)
-	}
-	return k.hash
 }
 
 type stmtEvicted struct {
@@ -494,7 +456,7 @@ func newStmtEvicted() *stmtEvicted {
 	}
 }
 
-func (e *stmtEvicted) add(key *stmtKey, record *StmtRecord) {
+func (e *stmtEvicted) add(key *stmtsummary.StmtSummaryByDigestKey, record *StmtRecord) {
 	if key == nil || record == nil {
 		return
 	}
@@ -533,11 +495,11 @@ func (*mockStmtStorage) sync() error {
 /* Public proxy functions between v1 and v2 */
 
 // Add wraps GlobalStmtSummary.Add and stmtsummary.StmtSummaryByDigestMap.AddStatement.
-func Add(stmtExecInfo *stmtsummary.StmtExecInfo) {
+func Add(key *stmtsummary.StmtSummaryByDigestKey, stmtExecInfo *stmtsummary.StmtExecInfo) {
 	if config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent {
-		GlobalStmtSummary.Add(stmtExecInfo)
+		GlobalStmtSummary.Add(key, stmtExecInfo)
 	} else {
-		stmtsummary.StmtSummaryByDigestMap.AddStatement(stmtExecInfo)
+		stmtsummary.StmtSummaryByDigestMap.AddStatement(key, stmtExecInfo)
 	}
 }
 

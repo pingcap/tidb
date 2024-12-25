@@ -2019,7 +2019,17 @@ func (a *ExecStmt) SummaryStmt(succ bool, execDetail execdetails.ExecDetails) {
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
 	}
-	stmtsummaryv2.Add(stmtExecInfo)
+	if sessVars.CacheStmtExecInfoKey == nil {
+		sessVars.CacheStmtExecInfoKey = &stmtsummary.StmtSummaryByDigestKey{}
+	}
+	key := sessVars.CacheStmtExecInfoKey
+	key.ResetHash()
+	key.SchemaName = stmtExecInfo.SchemaName
+	key.Digest = stmtExecInfo.Digest
+	key.PrevDigest = stmtExecInfo.PrevSQLDigest
+	key.PlanDigest = stmtExecInfo.PlanDigest
+	key.ResourceGroupName = stmtExecInfo.ResourceGroupName
+	stmtsummaryv2.Add(key, stmtExecInfo)
 }
 
 // GetOriginalSQL implements StmtExecLazyInfo interface.

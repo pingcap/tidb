@@ -1715,6 +1715,8 @@ type SessionVars struct {
 
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+	// CacheStmtExecInfoKey is a cache too.
+	CacheStmtExecInfoKey *stmtsummary.StmtSummaryByDigestKey
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

@@ -60,7 +60,10 @@ type StmtSummaryByDigestKey struct {
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *StmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.SchemaName)+len(key.Digest)+len(key.PrevDigest)+len(key.PlanDigest)+len(key.ResourceGroupName))
+		length := len(key.SchemaName) + len(key.Digest) + len(key.PrevDigest) + len(key.PlanDigest) + len(key.ResourceGroupName)
+		if cap(key.hash) < length {
+			key.hash = make([]byte, 0, length)
+		}
 		key.hash = append(key.hash, hack.Slice(key.Digest)...)
 		key.hash = append(key.hash, hack.Slice(key.SchemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.PrevDigest)...)
@@ -68,6 +71,10 @@ func (key *StmtSummaryByDigestKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(key.ResourceGroupName)...)
 	}
 	return key.hash
+}
+
+func (key *StmtSummaryByDigestKey) ResetHash() {
+	key.hash = key.hash[:0]
 }
 
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
@@ -314,7 +321,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 }
 
 // AddStatement adds a statement to StmtSummaryByDigestMap.
-func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
+func (ssMap *stmtSummaryByDigestMap) AddStatement(key *StmtSummaryByDigestKey, sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
 
@@ -335,13 +342,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	key := &StmtSummaryByDigestKey{
-		SchemaName:        sei.SchemaName,
-		Digest:            sei.Digest,
-		PrevDigest:        sei.PrevSQLDigest,
-		PlanDigest:        sei.PlanDigest,
-		ResourceGroupName: sei.ResourceGroupName,
-	}
 	// Calculate hash value in advance, to reduce the time holding the lock.
 	key.Hash()
 
