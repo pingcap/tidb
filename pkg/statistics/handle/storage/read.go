@@ -565,6 +565,24 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
 }
 
+func UpdateColSizeFromStorage(sctx sessionctx.Context, table *statistics.Table) error {
+	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id, tot_col_size from mysql.stats_histograms where table_id = %?", table.PhysicalID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if row.GetInt64(0) > 0 {
+			continue
+		}
+		histID := row.GetInt64(1)
+		totColSize := row.GetInt64(2)
+		if col := table.GetCol(histID); col != nil {
+			col.TotColSize = totColSize
+		}
+	}
+	return nil
+}
+
 // LoadHistogram will load histogram from storage.
 func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
 	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)

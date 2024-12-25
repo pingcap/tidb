@@ -189,12 +189,30 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		}
 		tableInfo := table.Meta()
 		// If the table is not updated, we can skip it.
-		if oldTbl, ok := s.Get(physicalID); ok &&
-			oldTbl.Version >= version &&
+
+		oldTbl, ok := s.Get(physicalID)
+		if ok && oldTbl.Version >= version &&
 			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
-		tbl, err := s.statsHandle.TableStatsFromStorage(
+		var tbl *statistics.Table
+		// If the column/index stats has not been updated, we can reuse the old table stats.
+		// Only need to update the count and modify count and the column sizes.
+		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsFullUpdateVersion >= latestHistUpdateVersion {
+			tbl = oldTbl.Copy()
+			err = s.statsHandle.UpdateColSizeFromStroage(tbl)
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"error occurred when read table stats",
+					zap.String("table", tableInfo.Name.O),
+					zap.Error(err),
+				)
+				continue
+			}
+			// count and modify count is updated in finalProcess
+			goto finalProcess
+		}
+		tbl, err = s.statsHandle.TableStatsFromStorage(
 			tableInfo,
 			physicalID,
 			false,
@@ -213,6 +231,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			tblToUpdateOrDelete.addToDelete(physicalID)
 			continue
 		}
+	finalProcess:
 		tbl.Version = version
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
