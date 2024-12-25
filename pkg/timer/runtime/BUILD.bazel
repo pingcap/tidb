@@ -35,7 +35,7 @@ go_test(
     embed = [":runtime"],
     flaky = True,
     race = "on",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/timer/api",

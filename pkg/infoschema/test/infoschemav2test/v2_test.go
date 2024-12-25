@@ -17,6 +17,7 @@ package infoschemav2test
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -533,4 +535,78 @@ func TestSnapshotInfoschemaReader(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("0"))
 	sql = fmt.Sprintf("select * from INFORMATION_SCHEMA.TABLES as of timestamp '%s' where table_schema = 'issue55827'", timeStr)
 	tk.MustQuery(sql).Check(testkit.Rows())
+}
+
+func TestInfoSchemaCachedAutoIncrement(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	autoid.SetStep(1)
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	tk.MustExec("create table t (a int primary key auto_increment);")
+	autoIncQuery := "select auto_increment from information_schema.tables where table_name = 't' and table_schema = 'test';"
+
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values (),(),();")
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("4"))
+
+	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024;")
+	tk.MustExec("create table t1 (a int);") // trigger infoschema cache reload
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
+	tk.MustExec("insert into t values ();")
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("5"))
+	tk.MustExec("set @@global.tidb_schema_cache_size = 0;")
+	tk.MustExec("drop table t1;") // trigger infoschema cache reload
+	tk.MustQuery(autoIncQuery).Check(testkit.Rows("0"))
+}
+
+func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	timeSafe := time.Now().Add(-48 * 60 * 60 * time.Second).Format("20060102-15:04:05 -0700 MST")
+	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[1]s'`
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
+
+	tk.MustExec("use test")
+	infoCache := dom.InfoCache()
+	schemaTS1 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+
+	// After some DDL changes
+	tk.MustExec("create table dummytbl (id int)")
+	schemaTS2 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.LessOrEqual(t, schemaTS1, schemaTS2)
+
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+
+	tk.MustExec("alter table dummytbl add column (c int)")
+	schemaTS3 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.LessOrEqual(t, schemaTS2, schemaTS3)
+
+	tk.MustExec("alter table dummytbl add index idx(c)")
+	schemaTS4 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.LessOrEqual(t, schemaTS3, schemaTS4)
+
+	// Reload several times
+	require.NoError(t, dom.Reload())
+	schemaTS5 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.Equal(t, uint64(math.MaxUint64), schemaTS5)
+
+	require.NoError(t, dom.Reload())
+	schemaTS6 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.Equal(t, uint64(math.MaxUint64), schemaTS6)
+
+	tk.MustQuery("select * from dummytbl").Check(testkit.Rows())
+	schemaTS7 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.Less(t, schemaTS4, schemaTS7)
+
+	// Now snapshot read using old infoschema
+	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = %d", ts))
+	tk.MustQuery("select * from dummytbl").Check(testkit.Rows())
+	schemaTS8 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
+	require.True(t, schemaTS8 < schemaTS7 && schemaTS8 > schemaTS2)
 }

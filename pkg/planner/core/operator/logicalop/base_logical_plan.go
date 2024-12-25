@@ -56,13 +56,21 @@ type BaseLogicalPlan struct {
 
 // Hash64 implements HashEquals.<0th> interface.
 func (p *BaseLogicalPlan) Hash64(h base2.Hasher) {
-	intest.Assert(false, "Hash64 should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Hash64 should not be called directly")
+	}
 	h.HashInt(p.ID())
 }
 
 // Equals implements HashEquals.<1st> interface.
 func (p *BaseLogicalPlan) Equals(other any) bool {
-	intest.Assert(false, "Equals should not be called directly")
+	_, ok1 := p.self.(*LogicalSequence)
+	_, ok2 := p.self.(*LogicalMaxOneRow)
+	if !ok1 && !ok2 {
+		intest.Assert(false, "Equals should not be called directly")
+	}
 	if other == nil {
 		return false
 	}
@@ -208,11 +216,11 @@ func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema)
 }
 
 // DeriveStats implements LogicalPlan.<11th> interface.
-func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.SetStats(childStats[0])
 		return p.StatsInfo(), nil

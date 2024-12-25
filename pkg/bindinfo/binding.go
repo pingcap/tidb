@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -38,12 +39,8 @@ const (
 	Using = "using"
 	// deleted is the bind info's deleted status.
 	deleted = "deleted"
-	// Invalid is the bind info's invalid status.
-	Invalid = "invalid"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
-	// Capture indicates the binding is captured by TiDB automatically.
-	Capture = "capture"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest
@@ -71,7 +68,7 @@ type Binding struct {
 	SQLDigest  string
 	PlanDigest string
 
-	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
 }
 
@@ -104,33 +101,15 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
-// Bindings represents a sql bind record retrieved from the storage.
-type Bindings []Binding
-
-// Copy get the copy of bindings
-func (br Bindings) Copy() Bindings {
-	nbr := append(make(Bindings, 0, len(br)), br...)
-	return nbr
-}
-
-// HasAvailableBinding checks if there are any available bindings in bind record.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func HasAvailableBinding(br Bindings) bool {
-	if br == nil {
-		return false
-	}
-	for _, binding := range br {
-		if binding.IsBindingAvailable() {
-			return true
-		}
-	}
-	return false
-}
-
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(sctx sessionctx.Context, binding *Binding) error {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
+		}
+	}()
+
 	p := parser.New()
 	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
 		return nil
@@ -141,7 +120,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isFuzzyBinding(bindingStmt)
+	isFuzzy := isCrossDBBinding(bindingStmt)
 	if isFuzzy {
 		dbName = "*" // ues '*' for universal bindings
 	}
@@ -177,19 +156,19 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 }
 
 // `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindings, rBindings Bindings) Bindings {
+func merge(lBindings, rBindings []*Binding) []*Binding {
 	if lBindings == nil {
 		return rBindings
 	}
 	if rBindings == nil {
 		return lBindings
 	}
-	result := lBindings.Copy()
+	result := lBindings
 	for i := range rBindings {
 		rbind := rBindings[i]
 		found := false
 		for j, lbind := range lBindings {
-			if lbind.isSame(&rbind) {
+			if lbind.isSame(rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
 					result[j] = rbind
@@ -204,23 +183,14 @@ func merge(lBindings, rBindings Bindings) Bindings {
 	return result
 }
 
-func removeDeletedBindings(br Bindings) Bindings {
-	result := make(Bindings, 0, len(br))
+func removeDeletedBindings(br []*Binding) []*Binding {
+	result := make([]*Binding, 0, len(br))
 	for _, binding := range br {
 		if binding.Status != deleted {
 			result = append(result, binding)
 		}
 	}
 	return result
-}
-
-// size calculates the memory size of a Bindings.
-func (br Bindings) size() float64 {
-	mem := float64(0)
-	for _, binding := range br {
-		mem += binding.size()
-	}
-	return mem
 }
 
 // size calculates the memory size of a bind info.

@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -1348,7 +1349,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
 	pdCli := h.RegionCache.PDClient()
-	regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+	regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,7 +1372,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 		indices[i].Name = index.Meta().Name.String()
 		indices[i].ID = indexID
 		startKey, endKey := tablecodec.GetTableIndexKeyRange(id, indexID)
-		regions, err := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 		if err != nil {
 			return nil, err
 		}
@@ -1957,7 +1958,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	hook := req.FormValue("ddl_hook")
 	switch hook {
 	case "ctc_hook":
-		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		err := failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			log.Info("on job run before", zap.String("job", job.String()))
 			// Only block the ctc type ddl here.
 			if job.Type != model.ActionModifyColumn {
@@ -1974,7 +1975,7 @@ func (DDLHookHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "default_hook":
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 
 	handler.WriteData(w, "success!")

@@ -20,6 +20,7 @@ go_library(
         "safe_point.go",
         "schema.go",
         "store_manager.go",
+        "wait.go",
         "worker.go",
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/utils",
@@ -85,7 +86,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 34,
     deps = [
         "//br/pkg/errors",
         "//pkg/kv",

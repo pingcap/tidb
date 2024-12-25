@@ -134,7 +134,7 @@ func TestForeignKey(t *testing.T) {
 	var mu sync.Mutex
 	checkOK := false
 	var hookErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -171,7 +171,7 @@ func TestForeignKey(t *testing.T) {
 	checkOK = false
 	mu.Unlock()
 	// fix data race pr/#9491
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -199,7 +199,7 @@ func TestForeignKey(t *testing.T) {
 	mu.Unlock()
 	require.NoError(t, hErr)
 	require.True(t, ok)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	tk := testkit.NewTestKit(t, store)
 	jobID := testDropTable(tk, t, dbInfo.Name.L, tblInfo.Name.L, dom)
@@ -224,7 +224,7 @@ func TestTruncateOrDropTableWithForeignKeyReferred2(t *testing.T) {
 	var wg sync.WaitGroup
 	var truncateErr, dropErr error
 	testTruncate := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
 		}
@@ -275,7 +275,7 @@ func TestDropIndexNeededInForeignKey2(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var dropErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
 		}
@@ -309,7 +309,7 @@ func TestDropDatabaseWithForeignKeyReferred2(t *testing.T) {
 	tk.MustExec("create database test2")
 	var wg sync.WaitGroup
 	var dropErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StateNone {
 			return
 		}
@@ -345,7 +345,7 @@ func TestAddForeignKey2(t *testing.T) {
 	tk.MustExec("create table t2 (id int key, b int, index(b));")
 	var wg sync.WaitGroup
 	var addErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState != model.StatePublic || job.Type != model.ActionDropIndex {
 			return
 		}
@@ -380,7 +380,7 @@ func TestAddForeignKey3(t *testing.T) {
 
 	var insertErrs []error
 	var deleteErrs []error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddForeignKey {
 			return
 		}
@@ -417,7 +417,7 @@ func TestForeignKeyInWriteOnlyMode(t *testing.T) {
 	tkDDL.MustExec("insert into parent values(1)")
 
 	var notExistErrs []error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionCreateTable && job.TableName == "child" {
 			if job.SchemaState == model.StateDeleteOnly {
 				// tk with the latest schema will insert data into child
@@ -436,7 +436,7 @@ func TestForeignKeyInWriteOnlyMode(t *testing.T) {
 	})
 	tkDDL.MustExec("create table child (id int, pid int, index idx_pid(pid), foreign key (pid) references parent(id) on delete cascade);")
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 	for _, err := range notExistErrs {
 		require.Error(t, err)

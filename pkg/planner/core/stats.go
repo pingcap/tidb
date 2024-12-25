@@ -60,7 +60,7 @@ func GetStats4Test(p base.LogicalPlan) *property.StatsInfo {
 
 func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, err error) {
 	ts := lp.(*logicalop.LogicalTableScan)
-	initStats(ts.Source, nil)
+	initStats(ts.Source)
 	// PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	exprCtx := ts.SCtx().GetExprCtx()
 	for i, expr := range ts.AccessConds {
@@ -91,7 +91,7 @@ func deriveStats4LogicalTableScan(lp base.LogicalPlan) (_ *property.StatsInfo, e
 
 func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Schema) (*property.StatsInfo, error) {
 	is := lp.(*logicalop.LogicalIndexScan)
-	initStats(is.Source, nil)
+	initStats(is.Source)
 	exprCtx := is.SCtx().GetExprCtx()
 	for i, expr := range is.AccessConds {
 		is.AccessConds[i] = expression.PushDownNot(exprCtx, expr)
@@ -112,12 +112,12 @@ func deriveStats4LogicalIndexScan(lp base.LogicalPlan, selfSchema *expression.Sc
 	return is.StatsInfo(), nil
 }
 
-func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, error) {
 	ds := lp.(*logicalop.DataSource)
-	if ds.StatsInfo() != nil && len(colGroups) == 0 {
+	if ds.StatsInfo() != nil {
 		return ds.StatsInfo(), nil
 	}
-	initStats(ds, colGroups)
+	initStats(ds)
 	if ds.StatsInfo() != nil {
 		// Just reload the GroupNDVs.
 		selectivity := ds.StatsInfo().RowCount / ds.TableStats.RowCount
@@ -160,7 +160,11 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugTraceAccessPaths(ds.SCtx(), ds.PossibleAccessPaths)
 	}
-	ds.AccessPathMinSelectivity = getMinSelectivityFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
+	indexForce := false
+	ds.AccessPathMinSelectivity, indexForce = getGeneralAttributesFromPaths(ds.PossibleAccessPaths, float64(ds.TblColHists.RealtimeCount))
+	if indexForce {
+		ds.SCtx().GetSessionVars().StmtCtx.SetIndexForce()
+	}
 
 	return ds.StatsInfo(), nil
 }
@@ -404,25 +408,29 @@ func detachCondAndBuildRangeForPath(
 	return err
 }
 
-func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64) float64 {
+func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
 	minSelectivity := 1.0
-	if totalRowCount <= 0 {
-		return minSelectivity
-	}
+	indexForce := false
 	for _, path := range paths {
 		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
 		// but we still consider their AccessPath.CountAfterAccess.
-		if path.IsTablePath() || path.PartialIndexPaths != nil {
-			minSelectivity = min(minSelectivity, path.CountAfterAccess/totalRowCount)
-			continue
+		if totalRowCount > 0 {
+			if path.IsTablePath() || path.PartialIndexPaths != nil {
+				minSelectivity = min(minSelectivity, path.CountAfterAccess/totalRowCount)
+			} else {
+				minSelectivity = min(minSelectivity, path.CountAfterIndex/totalRowCount)
+			}
 		}
-		minSelectivity = min(minSelectivity, path.CountAfterIndex/totalRowCount)
+		if !indexForce && path.Forced {
+			indexForce = true
+		}
 	}
-	return minSelectivity
+	return minSelectivity, indexForce
 }
 
-func getGroupNDVs(ds *logicalop.DataSource, colGroups [][]*expression.Column) []property.GroupNDV {
-	if colGroups == nil {
+func getGroupNDVs(ds *logicalop.DataSource) []property.GroupNDV {
+	colGroups := ds.AskedColumnGroup
+	if len(ds.AskedColumnGroup) == 0 {
 		return nil
 	}
 	tbl := ds.TableStats.HistColl
@@ -489,12 +497,7 @@ func getTblInfoForUsedStatsByPhysicalID(sctx base.PlanContext, id int64) (fullNa
 	return
 }
 
-func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
-	if ds.TableStats != nil {
-		// Reload GroupNDVs since colGroups may have changed.
-		ds.TableStats.GroupNDVs = getGroupNDVs(ds, colGroups)
-		return
-	}
+func initStats(ds *logicalop.DataSource) {
 	if ds.StatisticTable == nil {
 		ds.StatisticTable = getStatsTable(ds.SCtx(), ds.TableInfo, ds.PhysicalTableID)
 	}
@@ -523,7 +526,7 @@ func initStats(ds *logicalop.DataSource, colGroups [][]*expression.Column) {
 		tableStats.ColNDVs[col.UniqueID] = cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
 	}
 	ds.TableStats = tableStats
-	ds.TableStats.GroupNDVs = getGroupNDVs(ds, colGroups)
+	ds.TableStats.GroupNDVs = getGroupNDVs(ds)
 	ds.TblColHists = ds.StatisticTable.ID2UniqueID(ds.TblCols)
 	for _, col := range ds.TableInfo.Columns {
 		if col.State != model.StatePublic {

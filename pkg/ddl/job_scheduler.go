@@ -437,7 +437,6 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 		}
 
 		s.deliveryJob(wk, targetPool, &job)
-
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
@@ -476,6 +475,10 @@ func (s *jobScheduler) deliveryJob(wk *worker, pool *workerPool, job *model.Job)
 	jobCtx := s.getJobRunCtx(job.ID, job.TraceInfo)
 
 	s.wg.Run(func() {
+		start := time.Now()
+		defer func() {
+			metrics.DDLRunJobOpHist.Observe(time.Since(start).Seconds())
+		}()
 		defer func() {
 			r := recover()
 			if r != nil {
@@ -552,7 +555,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
 func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
-	failpoint.InjectCall("beforeRunOneJobStep")
+	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
@@ -596,7 +599,7 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 		}
 	})
 
-	failpoint.InjectCall("beforeWaitSchemaChanged", job, schemaVer)
+	failpoint.InjectCall("beforeWaitSchemaSynced", job, schemaVer)
 	// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 	// If the job is done or still running or rolling back, we will wait 2 * lease time or util MDL synced to guarantee other servers to update
 	// the newest schema.
@@ -606,12 +609,16 @@ func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobConte
 	s.cleanMDLInfo(job, ownerID)
 	jobCtx.removeUnSynced(job.ID)
 
-	failpoint.InjectCall("onJobUpdated", job)
+	failpoint.InjectCall("afterWaitSchemaSynced", job)
 	return nil
 }
 
 // cleanMDLInfo cleans metadata lock info.
 func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
+	start := time.Now()
+	defer func() {
+		metrics.DDLCleanMDLInfoHist.Observe(time.Since(start).Seconds())
+	}()
 	if !variable.EnableMDL.Load() {
 		return
 	}

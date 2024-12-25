@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	storepkg "github.com/pingcap/tidb/pkg/store"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -457,7 +460,9 @@ const (
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
-		KEY (update_time)
+		KEY (update_time),
+		INDEX idx_schema_table_state (table_schema, table_name, state),
+		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
 	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
@@ -589,8 +594,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateGlobalTaskHistory is a table about history global task.
@@ -610,8 +616,9 @@ const (
 		step INT(11),
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
+		modify_params json,
 		key(state),
-      	UNIQUE KEY task_key(task_key)
+		UNIQUE KEY task_key(task_key)
 	);`
 
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
@@ -797,6 +804,29 @@ func bootstrap(s sessiontypes.Session) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func getFunctionName(f func(sessiontypes.Session, int64)) (string, error) {
+	if f == nil {
+		return "", errors.New("function is nil")
+	}
+
+	funcPtr := reflect.ValueOf(f).Pointer()
+	if funcPtr == 0 {
+		return "", errors.New("invalid function pointer")
+	}
+
+	fullName := runtime.FuncForPC(funcPtr).Name()
+	if fullName == "" {
+		return "", errors.New("unable to retrieve function name")
+	}
+
+	parts := strings.Split(fullName, ".")
+	if len(parts) == 0 {
+		return "", errors.New("invalid function name structure")
+	}
+
+	return parts[len(parts)-1], nil
 }
 
 const (
@@ -1186,11 +1216,29 @@ const (
 	// version 217
 	// Keep tidb_schema_cache_size to 0 if this variable does not exist (upgrading from old version pre 8.1).
 	version217 = 217
+
+	// version 218
+	// enable fast_create_table on default
+	version218 = 218
+
+	// ...
+	// [version219, version238] is the version range reserved for patches of 8.5.x
+	// ...
+
+	// next version should start with 239
+
+	// version 239
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version239 = 239
+
+	// version 240
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version240 = 240
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version217
+var currentBootstrapVersion int64 = version240
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1363,6 +1411,9 @@ var (
 		upgradeToVer215,
 		upgradeToVer216,
 		upgradeToVer217,
+		upgradeToVer218,
+		upgradeToVer239,
+		upgradeToVer240,
 	}
 )
 
@@ -1427,7 +1478,7 @@ var (
 )
 
 func acquireLock(store kv.Storage) (func(), error) {
-	etcdCli, err := domain.NewEtcdCli(store)
+	etcdCli, err := storepkg.NewEtcdCli(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1528,13 +1579,18 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		funcName, err := getFunctionName(upgrade)
+		terror.MustNil(err)
 		upgrade(s, ver)
+		logutil.BgLogger().Info("upgrade in progress, a version has just been completed or be skipped.",
+			zap.Int64("old-start-version", ver),
+			zap.String("in-progress-version", funcName),
+			zap.Int64("latest-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
 	}
 
-	variable.DDLForce2Queue.Store(false)
 	updateBootstrapVer(s)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err = s.ExecuteInternal(ctx, "COMMIT")
@@ -3252,6 +3308,39 @@ func upgradeToVer217(s sessiontypes.Session, ver int64) {
 	// If tidb_schema_cache_size does not exist, insert a record and set the value to 0
 	// Otherwise do nothing.
 	mustExecute(s, "INSERT IGNORE INTO mysql.global_variables VALUES ('tidb_schema_cache_size', 0)")
+}
+
+func upgradeToVer218(_ sessiontypes.Session, ver int64) {
+	if ver >= version218 {
+		return
+	}
+	// empty, just make lint happy.
+}
+
+func upgradeToVer239(s sessiontypes.Session, ver int64) {
+	if ver >= version239 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+const (
+	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
+	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
+	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
+	// simpler index directly for non-partitioned tables.
+	addAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
+	// addAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
+	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
+)
+
+func upgradeToVer240(s sessiontypes.Session, ver int64) {
+	if ver >= version240 {
+		return
+	}
+	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

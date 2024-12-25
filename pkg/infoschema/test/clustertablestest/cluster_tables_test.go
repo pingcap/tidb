@@ -1972,3 +1972,54 @@ func TestMDLViewIDConflict(t *testing.T) {
 	txnTK2.MustExec("COMMIT")
 	wg.Wait()
 }
+
+func TestPlanCacheView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select a from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
+
+	tk.MustExec("use test")
+	tk.MustExec(`prepare st from 'select a from t where a in (?)'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache order by executions`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2",
+			":10080 select a from t where a in (?) 3")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
+}

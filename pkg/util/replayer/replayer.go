@@ -82,6 +82,6 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().TempDir)
 	return filepath.Join(tidbLogDir, "replayer")
 }

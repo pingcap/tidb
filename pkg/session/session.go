@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	stderrs "errors"
 	"fmt"
+	"iter"
 	"math"
 	"math/rand"
 	"runtime/pprof"
@@ -128,6 +129,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func init() {
@@ -414,18 +416,12 @@ func (s *session) GetSessionManager() util.SessionManager {
 	return s.sessionManager
 }
 
-func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
+func (s *session) UpdateColStatsUsage(colStatsUsage iter.Seq[model.TableItemID]) {
 	if s.statsCollector == nil {
 		return
 	}
 	t := time.Now()
-	colMap := make(map[model.TableItemID]time.Time, len(predicateColumns))
-	for _, col := range predicateColumns {
-		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
-		intest.Assert(!col.IsIndex, "predicate column should only be table column")
-		colMap[col] = t
-	}
-	s.statsCollector.UpdateColStatsUsage(colMap)
+	s.statsCollector.UpdateColStatsUsage(colStatsUsage, t)
 }
 
 // FieldList returns fields list of a table.
@@ -467,6 +463,7 @@ func (s *session) FieldList(tableName string) ([]*resolve.ResultField, error) {
 }
 
 // TxnInfo returns a pointer to a *copy* of the internal TxnInfo, thus is *read only*
+// Process field may not initialize if this is a session used internally.
 func (s *session) TxnInfo() *txninfo.TxnInfo {
 	s.txn.mu.RLock()
 	// Copy on read to get a snapshot, this API shouldn't be frequently called.
@@ -479,17 +476,18 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 
 	processInfo := s.ShowProcess()
 	if processInfo == nil {
-		return nil
+		return &txnInfo
 	}
-	txnInfo.ConnectionID = processInfo.ID
-	txnInfo.Username = processInfo.User
-	txnInfo.CurrentDB = processInfo.DB
-	txnInfo.RelatedTableIDs = make(map[int64]struct{})
+	txnInfo.ProcessInfo = &txninfo.ProcessInfo{
+		ConnectionID:    processInfo.ID,
+		Username:        processInfo.User,
+		CurrentDB:       processInfo.DB,
+		RelatedTableIDs: make(map[int64]struct{}),
+	}
 	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, _ any) bool {
-		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
+		txnInfo.ProcessInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
-
 	return &txnInfo
 }
 
@@ -2143,7 +2141,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 
 	// Execute the physical plan.
-	logStmt(stmt, s)
+	defer logStmt(stmt, s) // defer until txnStartTS is set
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
@@ -2261,10 +2259,10 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	r, ctx := tracing.StartRegionEx(ctx, "session.runStmt")
 	defer r.End()
 	if r.Span != nil {
-		r.Span.LogKV("sql", s.OriginText())
+		r.Span.LogKV("sql", s.Text())
 	}
 
-	se.SetValue(sessionctx.QueryString, s.OriginText())
+	se.SetValue(sessionctx.QueryString, s.Text())
 	if _, ok := s.(*executor.ExecStmt).StmtNode.(ast.DDLNode); ok {
 		se.SetValue(sessionctx.LastExecuteDDL, true)
 	} else {
@@ -2646,6 +2644,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			LoadBasedReplicaReadThreshold: vars.LoadBasedReplicaReadThreshold,
 			RunawayChecker:                sc.RunawayChecker,
 			TiKVClientReadTimeout:         vars.GetTiKVClientReadTimeout(),
+			MaxExecutionTime:              vars.GetMaxExecutionTime(),
 
 			ReplicaClosestReadThreshold: vars.ReplicaClosestReadThreshold,
 			ConnectionID:                vars.ConnectionID,
@@ -2706,9 +2705,9 @@ func (s *session) GetBuildPBCtx() *planctx.BuildPBContext {
 	return bctx.(*planctx.BuildPBContext)
 }
 
-func (s *session) AuthPluginForUser(user *auth.UserIdentity) (string, error) {
+func (s *session) AuthPluginForUser(ctx context.Context, user *auth.UserIdentity) (string, error) {
 	pm := privilege.GetPrivilegeManager(s)
-	authplugin, err := pm.GetAuthPluginForConnection(user.Username, user.Hostname)
+	authplugin, err := pm.GetAuthPluginForConnection(ctx, user.Username, user.Hostname)
 	if err != nil {
 		return "", err
 	}
@@ -2724,7 +2723,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		hasPassword = "NO"
 	}
 	pm := privilege.GetPrivilegeManager(s)
-	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	authUser, err := s.MatchIdentity(context.Background(), user.Username, user.Hostname)
 	if err != nil {
 		return privileges.ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
@@ -2754,7 +2753,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 		}
 		if lockStatusChanged {
 			// Notification auto unlock.
-			err = domain.GetDomain(s).NotifyUpdatePrivilege()
+			err = domain.GetDomain(s).NotifyUpdatePrivilege([]string{authUser.Username})
 			if err != nil {
 				return err
 			}
@@ -2829,7 +2828,7 @@ func (s *session) Auth(user *auth.UserIdentity, authentication, salt []byte, aut
 	user.AuthUsername = authUser.Username
 	user.AuthHostname = authUser.Hostname
 	s.sessionVars.User = user
-	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+	s.sessionVars.ActiveRoles = pm.GetDefaultRoles(context.Background(), user.AuthUsername, user.AuthHostname)
 	return nil
 }
 
@@ -2928,7 +2927,7 @@ func authFailedTracking(s *session, user string, host string) (bool, *privileges
 
 func autolockAction(s *session, passwordLocking *privileges.PasswordLocking, user, host string) error {
 	// Don't want to update the cache frequently, and only trigger the update cache when the lock status is updated.
-	err := domain.GetDomain(s).NotifyUpdatePrivilege()
+	err := domain.GetDomain(s).NotifyUpdatePrivilege([]string{user})
 	if err != nil {
 		return err
 	}
@@ -3045,7 +3044,7 @@ func userAutoAccountLocked(s *session, user string, host string, pl *privileges.
 
 // MatchIdentity finds the matching username + password in the MySQL privilege tables
 // for a username + hostname, since MySQL can have wildcards.
-func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity, error) {
+func (s *session) MatchIdentity(ctx context.Context, username, remoteHost string) (*auth.UserIdentity, error) {
 	pm := privilege.GetPrivilegeManager(s)
 	var success bool
 	var skipNameResolve bool
@@ -3054,7 +3053,7 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 	if err == nil && variable.TiDBOptOn(varVal) {
 		skipNameResolve = true
 	}
-	user.Username, user.Hostname, success = pm.MatchIdentity(username, remoteHost, skipNameResolve)
+	user.Username, user.Hostname, success = pm.MatchIdentity(ctx, username, remoteHost, skipNameResolve)
 	if success {
 		return user, nil
 	}
@@ -3063,9 +3062,9 @@ func (s *session) MatchIdentity(username, remoteHost string) (*auth.UserIdentity
 }
 
 // AuthWithoutVerification is required by the ResetConnection RPC
-func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
+func (s *session) AuthWithoutVerification(ctx context.Context, user *auth.UserIdentity) bool {
 	pm := privilege.GetPrivilegeManager(s)
-	authUser, err := s.MatchIdentity(user.Username, user.Hostname)
+	authUser, err := s.MatchIdentity(ctx, user.Username, user.Hostname)
 	if err != nil {
 		return false
 	}
@@ -3073,7 +3072,7 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 		user.AuthUsername = authUser.Username
 		user.AuthHostname = authUser.Hostname
 		s.sessionVars.User = user
-		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(user.AuthUsername, user.AuthHostname)
+		s.sessionVars.ActiveRoles = pm.GetDefaultRoles(ctx, user.AuthUsername, user.AuthHostname)
 		return true
 	}
 	return false
@@ -3631,6 +3630,9 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// init the instance plan cache
 	dom.InitInstancePlanCache()
 
+	// setup workload-based learning worker
+	dom.SetupWorkloadBasedLearningWorker()
+
 	// start TTL job manager after setup stats collector
 	// because TTL could modify a lot of columns, and need to trigger auto analyze
 	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
@@ -3890,10 +3892,8 @@ func mustGetStoreBootstrapVersion(store kv.Storage) int64 {
 }
 
 func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
-	storeBootstrappedLock.Lock()
-	defer storeBootstrappedLock.Unlock()
 	// check in memory
-	_, ok := storeBootstrapped[store.UUID()]
+	_, ok := store.GetOption(StoreBootstrappedKey)
 	if ok {
 		return currentBootstrapVersion
 	}
@@ -3902,7 +3902,7 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 
 	if ver > notBootstrapped {
 		// here mean memory is not ok, but other server has already finished it
-		storeBootstrapped[store.UUID()] = true
+		store.SetOption(StoreBootstrappedKey, true)
 	}
 
 	modifyBootstrapVersionForTest(ver)
@@ -3910,7 +3910,7 @@ func getStoreBootstrapVersionWithCache(store kv.Storage) int64 {
 }
 
 func finishBootstrap(store kv.Storage) {
-	setStoreBootstrapped(store.UUID())
+	store.SetOption(StoreBootstrappedKey, true)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
@@ -4067,9 +4067,10 @@ func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	txnInfo := tmp.TxnInfo()
 	if txnInfo != nil {
 		startTS = txnInfo.StartTS
-		processInfoID = txnInfo.ConnectionID
+		if txnInfo.ProcessInfo != nil {
+			processInfoID = txnInfo.ProcessInfo.ConnectionID
+		}
 	}
-
 	logutil.BgLogger().Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
@@ -4096,7 +4097,7 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 	case *ast.CreateUserStmt, *ast.DropUserStmt, *ast.AlterUserStmt, *ast.SetPwdStmt, *ast.GrantStmt,
 		*ast.RevokeStmt, *ast.AlterTableStmt, *ast.CreateDatabaseStmt, *ast.CreateTableStmt,
 		*ast.DropDatabaseStmt, *ast.DropTableStmt, *ast.RenameTableStmt, *ast.TruncateTableStmt,
-		*ast.RenameUserStmt:
+		*ast.RenameUserStmt, *ast.CreateBindingStmt, *ast.DropBindingStmt, *ast.SetBindingStmt, *ast.BRIEStmt:
 		isCrucial = true
 	}
 
@@ -4136,7 +4137,8 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if vars.EnableRedactLog != errors.RedactLogEnable {
 			query += redact.String(vars.EnableRedactLog, vars.PlanCacheParams.String())
 		}
-		logutil.GeneralLogger.Info("GENERAL_LOG",
+
+		fields := []zapcore.Field{
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),
@@ -4147,7 +4149,12 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("currentDB", vars.CurrentDB),
 			zap.Bool("isPessimistic", vars.TxnCtx.IsPessimistic),
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
-			zap.String("sql", query))
+			zap.String("sql", query),
+		}
+		if ot := execStmt.OriginText(); ot != execStmt.Text() {
+			fields = append(fields, zap.String("originText", strconv.Quote(ot)))
+		}
+		logutil.GeneralLogger.Info("GENERAL_LOG", fields...)
 	}
 }
 

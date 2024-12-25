@@ -148,6 +148,35 @@ type ResumeDDLJobs struct {
 	JobIDs []int64
 }
 
+const (
+	// AlterDDLJobThread alter reorg worker count
+	AlterDDLJobThread = "thread"
+	// AlterDDLJobBatchSize alter reorg batch size
+	AlterDDLJobBatchSize = "batch_size"
+	// AlterDDLJobMaxWriteSpeed alter reorg max write speed
+	AlterDDLJobMaxWriteSpeed = "max_write_speed"
+)
+
+var allowedAlterDDLJobParams = map[string]struct{}{
+	AlterDDLJobThread:        {},
+	AlterDDLJobBatchSize:     {},
+	AlterDDLJobMaxWriteSpeed: {},
+}
+
+// AlterDDLJobOpt represents alter ddl job option.
+type AlterDDLJobOpt struct {
+	Name  string
+	Value expression.Expression
+}
+
+// AlterDDLJob is the plan of admin alter ddl job
+type AlterDDLJob struct {
+	baseSchemaProducer
+
+	JobID   int64
+	Options []*AlterDDLJobOpt
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
@@ -261,8 +290,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.
@@ -351,10 +378,9 @@ type InsertGeneratedColumns struct {
 	OnDuplicates []*expression.Assignment
 }
 
-// Copy clones InsertGeneratedColumns.
-func (i InsertGeneratedColumns) Copy() InsertGeneratedColumns {
+func (i InsertGeneratedColumns) cloneForPlanCache() InsertGeneratedColumns {
 	return InsertGeneratedColumns{
-		Exprs:        util.CloneExpressions(i.Exprs),
+		Exprs:        cloneExpressionsForPlanCache(i.Exprs, nil),
 		OnDuplicates: util.CloneAssignments(i.OnDuplicates),
 	}
 }
@@ -468,7 +494,7 @@ type Update struct {
 
 	// Used when partition sets are given.
 	// e.g. update t partition(p0) set a = 1;
-	PartitionedTable []table.PartitionedTable `plan-cache-clone:"must-nil"`
+	PartitionedTable []table.PartitionedTable `plan-cache-clone:"shallow"`
 
 	// tblID2Table stores related tables' info of this Update statement.
 	tblID2Table map[int64]table.Table `plan-cache-clone:"shallow"`
@@ -562,6 +588,7 @@ type AnalyzeColumnsTask struct {
 	HandleCols       util.HandleCols
 	CommonHandleInfo *model.IndexInfo
 	ColsInfo         []*model.ColumnInfo
+	SkipColsInfo     []*model.ColumnInfo
 	TblInfo          *model.TableInfo
 	Indexes          []*model.IndexInfo
 	AnalyzeInfo
@@ -665,6 +692,14 @@ type PlanReplayer struct {
 	Remove     bool
 	SQLDigest  string
 	PlanDigest string
+}
+
+// Traffic represents a traffic plan.
+type Traffic struct {
+	baseSchemaProducer
+	OpType  ast.TrafficOpType
+	Options []*ast.TrafficOption
+	Dir     string
 }
 
 // SplitRegion represents a split regions plan.
@@ -808,6 +843,9 @@ func GetExplainRowsForPlan(plan base.Plan) (rows [][]string) {
 		TargetPlan: plan,
 		Format:     types.ExplainFormatROW,
 		Analyze:    false,
+	}
+	if plan != nil {
+		explain.SetSCtx(plan.SCtx())
 	}
 	if err := explain.RenderResult(); err != nil {
 		return rows

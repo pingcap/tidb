@@ -60,7 +60,10 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -112,12 +115,15 @@ var (
 	// MaxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
 	MaxWriteAndIngestRetryTimes = 30
+
+	// Unlimited RPC receive message size for TiKV importer
+	unlimitedRPCRecvMsgSize = math.MaxInt32
 )
 
-// ImportClientFactory is factory to create new import client for specific store.
-type ImportClientFactory interface {
-	Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
-	Close()
+// importClientFactory is factory to create new import client for specific store.
+type importClientFactory interface {
+	create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error)
+	close()
 }
 
 type importClientFactoryImpl struct {
@@ -165,6 +171,7 @@ func (f *importClientFactoryImpl) makeConn(ctx context.Context, storeID uint64) 
 		addr = store.GetAddress()
 	}
 	opts = append(opts,
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(unlimitedRPCRecvMsgSize)),
 		grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                gRPCKeepAliveTime,
@@ -209,8 +216,8 @@ func (f *importClientFactoryImpl) getGrpcConn(ctx context.Context, storeID uint6
 		})
 }
 
-// Create creates a new import client for specific store.
-func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
+// create creates a new import client for specific store.
+func (f *importClientFactoryImpl) create(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
 	conn, err := f.getGrpcConn(ctx, storeID)
 	if err != nil {
 		return nil, err
@@ -218,8 +225,8 @@ func (f *importClientFactoryImpl) Create(ctx context.Context, storeID uint64) (s
 	return sst.NewImportSSTClient(conn), nil
 }
 
-// Close closes the factory.
-func (f *importClientFactoryImpl) Close() {
+// close closes the factory.
+func (f *importClientFactoryImpl) close() {
 	f.conns.Close()
 }
 
@@ -286,8 +293,27 @@ func (g *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 
 // FetchRemoteTableModels obtains the models of all tables given the schema name.
 // It implements the `TargetInfoGetter` interface.
-func (g *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	return tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+func (g *targetInfoGetter) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	allTablesInDB, err := tikv.FetchRemoteTableModelsFromTLS(ctx, g.tls, schemaName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tableNamesSet := make(map[string]struct{}, len(tableNames))
+	for _, name := range tableNames {
+		tableNamesSet[strings.ToLower(name)] = struct{}{}
+	}
+	ret := make(map[string]*model.TableInfo, len(tableNames))
+	for _, tbl := range allTablesInDB {
+		if _, ok := tableNamesSet[tbl.Name.L]; ok {
+			ret[tbl.Name.L] = tbl
+		}
+	}
+	return ret, nil
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.
@@ -492,7 +518,7 @@ type Backend struct {
 	engineMgr *engineManager
 
 	supportMultiIngest  bool
-	importClientFactory ImportClientFactory
+	importClientFactory importClientFactory
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -521,7 +547,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
@@ -538,7 +564,7 @@ func NewBackend(
 			return
 		}
 		if importClientFactory != nil {
-			importClientFactory.Close()
+			importClientFactory.close()
 		}
 		if pdHTTPCli != nil {
 			pdHTTPCli.Close()
@@ -570,11 +596,11 @@ func NewBackend(
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
 	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -614,12 +640,7 @@ func NewBackend(
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
 	}
 
-	var writeLimiter StoreWriteLimiter
-	if config.StoreWriteBWLimit > 0 {
-		writeLimiter = newStoreWriteLimiter(config.StoreWriteBWLimit)
-	} else {
-		writeLimiter = noopStoreWriteLimiter{}
-	}
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
 	local := &Backend{
 		pdCli:     pdCli,
 		pdHTTPCli: pdHTTPCli,
@@ -673,8 +694,8 @@ func (local *Backend) TotalMemoryConsume() int64 {
 	return local.engineMgr.totalMemoryConsume()
 }
 
-func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientFactory ImportClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -701,7 +722,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, importClientF
 					return false, ctx.Err()
 				}
 			}
-			client, err1 := importClientFactory.Create(ctx, s.Id)
+			client, err1 := factory.create(ctx, s.Id)
 			if err1 != nil {
 				err = err1
 				log.FromContext(ctx).Warn("get import client failed", zap.Error(err), zap.String("store", s.Address))
@@ -763,7 +784,7 @@ func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 // Close the local backend.
 func (local *Backend) Close() {
 	local.engineMgr.close()
-	local.importClientFactory.Close()
+	local.importClientFactory.close()
 
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
@@ -801,7 +822,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 }
 
 func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.ImportSSTClient, error) {
-	return local.importClientFactory.Create(ctx, storeID)
+	return local.importClientFactory.create(ctx, storeID)
 }
 
 func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
@@ -1348,7 +1369,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
@@ -1584,10 +1605,23 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use OpenedEngine.SetTS to set a valid TS before import
+// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
+}
+
+// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// This is typically called after persisting the chosen TS of the engine to make
+// sure TS is not changed after task failover.
+func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
+	if e == nil {
+		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+	}
+	defer e.unlock()
+	e.engineMeta.TS = ts
+	return e.saveEngineMeta()
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
@@ -1779,7 +1813,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 // GetRegionSplitSizeKeys return region split size, region split keys, error
 func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
-	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := cli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
 	}

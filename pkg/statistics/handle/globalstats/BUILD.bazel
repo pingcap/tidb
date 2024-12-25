@@ -54,6 +54,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",

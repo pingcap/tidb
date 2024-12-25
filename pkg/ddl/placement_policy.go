@@ -458,7 +458,7 @@ func CheckPlacementPolicyNotInUseFromMeta(t *meta.Mutator, policy *model.PolicyI
 			return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
 		}
 
-		tables, err := t.ListTables(dbInfo.ID)
+		tables, err := t.ListTables(context.Background(), dbInfo.ID)
 		if err != nil {
 			return err
 		}

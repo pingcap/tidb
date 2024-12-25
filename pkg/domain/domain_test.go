@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -423,7 +424,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 
@@ -485,20 +486,4 @@ func TestDeferFn(t *testing.T) {
 	require.False(t, c)
 	require.True(t, d)
 	require.Len(t, df.data, 1)
-}
-
-func TestNewEtcdCliGetEtcdAddrs(t *testing.T) {
-	etcdStore, addrs, err := getEtcdAddrs(nil)
-	require.NoError(t, err)
-	require.Empty(t, addrs)
-	require.Nil(t, etcdStore)
-
-	etcdStore, addrs, err = getEtcdAddrs(&mockEtcdBackend{pdAddrs: []string{"localhost:2379"}})
-	require.NoError(t, err)
-	require.Equal(t, []string{"localhost:2379"}, addrs)
-	require.NotNil(t, etcdStore)
-
-	cli, err := NewEtcdCli(nil)
-	require.NoError(t, err)
-	require.Nil(t, cli)
 }

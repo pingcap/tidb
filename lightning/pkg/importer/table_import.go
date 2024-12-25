@@ -92,7 +92,7 @@ func NewTableImporter(
 	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(tableInfo.Core.SepAutoInc(), cp.AllocBase)
+	idAlloc := kv.NewPanickingAllocatorsWithBase(tableInfo.Core.SepAutoInc(), cp.AutoRandBase, cp.AutoIncrBase, cp.AutoRowIDBase)
 	tbl, err := tables.TableFromMeta(idAlloc, tableInfo.Core)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
@@ -143,12 +143,15 @@ func (tr *TableImporter) importTable(
 		}
 
 		// fetch the max chunk row_id max value as the global max row_id
-		rowIDMax := int64(0)
+		requiredRowIDCnt := int64(0)
 		for _, engine := range cp.Engines {
-			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > rowIDMax {
-				rowIDMax = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
+			if len(engine.Chunks) > 0 && engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax > requiredRowIDCnt {
+				requiredRowIDCnt = engine.Chunks[len(engine.Chunks)-1].Chunk.RowIDMax
 			}
 		}
+		tr.logger.Info("estimated required row id count",
+			zap.String("table", tr.tableName),
+			zap.Int64("count", requiredRowIDCnt))
 		versionStr, err := version.FetchVersion(ctx, rc.db)
 		if err != nil {
 			return false, errors.Trace(err)
@@ -163,7 +166,7 @@ func (tr *TableImporter) importTable(
 				return false, err
 			}
 
-			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, rowIDMax)
+			checksum, rowIDBase, err := metaMgr.AllocTableRowIDs(ctx, requiredRowIDCnt)
 			if err != nil {
 				return false, err
 			}
@@ -187,22 +190,31 @@ func (tr *TableImporter) importTable(
 		}
 		web.BroadcastTableCheckpoint(tr.tableName, cp)
 
-		// rebase the allocator so it exceeds the number of rows.
-		if tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
-			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+		// rebase the allocator based on the max ID from table info.
+		ti := tr.tableInfo.Core
+		if ti.ContainsAutoRandomBits() {
+			cp.AutoRandBase = max(cp.AutoRandBase, ti.AutoRandID)
+			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AutoRandBase, false); err != nil {
 				return false, err
 			}
 		} else {
-			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
-			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
+			if ti.GetAutoIncrementColInfo() != nil && ti.SepAutoInc() {
+				cp.AutoIncrBase = max(cp.AutoIncrBase, ti.AutoIncID)
+				if err := tr.alloc.Get(autoid.AutoIncrementType).Rebase(context.Background(), cp.AutoIncrBase, false); err != nil {
+					return false, err
+				}
+			}
+			cp.AutoRowIDBase = max(cp.AutoRowIDBase, ti.AutoIncID)
+			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AutoRowIDBase, false); err != nil {
 				return false, err
 			}
 		}
 		rc.saveCpCh <- saveCp{
 			tableName: tr.tableName,
 			merger: &checkpoints.RebaseCheckpointMerger{
-				AllocBase: cp.AllocBase,
+				AutoRandBase:  cp.AutoRandBase,
+				AutoIncrBase:  cp.AutoIncrBase,
+				AutoRowIDBase: cp.AutoRowIDBase,
 			},
 		}
 	}

@@ -16,6 +16,7 @@
 
 set -eu
 
+export PD_HTTP_PROTO="https"
 export PD_PEER_ADDR="127.0.0.1:2380"
 export PD_ADDR="127.0.0.1:2379"
 export PD_PID="${TEST_DIR:?}/pd_pid.txt"
@@ -79,9 +80,10 @@ start_services() {
 start_pd() {
     echo "Starting PD..."
     mkdir -m 700 -p "$TEST_DIR/pd"
+
     pd-server \
-        --client-urls "https://$PD_ADDR" \
-        --peer-urls "https://$PD_PEER_ADDR" \
+        --client-urls "$PD_HTTP_PROTO://$PD_ADDR" \
+        --peer-urls "$PD_HTTP_PROTO://$PD_PEER_ADDR" \
         --log-file "$TEST_DIR/pd.log" \
         --data-dir "$TEST_DIR/pd" \
         --config $PD_CONFIG &
@@ -89,7 +91,7 @@ start_pd() {
     echo -e "$pid" > "${PD_PID}"
     # wait until PD is online...
     i=0
-    while ! run_curl "https://$PD_ADDR/pd/api/v1/version"; do
+    while ! run_curl "$PD_HTTP_PROTO://$PD_ADDR/pd/api/v1/version"; do
        i=$((i+1))
        if [ "$i" -gt 20 ]; then
           echo 'Failed to start PD'
@@ -158,7 +160,7 @@ start_tikv() {
 
 ensure_tikv() {
     echo "Waiting initializing TiKV..."
-    while ! run_curl "https://$PD_ADDR/pd/api/v1/cluster/status" | grep '"is_initialized": true'; do
+    while ! run_curl "$PD_HTTP_PROTO://$PD_ADDR/pd/api/v1/cluster/status" | grep '"is_initialized": true'; do
        i=$((i+1))
        if [ "$i" -gt 20 ]; then
           echo 'Failed to initialize TiKV cluster'
@@ -196,6 +198,7 @@ start_services_impl() {
     cleanup_data || true
 
     RUN_TIFLASH=true
+    RUN_TIDB=true
 
     while [[ $# -gt 0 ]]
     do
@@ -209,6 +212,10 @@ start_services_impl() {
             ;;
             --no-tiflash)
             RUN_TIFLASH=false
+            shift # past argument
+            ;;
+            --no-tidb)
+            RUN_TIDB=false
             shift # past argument
             ;;
             *)    # unknown option
@@ -227,14 +234,16 @@ start_services_impl() {
         start_tikv "$i"
     done
     ensure_tikv
-    start_tidb
+    if $RUN_TIDB; then
+        start_tidb
+    fi
 
     if $RUN_TIFLASH; then
         start_tiflash
     fi
 
     i=0
-    while ! run_curl "https://$PD_ADDR/pd/api/v1/cluster/status" | grep -q "\"is_initialized\": true"; do
+    while ! run_curl "$PD_HTTP_PROTO://$PD_ADDR/pd/api/v1/cluster/status" | grep -q "\"is_initialized\": true"; do
         i=$((i+1))
         if [ "$i" -gt 20 ]; then
             echo 'Failed to bootstrap cluster'

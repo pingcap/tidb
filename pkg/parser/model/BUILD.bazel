@@ -5,7 +5,10 @@ go_library(
     srcs = ["model.go"],
     importpath = "github.com/pingcap/tidb/pkg/parser/model",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_errors//:errors"],
+    deps = [
+        "//pkg/parser/types",
+        "@com_github_pingcap_errors//:errors",
+    ],
 )
 
 go_test(

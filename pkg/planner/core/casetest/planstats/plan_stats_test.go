@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -78,7 +77,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
-					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
+					require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 					require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
 				default:
 					t.Error("unexpected plan:", pp)
@@ -391,12 +390,12 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	is := dom.InfoSchema()
 	tableNames := []string{"t", "t1"}
 	tblName2TblID := make(map[string]int64)
-	tblID2Tbl := make(map[int64]table.Table)
+	tblID2Tbl := make(map[int64]*model.TableInfo)
 	for _, tblName := range tableNames {
 		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
-		tblID2Tbl[tbl.Meta().ID] = tbl
+		tblID2Tbl[tbl.Meta().ID] = tbl.Meta()
 	}
 
 	var input []struct {
@@ -417,9 +416,9 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		require.NotNil(t, tbl)
 		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
-			col := tbl.Meta().FindPublicColumnByName(colName)
+			col := tbl.FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function
@@ -428,7 +427,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// record and check the output
 		cols := make([]string, 0, len(res))
 		for _, tblColID := range res {
-			colName := tbl.Meta().FindColumnNameByID(tblColID.ID)
+			colName := tbl.FindColumnNameByID(tblColID.ID)
 			require.NotEmpty(t, colName)
 			cols = append(cols, colName)
 		}
@@ -484,5 +483,6 @@ func TestPartialStatsInExplain(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	}
 }

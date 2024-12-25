@@ -16,6 +16,7 @@ package meta
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -36,7 +37,9 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/structure"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/partialjson"
@@ -178,9 +181,8 @@ type Option func(m *Mutator)
 
 // Mutator is for handling meta information in a transaction.
 type Mutator struct {
-	txn        *structure.TxStructure
-	StartTS    uint64 // StartTS is the txn's start TS.
-	jobListKey JobListKeyType
+	txn     *structure.TxStructure
+	StartTS uint64 // StartTS is the txn's start TS.
 }
 
 var _ Reader = (*Mutator)(nil)
@@ -192,8 +194,7 @@ func NewMutator(txn kv.Transaction, options ...Option) *Mutator {
 	txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 	t := structure.NewStructure(txn, txn, mMetaPrefix)
 	m := &Mutator{txn: t,
-		StartTS:    txn.StartTS(),
-		jobListKey: DefaultJobListKey,
+		StartTS: txn.StartTS(),
 	}
 	for _, opt := range options {
 		opt(m)
@@ -1131,7 +1132,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 }
 
 // ListTables shows all tables in database.
-func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
+func (m *Mutator) ListTables(ctx context.Context, dbID int64) ([]*model.TableInfo, error) {
 	res, err := m.GetMetasByDBID(dbID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1143,6 +1144,9 @@ func (m *Mutator) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		tableKey := string(r.Field)
 		if !strings.HasPrefix(tableKey, mTablePrefix) {
 			continue
+		}
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
 		}
 
 		tbInfo := &model.TableInfo{}
@@ -1446,33 +1450,6 @@ var (
 	mDDLJobHistoryKey = []byte("DDLJobHistory")
 )
 
-var (
-	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
-	// this and below list are always appended, so the order is the same as the
-	// job's creation order.
-	DefaultJobListKey JobListKeyType = mDDLJobListKey
-	// AddIndexJobListKey only keeps the action of adding index.
-	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
-)
-
-func (m *Mutator) enQueueDDLJob(key []byte, job *model.Job) error {
-	b, err := job.Encode(true)
-	if err == nil {
-		err = m.txn.RPush(key, b)
-	}
-	return errors.Trace(err)
-}
-
-// EnQueueDDLJob adds a DDL job to the list.
-func (m *Mutator) EnQueueDDLJob(job *model.Job, jobListKeys ...JobListKeyType) error {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	return m.enQueueDDLJob(listKey, job)
-}
-
 // JobListKeyType is a key type of the DDL job queue.
 type JobListKeyType []byte
 
@@ -1493,34 +1470,6 @@ func (m *Mutator) getDDLJob(key []byte, index int64) (*model.Job, error) {
 		job.Priority = kv.PriorityLow
 	}
 	return job, errors.Trace(err)
-}
-
-// GetAllDDLJobsInQueue gets all DDL Jobs in the current queue.
-// The length of jobListKeys can only be 1 or 0.
-// If its length is 1, we need to replace m.jobListKey with jobListKeys[0].
-// Otherwise, we use m.jobListKey directly.
-func (m *Mutator) GetAllDDLJobsInQueue(jobListKeys ...JobListKeyType) ([]*model.Job, error) {
-	listKey := m.jobListKey
-	if len(jobListKeys) != 0 {
-		listKey = jobListKeys[0]
-	}
-
-	values, err := m.txn.LGetAll(listKey)
-	if err != nil || values == nil {
-		return nil, errors.Trace(err)
-	}
-
-	jobs := make([]*model.Job, 0, len(values))
-	for _, val := range values {
-		job := &model.Job{}
-		err = job.Decode(val)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jobs = append(jobs, job)
-	}
-
-	return jobs, nil
 }
 
 func (*Mutator) jobIDKey(id int64) []byte {
@@ -1841,4 +1790,26 @@ func (m *Mutator) SetRUStats(stats *RUStats) error {
 
 	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
+}
+
+// GetOldestSchemaVersion gets the oldest schema version at the GC safe point.
+// It works by checking the MVCC information (internal txn API) of the schema version meta key.
+// This function is only used by infoschema v2 currently.
+func GetOldestSchemaVersion(h *helper.Helper) (int64, error) {
+	ek := make([]byte, 0, len(mMetaPrefix)+len(mSchemaVersionKey)+24)
+	ek = append(ek, mMetaPrefix...)
+	ek = codec.EncodeBytes(ek, mSchemaVersionKey)
+	key := codec.EncodeUint(ek, uint64(structure.StringData))
+	mvccResp, err := h.GetMvccByEncodedKeyWithTS(key, math.MaxUint64)
+	if err != nil {
+		return 0, err
+	}
+	if mvccResp == nil || mvccResp.Info == nil || len(mvccResp.Info.Writes) == 0 {
+		return 0, errors.Errorf("There is no Write MVCC info for the schema version key")
+	}
+
+	v := mvccResp.Info.Writes[len(mvccResp.Info.Writes)-1]
+	var n int64
+	n, err = strconv.ParseInt(string(v.ShortValue), 10, 64)
+	return n, errors.Trace(err)
 }

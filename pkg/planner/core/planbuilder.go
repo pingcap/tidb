@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -269,8 +270,10 @@ type PlanBuilder struct {
 	allocIDForCTEStorage        int
 	buildingRecursivePartForCTE bool
 	buildingCTE                 bool
-	//Check whether the current building query is a CTE
+	// Check whether the current building query is a CTE
 	isCTE bool
+	// CTE table name in lower case, it can be nil
+	nameMapCTE map[string]struct{}
 
 	// subQueryCtx and subQueryHintFlags are for handling subquery related hints.
 	// Note: "subquery" here only contains subqueries that are handled by the expression rewriter, i.e., [NOT] IN,
@@ -529,6 +532,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildUnlockStats(x), nil
 	case *ast.PlanReplayerStmt:
 		return b.buildPlanReplayer(x), nil
+	case *ast.TrafficStmt:
+		return b.buildTraffic(x), nil
 	case *ast.PrepareStmt:
 		return b.buildPrepare(x), nil
 	case *ast.SelectStmt:
@@ -1191,15 +1196,19 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
-			path := &util.AccessPath{Index: index}
 			if index.VectorInfo != nil {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the vector indexes is to require the TiFlash Replica to be available.
 				if !tblInfo.TiFlashReplica.Available {
 					continue
 				}
+				path := genTiFlashPath(tblInfo)
 				path.StoreType = kv.TiFlash
+				path.Index = index
+				publicPaths = append(publicPaths, path)
+				continue
 			}
+			path := &util.AccessPath{Index: index}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1556,14 +1565,9 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminFlushBindings:
 		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		return nil, errors.Errorf("Auto Capture is not supported")
 	case ast.AdminEvolveBindings:
-		var err error
-		// The 'baseline evolution' only work in the test environment before the feature is GA.
-		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
-		}
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminReloadStatistics:
@@ -1576,6 +1580,11 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p := &AdminShowBDRRole{}
 		p.setSchemaAndNames(buildAdminShowBDRRoleFields())
 		ret = p
+	case ast.AdminAlterDDLJob:
+		ret, err = b.buildAdminAlterDDLJob(ctx, as)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
@@ -2332,7 +2341,7 @@ func getModifiedIndexesInfoForAnalyze(
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
-func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
 	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -2362,6 +2371,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *res
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
 		if skip && !keep {
+			skipCol = append(skipCol, colInfo)
 			continue
 		}
 		result = append(result, colInfo)
@@ -2485,16 +2495,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			if colsInfo, ok := colsInfoMap[physicalID]; ok {
 				execColsInfo = colsInfo
 			}
-			execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+			var skipColsInfo []*model.ColumnInfo
+			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
 			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 			newTask := AnalyzeColumnsTask{
-				HandleCols:  handleCols,
-				ColsInfo:    execColsInfo,
-				AnalyzeInfo: info,
-				TblInfo:     tbl.TableInfo,
-				Indexes:     indexes,
+				HandleCols:   handleCols,
+				ColsInfo:     execColsInfo,
+				AnalyzeInfo:  info,
+				TblInfo:      tbl.TableInfo,
+				Indexes:      indexes,
+				SkipColsInfo: skipColsInfo,
 			}
 			if newTask.HandleCols == nil {
 				extraCol := model.NewExtraHandleColInfo()
@@ -3155,6 +3167,7 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "STATE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "COMMENTS", mysql.TypeVarchar, 65535))
 	return schema.col2Schema(), schema.names
 }
 
@@ -3311,6 +3324,19 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	cols.Append(buildColumnWithName("", "WATCH_ID", mysql.TypeLonglong, longlongSize))
 
 	return cols.col2Schema(), cols.names
+}
+
+func buildShowTrafficJobsSchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(7)
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "INSTANCE", mysql.TypeVarchar, 256))
+	schema.Append(buildColumnWithName("", "TYPE", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "PROGRESS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "STATUS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "FAIL_REASON", mysql.TypeVarchar, 256))
+
+	return schema.col2Schema(), schema.names
 }
 
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
@@ -3590,11 +3616,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
 		// Check if any of the users are RESTRICTED
 		for _, user := range raw.Users {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.RevokeStmt:
 		var err error
-		b.visitInfo, err = collectVisitInfoFromRevokeStmt(b.ctx, b.visitInfo, raw)
+		b.visitInfo, err = collectVisitInfoFromRevokeStmt(ctx, b.ctx, b.visitInfo, raw)
 		if err != nil {
 			return nil, err
 		}
@@ -3609,7 +3635,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 				if pi.User != loginUser.Username {
 					err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CONNECTION_ADMIN")
 					b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CONNECTION_ADMIN"}, false, err)
-					b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
+					b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: pi.User, Hostname: pi.Host}, "RESTRICTED_CONNECTION_ADMIN")
 				}
 			} else if handleutil.GlobalAutoAnalyzeProcessList.Contains(raw.ConnectionID) {
 				// Only the users with SUPER or CONNECTION_ADMIN privilege can kill auto analyze.
@@ -3625,11 +3651,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		// The main privilege checks for DROP USER are currently performed in executor/simple.go
 		// because they use complex OR conditions (not supported by visitInfo).
 		for _, user := range raw.UserList {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.SetPwdStmt:
 		if raw.User != nil {
-			b.visitInfo = appendVisitInfoIsRestrictedUser(b.visitInfo, b.ctx, raw.User, "RESTRICTED_USER_ADMIN")
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, raw.User, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.ShutdownStmt:
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ShutdownPriv, "", "", "", nil)
@@ -3640,7 +3666,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3654,7 +3680,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateStaleReadTS(ctx, b.ctx.GetSessionVars().StmtCtx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3668,7 +3694,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	return p, nil
 }
 
-func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
+func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, vi []visitInfo, stmt *ast.RevokeStmt) ([]visitInfo, error) {
 	// To use REVOKE, you must have the GRANT OPTION privilege,
 	// and you must have the privileges that you are granting.
 	dbName := stmt.Level.DBName
@@ -3708,7 +3734,7 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 	}
 	for _, u := range stmt.Users {
 		// For SEM, make sure the users are not restricted
-		vi = appendVisitInfoIsRestrictedUser(vi, sctx, u.User, "RESTRICTED_USER_ADMIN")
+		vi = appendVisitInfoIsRestrictedUser(ctx, vi, sctx, u.User, "RESTRICTED_USER_ADMIN")
 	}
 	if nonDynamicPrivilege {
 		// Dynamic privileges use their own GRANT OPTION. If there were any non-dynamic privilege requests,
@@ -3720,12 +3746,12 @@ func collectVisitInfoFromRevokeStmt(sctx base.PlanContext, vi []visitInfo, stmt 
 
 // appendVisitInfoIsRestrictedUser appends additional visitInfo if the user has a
 // special privilege called "RESTRICTED_USER_ADMIN". It only applies when SEM is enabled.
-func appendVisitInfoIsRestrictedUser(visitInfo []visitInfo, sctx base.PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
+func appendVisitInfoIsRestrictedUser(ctx context.Context, visitInfo []visitInfo, sctx base.PlanContext, user *auth.UserIdentity, priv string) []visitInfo {
 	if !sem.IsEnabled() {
 		return visitInfo
 	}
 	checker := privilege.GetPrivilegeManager(sctx)
-	if checker != nil && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, user) {
+	if checker != nil && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, user) {
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(priv)
 		visitInfo = appendDynamicVisitInfo(visitInfo, []string{priv}, false, err)
 	}
@@ -4920,6 +4946,32 @@ func convertValueListToData(valueList []ast.ExprNode, handleColInfos []*model.Co
 	return data, nil
 }
 
+type userVariableChecker struct {
+	hasUserVariables bool
+}
+
+func (e *userVariableChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*ast.VariableExpr); ok {
+		e.hasUserVariables = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*userVariableChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// Check for UserVariables
+func checkForUserVariables(in ast.Node) error {
+	v := &userVariableChecker{hasUserVariables: false}
+	_, ok := in.Accept(v)
+	if !ok || v.hasUserVariables {
+		return dbterror.ErrViewSelectVariable
+	}
+	return nil
+}
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -5067,6 +5119,10 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		err := checkForUserVariables(v.Select)
+		if err != nil {
+			return nil, err
+		}
 		b.isCreateView = true
 		b.capFlag |= canExpandAST | renameView
 		b.renamingViewName = v.ViewName.Schema.L + "." + v.ViewName.Name.L
@@ -5781,6 +5837,18 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 	return nil
 }
 
+func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
+	p := &Traffic{
+		OpType:  pc.OpType,
+		Options: pc.Options,
+		Dir:     pc.Dir,
+	}
+	if pc.OpType == ast.TrafficOpShow {
+		p.setSchemaAndNames(buildShowTrafficJobsSchema())
+	}
+	return p
+}
+
 // buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.
 func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, error) {
 	var authErr error
@@ -5819,6 +5887,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
+		schema.Append(buildColumnWithName("", "create_index_statement", mysql.TypeBlob, -1))
 		p.setSchemaAndNames(schema.col2Schema(), schema.names)
 	case "set":
 		if len(p.Options) == 0 {
@@ -5854,4 +5923,97 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 		}
 	}
 	return nil
+}
+
+func (b *PlanBuilder) buildAdminAlterDDLJob(ctx context.Context, as *ast.AdminStmt) (_ base.Plan, err error) {
+	options := make([]*AlterDDLJobOpt, 0, len(as.AlterJobOptions))
+	optionNames := make([]string, 0, len(as.AlterJobOptions))
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	for _, opt := range as.AlterJobOptions {
+		_, ok := allowedAlterDDLJobParams[opt.Name]
+		if !ok {
+			return nil, fmt.Errorf("unsupported admin alter ddl jobs config: %s", opt.Name)
+		}
+		alterDDLJobOpt := AlterDDLJobOpt{Name: opt.Name}
+		if opt.Value != nil {
+			alterDDLJobOpt.Value, _, err = b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if err = checkAlterDDLJobOptValue(&alterDDLJobOpt); err != nil {
+			return nil, err
+		}
+		options = append(options, &alterDDLJobOpt)
+		optionNames = append(optionNames, opt.Name)
+	}
+	p := &AlterDDLJob{
+		JobID:   as.JobNumber,
+		Options: options,
+	}
+	return p, nil
+}
+
+// check if the config value is valid.
+func checkAlterDDLJobOptValue(opt *AlterDDLJobOpt) error {
+	switch opt.Name {
+	case AlterDDLJobThread:
+		thread, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		if thread < 1 || thread > variable.MaxConfigurableConcurrency {
+			return fmt.Errorf("the value %v for %s is out of range [1, %v]",
+				thread, opt.Name, variable.MaxConfigurableConcurrency)
+		}
+	case AlterDDLJobBatchSize:
+		batchSize, err := GetThreadOrBatchSizeFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		bs := int32(batchSize)
+		if bs < variable.MinDDLReorgBatchSize || bs > variable.MaxDDLReorgBatchSize {
+			return fmt.Errorf("the value %v for %s is out of range [%v, %v]",
+				bs, opt.Name, variable.MinDDLReorgBatchSize, variable.MaxDDLReorgBatchSize)
+		}
+	case AlterDDLJobMaxWriteSpeed:
+		speed, err := GetMaxWriteSpeedFromExpression(opt)
+		if err != nil {
+			return err
+		}
+		if speed < 0 || speed > units.PiB {
+			return fmt.Errorf("the value %s for %s is out of range [%v, %v]",
+				strconv.FormatInt(speed, 10), opt.Name, 0, units.PiB)
+		}
+	}
+	return nil
+}
+
+// GetThreadOrBatchSizeFromExpression gets the numeric value of the thread or batch size from the expression.
+func GetThreadOrBatchSizeFromExpression(opt *AlterDDLJobOpt) (int64, error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETInt:
+		return v.Value.GetInt64(), nil
+	default:
+		return 0, fmt.Errorf("the value for %s is invalid, only integer is allowed", opt.Name)
+	}
+}
+
+// GetMaxWriteSpeedFromExpression gets the numeric value of the max write speed from the expression.
+func GetMaxWriteSpeedFromExpression(opt *AlterDDLJobOpt) (maxWriteSpeed int64, err error) {
+	v := opt.Value.(*expression.Constant)
+	switch v.RetType.EvalType() {
+	case types.ETString:
+		speedStr := v.Value.GetString()
+		maxWriteSpeed, err = units.RAMInBytes(speedStr)
+		if err != nil {
+			return 0, errors.Annotate(err, "parse max_write_speed value error")
+		}
+	case types.ETInt:
+		maxWriteSpeed = v.Value.GetInt64()
+	default:
+		return 0, fmt.Errorf("the value %v for %s is invalid", v.Value.GetValue(), opt.Name)
+	}
+	return maxWriteSpeed, nil
 }

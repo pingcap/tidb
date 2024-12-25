@@ -1179,7 +1179,7 @@
           "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t3.b)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
           "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
@@ -1196,7 +1196,7 @@
           "└─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 12487.50 root  left outer join, equal:[eq(test.t2.b, test.t3.b)]",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t3.b)]",
           "    ├─TableReader(Build) 9990.00 root  data:Selection",
           "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.b))",
           "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
@@ -1210,7 +1210,7 @@
         "SQL": "explain format = 'brief' select /*+ leading(t3), merge_join(t1) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
           "Projection 15609.38 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b",
-          "└─MergeJoin 15609.38 root  right outer join, left key:test.t1.a, right key:test.t2.a",
+          "└─MergeJoin 15609.38 root  right outer join, left side:Sort, left key:test.t1.a, right key:test.t2.a",
           "  ├─Sort(Build) 10000.00 root  test.t1.a",
           "  │ └─TableReader 10000.00 root  data:TableFullScan",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -1228,7 +1228,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t2), merge_join(t2) */ * from t1 right join t2 on t1.a = t2.a join t3 on t2.b = t3.b;",
         "Plan": [
-          "HashJoin 15609.38 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "HashJoin 15609.38 root  right outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t2.b, right key:test.t3.b",
@@ -1485,7 +1485,7 @@
       {
         "SQL": "explain format = 'brief' SELECT /*+ leading(t2@sel_2), merge_join(t) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
         "Plan": [
-          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "HashJoin 9990.00 root  semi join, left side:Projection, equal:[eq(test.t1.b, test.t2.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "└─Projection(Probe) 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",
@@ -1505,7 +1505,7 @@
       {
         "SQL": "explain format = 'brief' SELECT /*+ leading(t1), inl_join(t1) */ * FROM t join t1 on t.a = t1.a WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.b = t1.b);",
         "Plan": [
-          "HashJoin 9990.00 root  semi join, equal:[eq(test.t1.b, test.t2.b)]",
+          "HashJoin 9990.00 root  semi join, left side:Projection, equal:[eq(test.t1.b, test.t2.b)]",
           "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:idx_b(b) keep order:false, stats:pseudo",
           "└─Projection(Probe) 12487.50 root  test.t.a, test.t.b, test.t1.a, test.t1.b",

@@ -254,8 +254,6 @@ const (
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
 	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
@@ -590,99 +588,6 @@ func (job *Job) String() string {
 	return ret
 }
 
-func (job *Job) hasDependentSchema(other *Job) (bool, error) {
-	if other.Type == ActionDropSchema || other.Type == ActionCreateSchema {
-		if other.SchemaID == job.SchemaID {
-			return true, nil
-		}
-		if job.Type == ActionRenameTable {
-			args, err := GetRenameTableArgs(job)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-
-			if other.SchemaID == args.OldSchemaID {
-				return true, nil
-			}
-		}
-		if job.Type == ActionExchangeTablePartition {
-			args, err := GetExchangeTablePartitionArgs(job)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if other.SchemaID == args.PTSchemaID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
-	if job.Type == ActionExchangeTablePartition {
-		// TODO this code seems buggy, we haven't encode Args into RawArgs yet, so cannot decode.
-		// but it's very old code for previous job queue, will be removed later anyway.
-		args, err := GetExchangeTablePartitionArgs(job)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if args.PTTableID == other.TableID || args.PartitionID == other.TableID {
-			return true, nil
-		}
-
-		if other.Type == ActionExchangeTablePartition {
-			otherArgs, err := GetExchangeTablePartitionArgs(other)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if job.TableID == other.TableID || job.TableID == otherArgs.PTTableID || job.TableID == otherArgs.PartitionID {
-				return true, nil
-			}
-			if args.PTTableID == other.TableID || args.PTTableID == otherArgs.PTTableID || args.PTTableID == otherArgs.PartitionID {
-				return true, nil
-			}
-			if args.PartitionID == other.TableID || args.PartitionID == otherArgs.PTTableID || args.PartitionID == otherArgs.PartitionID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-// IsDependentOn returns whether the job depends on "other".
-// How to check the job depends on "other"?
-// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
-// 2. Or the two jobs handle the same table.
-// 3. Or other job is flashback cluster.
-func (job *Job) IsDependentOn(other *Job) (bool, error) {
-	if other.Type == ActionFlashbackCluster {
-		return true, nil
-	}
-
-	isDependent, err := job.hasDependentSchema(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentSchema(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-
-	// TODO: If a job is ActionRenameTable, we need to check table name.
-	if other.TableID == job.TableID {
-		return true, nil
-	}
-	isDependent, err = job.hasDependentTableForExchangePartition(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentTableForExchangePartition(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	return false, nil
-}
-
 // IsFinished returns whether job is finished or not.
 // If the job state is Done or Cancelled, it is finished.
 func (job *Job) IsFinished() bool {
@@ -731,6 +636,14 @@ func (job *Job) IsPausable() bool {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
+}
+
+// IsAlterable checks whether the job type can be altered.
+func (job *Job) IsAlterable() bool {
+	// Currently, only non-distributed add index reorg task can be altered
+	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
 }
 
 // IsResumable checks whether the job can be rollback.
@@ -820,8 +733,10 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropForeignKey, ActionDropTablePartition, ActionTruncateTablePartition:
+		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionTruncateTablePartition:
+		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
@@ -833,6 +748,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionFlashbackCluster:
 		if job.SchemaState == StateWriteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
 			return false
 		}
 	}
@@ -876,7 +797,6 @@ type SubJob struct {
 	CtxVars     []any           `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -944,8 +864,9 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
+	if proxyJob.ReorgMeta != nil {
+		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	}
 }
 
 // FillArgs fills args.

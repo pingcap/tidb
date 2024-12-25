@@ -28,7 +28,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -171,123 +171,154 @@ func (b *targetInfoGetter) FetchRemoteDBModels(ctx context.Context) ([]*model.DB
 	return results, err
 }
 
-// FetchRemoteTableModels obtains the models of all tables given the schema name.
-// It implements the `backend.TargetInfoGetter` interface.
-// TODO: refactor
-func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error) {
-	var err error
-	results := []*model.TableInfo{}
+// exported for test.
+var (
+	FetchRemoteTableModelsConcurrency = 8
+	FetchRemoteTableModelsBatchSize   = 32
+)
+
+// FetchRemoteTableModels implements the `backend.TargetInfoGetter` interface.
+func (b *targetInfoGetter) FetchRemoteTableModels(
+	ctx context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
+	tableInfos := make([]*model.TableInfo, len(tableNames))
 	logger := log.FromContext(ctx)
 	s := common.SQLWithRetry{
 		DB:     b.db,
 		Logger: logger,
 	}
 
-	err = s.Transact(ctx, "fetch table columns", func(_ context.Context, tx *sql.Tx) error {
-		var versionStr string
-		if versionStr, err = version.FetchVersion(ctx, tx); err != nil {
-			return err
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(FetchRemoteTableModelsConcurrency)
+	for i := 0; i < len(tableNames); i += FetchRemoteTableModelsBatchSize {
+		start := i
+		end := i + FetchRemoteTableModelsBatchSize
+		if end > len(tableNames) {
+			end = len(tableNames)
 		}
-		serverInfo := version.ParseServerInfo(versionStr)
+		eg.Go(func() error {
+			return s.Transact(
+				egCtx, "fetch table columns",
+				func(_ context.Context, tx *sql.Tx) error {
+					args := make([]any, 0, 1+end-start)
+					args = append(args, schemaName)
+					for _, tableName := range tableNames[start:end] {
+						args = append(args, tableName)
+					}
+					//nolint:gosec
+					rows, err := tx.Query(`
+						SELECT table_name, column_name, column_type, generation_expression, extra
+						FROM information_schema.columns
+						WHERE table_schema = ? AND table_name IN (?`+strings.Repeat(",?", end-start-1)+`)
+						ORDER BY table_name, ordinal_position;
+					`, args...)
+					if err != nil {
+						return err
+					}
+					defer rows.Close()
 
-		rows, e := tx.Query(`
-			SELECT table_name, column_name, column_type, generation_expression, extra
-			FROM information_schema.columns
-			WHERE table_schema = ?
-			ORDER BY table_name, ordinal_position;
-		`, schemaName)
-		if e != nil {
-			return e
-		}
-		defer rows.Close()
+					var (
+						curTableName string
+						curColOffset int
+						curTable     *model.TableInfo
+						tableIdx     = start - 1
+					)
+					for rows.Next() {
+						var tableName, columnName, columnType, generationExpr, columnExtra string
+						if err2 := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); err2 != nil {
+							return err2
+						}
+						if tableName != curTableName {
+							tableIdx++
+							curTable = &model.TableInfo{
+								Name:       pmodel.NewCIStr(tableName),
+								State:      model.StatePublic,
+								PKIsHandle: true,
+							}
+							tableInfos[tableIdx] = curTable
+							curTableName = tableName
+							curColOffset = 0
+						}
 
-		var (
-			curTableName string
-			curColOffset int
-			curTable     *model.TableInfo
-		)
-		tables := []*model.TableInfo{}
-		for rows.Next() {
-			var tableName, columnName, columnType, generationExpr, columnExtra string
-			if e := rows.Scan(&tableName, &columnName, &columnType, &generationExpr, &columnExtra); e != nil {
-				return e
-			}
-			if tableName != curTableName {
-				curTable = &model.TableInfo{
-					Name:       pmodel.NewCIStr(tableName),
-					State:      model.StatePublic,
-					PKIsHandle: true,
-				}
-				tables = append(tables, curTable)
-				curTableName = tableName
-				curColOffset = 0
-			}
+						// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
+						var flag uint
+						if strings.HasSuffix(columnType, "unsigned") {
+							flag |= mysql.UnsignedFlag
+						}
+						if strings.Contains(columnExtra, "auto_increment") {
+							flag |= mysql.AutoIncrementFlag
+						}
 
-			// see: https://github.com/pingcap/parser/blob/3b2fb4b41d73710bc6c4e1f4e8679d8be6a4863e/types/field_type.go#L185-L191
-			var flag uint
-			if strings.HasSuffix(columnType, "unsigned") {
-				flag |= mysql.UnsignedFlag
-			}
-			if strings.Contains(columnExtra, "auto_increment") {
-				flag |= mysql.AutoIncrementFlag
-			}
+						ft := types.FieldType{}
+						ft.SetFlag(flag)
+						curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
+							Name:                pmodel.NewCIStr(columnName),
+							Offset:              curColOffset,
+							State:               model.StatePublic,
+							FieldType:           ft,
+							GeneratedExprString: generationExpr,
+						})
+						curColOffset++
+					}
+					if err := rows.Err(); err != nil {
+						return err
+					}
 
-			ft := types.FieldType{}
-			ft.SetFlag(flag)
-			curTable.Columns = append(curTable.Columns, &model.ColumnInfo{
-				Name:                pmodel.NewCIStr(columnName),
-				Offset:              curColOffset,
-				State:               model.StatePublic,
-				FieldType:           ft,
-				GeneratedExprString: generationExpr,
-			})
-			curColOffset++
-		}
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		// shard_row_id/auto random is only available after tidb v4.0.0
-		// `show table next_row_id` is also not available before tidb v4.0.0
-		if serverInfo.ServerType != version.ServerTypeTiDB || serverInfo.ServerVersion.Major < 4 {
-			results = tables
-			return nil
-		}
+					failpoint.Inject(
+						"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
+						func() {
+							fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+						},
+					)
 
-		failpoint.Inject(
-			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
-			func() {
-				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
-			},
-		)
-
-		// init auto id column for each table
-		for _, tbl := range tables {
-			tblName := common.UniqueTable(schemaName, tbl.Name.O)
-			autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
-			if err != nil {
-				logger.Warn("fetch table auto ID infos error. Ignore this table and continue.", zap.String("table_name", tblName), zap.Error(err))
-				continue
-			}
-			for _, info := range autoIDInfos {
-				for _, col := range tbl.Columns {
-					if col.Name.O == info.Column {
-						switch info.Type {
-						case "AUTO_INCREMENT":
-							col.AddFlag(mysql.AutoIncrementFlag)
-						case "AUTO_RANDOM":
-							col.AddFlag(mysql.PriKeyFlag)
-							tbl.PKIsHandle = true
-							// set a stub here, since we don't really need the real value
-							tbl.AutoRandomBits = 1
+					// init auto id column for each table
+					for idx := start; idx <= tableIdx; idx++ {
+						tbl := tableInfos[idx]
+						tblName := common.UniqueTable(schemaName, tbl.Name.O)
+						autoIDInfos, err := FetchTableAutoIDInfos(ctx, tx, tblName)
+						if err != nil {
+							logger.Warn(
+								"fetch table auto ID infos error. Ignore this table and continue.",
+								zap.String("table_name", tblName),
+								zap.Error(err),
+							)
+							tableInfos[idx] = nil
+							continue
+						}
+						for _, info := range autoIDInfos {
+							for _, col := range tbl.Columns {
+								if col.Name.O == info.Column {
+									switch info.Type {
+									case "AUTO_INCREMENT":
+										col.AddFlag(mysql.AutoIncrementFlag)
+									case "AUTO_RANDOM":
+										col.AddFlag(mysql.PriKeyFlag)
+										tbl.PKIsHandle = true
+										// set a stub here, since we don't really need the real value
+										tbl.AutoRandomBits = 1
+									}
+								}
+							}
 						}
 					}
-				}
-			}
-			results = append(results, tbl)
+					return nil
+				})
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ret := make(map[string]*model.TableInfo, len(tableInfos))
+	for _, tbl := range tableInfos {
+		if tbl != nil {
+			ret[tbl.Name.L] = tbl
 		}
-		return nil
-	})
-	return results, err
+	}
+
+	return ret, nil
 }
 
 // CheckRequirements performs the check whether the backend satisfies the version requirements.

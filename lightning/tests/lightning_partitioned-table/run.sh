@@ -31,12 +31,20 @@ for BACKEND in tidb local; do
     check_contains 'count(1): 8'
     check_contains 'sum(a): 277151781'
 
+    run_sql 'SELECT count(1), sum(c) FROM partitioned.a use index (key_c);'
+    check_contains 'count(1): 8'
+    check_contains 'sum(c): 277151781'
+
     run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'a';"
     check_contains 'Create_options: partitioned'
 
     run_sql 'SELECT count(1), sum(a) FROM partitioned.range;'
     check_contains 'count(1): 8'
     check_contains 'sum(a): 277151781'
+
+    run_sql 'SELECT count(1), sum(c) FROM partitioned.range use index (key_c);'
+    check_contains 'count(1): 8'
+    check_contains 'sum(c): 277151781'
 
     run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'range';"
     check_contains 'Create_options: partitioned'
@@ -45,12 +53,20 @@ for BACKEND in tidb local; do
     check_contains 'count(1): 8'
     check_contains 'sum(a): 277151781'
 
+    run_sql 'SELECT count(1), sum(c) FROM partitioned.list use index (key_c);'
+    check_contains 'count(1): 8'
+    check_contains 'sum(c): 277151781'
+
     run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'list';"
     check_contains 'Create_options: partitioned'
 
     run_sql 'SELECT count(1), sum(a) FROM partitioned.defaultlist;'
     check_contains 'count(1): 8'
     check_contains 'sum(a): 277151781'
+
+    run_sql 'SELECT count(1), sum(c) FROM partitioned.defaultlist use index (key_c);'
+    check_contains 'count(1): 8'
+    check_contains 'sum(c): 277151781'
 
     run_sql "SHOW TABLE STATUS FROM partitioned WHERE name = 'defaultlist';"
     check_contains 'Create_options: partitioned'

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
@@ -66,15 +67,18 @@ const (
 	strictPlacementPolicyMode = "STRICT"
 	ignorePlacementPolicyMode = "IGNORE"
 
-	defaultDDLConcurrency = 100
-	maxSplitKeysOnce      = 10240
+	resetSpeedLimitRetryTimes = 3
+	defaultDDLConcurrency     = 100
+	maxSplitKeysOnce          = 10240
 )
 
 const minBatchDdlSize = 1
 
 type SnapClient struct {
+	restorer restore.SstRestorer
+	// Use a closure to lazy load checkpoint runner
+	getRestorerFn func(*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer
 	// Tool clients used by SnapClient
-	fileImporter *SnapFileImporter
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
 
@@ -91,8 +95,7 @@ type SnapClient struct {
 	supportPolicy bool
 	workerPool    *tidbutil.WorkerPool
 
-	noSchema        bool
-	hasSpeedLimited bool
+	noSchema bool
 
 	databases map[string]*metautil.Database
 	ddlJobs   []*model.Job
@@ -147,7 +150,8 @@ type SnapClient struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
-	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
@@ -167,6 +171,13 @@ func NewRestoreClient(
 	}
 }
 
+func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+	if rc.restorer == nil {
+		rc.restorer = rc.getRestorerFn(checkpointRunner)
+	}
+	return rc.restorer
+}
+
 func (rc *SnapClient) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
@@ -182,8 +193,10 @@ func (rc *SnapClient) Close() {
 	// close the connection, and it must be succeed when in SQL mode.
 	rc.closeConn()
 
-	if err := rc.fileImporter.Close(); err != nil {
-		log.Warn("failed to close file improter")
+	if rc.restorer != nil {
+		if err := rc.restorer.Close(); err != nil {
+			log.Warn("failed to close file restorer")
+		}
 	}
 
 	log.Info("Restore client closed")
@@ -339,18 +352,18 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.LoadCheckpointDataForSnapshotRestore(ctx, execCtx, func(tableID int64, rangeKey checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
-			checkpointSet[rangeKey.RangeKey] = struct{}{}
+			checkpointSet[v.RangeKey] = struct{}{}
 		})
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
-		// t2 is the latest time the checkpoint checksum persisted to the external storage.
+
 		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
@@ -372,7 +385,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err := checkpoint.SaveCheckpointMetadataForSnapshotRestore(ctx, rc.db.Session(), meta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
@@ -381,8 +394,11 @@ func (rc *SnapClient) InitCheckpoint(
 	if err != nil {
 		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se)
-	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	return checkpointSetWithTableID, checkpointClusterConfig, nil
 }
 
 func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
@@ -445,7 +461,30 @@ func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
 	return errors.Trace(err)
 }
 
-func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) error {
+func SetSpeedLimitFn(ctx context.Context, stores []*metapb.Store, pool *tidbutil.WorkerPool) func(*SnapFileImporter, uint64) error {
+	return func(importer *SnapFileImporter, limit uint64) error {
+		eg, ectx := errgroup.WithContext(ctx)
+		for _, store := range stores {
+			if err := ectx.Err(); err != nil {
+				return errors.Trace(err)
+			}
+
+			finalStore := store
+			pool.ApplyOnErrorGroup(eg,
+				func() error {
+					err := importer.SetDownloadSpeedLimit(ectx, finalStore.GetId(), limit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
+		}
+		return eg.Wait()
+	}
+}
+
+func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool,
+	RawStartKey, RawEndKey []byte) error {
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		return errors.Annotate(err, "failed to get stores")
@@ -453,27 +492,93 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	rc.storeCount = len(stores)
 	rc.updateConcurrency()
 
+	var createCallBacks []func(*SnapFileImporter) error
+	var closeCallBacks []func(*SnapFileImporter) error
 	var splitClientOpts []split.ClientOptionalParameter
 	if isRawKvMode {
 		splitClientOpts = append(splitClientOpts, split.WithRawKV())
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return importer.SetRawRange(RawStartKey, RawEndKey)
+		})
 	}
+	createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+		return importer.CheckMultiIngestSupport(ctx, stores)
+	})
+	if rc.rateLimit != 0 {
+		setFn := SetSpeedLimitFn(ctx, stores, rc.workerPool)
+		createCallBacks = append(createCallBacks, func(importer *SnapFileImporter) error {
+			return setFn(importer, rc.rateLimit)
+		})
+		closeCallBacks = append(closeCallBacks, func(importer *SnapFileImporter) error {
+			// In future we may need a mechanism to set speed limit in ttl. like what we do in switchmode. TODO
+			var resetErr error
+			for retry := 0; retry < resetSpeedLimitRetryTimes; retry++ {
+				resetErr = setFn(importer, 0)
+				if resetErr != nil {
+					log.Warn("failed to reset speed limit, retry it",
+						zap.Int("retry time", retry), logutil.ShortError(resetErr))
+					time.Sleep(time.Duration(retry+3) * time.Second)
+					continue
+				}
+				break
+			}
+			if resetErr != nil {
+				log.Error("failed to reset speed limit, please reset it manually", zap.Error(resetErr))
+			}
+			return resetErr
+		})
+	}
+
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter, err = NewSnapFileImporter(ctx, metaClient, importCli, backend, isRawKvMode, isTxnKvMode, stores, rc.rewriteMode, rc.concurrencyPerStore)
-	return errors.Trace(err)
+
+	var fileImporter *SnapFileImporter
+	opt := NewSnapFileImporterOptions(
+		rc.cipher, metaClient, importCli, backend,
+		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+	)
+	if isRawKvMode || isTxnKvMode {
+		mode := Raw
+		if isTxnKvMode {
+			mode = Txn
+		}
+		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
+		fileImporter, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		// Raw/Txn restore are not support checkpoint for now
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+		}
+	} else {
+		// or create a fileImporter with the cluster API version
+		fileImporter, err = NewSnapFileImporter(
+			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, checkpointRunner)
+		}
+	}
+	return nil
 }
 
 func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
-// InitBackupMeta loads schemas from BackupMeta to initialize RestoreClient.
-func (rc *SnapClient) InitBackupMeta(
+// LoadSchemaIfNeededAndInitClient loads schemas from BackupMeta to initialize RestoreClient.
+func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	c context.Context,
 	backupMeta *backuppb.BackupMeta,
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader,
-	loadStats bool) error {
+	loadStats bool,
+	RawStartKey []byte,
+	RawEndKey []byte,
+) error {
 	if rc.needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
@@ -498,7 +603,7 @@ func (rc *SnapClient) InitBackupMeta(
 	rc.backupMeta = backupMeta
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
-	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
@@ -568,7 +673,7 @@ func (rc *SnapClient) ResetTS(ctx context.Context, pdCtrl *pdutil.PdController) 
 	log.Info("reset pd timestamp", zap.Uint64("ts", restoreTS))
 	return utils.WithRetry(ctx, func() error {
 		return pdCtrl.ResetTS(ctx, restoreTS)
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 }
 
 // GetDatabases returns all databases.
@@ -948,48 +1053,7 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 	return nil
 }
 
-func (rc *SnapClient) ResetSpeedLimit(ctx context.Context) error {
-	rc.hasSpeedLimited = false
-	err := rc.setSpeedLimit(ctx, 0)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-func (rc *SnapClient) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
-	if !rc.hasSpeedLimited {
-		stores, err := util.GetAllTiKVStores(ctx, rc.pdClient, util.SkipTiFlash)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		eg, ectx := errgroup.WithContext(ctx)
-		for _, store := range stores {
-			if err := ectx.Err(); err != nil {
-				return errors.Trace(err)
-			}
-
-			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() error {
-					err := rc.fileImporter.SetDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
-		}
-
-		if err := eg.Wait(); err != nil {
-			return errors.Trace(err)
-		}
-		rc.hasSpeedLimited = true
-	}
-	return nil
-}
-
-func (rc *SnapClient) execChecksum(
+func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
 	tbl *CreatedTable,
 	kvClient kv.Client,
@@ -1000,13 +1064,14 @@ func (rc *SnapClient) execChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	if tbl.OldTable.NoChecksum() {
+	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil
 	}
 
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("Client.execChecksum", opentracing.ChildOf(span.Context()))
+		span1 := span.Tracer().StartSpan("Client.execAndValidateChecksum", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
@@ -1046,71 +1111,23 @@ func (rc *SnapClient) execChecksum(
 			}
 		}
 	}
-	table := tbl.OldTable
-	if item.Crc64xor != table.Crc64Xor ||
-		item.TotalKvs != table.TotalKvs ||
-		item.TotalBytes != table.TotalBytes {
+	checksumMatch := item.Crc64xor == expectedChecksumStats.Crc64Xor &&
+		item.TotalKvs == expectedChecksumStats.TotalKvs &&
+		item.TotalBytes == expectedChecksumStats.TotalBytes
+	failpoint.Inject("full-restore-validate-checksum", func(_ failpoint.Value) {
+		checksumMatch = false
+	})
+	if !checksumMatch {
 		logger.Error("failed in validate checksum",
-			zap.Uint64("origin tidb crc64", table.Crc64Xor),
+			zap.Uint64("expected tidb crc64", expectedChecksumStats.Crc64Xor),
 			zap.Uint64("calculated crc64", item.Crc64xor),
-			zap.Uint64("origin tidb total kvs", table.TotalKvs),
+			zap.Uint64("expected tidb total kvs", expectedChecksumStats.TotalKvs),
 			zap.Uint64("calculated total kvs", item.TotalKvs),
-			zap.Uint64("origin tidb total bytes", table.TotalBytes),
+			zap.Uint64("expected tidb total bytes", expectedChecksumStats.TotalBytes),
 			zap.Uint64("calculated total bytes", item.TotalBytes),
 		)
 		return errors.Annotate(berrors.ErrRestoreChecksumMismatch, "failed to validate checksum")
 	}
-	logger.Info("success in validate checksum")
-	return nil
-}
-
-func (rc *SnapClient) WaitForFilesRestored(ctx context.Context, files []*backuppb.File, updateCh glue.Progress) error {
-	errCh := make(chan error, len(files))
-	eg, ectx := errgroup.WithContext(ctx)
-	defer close(errCh)
-
-	for _, file := range files {
-		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
-			func() error {
-				defer func() {
-					log.Info("import sst files done", logutil.Files(files))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, []TableIDWithFiles{{Files: []*backuppb.File{fileReplica}, RewriteRules: restoreutils.EmptyRewriteRule()}}, rc.cipher, rc.backupMeta.ApiVersion)
-			})
-	}
-	if err := eg.Wait(); err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// RestoreRaw tries to restore raw keys in the specified range.
-func (rc *SnapClient) RestoreRaw(
-	ctx context.Context, startKey []byte, endKey []byte, files []*backuppb.File, updateCh glue.Progress,
-) error {
-	start := time.Now()
-	defer func() {
-		elapsed := time.Since(start)
-		log.Info("Restore Raw",
-			logutil.Key("startKey", startKey),
-			logutil.Key("endKey", endKey),
-			zap.Duration("take", elapsed))
-	}()
-	err := rc.fileImporter.SetRawRange(startKey, endKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = rc.WaitForFilesRestored(ctx, files, updateCh)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.Info(
-		"finish to restore raw range",
-		logutil.Key("startKey", startKey),
-		logutil.Key("endKey", endKey),
-	)
+	logger.Info("success in validating checksum")
 	return nil
 }

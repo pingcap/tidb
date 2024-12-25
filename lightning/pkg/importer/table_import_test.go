@@ -409,7 +409,7 @@ func (s *tableRestoreSuite) TestRestoreEngineFailed() {
 	mockEngineWriter.EXPECT().IsSynced().Return(true).AnyTimes()
 	mockEngineWriter.EXPECT().Close(gomock.Any()).Return(mockChunkFlushStatus, nil).AnyTimes()
 
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0), s.tableInfo.Core)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc()), s.tableInfo.Core)
 	require.NoError(s.T(), err)
 	_, indexUUID := backend.MakeUUID("`db`.`table`", -1)
 	_, dataUUID := backend.MakeUUID("`db`.`table`", 0)
@@ -1195,7 +1195,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 			targetInfoGetter: targetInfoGetter,
 			srcStorage:       mockStore,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, []*mydump.MDDatabaseMeta{}, preInfoGetter, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			store:               mockStore,
@@ -1332,7 +1332,7 @@ func (s *tableRestoreSuite) TestCheckClusterRegion() {
 			targetInfoGetter: targetInfoGetter,
 			dbMetas:          dbMetas,
 		}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, checkpoints.NewNullCheckpointsDB(), nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			taskMgr:             mockTaskMetaMgr{},
@@ -1425,7 +1425,7 @@ func (s *tableRestoreSuite) TestCheckHasLargeCSV() {
 	for _, ca := range cases {
 		template := NewSimpleTemplate()
 		cfg := &config.Config{Mydumper: config.MydumperRuntime{StrictFormat: ca.strictFormat}}
-		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil)
+		theCheckBuilder := NewPrecheckItemBuilder(cfg, ca.dbMetas, nil, nil, nil, nil)
 		rc := &Controller{
 			cfg:                 cfg,
 			checkTemplate:       template,
@@ -1445,7 +1445,7 @@ func (s *tableRestoreSuite) TestEstimate() {
 	controller := gomock.NewController(s.T())
 	defer controller.Finish()
 	mockEncBuilder := mock.NewMockEncodingBuilder(controller)
-	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(s.tableInfo.Core.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, s.tableInfo.Core)
 	require.NoError(s.T(), err)
 
