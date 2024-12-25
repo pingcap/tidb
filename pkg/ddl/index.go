@@ -2417,16 +2417,7 @@ type cleanUpIndexWorker struct {
 	baseIndexWorker
 }
 
-<<<<<<< HEAD
 func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *cleanUpIndexWorker {
-=======
-func newCleanUpIndexWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*cleanUpIndexWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false, false)
-	if err != nil {
-		return nil, err
-	}
-
->>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	indexes := make([]table.Index, 0, len(t.Indices()))
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	for _, index := range t.Indices() {

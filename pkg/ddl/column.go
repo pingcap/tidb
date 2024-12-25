@@ -35,10 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/meta/model"
->>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -1215,36 +1211,20 @@ type updateColumnWorker struct {
 	checksumNeeded bool
 }
 
-<<<<<<< HEAD
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
-=======
-func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
-	for _, col := range t.WritableCols() {
-		if col.ID == currElementID {
-			changeColumnOrigName := table.FindCol(t.Cols(), getChangingColumnOriginName(col.ColumnInfo))
-			if changeColumnOrigName != nil {
-				newCol = col.ColumnInfo
-				oldCol = changeColumnOrigName.ColumnInfo
-				return
-			}
-		}
-	}
-	return
-}
-
-func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblUpdateColRate, false, true)
-	if err != nil {
-		return nil, err
-	}
-
->>>>>>> 042a332aae6 (metrics: add col/idx name(s) for BackfillProgressGauge and BackfillTotalCounter (#58380))
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.DDLLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.Stringer("reorgInfo", reorgInfo))
 		return nil
 	}
-	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
+	var oldCol, newCol *model.ColumnInfo
+	for _, col := range t.WritableCols() {
+		if col.ID == reorgInfo.currElement.ID {
+			newCol = col.ColumnInfo
+			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
+			break
+		}
+	}
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	checksumNeeded := false
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {

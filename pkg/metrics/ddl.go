@@ -180,47 +180,26 @@ func InitDDLMetrics() {
 const (
 	LblAction = "action"
 
-	// Used by BackfillProgressGauge
-	LblAddIndex       = "add_index"
-	LblAddIndexMerge  = "add_index_merge_tmp"
-	LblModifyColumn   = "modify_column"
-	LblReorgPartition = "reorganize_partition"
+	LblAddIndex      = "add_index"
+	LblAddIndexMerge = "add_index_merge_tmp"
+	LblModifyColumn  = "modify_column"
 
-	// Used by BackfillTotalCounter
-	LblAddIdxRate         = "add_idx_rate"
-	LblMergeTmpIdxRate    = "merge_tmp_idx_rate"
-	LblCleanupIdxRate     = "cleanup_idx_rate"
-	LblUpdateColRate      = "update_col_rate"
-	LblReorgPartitionRate = "reorg_partition_rate"
+	LblReorgPartition = "reorganize_partition"
 )
 
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
+// GenerateReorgLabel returns the label with schema name and table name.
+func GenerateReorgLabel(label string, schemaName string, tableName string) string {
 	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
-	}
+	stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
 	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
+	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
+	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
 	return stringBuilder.String()
 }
 
-// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
-}
-
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+func GetBackfillProgressByLabel(label string, schemaName string, tableName string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName))
 }
