@@ -302,7 +302,7 @@ partition p1 values in ((3,'a'),(4,'b')),
 partition p3 values in ((5,null))
 );
 create table t (a int) partition by list (a) (partition p0 values in (default), partition p1 values in (maxvalue));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 112 near "maxvalue));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 112 near "maxvalue))" 
 alter table t add partition (
 partition p4 values in ((7,'a')),
 partition p5 values in ((8,'a')));
@@ -311,19 +311,19 @@ partition pDef values in (10, default));
 Error 1653 (HY000): Inconsistency in usage of column lists for partitioning
 alter table t add partition (
 partition pDef values in ((10, default)));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 40 near ")));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 40 near ")))" 
 alter table t add partition (
 partition pDef values in (default, 10));
 Error 1653 (HY000): Inconsistency in usage of column lists for partitioning
 alter table t add partition (
 partition pDef values in ((default, 10)));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 36 near ", 10)));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 36 near ", 10)))" 
 alter table t add partition (
 partition pDef values in ((9,'a'), (default, 10, 'q'));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 45 near ", 10, 'q'));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 45 near ", 10, 'q'))" 
 alter table t add partition (
 partition pDef values in ((9,'a'), (10, default, 'q'));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 49 near ", 'q'));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 49 near ", 'q'))" 
 alter table t add partition (
 partition pDef values in (default));
 alter table t add partition (
@@ -340,7 +340,7 @@ alter table t add partition (
 partition pDef values in ((9, 'c'), default));
 alter table t add partition (
 partition pDef values in ((9, 'c'), (default)));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 46 near ")));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 46 near ")))" 
 alter table t drop partition pDef;
 alter table t add partition (
 partition pDef values in (default, (9,'c')));
@@ -355,7 +355,7 @@ alter table t add partition (
 partition pDef values in ((9,'d'), default, (10, 'd')));
 alter table t add partition (
 partition pDef values in ((9,'a'), (10, default, 'q'));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 49 near ", 'q'));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 2 column 49 near ", 'q'))" 
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
@@ -657,13 +657,13 @@ Error 1526 (HY000): Table has no partition for value from column_list
 set @@tidb_partition_prune_mode = default;
 drop table if exists t;
 create table t (a int) partition by range (a) (partition p0 values less than (default));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 86 near "));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 86 near "))" 
 create table t (a int) partition by range (a) (partition p0 values less than ("default"));
 Error 1697 (HY000): VALUES value for partition 'p0' must have type INT
 create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than ("default"));
 drop table t;
 create table t (a varchar(55)) partition by range columns (a) (partition p0 values less than (default));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 102 near "));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 102 near "))" 
 create table t (a varchar(55)) partition by range columns (a) (partition p0 default);
 Error 1480 (HY000): Only LIST PARTITIONING can use VALUES IN in partition definition
 create table t (a varchar(55)) partition by list columns (a) (partition p0 default);
@@ -687,7 +687,7 @@ PARTITION BY LIST (`a`)
 (PARTITION `p0` DEFAULT)
 drop table t;
 create table t (a int) partition by list (a) (partition p0 values in ());
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 71 near "));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 71 near "))" 
 drop table if exists t;
 create table t (id int) partition by list  (id) (
 partition p0 values in (1,2),

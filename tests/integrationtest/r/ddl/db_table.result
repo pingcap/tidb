@@ -73,7 +73,7 @@ create table t (a bigint, b int, c int generated always as (b+1)) partition by h
 alter table t drop column a;
 Error 3855 (HY000): Column 'a' has a partitioning function dependency and cannot be dropped or renamed
 alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near "then (b / a) end));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near "then (b / a) end))" 
 alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near "then (b / a) end));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near "then (b / a) end))" 
 drop table if exists t;
