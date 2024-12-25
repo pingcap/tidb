@@ -89,8 +89,7 @@ func updateRecord(
 	r, ctx := tracing.StartRegionEx(ctx, "executor.updateRecord")
 	defer r.End()
 
-	sessVars := sctx.GetSessionVars()
-	sc := sessVars.StmtCtx
+	sc := sctx.GetSessionVars().StmtCtx
 
 	// changed, handleChanged indicated whether row/handle is changed
 	changed, handleChanged := false, false
@@ -153,7 +152,7 @@ func updateRecord(
 	// Step 2: check whether there are some columns changed.
 	// Step 3: on-update-now columns if non-generated columns are changed.
 	// Step 4: generated columns if non-generated columns are changed.
-	// Step 5: handle foreign key errors, bad null errors and exchange partition errors.
+	// Step 5: handle bad null errors and exchange partition errors.
 	// After these are done, we can finally update the record.
 
 	// Step 2: compare already evaluated columns and update changed, handleChanged and handleChanged flags.

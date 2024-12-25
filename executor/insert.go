@@ -478,7 +478,7 @@ func (e *InsertExec) doDupRowUpdate(
 		true, e.memTracker, e.fkChecks, e.fkCascades)
 
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 
 	if autoColIdx >= 0 {
