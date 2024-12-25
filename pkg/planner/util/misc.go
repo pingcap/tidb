@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -52,8 +53,8 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 // SliceRecursiveFlattenIter returns an iterator that recursively iterates over all elements of an any-dimensional slice
 // of any type.
 // Performance note:
-// For each non-leaf slice, this function uses reflection to iterate over them. For each slice, this function will use
-// reflection to check the dynamic type. Be careful when trying to use this function in performance-critical code.
+// For each slice, this function need to check the dynamic type before iterating over it. For each non-leaf slice, this
+// function uses reflect to iterate over it. Be careful when trying to use this function in performance-critical code.
 /*
 Example:
 	paths := [][][]*AccessPath{...}
@@ -72,10 +73,13 @@ func sliceRecursiveFlattenIterHelper[E any, Slice any](
 	yield func(int, E) bool,
 	startIdx int,
 ) (nextIdx int, stop bool) {
-	// Case 1: Slice == []E, which means it's already the lowest level
-	if reflect.TypeOf(s) == reflect.SliceOf(reflect.TypeFor[E]()) {
+	intest.AssertFunc(func() bool {
+		return reflect.TypeOf(s).Kind() == reflect.Slice
+	})
+	// Case 1: Input slice is []E, which means it's already the lowest level.
+	if leafSlice, isLeafSlice := any(s).([]E); isLeafSlice {
 		i := startIdx
-		for _, v := range any(s).([]E) {
+		for _, v := range leafSlice {
 			if !yield(i, v) {
 				return i + 1, true
 			}
@@ -88,7 +92,11 @@ func sliceRecursiveFlattenIterHelper[E any, Slice any](
 	// We have to use reflect to iterate over the slice here.
 	v := reflect.ValueOf(s)
 	for i := range v.Len() {
-		idx, stop = sliceRecursiveFlattenIterHelper[E](v.Index(i).Interface(), yield, idx)
+		val := v.Index(i).Interface()
+		intest.AssertFunc(func() bool {
+			return reflect.TypeOf(val).Kind() == reflect.Slice
+		})
+		idx, stop = sliceRecursiveFlattenIterHelper[E](val, yield, idx)
 		if stop {
 			return idx, true
 		}

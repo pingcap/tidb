@@ -80,14 +80,19 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 	}
 
 	regularPathCount := len(ds.PossibleAccessPaths)
+
+	// Now we have 3 entry functions to generate IndexMerge paths:
+	// 1. Generate AND type IndexMerge for non-MV indexes and all OR type IndexMerge.
 	var err error
 	if warningMsg, err = generateOtherIndexMerge(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
+	// 2. Generate AND type IndexMerge for MV indexes. Tt can only use one index in an IndexMerge path.
 	if err := generateANDIndexMerge4MVIndex(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
 	oldIndexMergeCount := len(ds.PossibleAccessPaths)
+	// 3. Generate AND type IndexMerge for MV indexes. It can use multiple MV and non-MV indexes in an IndexMerge path.
 	if err := generateANDIndexMerge4ComposedIndex(ds, regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
