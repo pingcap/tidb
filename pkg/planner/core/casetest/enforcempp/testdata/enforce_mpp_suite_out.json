@@ -649,11 +649,11 @@
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
-          "MergeJoin_10 8000.00 root  anti semi join, left side:TableReader_23, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
-          "├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
-          "└─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
-          "  └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "MergeJoin_10 8000.00 root  anti semi join, left side:TableReader_24, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
+          "├─TableReader_27(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader_24(Probe) 10000.00 root  data:TableFullScan_23",
+          "  └─TableFullScan_23 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
