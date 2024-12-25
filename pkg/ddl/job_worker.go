@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -529,18 +530,31 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 // non-zero, caller should wait for other nodes to catch up.
 func (w *worker) transitOneJobStep(
 	jobCtx *jobContext,
-	job *model.Job,
+	jobW *model.JobW,
 	sysTblMgr systable.Manager,
 ) (int64, error) {
-	var (
-		err error
-	)
-
+	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
 	}
 	jobCtx.metaMut = meta.NewMutator(txn)
+
+	// we are using optimistic txn in nearly all DDL related transactions, if
+	// time range of another concurrent job updates, such as 'cancel/pause' job
+	// or on owner change, overlap with us, we will report 'write conflict', but
+	// if they don't overlap, we query and check inside our txn to detect the conflict.
+	currBytes, err := sysTblMgr.GetJobBytesByIDWithSe(jobCtx.ctx, w.sess, job.ID)
+	if err != nil {
+		// TODO maybe we can unify where to rollback, they are scatting around.
+		w.sess.Rollback()
+		return 0, err
+	}
+	if !bytes.Equal(currBytes, jobW.Bytes) {
+		w.sess.Rollback()
+		return 0, errors.New("job meta changed by others")
+	}
 
 	if job.IsDone() || job.IsRollbackDone() || job.IsCancelled() {
 		if job.IsDone() {

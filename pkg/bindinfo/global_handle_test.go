@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -148,9 +149,10 @@ func TestBindParse(t *testing.T) {
 	require.Equal(t, "utf8mb4_bin", binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
-	dur, err := binding.SinceUpdateTime()
+
+	dur, err := binding.UpdateTime.GoTime(time.Local)
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, int64(dur), int64(0))
+	require.GreaterOrEqual(t, int64(time.Since(dur)), int64(0))
 
 	// Test fields with quotes or slashes.
 	sql = `CREATE GLOBAL BINDING FOR  select * from t where i BETWEEN "a" and "b" USING select * from t use index(index_t) where i BETWEEN "a\nb\rc\td\0e" and 'x'`
@@ -250,14 +252,14 @@ func TestSetBindingStatus(t *testing.T) {
 }
 
 func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, index idx_a(a))")
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	// Simulate creating bindings on other machines
@@ -266,7 +268,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	dom.BindHandle().Reset()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
@@ -274,21 +275,20 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	require.Equal(t, bindinfo.Disabled, rows[0][3])
 
 	// clear the mysql.bind_info
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	dom.BindHandle().Reset()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, bindinfo.Enabled, rows[0][3])
 
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 }
 
 var testSQLs = []struct {
@@ -416,7 +416,7 @@ func TestGlobalBinding(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		internal.UtilCleanBindingEnv(tk, dom)
+		internal.UtilCleanBindingEnv(tk)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -516,7 +516,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
-	internal.UtilCleanBindingEnv(tk, dom)
+	internal.UtilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
 
