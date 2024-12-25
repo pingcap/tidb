@@ -38,22 +38,22 @@ func TestSemiJoinOrder(t *testing.T) {
 	tk.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
-	tk.MustQuery("explain select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-		"Sort_9 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin_12 7992.00 root  semi join, left side:TableReader_15, equal:[eq(test.t1.col0, test.t2.col0)]",
-		"  ├─TableReader_15(Build) 9990.00 root  data:Selection_14",
-		"  │ └─Selection_14 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-		"  │   └─TableFullScan_13 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"  └─TableReader_18(Probe) 9990.00 root  data:Selection_17",
-		"    └─Selection_17 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-		"      └─TableFullScan_16 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
-	tk.MustQuery("explain select  /*+ HASH_JOIN_BUILD(t2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-		"Sort_9 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin_12 7992.00 root  semi join, left side:TableReader_16, equal:[eq(test.t1.col0, test.t2.col0)]",
-		"  ├─TableReader_19(Build) 9990.00 root  data:Selection_18",
-		"  │ └─Selection_18 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-		"  │   └─TableFullScan_17 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-		"  └─TableReader_16(Probe) 9990.00 root  data:Selection_15",
-		"    └─Selection_15 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-		"      └─TableFullScan_14 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
+		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 9990.00 root  data:Selection",
+		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
+		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 9990.00 root  data:Selection",
+		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
