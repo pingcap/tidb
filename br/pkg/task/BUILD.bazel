@@ -59,6 +59,7 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
