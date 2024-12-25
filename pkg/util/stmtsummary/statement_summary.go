@@ -40,17 +40,17 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
+// StmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtSummaryByDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
+	SchemaName string
+	Digest     string
 	// The digest of the previous statement.
-	prevDigest string
+	PrevDigest string
 	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
+	PlanDigest string
+	// `ResourceGroupName` is the resource group's name of this statement is bind to.
+	ResourceGroupName string
 	// `hash` is the hash value of this object.
 	hash []byte
 }
@@ -58,14 +58,14 @@ type stmtSummaryByDigestKey struct {
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
+func (key *StmtSummaryByDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
+		key.hash = make([]byte, 0, len(key.SchemaName)+len(key.Digest)+len(key.PrevDigest)+len(key.PlanDigest)+len(key.ResourceGroupName))
+		key.hash = append(key.hash, hack.Slice(key.Digest)...)
+		key.hash = append(key.hash, hack.Slice(key.SchemaName)...)
+		key.hash = append(key.hash, hack.Slice(key.PrevDigest)...)
+		key.hash = append(key.hash, hack.Slice(key.PlanDigest)...)
+		key.hash = append(key.hash, hack.Slice(key.ResourceGroupName)...)
 	}
 	return key.hash
 }
@@ -308,7 +308,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -335,12 +335,12 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        sei.SchemaName,
+		Digest:            sei.Digest,
+		PrevDigest:        sei.PrevSQLDigest,
+		PlanDigest:        sei.PlanDigest,
+		ResourceGroupName: sei.ResourceGroupName,
 	}
 	// Calculate hash value in advance, to reduce the time holding the lock.
 	key.Hash()

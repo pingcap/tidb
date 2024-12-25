@@ -75,11 +75,11 @@ func TestAddStatement(t *testing.T) {
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	samplePlan, _, _ := stmtExecInfo1.LazyInfo.GetEncodedPlan()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
@@ -454,11 +454,11 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo4 := stmtExecInfo1
 	stmtExecInfo4.SchemaName = "schema2"
 	stmtExecInfo4.ExecDetail.CommitDetail = nil
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo4.SchemaName,
-		digest:            stmtExecInfo4.Digest,
-		planDigest:        stmtExecInfo4.PlanDigest,
-		resourceGroupName: stmtExecInfo4.ResourceGroupName,
+	key = &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo4.SchemaName,
+		Digest:            stmtExecInfo4.Digest,
+		PlanDigest:        stmtExecInfo4.PlanDigest,
+		ResourceGroupName: stmtExecInfo4.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo4)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
@@ -468,11 +468,11 @@ func TestAddStatement(t *testing.T) {
 	// Fifth statement has a different digest.
 	stmtExecInfo5 := stmtExecInfo1
 	stmtExecInfo5.Digest = "digest2"
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo5.SchemaName,
-		digest:            stmtExecInfo5.Digest,
-		planDigest:        stmtExecInfo4.PlanDigest,
-		resourceGroupName: stmtExecInfo5.ResourceGroupName,
+	key = &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo5.SchemaName,
+		Digest:            stmtExecInfo5.Digest,
+		PlanDigest:        stmtExecInfo4.PlanDigest,
+		ResourceGroupName: stmtExecInfo5.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo5)
 	require.Equal(t, 3, ssMap.summaryMap.Size())
@@ -482,11 +482,11 @@ func TestAddStatement(t *testing.T) {
 	// Sixth statement has a different plan digest.
 	stmtExecInfo6 := stmtExecInfo1
 	stmtExecInfo6.PlanDigest = "plan_digest2"
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo6.SchemaName,
-		digest:            stmtExecInfo6.Digest,
-		planDigest:        stmtExecInfo6.PlanDigest,
-		resourceGroupName: stmtExecInfo6.ResourceGroupName,
+	key = &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo6.SchemaName,
+		Digest:            stmtExecInfo6.Digest,
+		PlanDigest:        stmtExecInfo6.PlanDigest,
+		ResourceGroupName: stmtExecInfo6.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo6)
 	require.Equal(t, 4, ssMap.summaryMap.Size())
@@ -507,18 +507,18 @@ func TestAddStatement(t *testing.T) {
 		binPlan:     "",
 		planDigest:  "",
 	}
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo7.SchemaName,
-		digest:            stmtExecInfo7.Digest,
-		planDigest:        stmtExecInfo7.PlanDigest,
-		resourceGroupName: stmtExecInfo7.ResourceGroupName,
+	key = &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo7.SchemaName,
+		Digest:            stmtExecInfo7.Digest,
+		PlanDigest:        stmtExecInfo7.PlanDigest,
+		ResourceGroupName: stmtExecInfo7.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo7)
 	require.Equal(t, 5, ssMap.summaryMap.Size())
 	v, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	stmt := v.(*stmtSummaryByDigest)
-	require.Equal(t, key.digest, stmt.digest)
+	require.Equal(t, key.Digest, stmt.digest)
 	e := stmt.history.Back()
 	ssElement := e.Value.(*stmtSummaryByDigestElement)
 	require.Equal(t, plancodec.PlanDiscardedEncoded, ssElement.samplePlan)
@@ -1044,11 +1044,11 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// LRU cache should work.
 	for i := loops - 10; i < loops; i++ {
-		key := &stmtSummaryByDigestKey{
-			schemaName:        stmtExecInfo1.SchemaName,
-			digest:            fmt.Sprintf("digest%d", i),
-			planDigest:        stmtExecInfo1.PlanDigest,
-			resourceGroupName: stmtExecInfo1.ResourceGroupName,
+		key := &StmtSummaryByDigestKey{
+			SchemaName:        stmtExecInfo1.SchemaName,
+			Digest:            fmt.Sprintf("digest%d", i),
+			PlanDigest:        stmtExecInfo1.PlanDigest,
+			ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 		}
 		key.Hash()
 		_, ok := sm.Get(key)
@@ -1092,12 +1092,12 @@ func TestMaxSQLLength(t *testing.T) {
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		prevDigest:        stmtExecInfo1.PrevSQLDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		PrevDigest:        stmtExecInfo1.PrevSQLDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1301,11 +1301,11 @@ func TestRefreshCurrentSummary(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now + 10
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	ssMap.AddStatement(stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
@@ -1352,11 +1352,11 @@ func TestSummaryHistory(t *testing.T) {
 	}()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
@@ -1425,12 +1425,12 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo1.PrevSQL = "prevSQL"
 	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		prevDigest:        stmtExecInfo1.PrevSQLDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		PrevDigest:        stmtExecInfo1.PrevSQLDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	_, ok := ssMap.summaryMap.Get(key)
@@ -1444,7 +1444,7 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.PrevSQL = "prevSQL1"
 	stmtExecInfo2.PrevSQLDigest = "prevSQLDigest1"
-	key.prevDigest = stmtExecInfo2.PrevSQLDigest
+	key.PrevDigest = stmtExecInfo2.PrevSQLDigest
 	ssMap.AddStatement(stmtExecInfo2)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
@@ -1458,11 +1458,11 @@ func TestEndTime(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        stmtExecInfo1.PlanDigest,
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
@@ -1508,11 +1508,11 @@ func TestPointGet(t *testing.T) {
 	stmtExecInfo1.PlanDigest = ""
 	stmtExecInfo1.LazyInfo.(*mockLazyInfo).plan = fakePlanDigestGenerator()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        "",
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
+	key := &StmtSummaryByDigestKey{
+		SchemaName:        stmtExecInfo1.SchemaName,
+		Digest:            stmtExecInfo1.Digest,
+		PlanDigest:        "",
+		ResourceGroupName: stmtExecInfo1.ResourceGroupName,
 	}
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
