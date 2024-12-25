@@ -285,22 +285,17 @@ func (e *UpdateExec) exec(
 		}
 
 		// Update row
-		changed, ignored, err1 := updateRecord(
-			ctx, e.Ctx(),
+		changed, err1 := updateRecord(
+			ctx, e.ctx,
 			handle, oldData, newTableData,
 			content.Start, assignments, e.evalBuffer, errorHandler,
 			flags, tbl, false, e.memTracker,
 			e.fkChecks[content.TblID],
-			e.fkCascades[content.TblID],
-			dupKeyCheck, e.IgnoreError)
+			e.fkCascades[content.TblID])
 
 		// Copy data from new row to merge row
 		if err := e.mergeGenerated(row, newData, i, false); err != nil {
 			return errors.Trace(err)
-		}
-
-		if ignored {
-			continue
 		}
 
 		if err1 == nil {

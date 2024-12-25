@@ -470,16 +470,12 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	newData := e.row4Update[:len(oldRow)]
-	_, ignored, err := updateRecord(
-		ctx, e.Ctx(),
+	_, err := updateRecord(
+		ctx, e.ctx,
 		handle, oldRow, newData,
 		0, generated, e.evalBuffer4Dup, errorHandler,
 		assignFlag, e.Table,
-		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
-
-	if ignored {
-		return nil
-	}
+		true, e.memTracker, e.fkChecks, e.fkCascades)
 
 	if err != nil {
 		return errors.Trace(err)
