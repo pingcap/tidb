@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/google/btree"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -26,7 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -387,10 +390,10 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	incomplete := tree.Iter().GetIncompleteRanges()
+	incomplete := tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 1)
-	require.Equal(t, []byte("b"), incomplete[0].StartKey)
-	require.Equal(t, []byte("c"), incomplete[0].EndKey)
+	require.Len(t, incomplete[0].SubRanges, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("b"), EndKey: []byte("c")}, incomplete[0].SubRanges[0])
 
 	// case #4: success case, make up incomplete range
 	r.Resp.StartKey = []byte("b")
@@ -398,7 +401,7 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Nil(t, lock)
-	incomplete = tree.Iter().GetIncompleteRanges()
+	incomplete = tree.GetIncompleteRanges()
 	require.Len(t, incomplete, 0)
 
 	// case #5: failed case, key is locked
@@ -424,6 +427,378 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Equal(t, []byte("b"), lock.Primary)
+}
+
+func TestOnBackupResponse2(t *testing.T) {
+	s := createBackupSuite(t)
+
+	ctx := context.Background()
+	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
+		return &rtree.ProgressRange{
+			Res: rtree.NewRangeTree(),
+			Origin: rtree.Range{
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+	}
+	buildBackupResponseFn := func(startKey, endKey []byte, fileName string) *backup.ResponseAndStore {
+		return &backup.ResponseAndStore{
+			StoreID: 0,
+			Resp: &backuppb.BackupResponse{
+				StartKey: startKey,
+				EndKey:   endKey,
+				Files: []*backuppb.File{
+					{Name: fileName},
+				},
+			},
+		}
+	}
+	tree := rtree.NewProgressRangeTree()
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("cc"))))
+	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("dd"), []byte("ff"))))
+
+	errContext := utils.NewErrorContext("test", 1)
+	r := buildBackupResponseFn([]byte("a"), []byte("ccc"), "123")
+	lock, err := s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aaa"), []byte("dd"), "123")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Error(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aaa"), []byte("ca"), "123")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("ca"), []byte("de"), "456")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("aa"), []byte("aaa"), "789")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+	r = buildBackupResponseFn([]byte("de"), []byte("ff"), "012")
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.NoError(t, err)
+	require.Nil(t, lock)
+
+	expectResultFileNames := []struct {
+		name     string
+		startKey []byte
+		endKey   []byte
+	}{
+		{
+			name:     "789",
+			startKey: []byte("aa"),
+			endKey:   []byte("aaa"),
+		},
+		{
+			name:     "123",
+			startKey: []byte("aaa"),
+			endKey:   []byte("ca"),
+		},
+		{
+			name:     "456",
+			startKey: []byte("ca"),
+			endKey:   []byte("cc"),
+		},
+		{
+			name:     "456",
+			startKey: []byte("dd"),
+			endKey:   []byte("de"),
+		},
+		{
+			name:     "012",
+			startKey: []byte("de"),
+			endKey:   []byte("ff"),
+		},
+	}
+	i := 0
+	tree.Ascend(func(item *rtree.ProgressRange) bool {
+		item.Res.Ascend(func(item btree.Item) bool {
+			rg := item.(*rtree.Range)
+			expectRg := expectResultFileNames[i]
+			require.Equal(t, expectRg.startKey, rg.StartKey)
+			require.Equal(t, expectRg.endKey, rg.EndKey)
+			require.Len(t, rg.Files, 1)
+			require.Equal(t, expectRg.name, rg.Files[0].Name)
+			i += 1
+			return true
+		})
+		return true
+	})
+}
+
+func encodeTableRowKey(tableID int64, rowID uint64) []byte {
+	tablePrefix := tablecodec.GenTableRecordPrefix(tableID)
+	return tablecodec.EncodeRecordKey(tablePrefix, kv.IntHandle(rowID))
+}
+
+func buildBackupResponse(startKey, endKey []byte, fileName string, physicalIDs ...int64) *backup.ResponseAndStore {
+	tableMetas := make([]*backuppb.TableMeta, 0, len(physicalIDs))
+	for _, physicalID := range physicalIDs {
+		tableMetas = append(tableMetas, &backuppb.TableMeta{
+			PhysicalId: physicalID,
+		})
+	}
+	return &backup.ResponseAndStore{
+		StoreID: 0,
+		Resp: &backuppb.BackupResponse{
+			StartKey: startKey,
+			EndKey:   endKey,
+			Files: []*backuppb.File{
+				{Name: fileName, TableMetas: tableMetas},
+			},
+		},
+	}
+}
+
+func getRanges(tree *rtree.ProgressRangeTree) ([][]*rtree.Range, error) {
+	prs, err := tree.FindContained(encodeTableRowKey(1, 1), encodeTableRowKey(3, 1000))
+	if err != nil {
+		return nil, err
+	}
+	rgss := make([][]*rtree.Range, len(prs))
+	for k, pr := range prs {
+		pr.Res.Ascend(func(i btree.Item) bool {
+			rg := i.(*rtree.Range)
+			rgss[k] = append(rgss[k], rg)
+			return true
+		})
+	}
+	return rgss, nil
+}
+
+//	tableID 1         tableID 2       tableID 3
+//
+// [                ] [              ] [             ]
+//
+//	 -------    --------------------------   ------
+//	 ^     ^    ^                        ^   ^    ^
+//	200   600  800                      200 500  800
+func initialProgressRangeTree(t *testing.T, ctx context.Context, backupClient *backup.Client) rtree.ProgressRangeTree {
+	tree := rtree.NewProgressRangeTree()
+	originRanges := []rtree.Range{
+		{StartKey: encodeTableRowKey(1, 1), EndKey: encodeTableRowKey(1, 1000)},
+		{StartKey: encodeTableRowKey(2, 1), EndKey: encodeTableRowKey(2, 1000)},
+		{StartKey: encodeTableRowKey(3, 1), EndKey: encodeTableRowKey(3, 1000)},
+	}
+	for _, origin := range originRanges {
+		physicalID := tablecodec.DecodeTableID(origin.StartKey)
+		err := tree.Insert(&rtree.ProgressRange{
+			Res:    rtree.NewRangeTreeWithPhysicalID(physicalID),
+			Origin: origin,
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+		encodeTableRowKey(1, 200),
+		encodeTableRowKey(1, 600),
+		"1.sst",
+		1,
+	), nil, &tree)
+	require.NoError(t, err)
+	_, err = backupClient.OnBackupResponse(ctx, buildBackupResponse(
+		encodeTableRowKey(1, 800),
+		encodeTableRowKey(3, 200),
+		"2.sst",
+		1, 2, 3,
+	), nil, &tree)
+	require.NoError(t, err)
+	_, err = backupClient.OnBackupResponse(ctx, buildBackupResponse(
+		encodeTableRowKey(3, 500),
+		encodeTableRowKey(3, 800),
+		"3.sst",
+		3,
+	), nil, &tree)
+	require.NoError(t, err)
+	return tree
+}
+
+func equalRange(t *testing.T, rg *rtree.Range, startKey, endKey []byte, name string, physicalIDs ...int64) {
+	require.Equal(t, startKey, rg.StartKey)
+	require.Equal(t, endKey, rg.EndKey)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, name, rg.Files[0].Name)
+	require.Len(t, rg.Files[0].TableMetas, len(physicalIDs))
+	for i, tableMeta := range rg.Files[0].TableMetas {
+		if physicalIDs[i] < 0 {
+			require.Nil(t, tableMeta)
+		} else {
+			require.Equal(t, physicalIDs[i], tableMeta.PhysicalId)
+		}
+	}
+}
+
+func TestOnBackupResponse3(t *testing.T) {
+	ctx := context.Background()
+	backupClient := &backup.Client{}
+
+	{
+		//	   tableID 1         tableID 2       tableID 3
+		//
+		// [                ] [              ] [             ]
+		//
+		//	 -------    --------------------------   ------
+		//	 ^     ^    ^                        ^   ^    ^
+		//	200   600  800                      200 500  800
+		//
+		// overlaps
+		//              --------------------------
+		//              ^                        ^
+		//             800                      200
+		tree := initialProgressRangeTree(t, ctx, backupClient)
+		_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+			encodeTableRowKey(1, 800),
+			encodeTableRowKey(3, 200),
+			"4.sst",
+			1, 2, 3,
+		), nil, &tree)
+		require.NoError(t, err)
+		rgss, err := getRanges(&tree)
+		require.NoError(t, err)
+		require.Len(t, rgss[0], 2)
+		equalRange(t, rgss[0][0], encodeTableRowKey(1, 200), encodeTableRowKey(1, 600), "1.sst", 1)
+		equalRange(t, rgss[0][1], encodeTableRowKey(1, 800), encodeTableRowKey(1, 1000), "2.sst", 1, 2, 3)
+		require.Len(t, rgss[1], 1)
+		equalRange(t, rgss[1][0], encodeTableRowKey(2, 1), encodeTableRowKey(2, 1000), "2.sst", 1, 2, 3)
+		require.Len(t, rgss[2], 2)
+		equalRange(t, rgss[2][0], encodeTableRowKey(3, 1), encodeTableRowKey(3, 200), "2.sst", 1, 2, 3)
+		equalRange(t, rgss[2][1], encodeTableRowKey(3, 500), encodeTableRowKey(3, 800), "3.sst", 3)
+	}
+
+	{
+		//	   tableID 1         tableID 2       tableID 3
+		//
+		// [                ] [              ] [             ]
+		//
+		//	 -------    --------------------------   ------
+		//	 ^     ^    ^                        ^   ^    ^
+		//	200   600  800                      200 500  800
+		//
+		// overlaps
+		//            ---------------------------
+		//            ^                         ^
+		//           700                       100
+		tree := initialProgressRangeTree(t, ctx, backupClient)
+		_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+			encodeTableRowKey(1, 700),
+			encodeTableRowKey(3, 100),
+			"4.sst",
+			1, 2, 3,
+		), nil, &tree)
+		require.NoError(t, err)
+		rgss, err := getRanges(&tree)
+		require.NoError(t, err)
+		require.Len(t, rgss[0], 2)
+		equalRange(t, rgss[0][0], encodeTableRowKey(1, 200), encodeTableRowKey(1, 600), "1.sst", 1)
+		equalRange(t, rgss[0][1], encodeTableRowKey(1, 700), encodeTableRowKey(1, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[1], 1)
+		equalRange(t, rgss[1][0], encodeTableRowKey(2, 1), encodeTableRowKey(2, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[2], 2)
+		equalRange(t, rgss[2][0], encodeTableRowKey(3, 1), encodeTableRowKey(3, 100), "4.sst", 1, 2, 3)
+		equalRange(t, rgss[2][1], encodeTableRowKey(3, 500), encodeTableRowKey(3, 800), "3.sst", 3)
+	}
+
+	{
+		//	   tableID 1         tableID 2       tableID 3
+		//
+		// [                ] [              ] [             ]
+		//
+		//	 -------    --------------------------   ------
+		//	 ^     ^    ^                        ^   ^    ^
+		//	200   600  800                      200 500  800
+		//
+		// overlaps
+		//          -----------------------------
+		//          ^                           ^
+		//         600                         100
+		tree := initialProgressRangeTree(t, ctx, backupClient)
+		_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+			encodeTableRowKey(1, 600),
+			encodeTableRowKey(3, 100),
+			"4.sst",
+			1, 2, 3,
+		), nil, &tree)
+		require.NoError(t, err)
+		rgss, err := getRanges(&tree)
+		require.NoError(t, err)
+		require.Len(t, rgss[0], 2)
+		equalRange(t, rgss[0][0], encodeTableRowKey(1, 200), encodeTableRowKey(1, 600), "1.sst", 1)
+		equalRange(t, rgss[0][1], encodeTableRowKey(1, 600), encodeTableRowKey(1, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[1], 1)
+		equalRange(t, rgss[1][0], encodeTableRowKey(2, 1), encodeTableRowKey(2, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[2], 2)
+		equalRange(t, rgss[2][0], encodeTableRowKey(3, 1), encodeTableRowKey(3, 100), "4.sst", 1, 2, 3)
+		equalRange(t, rgss[2][1], encodeTableRowKey(3, 500), encodeTableRowKey(3, 800), "3.sst", 3)
+	}
+
+	{
+		//	   tableID 1         tableID 2       tableID 3
+		//
+		// [                ] [              ] [             ]
+		//
+		//	 -------    --------------------------   ------
+		//	 ^     ^    ^                        ^   ^    ^
+		//	200   600  800                      200 500  800
+		//
+		// overlaps
+		//        -------------------------------
+		//        ^                             ^
+		//       500                           100
+		tree := initialProgressRangeTree(t, ctx, backupClient)
+		_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+			encodeTableRowKey(1, 500),
+			encodeTableRowKey(3, 100),
+			"4.sst",
+			1, 2, 3,
+		), nil, &tree)
+		require.NoError(t, err)
+		rgss, err := getRanges(&tree)
+		require.NoError(t, err)
+		require.Len(t, rgss[0], 1)
+		equalRange(t, rgss[0][0], encodeTableRowKey(1, 500), encodeTableRowKey(1, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[1], 1)
+		equalRange(t, rgss[1][0], encodeTableRowKey(2, 1), encodeTableRowKey(2, 1000), "4.sst", 1, 2, 3)
+		require.Len(t, rgss[2], 2)
+		equalRange(t, rgss[2][0], encodeTableRowKey(3, 1), encodeTableRowKey(3, 100), "4.sst", 1, 2, 3)
+		equalRange(t, rgss[2][1], encodeTableRowKey(3, 500), encodeTableRowKey(3, 800), "3.sst", 3)
+	}
+
+	{
+		//	   tableID 1         tableID 2       tableID 3
+		//
+		// [                ] [              ] [             ]
+		//
+		//	 -------    --------------------------   ------
+		//	 ^     ^    ^                        ^   ^    ^
+		//	200   600  800                      200 500  800
+		//
+		// overlaps
+		//              -------------------------------
+		//              ^                             ^
+		//             800                           600
+		tree := initialProgressRangeTree(t, ctx, backupClient)
+		_, err := backupClient.OnBackupResponse(ctx, buildBackupResponse(
+			encodeTableRowKey(1, 800),
+			encodeTableRowKey(3, 600),
+			"4.sst",
+			1, 2, 3,
+		), nil, &tree)
+		require.NoError(t, err)
+		rgss, err := getRanges(&tree)
+		require.NoError(t, err)
+		require.Len(t, rgss[0], 2)
+		equalRange(t, rgss[0][0], encodeTableRowKey(1, 200), encodeTableRowKey(1, 600), "1.sst", 1)
+		equalRange(t, rgss[0][1], encodeTableRowKey(1, 800), encodeTableRowKey(1, 1000), "2.sst", 1, 2, -1)
+		require.Len(t, rgss[1], 1)
+		equalRange(t, rgss[1][0], encodeTableRowKey(2, 1), encodeTableRowKey(2, 1000), "2.sst", 1, 2, -1)
+		require.Len(t, rgss[2], 1)
+		equalRange(t, rgss[2][0], encodeTableRowKey(3, 1), encodeTableRowKey(3, 600), "4.sst", -1, -1, 3)
+	}
 }
 
 func TestMainBackupLoop(t *testing.T) {
@@ -482,7 +857,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
@@ -523,7 +898,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -568,7 +943,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -627,7 +1002,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -680,7 +1055,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -732,6 +1107,7 @@ func TestMainBackupLoop(t *testing.T) {
 }
 
 func TestBuildProgressRangeTree(t *testing.T) {
+	backgroundCtx := context.Background()
 	s := createBackupSuite(t)
 	ranges := []rtree.Range{
 		{
@@ -743,7 +1119,7 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			EndKey:   []byte("d"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, func() {})
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
@@ -760,8 +1136,41 @@ func TestBuildProgressRangeTree(t *testing.T) {
 
 	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
 	require.NotNil(t, contained)
-	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
-	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.Len(t, contained, 1)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("b"))
+	require.NotNil(t, contained)
+	require.Len(t, contained, 1)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("a"), []byte("b"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("bb"), []byte("cc"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("b"), []byte("cc"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("c"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("aaa"), []byte("cc"))
+	require.NotNil(t, contained)
+	require.Len(t, contained, 2)
+	require.Equal(t, []byte("aa"), contained[0].Origin.StartKey)
+	require.Equal(t, []byte("b"), contained[0].Origin.EndKey)
+	require.Equal(t, []byte("c"), contained[1].Origin.StartKey)
+	require.Equal(t, []byte("d"), contained[1].Origin.EndKey)
 	require.NoError(t, err)
 }
 

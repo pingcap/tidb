@@ -60,7 +60,7 @@ func GetSchemasFromMeta(t *testing.T, es storage.ExternalStorage) []*metautil.Ta
 
 	output := make(chan *metautil.Table, 4)
 	go func() {
-		err = metaReader.ReadSchemasFiles(ctx, output)
+		_, err = metaReader.ReadSchemasFiles(ctx, output)
 		require.NoError(t, err)
 		close(output)
 	}()

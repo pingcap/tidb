@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -53,6 +54,7 @@ type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
 	RewriteRules  *restoreutils.RewriteRules
+	Files         []*backuppb.File
 }
 
 func defaultOutputTableChan() chan *CreatedTable {

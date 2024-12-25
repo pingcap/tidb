@@ -45,7 +45,7 @@ go_test(
     srcs = ["checkpoint_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         ":checkpoint",
         "//br/pkg/gluetidb",

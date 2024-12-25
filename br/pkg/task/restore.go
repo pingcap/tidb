@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	pconfig "github.com/pingcap/tidb/br/pkg/config"
@@ -758,15 +757,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	codec := mgr.GetStorage().GetCodec()
-
 	// need retrieve these configs from tikv if not set in command.
 	kvConfigs := &pconfig.KVConfig{
 		ImportGoroutines:    cfg.ConcurrencyPerStore,
 		MergeRegionSize:     cfg.MergeSmallRegionSizeBytes,
 		MergeRegionKeyCount: cfg.MergeSmallRegionKeyCount,
 	}
-
 	// according to https://github.com/pingcap/tidb/issues/34167.
 	// we should get the real config from tikv to adapt the dynamic region.
 	httpCli := httputil.NewClient(mgr.GetTLSConfig())
@@ -794,6 +790,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if backupMeta.IsRawKv && backupMeta.IsTxnKv {
+		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
+	}
 	if cfg.CheckRequirements {
 		err := checkIncompatibleChangefeed(ctx, backupMeta.EndVersion, mgr.GetDomain().GetEtcdClient())
 		log.Info("Checking incompatible TiCDC changefeeds before restoring.",
@@ -801,12 +800,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if err != nil {
 			return errors.Trace(err)
 		}
-	}
-
-	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
-	if cfg.CheckRequirements && backupVersion != nil {
-		if versionErr := version.CheckClusterVersion(ctx, mgr.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
-			return errors.Trace(versionErr)
+		backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
+		if backupVersion != nil {
+			if versionErr := version.CheckClusterVersion(ctx, mgr.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
+				return errors.Trace(versionErr)
+			}
 		}
 	}
 	if _, err = CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
@@ -818,24 +816,20 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	if client.IsRawKvMode() {
-		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
-	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
 		return err
 	}
-	files, tables, dbs := filterRestoreFiles(client, cfg)
+	tables, dbs := client.FilterRestoreFiles(cfg.TableFilter)
 	if len(dbs) == 0 && len(tables) != 0 {
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
+	archiveSize := metautil.ArchiveTablesSize(tables)
 	if cfg.CheckRequirements {
-		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
+		if err := checkDiskSpace(ctx, mgr, tables, archiveSize); err != nil {
 			return errors.Trace(err)
 		}
 	}
-
-	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -909,10 +903,12 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	err = client.AllocTableIDs(ctx, tables)
-	if err != nil {
-		return errors.Trace(err)
+	if !cfg.UseCheckpoint || checkpointFirstRun {
+		// preallocate the table id at first, because any ddl job or database creation(include checkpoint) also allocates the global ID
+		err = client.AllocTableIDs(ctx, tables)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// reload or register the checkpoint
@@ -926,6 +922,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
 		}
 		checkpointSetWithTableID = sets
+		client.AllocTableIDsWithCheckpoint(tables)
 
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
@@ -1041,12 +1038,17 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	if len(files) == 0 {
+	rangeSize, filesCount, anyFileKey := EstimateRangeSize(tables)
+	summary.CollectInt("restore ranges", rangeSize)
+	log.Info("range and file prepared", zap.Int("file count", filesCount), zap.Int("range count", rangeSize))
+
+	if filesCount == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
 	} else {
-		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
+		codec := mgr.GetStorage().GetCodec()
+		oldKeyspace, _, err := tikv.DecodeKey(anyFileKey, backupMeta.ApiVersion)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1077,10 +1079,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
-	rangeSize := EstimateRangeSize(files)
-	summary.CollectInt("restore ranges", rangeSize)
-	log.Info("range and file prepared", zap.Int("file count", len(files)), zap.Int("range count", rangeSize))
-
 	// Do not reset timestamp if we are doing incremental restore, because
 	// we are not allowed to decrease timestamp.
 	if !client.IsIncremental() {
@@ -1091,7 +1089,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// Split/Scatter + Download/Ingest
-	progressLen := int64(rangeSize + len(files))
+	progressLen := int64(rangeSize + filesCount)
 	if cfg.Checksum {
 		progressLen += int64(len(tables))
 	}
@@ -1112,7 +1110,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 		updateCh.IncBy(n)
 	}
-	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, files, checkpointSetWithTableID,
+	restoreTablesStart := time.Now()
+	if err := client.RestoreTables(ctx, placementRuleManager, createdTables, checkpointSetWithTableID,
 		kvConfigs.MergeRegionSize.Value, kvConfigs.MergeRegionKeyCount.Value,
 		// If the command is from BR binary, the ddl.EnableSplitTableRegion is always 0,
 		// If the command is from BRIE SQL, the ddl.EnableSplitTableRegion is TiDB config split-table.
@@ -1123,6 +1122,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	); err != nil {
 		return errors.Trace(err)
 	}
+	summary.CollectSuccessUnit("files", filesCount, time.Since(restoreTablesStart))
 
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
@@ -1199,19 +1199,15 @@ func getStores(ctx context.Context, mgr *conn.Mgr) (stores *http.StoresInfo, err
 	return stores, nil
 }
 
-func EstimateTikvUsage(files []*backuppb.File, replicaCnt uint64, storeCnt uint64) uint64 {
+func EstimateTikvUsage(archiveSize uint64, replicaCnt uint64, storeCnt uint64) uint64 {
 	if storeCnt == 0 {
 		return 0
 	}
 	if replicaCnt > storeCnt {
 		replicaCnt = storeCnt
 	}
-	totalSize := uint64(0)
-	for _, file := range files {
-		totalSize += file.GetSize_()
-	}
-	log.Info("estimate tikv usage", zap.Uint64("total size", totalSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
-	return totalSize * replicaCnt / storeCnt
+	log.Info("estimate tikv usage", zap.Uint64("total size", archiveSize), zap.Uint64("replicaCnt", replicaCnt), zap.Uint64("store count", storeCnt))
+	return archiveSize * replicaCnt / storeCnt
 }
 
 func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
@@ -1223,10 +1219,7 @@ func EstimateTiflashUsage(tables []*metautil.Table, storeCnt uint64) uint64 {
 		if table.Info.TiFlashReplica == nil || table.Info.TiFlashReplica.Count <= 0 {
 			continue
 		}
-		tableBytes := uint64(0)
-		for _, file := range table.Files {
-			tableBytes += file.GetSize_()
-		}
+		tableBytes := metautil.ArchiveTableSize(table)
 		tiflashTotal += tableBytes * table.Info.TiFlashReplica.Count
 	}
 	log.Info("estimate tiflash usage", zap.Uint64("total size", tiflashTotal), zap.Uint64("store count", storeCnt))
@@ -1248,7 +1241,7 @@ func CheckStoreSpace(necessary uint64, store *http.StoreInfo) error {
 	return nil
 }
 
-func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, tables []*metautil.Table) error {
+func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, archiveSize uint64) error {
 	maxReplica, err := getMaxReplica(ctx, mgr)
 	if err != nil {
 		return errors.Trace(err)
@@ -1279,7 +1272,7 @@ func checkDiskSpace(ctx context.Context, mgr *conn.Mgr, files []*backuppb.File, 
 	// The preserve rate for tikv is quite accurate, while rate for tiflash is a
 	// number calculated from tpcc testing with variable data sizes.  1.4 is a
 	// relative conservative value.
-	tikvUsage := preserve(EstimateTikvUsage(files, maxReplica, tikvCnt), 1.1)
+	tikvUsage := preserve(EstimateTikvUsage(archiveSize, maxReplica, tikvCnt), 1.1)
 	tiflashUsage := preserve(EstimateTiflashUsage(tables, tiflashCnt), 1.4)
 	log.Info("preserved disk space", zap.Uint64("tikv", tikvUsage), zap.Uint64("tiflash", tiflashUsage))
 
@@ -1341,14 +1334,23 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 }
 
 // EstimateRangeSize estimates the total range count by file.
-func EstimateRangeSize(files []*backuppb.File) int {
-	result := 0
-	for _, f := range files {
-		if strings.HasSuffix(f.GetName(), "_write.sst") {
-			result++
+func EstimateRangeSize(tables []*metautil.Table) (int, int, []byte) {
+	var anyKey []byte
+	result, count := 0, 0
+	for _, table := range tables {
+		for _, files := range table.FilesOfPhysicals {
+			for _, f := range files {
+				if strings.HasSuffix(f.GetName(), "_write.sst") {
+					result++
+				}
+				count++
+				if anyKey == nil {
+					anyKey = f.StartKey
+				}
+			}
 		}
 	}
-	return result
+	return result, count, anyKey
 }
 
 // dropToBlackhole drop all incoming tables into black hole,
@@ -1376,35 +1378,6 @@ func dropToBlackhole(
 		}
 	}()
 	return outCh
-}
-
-// filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
-// if the db has no table that can be processed, the db will be filtered too.
-func filterRestoreFiles(
-	client *snapclient.SnapClient,
-	cfg *RestoreConfig,
-) (files []*backuppb.File, tables []*metautil.Table, dbs []*metautil.Database) {
-	for _, db := range client.GetDatabases() {
-		dbName := db.Info.Name.O
-		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
-			dbName = name
-		}
-		if checkpoint.IsCheckpointDB(db.Info.Name) {
-			continue
-		}
-		if !cfg.TableFilter.MatchSchema(dbName) {
-			continue
-		}
-		dbs = append(dbs, db)
-		for _, table := range db.Tables {
-			if table.Info == nil || !cfg.TableFilter.MatchTable(dbName, table.Info.Name.O) {
-				continue
-			}
-			files = append(files, table.Files...)
-			tables = append(tables, table)
-		}
-	}
-	return
 }
 
 // tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.

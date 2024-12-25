@@ -154,7 +154,7 @@ func generateRegions() []*router.Region {
 	}
 }
 
-func generateFiles() ([]*backuppb.File, *restoreutils.RewriteRules) {
+func generateFiles() ([]*backuppb.File, int64, *restoreutils.RewriteRules) {
 	files := make([]*backuppb.File, 0, 10)
 	for i := 0; i < 10; i += 1 {
 		files = append(files, &backuppb.File{
@@ -162,7 +162,7 @@ func generateFiles() ([]*backuppb.File, *restoreutils.RewriteRules) {
 			EndKey:   tablecodec.EncodeTablePrefix(100),
 		})
 	}
-	return files, &restoreutils.RewriteRules{
+	return files, 100, &restoreutils.RewriteRules{
 		Data: []*import_sstpb.RewriteRule{
 			{
 				OldKeyPrefix: tablecodec.EncodeTablePrefix(100),

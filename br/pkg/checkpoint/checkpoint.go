@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -64,7 +63,9 @@ type KeyType interface {
 }
 
 type RangeType struct {
-	*rtree.Range
+	StartKey []byte
+	EndKey   []byte
+	Files    []*backuppb.File
 }
 
 type ValueType any
@@ -613,7 +614,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 	content []byte,
 	pastDureTime *time.Duration,
 	cipher *backuppb.CipherInfo,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) error {
 	checkpointData := &CheckpointData{}
 	if err := json.Unmarshal(content, checkpointData); err != nil {
@@ -645,7 +646,9 @@ func parseCheckpointData[K KeyType, V ValueType](
 		}
 
 		for _, g := range group.Group {
-			fn(group.GroupKey, g)
+			if err := fn(group.GroupKey, g); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -658,7 +661,7 @@ func walkCheckpointFile[K KeyType, V ValueType](
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	subDir string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0

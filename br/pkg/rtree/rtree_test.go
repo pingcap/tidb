@@ -4,9 +4,11 @@ package rtree_test
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -118,7 +120,7 @@ func TestRangeTree(t *testing.T) {
 	assertAllComplete()
 
 	// Overwrite range BD, c-d should be empty
-	rangeTree.Update(*rangeB)
+	rangeTree.UpdateForce(*rangeB, true)
 	require.Equal(t, 4, rangeTree.Len())
 	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
@@ -127,6 +129,111 @@ func TestRangeTree(t *testing.T) {
 	rangeTree.Update(*rangeC)
 	require.Equal(t, 5, rangeTree.Len())
 	assertAllComplete()
+}
+
+func TestRangeTree2(t *testing.T) {
+	rangeTree := rtree.NewRangeTreeWithPhysicalID(100)
+
+	newRangeItem := func(tableID int64, rowStartID, rowEndID uint64, name string, physicalIDs ...int64) ([]byte, []byte, []*backuppb.File) {
+		startKey := encodeTableRowKey(tableID, rowStartID)
+		endKey := encodeTableRowKey(tableID, rowEndID)
+		tableMetas := make([]*backuppb.TableMeta, 0, len(physicalIDs))
+		for _, physicalID := range physicalIDs {
+			tableMetas = append(tableMetas, &backuppb.TableMeta{
+				PhysicalId: physicalID,
+				Crc64Xor:   uint64(physicalID),
+				TotalKvs:   uint64(physicalID),
+				TotalBytes: uint64(physicalID),
+			})
+		}
+		return startKey, endKey, []*backuppb.File{
+			{
+				Name:       name,
+				StartKey:   startKey,
+				EndKey:     endKey,
+				TableMetas: tableMetas,
+			},
+		}
+	}
+	startKey, endKey, files1 := newRangeItem(100, 1, 100, "1.sst", 98, 99, 100)
+	force := rangeTree.PutForce(startKey, endKey, files1, false)
+	require.True(t, force)
+	startKey, endKey, files2 := newRangeItem(100, 200, 300, "2.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files2, false)
+	require.True(t, force)
+	startKey, endKey, files3 := newRangeItem(100, 500, 600, "3.sst", 100, 101, 102)
+	force = rangeTree.PutForce(startKey, endKey, files3, false)
+	require.True(t, force)
+
+	// [200, 300] -overlap-> [200, 300]
+	startKey, endKey, files := newRangeItem(100, 200, 300, "4.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.False(t, force)
+
+	// [200, 300] -overlap-> [200, 300]
+	startKey, endKey, files = newRangeItem(100, 200, 300, "4.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, true)
+	require.True(t, force)
+	rg := rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "4.sst")
+
+	// [150, 300] -overlap-> [200, 300]
+	startKey, endKey, files = newRangeItem(100, 150, 300, "5.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "5.sst")
+
+	// [150, 350] -overlap-> [150, 300]
+	startKey, endKey, files = newRangeItem(100, 150, 350, "6.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "6.sst")
+
+	// [140, 400] -overlap-> [150, 350]
+	startKey, endKey, files = newRangeItem(100, 140, 400, "7.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "7.sst")
+
+	// [1, 100], [140, 400], [500, 600]
+	// [1, 110] -overlap-> [1, 100]
+	startKey, endKey, files = newRangeItem(100, 1, 110, "8.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "8.sst")
+	require.Len(t, files1[0].TableMetas, 3)
+	require.Equal(t, files1[0].TableMetas[0].PhysicalId, int64(98))
+	require.Equal(t, files1[0].TableMetas[1].PhysicalId, int64(99))
+	require.Nil(t, files1[0].TableMetas[2])
+
+	// [450, 600] -overlap-> [500, 600]
+	startKey, endKey, files = newRangeItem(100, 450, 600, "9.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "9.sst")
+	require.Len(t, files3[0].TableMetas, 3)
+	require.Nil(t, files3[0].TableMetas[0])
+	require.Equal(t, files3[0].TableMetas[1].PhysicalId, int64(101))
+	require.Equal(t, files3[0].TableMetas[2].PhysicalId, int64(102))
+
+	// [50, 550] -overlap-> [1, 110], [140, 400], [450, 600]
+	startKey, endKey, files = newRangeItem(100, 50, 550, "10.sst", 100)
+	force = rangeTree.PutForce(startKey, endKey, files, false)
+	require.True(t, force)
+	rg = rangeTree.Get(newRange(startKey, endKey)).(*rtree.Range)
+	require.Len(t, rg.Files, 1)
+	require.Equal(t, rg.Files[0].Name, "10.sst")
 }
 
 func TestRangeIntersect(t *testing.T) {
@@ -184,6 +291,11 @@ func BenchmarkRangeTreeUpdate(b *testing.B) {
 	}
 }
 
+func encodeTableRowKey(tableID int64, rowID uint64) []byte {
+	tablePrefix := tablecodec.GenTableRecordPrefix(tableID)
+	return tablecodec.EncodeRecordKey(tablePrefix, kv.IntHandle(rowID))
+}
+
 func encodeTableRecord(prefix kv.Key, rowID uint64) []byte {
 	return tablecodec.EncodeRecordKey(prefix, kv.IntHandle(rowID))
 }
@@ -239,37 +351,162 @@ func TestProgressRangeTree(t *testing.T) {
 	require.NoError(t, prTree.Insert(buildProgressRange("cc", "dd")))
 	require.NoError(t, prTree.Insert(buildProgressRange("ee", "ff")))
 
-	prIter := prTree.Iter()
-	ranges := prIter.GetIncompleteRanges()
-	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("cc")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("cc"), EndKey: []byte("dd")}, ranges[1])
-	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+	groupRanges := prTree.GetIncompleteRanges()
+	require.Len(t, groupRanges, 1)
+	require.Len(t, groupRanges[0].SubRanges, 3)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("cc")}, groupRanges[0].SubRanges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("cc"), EndKey: []byte("dd")}, groupRanges[0].SubRanges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ee"), EndKey: []byte("ff")}, groupRanges[0].SubRanges[2])
 
-	pr, err := prTree.FindContained([]byte("aaa"), []byte("b"))
+	prs, err := prTree.FindContained([]byte("aaa"), []byte("b"))
+	require.Len(t, prs, 1)
 	require.NoError(t, err)
-	pr.Res.Put([]byte("aaa"), []byte("b"), nil)
+	prs[0].Res.Put([]byte("aaa"), []byte("b"), nil)
 
-	pr, err = prTree.FindContained([]byte("cc"), []byte("dd"))
+	// {[aa, aaa)}, {[b, cc), [cc, dd), [ee, ff)}
+	groupRanges = prTree.GetIncompleteRanges()
+	require.Len(t, groupRanges, 2)
+	require.Len(t, groupRanges[0].SubRanges, 1)
+	require.Len(t, groupRanges[1].SubRanges, 3)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("aaa")}, groupRanges[0].SubRanges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("b"), EndKey: []byte("cc")}, groupRanges[1].SubRanges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("cc"), EndKey: []byte("dd")}, groupRanges[1].SubRanges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ee"), EndKey: []byte("ff")}, groupRanges[1].SubRanges[2])
+
+	prs, err = prTree.FindContained([]byte("cc"), []byte("dd"))
+	require.Len(t, prs, 1)
 	require.NoError(t, err)
-	pr.Res.Put([]byte("cc"), []byte("dd"), nil)
+	prs[0].Res.Put([]byte("cc"), []byte("dd"), nil)
 
-	ranges = prIter.GetIncompleteRanges()
-	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("aaa")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("b"), EndKey: []byte("cc")}, ranges[1])
-	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+	// {[aa, aaa)}, {[b, cc)}, {[ee, ff)}
+	groupRanges = prTree.GetIncompleteRanges()
+	require.Len(t, groupRanges, 3)
+	require.Len(t, groupRanges[0].SubRanges, 1)
+	require.Len(t, groupRanges[1].SubRanges, 1)
+	require.Len(t, groupRanges[2].SubRanges, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("aaa")}, groupRanges[0].SubRanges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("b"), EndKey: []byte("cc")}, groupRanges[1].SubRanges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ee"), EndKey: []byte("ff")}, groupRanges[2].SubRanges[0])
 
-	pr, err = prTree.FindContained([]byte("aa"), []byte("aaa"))
+	prs, err = prTree.FindContained([]byte("aa"), []byte("aaa"))
+	require.Len(t, prs, 1)
 	require.NoError(t, err)
-	pr.Res.Put([]byte("aa"), []byte("aaa"), nil)
+	prs[0].Res.Put([]byte("aa"), []byte("aaa"), nil)
 
-	pr, err = prTree.FindContained([]byte("b"), []byte("cc"))
+	prs, err = prTree.FindContained([]byte("b"), []byte("cc"))
+	require.Len(t, prs, 1)
 	require.NoError(t, err)
-	pr.Res.Put([]byte("b"), []byte("cc"), nil)
+	prs[0].Res.Put([]byte("b"), []byte("cc"), nil)
 
-	pr, err = prTree.FindContained([]byte("ee"), []byte("ff"))
+	prs, err = prTree.FindContained([]byte("ee"), []byte("ff"))
+	require.Len(t, prs, 1)
 	require.NoError(t, err)
-	pr.Res.Put([]byte("ee"), []byte("ff"), nil)
+	prs[0].Res.Put([]byte("ee"), []byte("ff"), nil)
 
-	ranges = prIter.GetIncompleteRanges()
-	require.Equal(t, 0, len(ranges))
+	groupRanges = prTree.GetIncompleteRanges()
+	require.Equal(t, 0, len(groupRanges))
+}
+
+func removeNilTableMetas(tableMetas []*backuppb.TableMeta) []*backuppb.TableMeta {
+	return slices.DeleteFunc(tableMetas, func(tableMeta *backuppb.TableMeta) bool {
+		return tableMeta == nil
+	})
+}
+
+func TestRemoveOverlappedTableMetas(t *testing.T) {
+	rangeTree := rtree.NewRangeTreeWithPhysicalID(5)
+	rg := &rtree.Range{
+		StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
+		EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
+	}
+	skip := rtree.RemoveOverlappedTableMetas(&rangeTree, nil, rg, false)
+	require.False(t, skip)
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
+		},
+	}, rg, false)
+	require.True(t, skip)
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(500)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2000)),
+		},
+	}, rg, false)
+	require.True(t, skip)
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, []*rtree.Range{
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1000)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(3000)),
+		},
+	}, rg, false)
+	require.True(t, skip)
+
+	overlaps := []*rtree.Range{
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1500)),
+			Files: []*backuppb.File{
+				{
+					TableMetas: []*backuppb.TableMeta{
+						{PhysicalId: 4},
+						{PhysicalId: 5},
+					},
+				},
+			},
+		},
+	}
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg, false)
+	require.False(t, skip)
+	tableMetas := removeNilTableMetas(overlaps[0].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
+	overlaps = []*rtree.Range{
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1500)),
+			Files: []*backuppb.File{
+				{
+					TableMetas: []*backuppb.TableMeta{
+						{PhysicalId: 4},
+						{PhysicalId: 5},
+					},
+				},
+				{
+					TableMetas: []*backuppb.TableMeta{
+						{PhysicalId: 4},
+						{PhysicalId: 5},
+					},
+				},
+			},
+		},
+		{
+			StartKey: tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(1500)),
+			EndKey:   tablecodec.EncodeRecordKey(tablecodec.GenTableRecordPrefix(5), kv.IntHandle(2500)),
+			Files: []*backuppb.File{
+				{
+					TableMetas: []*backuppb.TableMeta{
+						{PhysicalId: 5},
+						{PhysicalId: 6},
+					},
+				},
+				{
+					TableMetas: []*backuppb.TableMeta{
+						{PhysicalId: 5},
+						{PhysicalId: 6},
+					},
+				},
+			},
+		},
+	}
+	skip = rtree.RemoveOverlappedTableMetas(&rangeTree, overlaps, rg, false)
+	require.False(t, skip)
+	tableMetas = removeNilTableMetas(overlaps[0].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[0].Files[1].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 4}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[1].Files[0].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, tableMetas)
+	tableMetas = removeNilTableMetas(overlaps[1].Files[1].TableMetas)
+	require.Equal(t, []*backuppb.TableMeta{{PhysicalId: 6}}, tableMetas)
 }

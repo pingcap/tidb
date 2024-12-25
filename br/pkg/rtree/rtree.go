@@ -7,8 +7,10 @@ import (
 
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
@@ -21,12 +23,16 @@ type Range struct {
 	Files    []*backuppb.File
 }
 
+func (rg *Range) ToKeyRange() *kvrpcpb.KeyRange {
+	return &kvrpcpb.KeyRange{
+		StartKey: rg.StartKey,
+		EndKey:   rg.EndKey,
+	}
+}
+
 // BytesAndKeys returns total bytes and keys in a range.
 func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
-	for _, f := range rg.Files {
-		bytes += f.TotalBytes
-		keys += f.TotalKvs
-	}
+	keys, bytes = metautil.CalculateKvStatsOnFiles(rg.Files)
 	return
 }
 
@@ -67,13 +73,6 @@ func (rg *Range) Contains(key []byte) bool {
 	start, end := rg.StartKey, rg.EndKey
 	return bytes.Compare(key, start) >= 0 &&
 		(len(end) == 0 || bytes.Compare(key, end) < 0)
-}
-
-// ContainsRange check if the range contains the region's key range.
-func (rg *Range) ContainsRange(startKey, endKey []byte) bool {
-	start, end := rg.StartKey, rg.EndKey
-	return bytes.Compare(startKey, start) >= 0 &&
-		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
 }
 
 // Less impls btree.Item.
@@ -186,12 +185,22 @@ var _ btree.Item = &Range{}
 // All the ranges it stored do not overlap.
 type RangeTree struct {
 	*btree.BTree
+
+	PhysicalID int64
 }
 
 // NewRangeTree returns an empty range tree.
 func NewRangeTree() RangeTree {
 	return RangeTree{
 		BTree: btree.New(32),
+	}
+}
+
+func NewRangeTreeWithPhysicalID(physicalID int64) RangeTree {
+	return RangeTree{
+		BTree: btree.New(32),
+
+		PhysicalID: physicalID,
 	}
 }
 
@@ -236,9 +245,70 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 	return overlaps
 }
 
+// isOverlapContainsRange currently only checks whether the only one overlap
+// entirely contains the range to avoid partition the merged backup SST file.
+//
+//	the merged backup SST file:   |___table A___|___table B____|__table C___|
+//	the only one overlap:                       |___overlap____|
+//	the new range:                              |__new range___|
+//
+// skip replace to avoid table A and table C having the same SST, but tbale B
+// does not have it.
+func isOverlapContainsRange(overlaps []*Range, rg *Range) bool {
+	if len(overlaps) != 1 {
+		return false
+	}
+	return bytes.Compare(rg.StartKey, overlaps[0].StartKey) >= 0 &&
+		bytes.Compare(rg.EndKey, overlaps[0].EndKey) <= 0
+}
+
+// removeOverlappedTableMetas remove table meta in files since the data is given up.
+func (rangeTree *RangeTree) removeOverlappedTableMetas(overlaps []*Range, rg *Range, force bool) bool {
+	if len(overlaps) == 0 {
+		return false
+	}
+	if !force && isOverlapContainsRange(overlaps, rg) {
+		for _, file := range rg.Files {
+			for i := range file.TableMetas {
+				if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+					file.TableMetas[i] = nil
+					break
+				}
+			}
+		}
+		return true
+	}
+	// files in the first overlap having other tables range, so remove the last one table meta
+	for _, file := range overlaps[0].Files {
+		for i := len(file.TableMetas) - 1; i >= 0; i-- {
+			if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas[i] = nil
+				break
+			}
+		}
+	}
+	// files in the last overlap having other tables range, so remove the first one table meta
+	for _, file := range overlaps[len(overlaps)-1].Files {
+		for i := range file.TableMetas {
+			if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == rangeTree.PhysicalID {
+				file.TableMetas[i] = nil
+				break
+			}
+		}
+	}
+	return false
+}
+
 // Update inserts range into tree and delete overlapping ranges.
-func (rangeTree *RangeTree) Update(rg Range) {
+func (rangeTree *RangeTree) Update(rg Range) bool {
+	return rangeTree.UpdateForce(rg, false)
+}
+
+func (rangeTree *RangeTree) UpdateForce(rg Range, force bool) bool {
 	overlaps := rangeTree.getOverlaps(&rg)
+	if rangeTree.removeOverlappedTableMetas(overlaps, &rg, force) {
+		return false
+	}
 	// Range has backuped, overwrite overlapping range.
 	for _, item := range overlaps {
 		log.Info("delete overlapping range",
@@ -247,18 +317,31 @@ func (rangeTree *RangeTree) Update(rg Range) {
 		rangeTree.Delete(item)
 	}
 	rangeTree.ReplaceOrInsert(&rg)
+	return true
 }
 
 // Put forms a range and inserts it into tree.
 func (rangeTree *RangeTree) Put(
 	startKey, endKey []byte, files []*backuppb.File,
-) {
+) bool {
 	rg := Range{
 		StartKey: startKey,
 		EndKey:   endKey,
 		Files:    files,
 	}
-	rangeTree.Update(rg)
+	return rangeTree.Update(rg)
+}
+
+// Put forms a range and inserts it into tree.
+func (rangeTree *RangeTree) PutForce(
+	startKey, endKey []byte, files []*backuppb.File, force bool,
+) bool {
+	rg := Range{
+		StartKey: startKey,
+		EndKey:   endKey,
+		Files:    files,
+	}
+	return rangeTree.UpdateForce(rg, force)
 }
 
 // InsertRange inserts ranges into the range tree.
@@ -319,7 +402,6 @@ type ProgressRange struct {
 	Res        RangeTree
 	Incomplete []Range
 	Origin     Range
-	GroupKey   string
 }
 
 // Less impls btree.Item.
@@ -369,73 +451,72 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 	return nil
 }
 
+// containsRange check if the range contains the region's key range.
+func containsRange(start, end, startKey, endKey []byte) bool {
+	return bytes.Compare(startKey, start) >= 0 &&
+		(len(end) == 0 || (len(endKey) > 0 && bytes.Compare(endKey, end) <= 0))
+}
+
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).
-func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
+func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) ([]*ProgressRange, error) {
+	ret := make([]*ProgressRange, 0)
 	startPr := &ProgressRange{
 		Origin: Range{
 			StartKey: startKey,
 			EndKey:   endKey,
 		},
 	}
-	ret := rangeTree.find(startPr)
+	pivot := rangeTree.find(startPr)
+	if pivot == nil || bytes.Compare(pivot.Origin.EndKey, startKey) <= 0 {
+		return nil, errors.Errorf("The given start key is not contained in any progress range. "+
+			"The given start key is %s.", startKey)
+	}
+	rangeTree.AscendGreaterOrEqual(pivot, func(item *ProgressRange) bool {
+		if bytes.Compare(item.Origin.StartKey, endKey) >= 0 {
+			return false
+		}
+		ret = append(ret, item)
+		return true
+	})
 
-	if ret == nil {
+	if len(ret) == 0 {
 		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
 	}
 
-	if !ret.Origin.ContainsRange(startKey, endKey) {
+	if !containsRange(ret[0].Origin.StartKey, ret[len(ret)-1].Origin.EndKey, startKey, endKey) {
 		return nil, errors.Errorf("The given region is not contained in the found progress range. "+
 			"The region start key is %s; The progress range start key is %s, end key is %s.",
-			startKey, redact.Key(ret.Origin.StartKey), redact.Key(ret.Origin.EndKey))
+			startKey, redact.Key(ret[0].Origin.StartKey), redact.Key(ret[len(ret)-1].Origin.EndKey))
 	}
 
 	return ret, nil
 }
 
-type incompleteRangesFetcherItem struct {
-	pr       *ProgressRange
-	complete bool
+type GroupRange struct {
+	Ranges []Range
 }
 
-type IncompleteRangesFetcher struct {
-	items []*incompleteRangesFetcherItem
-	left  int
-}
-
-func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
-	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []*backuppb.SortedSubRanges {
+	// about 64 MB memory if there are 1 million ranges
+	incompleteGroupRanges := make([]*backuppb.SortedSubRanges, 0)
+	rightContinuous := false
 	rangeTree.Ascend(func(item *ProgressRange) bool {
-		items = append(items, &incompleteRangesFetcherItem{
-			pr:       item,
-			complete: false,
-		})
+		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
+		if len(incomplete) == 0 {
+			rightContinuous = false
+			return true
+		}
+		// now the length of incomplete must be larger than zero
+		if rightContinuous && bytes.Equal(incomplete[0].StartKey, item.Origin.StartKey) {
+			incompleteGroupRanges[len(incompleteGroupRanges)-1].SubRanges = append(incompleteGroupRanges[len(incompleteGroupRanges)-1].SubRanges, incomplete[0].ToKeyRange())
+		} else {
+			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SortedSubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[0].ToKeyRange()}})
+		}
+		for i := 1; i < len(incomplete); i += 1 {
+			incompleteGroupRanges = append(incompleteGroupRanges, &backuppb.SortedSubRanges{SubRanges: []*kvrpcpb.KeyRange{incomplete[i].ToKeyRange()}})
+		}
+		rightContinuous = bytes.Equal(incomplete[len(incomplete)-1].EndKey, item.Origin.EndKey)
 		return true
 	})
-	return &IncompleteRangesFetcher{
-		items: items,
-		left:  len(items),
-	}
-}
-
-func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	// about 64 MB memory if there are 1 million ranges
-	incompleteRanges := make([]Range, 0, len(iter.items))
-	for _, item := range iter.items {
-		if item.complete {
-			continue
-		}
-
-		incomplete := item.pr.Res.GetIncompleteRange(item.pr.Origin.StartKey, item.pr.Origin.EndKey)
-		if len(incomplete) == 0 {
-			item.complete = true
-			iter.left -= 1
-			continue
-		}
-		incompleteRanges = append(incompleteRanges, incomplete...)
-	}
-	return incompleteRanges
-}
-
-func (iter *IncompleteRangesFetcher) Len() int {
-	return iter.left
+	return incompleteGroupRanges
 }

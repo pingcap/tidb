@@ -47,6 +47,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 			StartKey: []byte(""),
 			EndKey:   []byte(""),
 		},
+		0,
 		rules,
 	)
 	require.Error(t, err)
@@ -59,6 +60,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 			StartKey: tablecodec.EncodeTablePrefix(0),
 			EndKey:   tablecodec.EncodeTablePrefix(1),
 		},
+		0,
 		rules,
 	)
 	require.Error(t, err)
@@ -71,6 +73,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(2),
 		},
+		0,
 		rules,
 	)
 	require.Error(t, err)
@@ -87,6 +90,7 @@ func TestValidateFileRewriteRule(t *testing.T) {
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(2),
 		},
+		0,
 		rules,
 	)
 	require.Error(t, err)
@@ -103,10 +107,114 @@ func TestValidateFileRewriteRule(t *testing.T) {
 			StartKey: tablecodec.EncodeTablePrefix(1),
 			EndKey:   tablecodec.EncodeTablePrefix(2),
 		},
+		0,
 		rules,
 	)
 	require.Error(t, err)
 	require.Regexp(t, ".*rewrite rule mismatch.*", err.Error())
+
+	err = utils.ValidateFileRewriteRule(
+		&backuppb.File{
+			Name:     "file_write.sst",
+			StartKey: tablecodec.EncodeTablePrefix(4),
+			EndKey:   tablecodec.EncodeTablePrefix(6),
+			TableMetas: []*backuppb.TableMeta{
+				{PhysicalId: 4},
+				{PhysicalId: 5},
+				{PhysicalId: 6},
+			},
+		},
+		2,
+		nil,
+	)
+	require.Error(t, err)
+	require.Regexp(t, "table is not in file range.*", err.Error())
+
+	err = utils.ValidateFileRewriteRule(
+		&backuppb.File{
+			Name:     "file_write.sst",
+			StartKey: tablecodec.EncodeTablePrefix(4),
+			EndKey:   tablecodec.EncodeTablePrefix(6),
+			TableMetas: []*backuppb.TableMeta{
+				{PhysicalId: 4},
+				{PhysicalId: 5},
+				{PhysicalId: 6},
+			},
+		},
+		7,
+		nil,
+	)
+	require.Error(t, err)
+	require.Regexp(t, "table is not in file range.*", err.Error())
+
+	err = utils.ValidateFileRewriteRule(
+		&backuppb.File{
+			Name:     "file_write.sst",
+			StartKey: tablecodec.EncodeTablePrefix(4),
+			EndKey:   tablecodec.EncodeTablePrefix(6),
+			TableMetas: []*backuppb.TableMeta{
+				{PhysicalId: 4},
+				{PhysicalId: 5},
+				{PhysicalId: 6},
+			},
+		},
+		4,
+		nil,
+	)
+	require.NoError(t, err)
+}
+
+func tableRewriteRule(tableID int64) *utils.RewriteRules {
+	return &utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{{
+			OldKeyPrefix: []byte(tablecodec.EncodeTablePrefix(tableID)),
+			NewKeyPrefix: []byte(tablecodec.EncodeTablePrefix(1000 + tableID)),
+		}},
+	}
+}
+
+func rewriteRule(oldKey, newKey []byte) *import_sstpb.RewriteRule {
+	return &import_sstpb.RewriteRule{
+		OldKeyPrefix: oldKey,
+		NewKeyPrefix: newKey,
+	}
+}
+
+func TestUniqueSortedRewriteRules(t *testing.T) {
+	newRewriteRules := utils.UniqueSortedRewriteRules([]*import_sstpb.RewriteRule{
+		rewriteRule([]byte("1"), []byte("10")),
+		rewriteRule([]byte("1"), []byte("10")),
+		rewriteRule([]byte("2"), []byte("20")),
+		rewriteRule([]byte("3"), []byte("30")),
+		rewriteRule([]byte("3"), []byte("30")),
+		rewriteRule([]byte("4"), []byte("40")),
+		rewriteRule([]byte("5"), []byte("50")),
+		rewriteRule([]byte("5"), []byte("50")),
+	})
+	require.Len(t, newRewriteRules, 5)
+	require.Equal(t, []byte("1"), newRewriteRules[0].OldKeyPrefix)
+	require.Equal(t, []byte("2"), newRewriteRules[1].OldKeyPrefix)
+	require.Equal(t, []byte("3"), newRewriteRules[2].OldKeyPrefix)
+	require.Equal(t, []byte("4"), newRewriteRules[3].OldKeyPrefix)
+	require.Equal(t, []byte("5"), newRewriteRules[4].OldKeyPrefix)
+}
+
+func TestGetRewriteRawKey(t *testing.T) {
+	rewriteRules := utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(2),
+				OldKeyPrefix: tablecodec.GenTablePrefix(1),
+			},
+			{
+				NewKeyPrefix: tablecodec.GenTablePrefix(511),
+				OldKeyPrefix: tablecodec.GenTablePrefix(767),
+			},
+		},
+	}
+	rewritedKey, err := utils.GetRewriteRawKey(tablecodec.GenTableRecordPrefix(1), &rewriteRules)
+	require.NoError(t, err)
+	require.Equal(t, codec.EncodeBytes([]byte{}, tablecodec.GenTableRecordPrefix(2)), rewritedKey)
 }
 
 func TestRewriteFileKeys(t *testing.T) {
@@ -168,7 +276,7 @@ func TestRewriteRange(t *testing.T) {
 	// Define test cases
 	cases := []struct {
 		rg            *rtree.Range
-		rewriteRules  *utils.RewriteRules
+		rewriteRules  map[int64]*utils.RewriteRules
 		expectedRange *rtree.Range
 		expectedError error
 	}{
@@ -188,11 +296,13 @@ func TestRewriteRange(t *testing.T) {
 				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
 				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
 			},
-			rewriteRules: &utils.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: tablecodec.GenTableIndexPrefix(1),
-						NewKeyPrefix: tablecodec.GenTableIndexPrefix(2),
+			rewriteRules: map[int64]*utils.RewriteRules{
+				1: {
+					Data: []*import_sstpb.RewriteRule{
+						{
+							OldKeyPrefix: tablecodec.GenTableIndexPrefix(1),
+							NewKeyPrefix: tablecodec.GenTableIndexPrefix(2),
+						},
 					},
 				},
 			},
@@ -208,11 +318,13 @@ func TestRewriteRange(t *testing.T) {
 				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
 				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
 			},
-			rewriteRules: &utils.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
-						NewKeyPrefix: append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+			rewriteRules: map[int64]*utils.RewriteRules{
+				1: {
+					Data: []*import_sstpb.RewriteRule{
+						{
+							OldKeyPrefix: append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+							NewKeyPrefix: append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+						},
 					},
 				},
 			},
@@ -228,11 +340,13 @@ func TestRewriteRange(t *testing.T) {
 				StartKey: []byte("t1_startKey"),
 				EndKey:   []byte("t2_endKey"),
 			},
-			rewriteRules: &utils.RewriteRules{
-				Data: []*import_sstpb.RewriteRule{
-					{
-						OldKeyPrefix: []byte("t1_startKey"),
-						NewKeyPrefix: []byte("t2_newStartKey"),
+			rewriteRules: map[int64]*utils.RewriteRules{
+				0: {
+					Data: []*import_sstpb.RewriteRule{
+						{
+							OldKeyPrefix: []byte("t1_startKey"),
+							NewKeyPrefix: []byte("t2_newStartKey"),
+						},
 					},
 				},
 			},
@@ -352,14 +466,16 @@ func TestGetRewriteRules(t *testing.T) {
 	newTableInfo, oldTableInfo := generateRewriteTableInfos()
 
 	{
-		rewriteRules := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0, false)
+		rewriteRules, err := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0)
+		require.NoError(t, err)
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(2), rewriteRules), tablecodec.EncodeTablePrefix(1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(101), rewriteRules), tablecodec.EncodeTablePrefix(100))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTablePrefix(201), rewriteRules), tablecodec.EncodeTablePrefix(200))
 	}
 
 	{
-		rewriteRules := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0, true)
+		rewriteRules, err := utils.GetRewriteRules(newTableInfo, oldTableInfo, 0)
+		require.NoError(t, err)
 		require.Equal(t, getNewKeyPrefix(tablecodec.GenTableRecordPrefix(2), rewriteRules), tablecodec.GenTableRecordPrefix(1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 1))
 		require.Equal(t, getNewKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 2), rewriteRules), tablecodec.EncodeTableIndexPrefix(1, 2))
@@ -480,4 +596,85 @@ func TestGetRewriteKeyWithDifferentTable(t *testing.T) {
 	require.Error(t, err)
 	_, _, err = utils.GetRewriteEncodedKeys(applyFile, nil)
 	require.Error(t, err)
+}
+
+func tableDetailRewriteRule(tableID int64) *utils.RewriteRules {
+	return &utils.RewriteRules{
+		Data: []*import_sstpb.RewriteRule{
+			{
+				OldKeyPrefix: []byte(tablecodec.GenTableRecordPrefix(tableID)),
+				NewKeyPrefix: []byte(tablecodec.GenTableRecordPrefix(1000 + tableID)),
+			},
+			{
+				OldKeyPrefix: []byte(tablecodec.EncodeTableIndexPrefix(tableID, 1)),
+				NewKeyPrefix: []byte(tablecodec.EncodeTableIndexPrefix(1000+tableID, 1)),
+			},
+		},
+	}
+}
+
+func TestGetSortedRewriteRules(t *testing.T) {
+	file := &backuppb.File{
+		Name:       "test_write.sst",
+		StartKey:   tablecodec.GenTableRecordPrefix(1),
+		EndKey:     tablecodec.EncodeTableIndexPrefix(3, 1),
+		TableMetas: []*backuppb.TableMeta{},
+	}
+	rules := map[int64]*utils.RewriteRules{
+		1: tableDetailRewriteRule(1),
+		2: tableDetailRewriteRule(2),
+		3: tableDetailRewriteRule(3),
+	}
+	encodedStartKey, encodedEndKey, sortedRewriteRules := utils.GetSortedRewriteRules(file, rules, false)
+	require.Equal(t, codec.EncodeBytes([]byte{}, tablecodec.GenTableRecordPrefix(1001)), encodedStartKey)
+	require.Equal(t, codec.EncodeBytes([]byte{}, tablecodec.EncodeTableIndexPrefix(1003, 1)), encodedEndKey)
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: tablecodec.GenTableRecordPrefix(1),
+		NewKeyPrefix: tablecodec.GenTableRecordPrefix(1001),
+	}, sortedRewriteRules[0])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(2, 1),
+		NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(1002, 1),
+	}, sortedRewriteRules[1])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: tablecodec.GenTableRecordPrefix(2),
+		NewKeyPrefix: tablecodec.GenTableRecordPrefix(1002),
+	}, sortedRewriteRules[2])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: tablecodec.EncodeTableIndexPrefix(3, 1),
+		NewKeyPrefix: tablecodec.EncodeTableIndexPrefix(1003, 1),
+	}, sortedRewriteRules[3])
+}
+
+func TestGetSortedRewriteRules2(t *testing.T) {
+	file := &backuppb.File{
+		Name:       "test_write.sst",
+		StartKey:   tablecodec.GenTableRecordPrefix(1),
+		EndKey:     tablecodec.EncodeTableIndexPrefix(3, 1),
+		TableMetas: []*backuppb.TableMeta{},
+	}
+	rules := map[int64]*utils.RewriteRules{
+		1: tableDetailRewriteRule(1),
+		2: tableDetailRewriteRule(2),
+		3: tableDetailRewriteRule(3),
+	}
+	encodedStartKey, encodedEndKey, sortedRewriteRules := utils.GetSortedRewriteRules(file, rules, true)
+	require.Equal(t, codec.EncodeBytes([]byte{}, tablecodec.GenTableRecordPrefix(1001)), encodedStartKey)
+	require.Equal(t, codec.EncodeBytes([]byte{}, tablecodec.EncodeTableIndexPrefix(1003, 1)), encodedEndKey)
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: utils.EncodeKeyPrefix(tablecodec.GenTableRecordPrefix(1)),
+		NewKeyPrefix: utils.EncodeKeyPrefix(tablecodec.GenTableRecordPrefix(1001)),
+	}, sortedRewriteRules[0])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: utils.EncodeKeyPrefix(tablecodec.EncodeTableIndexPrefix(2, 1)),
+		NewKeyPrefix: utils.EncodeKeyPrefix(tablecodec.EncodeTableIndexPrefix(1002, 1)),
+	}, sortedRewriteRules[1])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: utils.EncodeKeyPrefix(tablecodec.GenTableRecordPrefix(2)),
+		NewKeyPrefix: utils.EncodeKeyPrefix(tablecodec.GenTableRecordPrefix(1002)),
+	}, sortedRewriteRules[2])
+	require.Equal(t, &import_sstpb.RewriteRule{
+		OldKeyPrefix: utils.EncodeKeyPrefix(tablecodec.EncodeTableIndexPrefix(3, 1)),
+		NewKeyPrefix: utils.EncodeKeyPrefix(tablecodec.EncodeTableIndexPrefix(1003, 1)),
+	}, sortedRewriteRules[3])
 }

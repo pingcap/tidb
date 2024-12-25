@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -97,8 +98,10 @@ type SnapClient struct {
 
 	noSchema bool
 
-	databases map[string]*metautil.Database
-	ddlJobs   []*model.Job
+	preallocInfo     checkpoint.PreallocedInfo
+	databases        map[string]*metautil.Database
+	schemaFilesStats metautil.SchemaFilesStats
+	ddlJobs          []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
 	rebasedTablesMap map[restore.UniqueTableName]bool
@@ -284,18 +287,7 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 	log.Info("set placement policy mode", zap.String("mode", rc.policyMode))
 }
 
-// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
-// the download stage.
-func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
-	preallocedTableIDs := tidalloc.New(tables)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
-		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
-	})
-	if err != nil {
-		return err
-	}
-
+func (rc *SnapClient) registerPreallocatedIDs(preallocedTableIDs *tidalloc.PreallocIDs) {
 	log.Info("registering the table IDs", zap.Stringer("ids", preallocedTableIDs))
 	for i := range rc.dbPool {
 		rc.dbPool[i].RegisterPreallocatedIDs(preallocedTableIDs)
@@ -303,7 +295,31 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if rc.db != nil {
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
+}
+
+// AllocTableIDs would pre-allocate the table's origin ID if exists, so that the TiKV doesn't need to rewrite the key in
+// the download stage.
+func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
+	preallocedTableIDs := tidalloc.New(tables)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn), rc.schemaFilesStats.SortedPhysicalRanges)
+	})
+	if err != nil {
+		return err
+	}
+	rc.preallocInfo.From, rc.preallocInfo.End, rc.preallocInfo.Unreused = preallocedTableIDs.GetPreallocedInfo()
+
+	rc.registerPreallocatedIDs(preallocedTableIDs)
 	return nil
+}
+
+// AllocTableIDsWithCheckpoint reuses the already pre-alloced IDs from checkpoint metadata.
+func (rc *SnapClient) AllocTableIDsWithCheckpoint(tables []*metautil.Table) {
+	preallocedTableIDs := tidalloc.New(tables)
+	preallocedTableIDs.SetPreallocedInfo(rc.preallocInfo.From, rc.preallocInfo.End, rc.preallocInfo.Unreused)
+
+	rc.registerPreallocatedIDs(preallocedTableIDs)
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
@@ -351,14 +367,18 @@ func (rc *SnapClient) InitCheckpoint(
 			checkpointClusterConfig = meta.SchedulersConfig
 		}
 
+		// Record the prealloced info
+		rc.preallocInfo = meta.PreallocedInfo
+
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) error {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
 			checkpointSet[v.RangeKey] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
@@ -380,6 +400,7 @@ func (rc *SnapClient) InitCheckpoint(
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
+			PreallocedInfo:    rc.preallocInfo,
 		}
 		// a nil config means undo function
 		if config != nil {
@@ -580,11 +601,12 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawEndKey []byte,
 ) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
+		databases, schemaFilesStats, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rc.databases = databases
+		rc.schemaFilesStats = *schemaFilesStats
 
 		var ddlJobs []*model.Job
 		// ddls is the bytes of json.Marshal
@@ -604,6 +626,53 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 
 	return rc.initClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv, RawStartKey, RawEndKey)
+}
+
+func (rc *SnapClient) skipFilesOfTable(table *metautil.Table) {
+	for physicalID, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			for i := range file.TableMetas {
+				if file.TableMetas[i] != nil && file.TableMetas[i].PhysicalId == physicalID {
+					file.TableMetas[i] = nil
+					break
+				}
+			}
+		}
+	}
+}
+
+func (rc *SnapClient) skipFilesOfTables(tables []*metautil.Table) {
+	for _, table := range tables {
+		rc.skipFilesOfTable(table)
+	}
+}
+
+// FilterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
+// if the db has no table that can be processed, the db will be filtered too.
+func (rc *SnapClient) FilterRestoreFiles(tableFilter filter.Filter) (tables []*metautil.Table, dbs []*metautil.Database) {
+	for _, db := range rc.GetDatabases() {
+		dbName := db.Info.Name.O
+		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
+			dbName = name
+		}
+		if checkpoint.IsCheckpointDB(db.Info.Name) {
+			rc.skipFilesOfTables(db.Tables)
+			continue
+		}
+		if !tableFilter.MatchSchema(dbName) {
+			rc.skipFilesOfTables(db.Tables)
+			continue
+		}
+		dbs = append(dbs, db)
+		for _, table := range db.Tables {
+			if table.Info == nil || !tableFilter.MatchTable(dbName, table.Info.Name.O) {
+				rc.skipFilesOfTable(table)
+				continue
+			}
+			tables = append(tables, table)
+		}
+	}
+	return
 }
 
 // IsRawKvMode checks whether the backup data is in raw kv format, in which case transactional recover is forbidden.
@@ -850,7 +919,10 @@ func (rc *SnapClient) createTables(
 				table.Info.IsCommonHandle,
 				newTableInfo.IsCommonHandle)
 		}
-		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
+		rules, err := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		ct := &CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
@@ -931,7 +1003,10 @@ func (rc *SnapClient) createTable(
 			table.Info.IsCommonHandle,
 			newTableInfo.IsCommonHandle)
 	}
-	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
+	rules, err := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	et := &CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
@@ -1064,7 +1139,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	expectedChecksumStats := tbl.OldTable.CalculateChecksumStatsOnFiles()
 	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil

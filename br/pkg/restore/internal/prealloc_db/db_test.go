@@ -229,7 +229,7 @@ func cloneTableInfos(
 		}
 
 		ids = prealloctableid.New(tableInfos)
-		return ids.Alloc(allocater)
+		return ids.Alloc(allocater, []metautil.TableIDSpan{})
 	})
 	require.NoError(t, err)
 	db.RegisterPreallocatedIDs(ids)
@@ -405,6 +405,84 @@ func TestCreateTablesInDb(t *testing.T) {
 
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
+}
+
+func TestIDPreAllocation(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
+	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
+
+	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	require.True(t, isExist)
+
+	globalID := int64(0)
+	err = kv.RunInNewTxn(ctx, s.Mock.Domain.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		allocater := meta.NewMutator(txn)
+		base, e := allocater.AdvanceGlobalIDs(1000)
+		globalID = base + 1000
+		return e
+	})
+	require.NoError(t, err)
+
+	tables := make([]*metautil.Table, 4)
+	intField := types.NewFieldType(mysql.TypeLong)
+	intField.SetCharset("binary")
+	// globalID - 2, globalID - 0, globalID + 2, globalID + 4
+	for i := len(tables) - 1; i >= 0; i-- {
+		id := globalID - int64(2*i-4)
+		tables[i] = &metautil.Table{
+			DB: dbSchema,
+			Info: &model.TableInfo{
+				ID:   id,
+				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Columns: []*model.ColumnInfo{{
+					ID:        1,
+					Name:      pmodel.NewCIStr("id"),
+					FieldType: *intField,
+					State:     model.StatePublic,
+				}},
+				Charset: "utf8mb4",
+				Collate: "utf8mb4_bin",
+			},
+		}
+	}
+	preallocedTableIDs := prealloctableid.New(tables)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
+	err = kv.RunInNewTxn(ctx, s.Mock.Storage, true, func(_ context.Context, txn kv.Transaction) error {
+		return preallocedTableIDs.Alloc(meta.NewMutator(txn), []metautil.TableIDSpan{
+			{
+				StartTableID: globalID - 2,
+				EndTableID:   globalID + 2,
+			},
+		})
+	})
+	require.NoError(t, err)
+
+	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
+	require.NoError(t, err)
+
+	db.RegisterPreallocatedIDs(preallocedTableIDs)
+
+	err = db.CreateTables(context.Background(), tables, nil, false, nil)
+	require.NoError(t, err)
+
+	infoschema := s.Mock.Domain.InfoSchema()
+	// globalID - 2, globalID - 0, globalID + 2, globalID + 4
+	// will replaced to
+	// globalID + 5, globalID + 6, globalID + 7, globalID + 4
+	tbl, ok := infoschema.TableByID(ctx, globalID+5)
+	require.True(t, ok)
+	require.Equal(t, pmodel.NewCIStr("test3"), tbl.Meta().Name)
+	tbl, ok = infoschema.TableByID(ctx, globalID+6)
+	require.True(t, ok)
+	require.Equal(t, pmodel.NewCIStr("test2"), tbl.Meta().Name)
+	tbl, ok = infoschema.TableByID(ctx, globalID+7)
+	require.True(t, ok)
+	require.Equal(t, pmodel.NewCIStr("test1"), tbl.Meta().Name)
+	tbl, ok = infoschema.TableByID(ctx, globalID+4)
+	require.True(t, ok)
+	require.Equal(t, pmodel.NewCIStr("test0"), tbl.Meta().Name)
 }
 
 func TestDDLJobMap(t *testing.T) {

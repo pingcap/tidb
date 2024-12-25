@@ -33,7 +33,7 @@ func FastChecksum(
 	errCh := make(chan error)
 	go func() {
 		reader := metautil.NewMetaReader(backupMeta, storage, cipher)
-		if err := reader.ReadSchemasFiles(ctx, ch, metautil.SkipStats); err != nil {
+		if _, err := reader.ReadSchemasFiles(ctx, ch, metautil.SkipStats); err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)
@@ -51,31 +51,24 @@ func FastChecksum(
 				return nil
 			}
 		}
-		checksum := uint64(0)
-		totalKvs := uint64(0)
-		totalBytes := uint64(0)
+
 		if tbl.Info == nil {
 			// empty database
 			continue
 		}
-		for _, file := range tbl.Files {
-			checksum ^= file.Crc64Xor
-			totalKvs += file.TotalKvs
-			totalBytes += file.TotalBytes
-		}
-
-		if checksum != tbl.Crc64Xor ||
-			totalBytes != tbl.TotalBytes ||
-			totalKvs != tbl.TotalKvs {
+		expectedChecksumStats := tbl.CalculateChecksumStatsOnFiles()
+		if expectedChecksumStats.Crc64Xor != tbl.Crc64Xor ||
+			expectedChecksumStats.TotalBytes != tbl.TotalBytes ||
+			expectedChecksumStats.TotalKvs != tbl.TotalKvs {
 			log.Error("checksum mismatch",
 				zap.Stringer("db", tbl.DB.Name),
 				zap.Stringer("table", tbl.Info.Name),
 				zap.Uint64("origin tidb crc64", tbl.Crc64Xor),
-				zap.Uint64("calculated crc64", checksum),
+				zap.Uint64("calculated crc64", expectedChecksumStats.Crc64Xor),
 				zap.Uint64("origin tidb total kvs", tbl.TotalKvs),
-				zap.Uint64("calculated total kvs", totalKvs),
+				zap.Uint64("calculated total kvs", expectedChecksumStats.TotalKvs),
 				zap.Uint64("origin tidb total bytes", tbl.TotalBytes),
-				zap.Uint64("calculated total bytes", totalBytes))
+				zap.Uint64("calculated total bytes", expectedChecksumStats.TotalBytes))
 			// TODO enhance error
 			return errors.Trace(berrors.ErrBackupChecksumMismatch)
 		}

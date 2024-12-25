@@ -98,7 +98,7 @@ func TestLoadBackupMeta(t *testing.T) {
 	err = store.WriteFile(ctx, MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := LoadBackupTables(
+	dbs, _, err := LoadBackupTables(
 		ctx,
 		NewMetaReader(
 			meta,
@@ -110,8 +110,122 @@ func TestLoadBackupMeta(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 1)
-	require.Equal(t, "1.sst", tbl.Files[0].Name)
+	require.Len(t, tbl.FilesOfPhysicals, 1)
+	require.Equal(t, "1.sst", tbl.FilesOfPhysicals[tblID][0].Name)
+}
+
+func TestLoadBackupMeta2(t *testing.T) {
+	testDir := t.TempDir()
+	store, err := storage.NewLocalStorage(testDir)
+	require.NoError(t, err)
+
+	generateSchema := func(dbName, tableName string, tableID int64) *backuppb.Schema {
+		tblNameStr := pmodel.NewCIStr(tableName)
+		dbNameStr := pmodel.NewCIStr(dbName)
+		mockTbl := &model.TableInfo{
+			ID:   tableID,
+			Name: tblNameStr,
+		}
+		mockStats := util.JSONTable{
+			DatabaseName: dbNameStr.String(),
+			TableName:    tblNameStr.String(),
+		}
+		mockDB := model.DBInfo{
+			ID:   1,
+			Name: dbNameStr,
+		}
+		mockDB.Deprecated.Tables = []*model.TableInfo{
+			mockTbl,
+		}
+		dbBytes, err := json.Marshal(mockDB)
+		require.NoError(t, err)
+		tblBytes, err := json.Marshal(mockTbl)
+		require.NoError(t, err)
+		statsBytes, err := json.Marshal(mockStats)
+		require.NoError(t, err)
+
+		return &backuppb.Schema{
+			Db:    dbBytes,
+			Table: tblBytes,
+			Stats: statsBytes,
+		}
+	}
+
+	generateFile := func(nameIdx int, tableIDs []int64, startHandle, endHandle []byte) *backuppb.File {
+		name := fmt.Sprintf("%d.sst", nameIdx)
+		tableMetas := make([]*backuppb.TableMeta, 0)
+		for _, tableID := range tableIDs {
+			tableMetas = append(tableMetas, &backuppb.TableMeta{
+				PhysicalId: tableID,
+			})
+		}
+		return &backuppb.File{
+			Name:       name,
+			StartKey:   tablecodec.EncodeRowKey(tableIDs[0], startHandle),
+			EndKey:     tablecodec.EncodeRowKey(tableIDs[len(tableIDs)-1], endHandle),
+			TableMetas: tableMetas,
+		}
+	}
+
+	mockSchemas := []*backuppb.Schema{
+		generateSchema("test", "t1", 100),
+		generateSchema("test", "t2", 101),
+		generateSchema("test", "t3", 102),
+		generateSchema("test", "t4", 103),
+	}
+
+	mockFiles := []*backuppb.File{
+		generateFile(1, []int64{100}, []byte("aa"), []byte("cc")),
+		generateFile(2, []int64{100}, []byte("cc"), []byte("ee")),
+		generateFile(3, []int64{100, 101}, []byte("ff"), []byte("aa")),
+		generateFile(4, []int64{101, 102}, []byte("aa"), []byte("ff")),
+		generateFile(5, []int64{102}, []byte("ii"), []byte("kk")),
+		generateFile(6, []int64{103}, []byte("aa"), []byte("cc")),
+		generateFile(7, []int64{103}, []byte("cc"), []byte("ee")),
+		generateFile(8, []int64{103}, []byte("ee"), []byte("ff")),
+	}
+
+	meta := mockBackupMeta(mockSchemas, mockFiles)
+	data, err := proto.Marshal(meta)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	err = store.WriteFile(ctx, MetaFile, data)
+	require.NoError(t, err)
+
+	dbs, schemaFilesStats, err := LoadBackupTables(
+		ctx,
+		NewMetaReader(
+			meta,
+			store,
+			&backuppb.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			}),
+		true,
+	)
+	require.NoError(t, err)
+	require.Len(t, schemaFilesStats.SortedPhysicalRanges, 1)
+	require.Equal(t, TableIDSpan{StartTableID: 100, EndTableID: 102}, schemaFilesStats.SortedPhysicalRanges[0])
+	expectTableFileNames := map[int64]map[string]struct{}{
+		100: {"1.sst": {}, "2.sst": {}, "3.sst": {}},
+		101: {"3.sst": {}, "4.sst": {}},
+		102: {"4.sst": {}, "5.sst": {}},
+		103: {"6.sst": {}, "7.sst": {}, "8.sst": {}},
+	}
+	db := dbs["test"]
+	require.Equal(t, len(expectTableFileNames), len(db.Tables))
+	for _, tbl := range db.Tables {
+		expectFileNames := expectTableFileNames[tbl.Info.ID]
+		count := 0
+		for _, files := range tbl.FilesOfPhysicals {
+			for _, file := range files {
+				_, ok := expectFileNames[file.Name]
+				require.True(t, ok)
+				count += 1
+			}
+		}
+		require.Equal(t, len(expectFileNames), count)
+	}
 }
 
 func TestLoadBackupMetaPartionTable(t *testing.T) {
@@ -194,7 +308,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	err = store.WriteFile(ctx, MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := LoadBackupTables(
+	dbs, _, err := LoadBackupTables(
 		ctx,
 		NewMetaReader(
 			meta,
@@ -207,11 +321,18 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 	)
 	tbl := dbs[dbName.String()].GetTable(tblName.String())
 	require.NoError(t, err)
-	require.Len(t, tbl.Files, 3)
+	require.Len(t, tbl.FilesOfPhysicals, 2)
+	count := 0
+	for _, files := range tbl.FilesOfPhysicals {
+		count += len(files)
+	}
+	require.Equal(t, 3, count)
 	contains := func(name string) bool {
-		for i := range tbl.Files {
-			if tbl.Files[i].Name == name {
-				return true
+		for i := range tbl.FilesOfPhysicals {
+			for _, file := range tbl.FilesOfPhysicals[i] {
+				if file.Name == name {
+					return true
+				}
 			}
 		}
 		return false
@@ -281,7 +402,7 @@ func BenchmarkLoadBackupMeta64(b *testing.B) {
 		err = store.WriteFile(ctx, MetaFile, data)
 		require.NoError(b, err)
 
-		dbs, err := LoadBackupTables(
+		dbs, _, err := LoadBackupTables(
 			ctx,
 			NewMetaReader(
 				meta,
@@ -314,7 +435,7 @@ func BenchmarkLoadBackupMeta1024(b *testing.B) {
 		err = store.WriteFile(ctx, MetaFile, data)
 		require.NoError(b, err)
 
-		dbs, err := LoadBackupTables(
+		dbs, _, err := LoadBackupTables(
 			ctx,
 			NewMetaReader(
 				meta,
@@ -347,7 +468,7 @@ func BenchmarkLoadBackupMeta10240(b *testing.B) {
 		err = store.WriteFile(ctx, MetaFile, data)
 		require.NoError(b, err)
 
-		dbs, err := LoadBackupTables(
+		dbs, _, err := LoadBackupTables(
 			ctx,
 			NewMetaReader(
 				meta,

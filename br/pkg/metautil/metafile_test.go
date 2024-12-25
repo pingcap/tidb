@@ -267,3 +267,164 @@ func TestMetaFileSize(t *testing.T) {
 	t.Logf("needFlush: %v, %+v", needFlush, metafiles)
 	require.True(t, needFlush)
 }
+
+func TestMergePhysicalRangeLink(t *testing.T) {
+	// 1 - 3 - 5 - 7 - 9
+	// 2 - 6
+	// 4 - 8
+	m := map[int64]int64{
+		1: 3,
+		4: 8,
+		7: 9,
+		5: 7,
+		2: 6,
+		3: 5,
+	}
+	mergePhysicalRangeLink(m)
+	require.Len(t, m, 3)
+	require.Equal(t, map[int64]int64{1: 9, 2: 6, 4: 8}, m)
+}
+
+func TestCalculateChecksumStatsOnFiles(t *testing.T) {
+	generateTableMeta := func(id int64, kvs, bytes, checksum uint64) *backuppb.TableMeta {
+		return &backuppb.TableMeta{
+			PhysicalId: id,
+			TotalKvs:   kvs,
+			TotalBytes: bytes,
+			Crc64Xor:   checksum,
+		}
+	}
+	file1 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(1, 10, 20, 30),
+			generateTableMeta(3, 30, 40, 50),
+		},
+	}
+	file2 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(3, 40, 50, 60),
+		},
+	}
+	file3 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(3, 50, 60, 70),
+			generateTableMeta(4, 40, 50, 60),
+			generateTableMeta(100, 1000, 2000, 3000),
+		},
+	}
+	file4 := &backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			generateTableMeta(102, 1002, 2002, 3002),
+			generateTableMeta(103, 1003, 2003, 3003),
+		},
+	}
+	// table id : 1, partition ids: 3, 100, 102
+	tbl := &Table{
+		FilesOfPhysicals: map[int64][]*backuppb.File{
+			1:   {file1},
+			3:   {file1, file2, file3},
+			100: {file3},
+			102: {file4},
+		},
+	}
+	checksumStats := tbl.CalculateChecksumStatsOnFiles()
+	require.Equal(t, uint64(10+30+40+50+1000+1002), checksumStats.TotalKvs)
+	require.Equal(t, uint64(20+40+50+60+2000+2002), checksumStats.TotalBytes)
+	require.Equal(t, uint64(30^50^60^70^3000^3002), checksumStats.Crc64Xor)
+}
+
+func TestCalculateKvStatsOnFile(t *testing.T) {
+	totalKvs, totalBytes := CalculateKvStatsOnFile(&backuppb.File{
+		TableMetas: []*backuppb.TableMeta{
+			{
+				PhysicalId: 1,
+				TotalKvs:   100,
+				TotalBytes: 100,
+				Crc64Xor:   100,
+			},
+			{
+				PhysicalId: 2,
+				TotalKvs:   200,
+				TotalBytes: 200,
+				Crc64Xor:   200,
+			},
+			{
+				PhysicalId: 3,
+				TotalKvs:   300,
+				TotalBytes: 300,
+				Crc64Xor:   300,
+			},
+		},
+	})
+	require.Equal(t, 600, totalKvs)
+	require.Equal(t, 600, totalBytes)
+	totalKvs, totalBytes = CalculateKvStatsOnFile(&backuppb.File{
+		TotalKvs:   100,
+		TotalBytes: 100,
+	})
+	require.Equal(t, 100, totalKvs)
+	require.Equal(t, 100, totalBytes)
+}
+
+func TestCalculateKvStatsOnFiles(t *testing.T) {
+	totalKvs, totalBytes := CalculateKvStatsOnFiles([]*backuppb.File{
+		{
+			TableMetas: []*backuppb.TableMeta{
+				{
+					PhysicalId: 1,
+					TotalKvs:   100,
+					TotalBytes: 100,
+					Crc64Xor:   100,
+				},
+				{
+					PhysicalId: 2,
+					TotalKvs:   200,
+					TotalBytes: 200,
+					Crc64Xor:   200,
+				},
+				{
+					PhysicalId: 3,
+					TotalKvs:   300,
+					TotalBytes: 300,
+					Crc64Xor:   300,
+				},
+			},
+		},
+		{
+			TableMetas: []*backuppb.TableMeta{
+				{
+					PhysicalId: 4,
+					TotalKvs:   400,
+					TotalBytes: 400,
+					Crc64Xor:   400,
+				},
+				{
+					PhysicalId: 5,
+					TotalKvs:   500,
+					TotalBytes: 500,
+					Crc64Xor:   500,
+				},
+				{
+					PhysicalId: 6,
+					TotalKvs:   600,
+					TotalBytes: 600,
+					Crc64Xor:   600,
+				},
+			},
+		},
+	})
+	require.Equal(t, uint64(2100), totalKvs)
+	require.Equal(t, uint64(2100), totalBytes)
+	totalKvs, totalBytes = CalculateKvStatsOnFiles([]*backuppb.File{
+		{
+			TotalKvs:   100,
+			TotalBytes: 100,
+		},
+		{
+			TotalKvs:   200,
+			TotalBytes: 200,
+		},
+	})
+	require.Equal(t, uint64(300), totalKvs)
+	require.Equal(t, uint64(300), totalBytes)
+}

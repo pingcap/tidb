@@ -15,6 +15,10 @@
 package utils
 
 import (
+	"fmt"
+	"strings"
+
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/codec"
 )
@@ -23,6 +27,19 @@ const (
 	WriteCFName   = "write"
 	DefaultCFName = "default"
 )
+
+// GetFileRangeKey is used to reduce the checkpoint number, because we combine the write cf/default cf into one restore file group.
+// during full restore, so we can reduce the checkpoint number with the common prefix of the file.
+func GetFileRangeKey(f string) string {
+	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
+	// so we need to compare with out the `_{cf}.sst` suffix
+	idx := strings.LastIndex(f, "_")
+	if idx < 0 {
+		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
+	}
+
+	return f[:idx]
+}
 
 // GetPartitionIDMap creates a map maping old physical ID to new physical ID.
 func GetPartitionIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
@@ -63,6 +80,22 @@ func GetIndexIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 	}
 
 	return indexIDMap
+}
+
+func MustTheSameIndexID(newTable, oldTable *model.TableInfo) error {
+	if len(oldTable.Indices) != len(newTable.Indices) {
+		return errors.Errorf("table(%s) index count does not match(%d != %d)",
+			newTable.Name.String(), len(oldTable.Indices), len(newTable.Indices))
+	}
+	for _, srcIndex := range oldTable.Indices {
+		for _, destIndex := range newTable.Indices {
+			if srcIndex.Name == destIndex.Name && srcIndex.ID != destIndex.ID {
+				return errors.Errorf("table(%s) index(%s) id does not match(%d != %d)",
+					newTable.Name.String(), srcIndex.Name, srcIndex.ID, destIndex.ID)
+			}
+		}
+	}
+	return nil
 }
 
 func TruncateTS(key []byte) []byte {

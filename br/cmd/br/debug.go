@@ -82,7 +82,7 @@ func newCheckSumCommand() *cobra.Command {
 			}
 
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
+			dbs, _, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -92,33 +92,40 @@ func newCheckSumCommand() *cobra.Command {
 					var calCRC64 uint64
 					var totalKVs uint64
 					var totalBytes uint64
-					for _, file := range tbl.Files {
-						calCRC64 ^= file.Crc64Xor
-						totalKVs += file.GetTotalKvs()
-						totalBytes += file.GetTotalBytes()
-						log.Info("file info", zap.Stringer("table", tbl.Info.Name),
-							zap.String("file", file.GetName()),
-							zap.Uint64("crc64xor", file.GetCrc64Xor()),
-							zap.Uint64("totalKvs", file.GetTotalKvs()),
-							zap.Uint64("totalBytes", file.GetTotalBytes()),
-							zap.Uint64("startVersion", file.GetStartVersion()),
-							zap.Uint64("endVersion", file.GetEndVersion()),
-							logutil.Key("startKey", file.GetStartKey()),
-							logutil.Key("endKey", file.GetEndKey()),
-						)
+					for physicalID, files := range tbl.FilesOfPhysicals {
+						for _, file := range files {
+							for _, tableMeta := range file.TableMetas {
+								if tableMeta.PhysicalId != physicalID {
+									continue
+								}
+								calCRC64 ^= file.Crc64Xor
+								totalKVs += file.GetTotalKvs()
+								totalBytes += file.GetTotalBytes()
+								log.Info("file info", zap.Stringer("table", tbl.Info.Name),
+									zap.String("file", file.GetName()),
+									zap.Uint64("crc64xor", file.GetCrc64Xor()),
+									zap.Uint64("totalKvs", file.GetTotalKvs()),
+									zap.Uint64("totalBytes", file.GetTotalBytes()),
+									zap.Uint64("startVersion", file.GetStartVersion()),
+									zap.Uint64("endVersion", file.GetEndVersion()),
+									logutil.Key("startKey", file.GetStartKey()),
+									logutil.Key("endKey", file.GetEndKey()),
+								)
 
-						var data []byte
-						data, err = s.ReadFile(ctx, file.Name)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						s := sha256.Sum256(data)
-						if !bytes.Equal(s[:], file.Sha256) {
-							return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
+								var data []byte
+								data, err = s.ReadFile(ctx, file.Name)
+								if err != nil {
+									return errors.Trace(err)
+								}
+								s := sha256.Sum256(data)
+								if !bytes.Equal(s[:], file.Sha256) {
+									return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
 backup data checksum failed: %s may be changed
 calculated sha256 is %s,
 origin sha256 is %s`,
-								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+										file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+								}
+							}
 						}
 					}
 					if tbl.Info == nil {
@@ -175,32 +182,14 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := metautil.LoadBackupTables(ctx, reader, false)
+			dbs, _, err := metautil.LoadBackupTables(ctx, reader, false)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
 				return errors.Trace(err)
 			}
-			files := make([]*backuppb.File, 0)
 			tables := make([]*metautil.Table, 0)
 			for _, db := range dbs {
-				for _, table := range db.Tables {
-					files = append(files, table.Files...)
-				}
 				tables = append(tables, db.Tables...)
-			}
-			// Check if the ranges of files overlapped
-			rangeTree := rtree.NewRangeTree()
-			for _, file := range files {
-				if out := rangeTree.InsertRange(rtree.Range{
-					StartKey: file.GetStartKey(),
-					EndKey:   file.GetEndKey(),
-				}); out != nil {
-					log.Error(
-						"file ranges overlapped",
-						zap.Stringer("out", out),
-						logutil.File(file),
-					)
-				}
 			}
 
 			tableIDAllocator := mockid.NewIDAllocator()
@@ -218,16 +207,14 @@ func newBackupMetaValidateCommand() *cobra.Command {
 					// empty database.
 					continue
 				}
-				indexIDAllocator := mockid.NewIDAllocator()
 				newTable := new(model.TableInfo)
 				tableID, _ := tableIDAllocator.Alloc()
 				newTable.ID = int64(tableID)
 				newTable.Name = table.Info.Name
 				newTable.Indices = make([]*model.IndexInfo, len(table.Info.Indices))
 				for i, indexInfo := range table.Info.Indices {
-					indexID, _ := indexIDAllocator.Alloc()
 					newTable.Indices[i] = &model.IndexInfo{
-						ID:   int64(indexID),
+						ID:   indexInfo.ID,
 						Name: indexInfo.Name,
 					}
 				}
@@ -246,15 +233,43 @@ func newBackupMetaValidateCommand() *cobra.Command {
 					}
 				}
 
-				rules := restoreutils.GetRewriteRules(newTable, table.Info, 0, true)
+				rules, err := restoreutils.GetRewriteRules(newTable, table.Info, 0)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)
 			}
+
 			// Validate rewrite rules
-			for _, file := range files {
-				err = restoreutils.ValidateFileRewriteRule(file, rewriteRules)
-				if err != nil {
-					return errors.Trace(err)
+			for _, db := range dbs {
+				for _, table := range db.Tables {
+					tableFiles := make([]*backuppb.File, 0)
+					for _, files := range table.FilesOfPhysicals {
+						tableFiles = append(tableFiles, files...)
+					}
+					restoreutils.MergeAndRewriteFileRanges(
+						tableFiles, map[int64]*restoreutils.RewriteRules{table.Info.ID: rewriteRules},
+						0, 0,
+					)
+					// Check if the ranges of files overlapped
+					rangeTree := rtree.NewRangeTree()
+					for _, file := range tableFiles {
+						err = restoreutils.ValidateFileRewriteRule(file, 0, rewriteRules)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						if out := rangeTree.InsertRange(rtree.Range{
+							StartKey: file.GetStartKey(),
+							EndKey:   file.GetEndKey(),
+						}); out != nil {
+							log.Error(
+								"file ranges overlapped",
+								zap.Stringer("out", out),
+								logutil.File(file),
+							)
+						}
+					}
 				}
 			}
 			cmd.Println("Check backupmeta done")

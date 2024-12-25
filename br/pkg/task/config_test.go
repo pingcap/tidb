@@ -268,7 +268,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := metautil.LoadBackupTables(
+	dbs, _, err := metautil.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,

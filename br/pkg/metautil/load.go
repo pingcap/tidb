@@ -16,6 +16,7 @@ package metautil
 
 import (
 	"context"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -38,31 +39,38 @@ func (db *Database) GetTable(name string) *Table {
 }
 
 // LoadBackupTables loads schemas from BackupMeta.
-func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, error) {
+func LoadBackupTables(ctx context.Context, reader *MetaReader, loadStats bool) (map[string]*Database, *SchemaFilesStats, error) {
+	var wg sync.WaitGroup
 	ch := make(chan *Table)
 	errCh := make(chan error)
+	statsCh := make(chan *SchemaFilesStats)
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		var opts []ReadSchemaOption
 		if !loadStats {
 			opts = []ReadSchemaOption{SkipStats}
 		}
-		if err := reader.ReadSchemasFiles(ctx, ch, opts...); err != nil {
+		schemaFilesStats, err := reader.ReadSchemasFiles(ctx, ch, opts...)
+		if err != nil {
 			errCh <- errors.Trace(err)
 		}
 		close(ch)
+		statsCh <- schemaFilesStats
 	}()
 
 	databases := make(map[string]*Database)
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case err := <-errCh:
-			return nil, errors.Trace(err)
+			return nil, nil, errors.Trace(err)
 		case table, ok := <-ch:
 			if !ok {
 				close(errCh)
-				return databases, nil
+				schemaFilesStats := <-statsCh
+				return databases, schemaFilesStats, nil
 			}
 			dbName := table.DB.Name.String()
 			db, ok := databases[dbName]

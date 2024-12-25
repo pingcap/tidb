@@ -93,7 +93,8 @@ func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 		out := make(chan *metautil.Table, 16)
 		errc := make(chan error, 1)
 		go func() {
-			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles, metautil.SkipStats)
+			_, readErr := exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles, metautil.SkipStats)
+			errc <- readErr
 			close(out)
 		}()
 		ts, err := collectResult(ctx, out, errc, convertTable)

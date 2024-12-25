@@ -94,20 +94,16 @@ func StartCheckpointRunnerForBackup(
 func AppendForBackup(
 	ctx context.Context,
 	r *CheckpointRunner[BackupKeyType, BackupValueType],
-	groupKey BackupKeyType,
 	startKey []byte,
 	endKey []byte,
 	files []*backuppb.File,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[BackupKeyType, BackupValueType]{
-		GroupKey: groupKey,
 		Group: []BackupValueType{
 			{
-				Range: &rtree.Range{
-					StartKey: startKey,
-					EndKey:   endKey,
-					Files:    files,
-				},
+				StartKey: startKey,
+				EndKey:   endKey,
+				Files:    files,
 			},
 		},
 	})
@@ -119,7 +115,7 @@ func WalkCheckpointFileForBackup(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
-	fn func(BackupKeyType, BackupValueType),
+	fn func(BackupKeyType, BackupValueType) error,
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
@@ -130,8 +126,8 @@ type CheckpointMetadataForBackup struct {
 	BackupTS    uint64        `json:"backup-ts"`
 	Ranges      []rtree.Range `json:"ranges"`
 
-	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
-	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
+	CheckpointChecksum    map[int64]*ChecksumItem `json:"-"`
+	LoadCheckpointDataMap bool                    `json:"-"`
 }
 
 // load checkpoint metadata from the external storage

@@ -16,8 +16,6 @@ package restore
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -44,7 +42,8 @@ import (
 type BackupFileSet struct {
 	// TableID only valid in 3.4.5.
 	// For Raw/Txn KV, table id is always 0
-	TableID int64
+	// MinPhysicalID is the minimal downstream table ID in the merged SST file set
+	MinPhysicalID int64
 
 	// For log Backup Changes, this field is null.
 	SSTFiles []*backuppb.File
@@ -52,7 +51,8 @@ type BackupFileSet struct {
 	// RewriteRules is the rewrite rules for the specify table.
 	// because these rules belongs to the *one table*.
 	// we can hold them here.
-	RewriteRules *utils.RewriteRules
+	// map from table ID to rewrite rules
+	RewriteRules map[int64]*utils.RewriteRules
 }
 
 type BatchBackupFileSet []BackupFileSet
@@ -105,7 +105,7 @@ func CreateUniqueFileSets(files []*backuppb.File) []BackupFileSet {
 func NewFileSet(files []*backuppb.File, rules *utils.RewriteRules) BackupFileSet {
 	return BackupFileSet{
 		SSTFiles:     files,
-		RewriteRules: rules,
+		RewriteRules: map[int64]*utils.RewriteRules{0: rules},
 	}
 }
 
@@ -208,7 +208,7 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 						// the table corresponding to the table-id.
 						for _, f := range set.SSTFiles {
 							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
-								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								checkpoint.NewCheckpointFileItem(set.MinPhysicalID, f.GetName())); err != nil {
 								return errors.Trace(err)
 							}
 						}
@@ -304,7 +304,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 				for _, filesGroup := range filesReplica {
 					rangeKeySet := make(map[string]struct{})
 					for _, file := range filesGroup.SSTFiles {
-						rangeKey := GetFileRangeKey(file.Name)
+						rangeKey := utils.GetFileRangeKey(file.Name)
 						// Assert that the files having the same rangeKey are all in the current filesGroup.Files
 						rangeKeySet[rangeKey] = struct{}{}
 					}
@@ -312,7 +312,7 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
 						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner,
-							checkpoint.NewCheckpointRangeKeyItem(filesGroup.TableID, rangeKey)); err != nil {
+							checkpoint.NewCheckpointRangeKeyItem(filesGroup.MinPhysicalID, rangeKey)); err != nil {
 							return errors.Trace(err)
 						}
 					}
@@ -325,19 +325,6 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 	// we may break the for loop without error in the errgroup. (Will this happen?)
 	// At that time, return the error in the context here.
 	return m.ectx.Err()
-}
-
-// GetFileRangeKey is used to reduce the checkpoint number, because we combine the write cf/default cf into one restore file group.
-// during full restore, so we can reduce the checkpoint number with the common prefix of the file.
-func GetFileRangeKey(f string) string {
-	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare without the `_{cf}.sst` suffix
-	idx := strings.LastIndex(f, "_")
-	if idx < 0 {
-		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
-	}
-
-	return f[:idx]
 }
 
 type PipelineRestorerWrapper[T any] struct {

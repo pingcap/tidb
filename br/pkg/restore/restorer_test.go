@@ -103,14 +103,14 @@ func TestSimpleRestorerWithErrorInImport(t *testing.T) {
 func createSampleBatchFileSets() restore.BatchBackupFileSet {
 	return restore.BatchBackupFileSet{
 		{
-			TableID: 1001,
+			MinPhysicalID: 1001,
 			SSTFiles: []*backuppb.File{
 				{Name: "file1.sst", TotalKvs: 10},
 				{Name: "file2.sst", TotalKvs: 20},
 			},
 		},
 		{
-			TableID: 1002,
+			MinPhysicalID: 1002,
 			SSTFiles: []*backuppb.File{
 				{Name: "file3.sst", TotalKvs: 15},
 			},

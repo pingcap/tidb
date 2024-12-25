@@ -4,11 +4,13 @@ package metautil
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -160,7 +162,7 @@ type Table struct {
 	Crc64Xor         uint64
 	TotalKvs         uint64
 	TotalBytes       uint64
-	Files            []*backuppb.File
+	FilesOfPhysicals map[int64][]*backuppb.File
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
@@ -238,6 +240,30 @@ func ArchiveSize(files []*backuppb.File) uint64 {
 	return total
 }
 
+// ArchiveTablesSize return the size of archive table
+func ArchiveTablesSize(tables []*Table) uint64 {
+	totalSize := uint64(0)
+	for _, table := range tables {
+		totalSize += ArchiveTableSize(table)
+	}
+	return totalSize
+}
+
+// ArchiveTableSize return the size of archive table
+func ArchiveTableSize(table *Table) uint64 {
+	totalSize := uint64(0)
+	for _, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			if len(file.TableMetas) > 0 {
+				totalSize += file.GetSize_() / uint64(len(file.TableMetas))
+			} else {
+				totalSize += file.GetSize_()
+			}
+		}
+	}
+	return totalSize
+}
+
 type ChecksumStats struct {
 	Crc64Xor   uint64
 	TotalKvs   uint64
@@ -251,13 +277,57 @@ func (stats ChecksumStats) ChecksumExists() bool {
 	return true
 }
 
-// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
-func CalculateChecksumStatsOnFiles(files []*backuppb.File) ChecksumStats {
-	var stats ChecksumStats
+// CalculateKvStatsOnFiles returns the total kvs and bytes of file
+func CalculateKvStatsOnFile(file *backuppb.File) (uint64, uint64) {
+	totalKvs, totalBytes := uint64(0), uint64(0)
+	for _, tableMeta := range file.TableMetas {
+		totalKvs += tableMeta.TotalKvs
+		totalBytes += tableMeta.TotalBytes
+	}
+	if len(file.TableMetas) == 0 {
+		totalKvs += file.TotalKvs
+		totalBytes += file.TotalBytes
+	}
+	return totalKvs, totalBytes
+}
+
+// CalculateKvStatsOnFiles returns the total kvs and bytes of files
+func CalculateKvStatsOnFiles(files []*backuppb.File) (uint64, uint64) {
+	totalKvs, totalBytes := uint64(0), uint64(0)
 	for _, file := range files {
-		stats.Crc64Xor ^= file.Crc64Xor
-		stats.TotalKvs += file.TotalKvs
-		stats.TotalBytes += file.TotalBytes
+		if len(file.TableMetas) > 0 {
+			for _, tableMeta := range file.TableMetas {
+				totalKvs += tableMeta.TotalKvs
+				totalBytes += tableMeta.TotalBytes
+			}
+		} else {
+			totalKvs += file.TotalKvs
+			totalBytes += file.TotalBytes
+		}
+	}
+	return totalKvs, totalBytes
+}
+
+// CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
+func (table *Table) CalculateChecksumStatsOnFiles() ChecksumStats {
+	var stats ChecksumStats
+	for physicalID, files := range table.FilesOfPhysicals {
+		for _, file := range files {
+			if len(file.TableMetas) > 0 {
+				for _, tableMeta := range file.TableMetas {
+					if tableMeta != nil && physicalID == tableMeta.PhysicalId {
+						stats.Crc64Xor ^= tableMeta.Crc64Xor
+						stats.TotalKvs += tableMeta.TotalKvs
+						stats.TotalBytes += tableMeta.TotalBytes
+						break
+					}
+				}
+			} else {
+				stats.Crc64Xor ^= file.Crc64Xor
+				stats.TotalKvs += file.TotalKvs
+				stats.TotalBytes += file.TotalBytes
+			}
+		}
 	}
 	return stats
 }
@@ -311,6 +381,11 @@ type readSchemaConfig struct {
 // ReadSchemaOption describes some extra option of reading the config.
 type ReadSchemaOption func(*readSchemaConfig)
 
+type TableIDSpan struct {
+	StartTableID int64
+	EndTableID   int64
+}
+
 // SkipFiles is the configuration which will make the schema reader skip all files.
 // This is useful when only schema information is needed.
 func SkipFiles(conf *readSchemaConfig) {
@@ -326,9 +401,61 @@ func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
 	return *reader.backupMeta
 }
 
+func checkSortedPhysicalRangeLink(spans []TableIDSpan) error {
+	lastEndID := int64(0)
+	for i, span := range spans {
+		if lastEndID >= span.StartTableID {
+			return errors.Errorf("table id spans overlapped, lastEndID is %d, the %dth span is [%d, %d]",
+				lastEndID, i, span.StartTableID, span.EndTableID)
+		}
+	}
+	return nil
+}
+
+// start table ID -> end table ID
+// The range of SST files are like:
+// [range_start, next_key_from_the_same_range), [next_key_from_the_same_range, range_end), [next_range_start, ..)
+// Notice that if there is an SST file whose range start/end is from table X,
+// either its data is empty, or first/end key of the SST file must from table X.
+func mergePhysicalRangeLink(physicalRangeMap map[int64]int64) ([]TableIDSpan, error) {
+	for startTableID, endTableID := range physicalRangeMap {
+		// merge range link to [startTableId, ..]
+		finalEndTableID := endTableID
+	MERGELINKS:
+		for {
+			nextEndTableID, exists := physicalRangeMap[finalEndTableID]
+			if !exists {
+				break MERGELINKS
+			}
+			delete(physicalRangeMap, finalEndTableID)
+			finalEndTableID = nextEndTableID
+		}
+		if finalEndTableID != endTableID {
+			physicalRangeMap[startTableID] = finalEndTableID
+		}
+	}
+	physicalIDSpans := make([]TableIDSpan, 0, len(physicalRangeMap))
+	for startTableID, endTableID := range physicalRangeMap {
+		physicalIDSpans = append(physicalIDSpans, TableIDSpan{StartTableID: startTableID, EndTableID: endTableID})
+	}
+	slices.SortFunc(physicalIDSpans, func(left, right TableIDSpan) int { return cmp.Compare(left.StartTableID, right.EndTableID) })
+	// check that there are not overlap spans
+	return physicalIDSpans, checkSortedPhysicalRangeLink(physicalIDSpans)
+}
+
+type SchemaFilesStats struct {
+	SortedPhysicalRanges []TableIDSpan
+}
+
+func newSchemaFilesStats() *SchemaFilesStats {
+	return &SchemaFilesStats{
+		SortedPhysicalRanges: nil,
+	}
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
-func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
+func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) (*SchemaFilesStats, error) {
 	cctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -392,10 +519,12 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
 	var fileMap map[int64][]*backuppb.File
+	schemaFilesStats := newSchemaFilesStats()
 	if !cfg.skipFiles {
 		fileCh := make(chan *backuppb.File, MaxBatchSize)
 		fileErrCh := make(chan error, 1)
 		fileMap = make(map[int64][]*backuppb.File)
+		physicalRangeMap := make(map[int64]int64)
 		go func() {
 			defer close(fileCh)
 			err := reader.readDataFiles(cctx, func(file *backuppb.File) {
@@ -412,20 +541,84 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 		for {
 			select {
 			case <-cctx.Done():
-				return errors.Trace(cctx.Err())
+				return nil, errors.Trace(cctx.Err())
 			case err := <-fileErrCh:
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			case file, ok := <-fileCh:
 				if !ok {
 					break generateFileMapDone
 				}
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
-					log.Panic("tableID must not equal to 0", logutil.File(file))
+				startTableID := tablecodec.DecodeTableID(file.GetStartKey())
+				if startTableID == 0 {
+					log.Error("tableID must not equal to 0", logutil.File(file))
+					return nil, errors.Annotate(berrors.ErrInvalidRange, "the table ID of the file start key can not be 0")
 				}
-				fileMap[tableID] = append(fileMap[tableID], file)
+				endTableID := tablecodec.DecodeTableID(file.GetEndKey())
+				if endTableID == 0 {
+					log.Error("tableID must not equal to 0", logutil.File(file))
+					return nil, errors.Annotate(berrors.ErrInvalidRange, "the table ID of the file end key can not be 0")
+				}
+				if len(file.TableMetas) > 0 {
+					firstTableID, lastTableID := file.TableMetas[0].PhysicalId, file.TableMetas[len(file.TableMetas)-1].PhysicalId
+					if firstTableID <= 0 || lastTableID <= 0 {
+						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+							"table meta physical id can not less(equal) than(to) 0, firstTableID: %d, lastTableID: %d",
+							firstTableID, lastTableID)
+					}
+					// startTableID <= firstTableID <= lastTableID <= endTableID
+					maxTableID := startTableID
+					for i, tableMeta := range file.TableMetas {
+						if tableMeta.PhysicalId < maxTableID {
+							return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+								"table meta physical id is not increasing: tableMetas[%d].PhysicalID is %d while the previous physical ID is %d",
+								i, tableMeta.PhysicalId, maxTableID)
+						}
+						maxTableID = tableMeta.PhysicalId
+						fileMap[tableMeta.PhysicalId] = append(fileMap[tableMeta.PhysicalId], file)
+					}
+					if endTableID < maxTableID {
+						return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+							"table meta physical id is not increasing: file range end key physical ID is %d while the previous physical ID is %d",
+							endTableID, maxTableID)
+					}
+					if len(file.TableMetas) > 1 {
+						// Any table whose table id is in (firstTableID, lastTableID] should be restored together
+						// with the table whose table id is firstTableID. However, maybe there is another
+						// SST file whose table range is [firstTableID0, lastTableID]. That's because
+						// region data was so large that SST file was split when backup.
+						// The firstTableID is the physical id of the first table meta.
+						// Notice that startTableID <= firstTableID <= lastTableID <= endTableID. That's because
+						// part of data may be overlapped by another backup response.
+						oldLastTableID := physicalRangeMap[firstTableID]
+						if oldLastTableID == 0 {
+							// uninitialized physical range
+							physicalRangeMap[firstTableID] = lastTableID
+						} else if oldLastTableID != lastTableID {
+							// The backup file is bad. It has valid data over from firstTableID0 to endTableID0, and another
+							// valid data over from firstTableID0 to endTableID1.
+							return nil, errors.Annotatef(berrors.ErrInvalidMetaFile,
+								"the file is over table id range [%d, %d] while another file over table id range [%d, %d]",
+								firstTableID, oldLastTableID, firstTableID, lastTableID)
+						}
+					}
+				} else {
+					if startTableID != endTableID {
+						log.Error("start key and end key are not from the same table", logutil.File(file))
+						return nil, errors.Annotate(berrors.ErrInvalidRange, "start key and end key are not from the same table")
+					}
+					fileMap[startTableID] = append(fileMap[startTableID], file)
+				}
 			}
 		}
+
+		// there may be a link like this:
+		// physicalRangeMap[tableID1] = tableID2 and physicalRangeMap[tableID2] = tableID3
+		// it should be adjust to physicalRangeMap[tableID1] = tableID3.
+		sortedPhysicalRanges, err := mergePhysicalRangeLink(physicalRangeMap)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		schemaFilesStats.SortedPhysicalRanges = sortedPhysicalRanges
 	}
 
 	for {
@@ -435,14 +628,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			table := item.(*Table)
 			if table.Info != nil {
 				if fileMap != nil {
-					if files, ok := fileMap[table.Info.ID]; ok {
-						table.Files = append(table.Files, files...)
+					if files, ok := fileMap[table.Info.ID]; ok && len(files) > 0 {
+						table.FilesOfPhysicals[table.Info.ID] = files
 					}
 					if table.Info.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range table.Info.Partition.Definitions {
-							if files, ok := fileMap[p.ID]; ok {
-								table.Files = append(table.Files, files...)
+							if files, ok := fileMap[p.ID]; ok && len(files) > 0 {
+								table.FilesOfPhysicals[p.ID] = files
 							}
 						}
 					}
@@ -455,11 +648,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			return nil
 		})
 		if err != nil {
-			return errors.Trace(err)
+			return schemaFilesStats, errors.Trace(err)
 		}
 		if len(tableMap) == 0 {
 			// We have read all tables.
-			return nil
+			return schemaFilesStats, nil
 		}
 		for _, table := range tableMap {
 			output <- table
@@ -498,6 +691,7 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		Crc64Xor:         s.Crc64Xor,
 		TotalKvs:         s.TotalKvs,
 		TotalBytes:       s.TotalBytes,
+		FilesOfPhysicals: make(map[int64][]*backuppb.File),
 		TiFlashReplicas:  int(s.TiflashReplicas),
 		Stats:            stats,
 		StatsFileIndexes: statsFileIndexes,

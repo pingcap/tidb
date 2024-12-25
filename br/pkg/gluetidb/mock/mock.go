@@ -92,6 +92,13 @@ func (*mockSession) CreateTable(_ context.Context, _ pmodel.CIStr,
 	return nil
 }
 
+// CreateTable implements glue.Session.
+func (*mockSession) CreateTableCloned(_ context.Context, _ pmodel.CIStr,
+	_ *model.TableInfo, _ ...ddl.CreateTableOption) error {
+	log.Fatal("unimplemented CreateDatabase for mock session")
+	return nil
+}
+
 // Close implements glue.Session.
 func (s *mockSession) Close() {
 	s.se.Close()

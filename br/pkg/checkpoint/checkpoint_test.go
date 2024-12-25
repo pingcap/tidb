@@ -217,10 +217,13 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
-		})
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+			[]byte(d.StartKey),
+			[]byte(d.EndKey),
+			[]*backuppb.File{
+				{Name: d.Name},
+				{Name: d.Name2},
+			})
 		require.NoError(t, err)
 	}
 
@@ -230,16 +233,19 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
-			{Name: d.Name},
-			{Name: d.Name2},
-		})
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+			[]byte(d.StartKey),
+			[]byte(d.EndKey),
+			[]*backuppb.File{
+				{Name: d.Name},
+				{Name: d.Name2},
+			})
 		require.NoError(t, err)
 	}
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	checker := func(groupKey string, resp checkpoint.BackupValueType) {
+	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -250,6 +256,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		require.Equal(t, d.EndKey, string(resp.EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
+		return nil
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
@@ -269,6 +276,47 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, meta.CheckpointChecksum[i].Crc64xor, uint64(i))
 	}
+}
+
+func TestCheckpointBackupRunner2(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	s, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
+	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
+
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+	checkpointRunner, err := checkpoint.StartCheckpointBackupRunnerForTest(
+		ctx, s, cipher, 5*time.Second, NewMockTimer(10, 10))
+	require.NoError(t, err)
+
+	err = checkpoint.AppendForBackup(ctx, checkpointRunner,
+		[]byte("a1"),
+		[]byte("c2"),
+		[]*backuppb.File{
+			{Name: "1.sst"},
+			{Name: "2.sst"},
+		})
+	require.NoError(t, err)
+
+	checkpointRunner.WaitForFinish(ctx, true)
+	count := 0
+	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
+		require.Equal(t, []byte("a1"), resp.StartKey)
+		require.Equal(t, []byte("c2"), resp.EndKey)
+		require.Len(t, resp.Files, 2)
+		require.Equal(t, "1.sst", resp.Files[0].Name)
+		require.Equal(t, "2.sst", resp.Files[1].Name)
+		count += 1
+		return nil
+	}
+	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
 }
 
 func TestCheckpointRestoreRunner(t *testing.T) {
@@ -329,7 +377,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[resp.RangeKey]
 		if !ok {
@@ -341,6 +389,7 @@ func TestCheckpointRestoreRunner(t *testing.T) {
 		}
 		require.Equal(t, d.RangeKey, resp.RangeKey)
 		respCount += 1
+		return nil
 	}
 
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checkpoint.SnapshotRestoreCheckpointDatabaseName, checker)
@@ -402,8 +451,9 @@ func TestCheckpointRunnerRetry(t *testing.T) {
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
-		func(tableID int64, v checkpoint.RestoreValueType) {
-			recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
+		func(tableID int64, rangeKey checkpoint.RestoreValueType) error {
+			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+			return nil
 		})
 	require.NoError(t, err)
 	require.LessOrEqual(t, 1, recordSet["1_123"])
@@ -443,8 +493,9 @@ func TestCheckpointRunnerNoRetry(t *testing.T) {
 	recordSet := make(map[string]int)
 	_, err = checkpoint.LoadCheckpointDataForSstRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(),
 		checkpoint.SnapshotRestoreCheckpointDatabaseName,
-		func(tableID int64, v checkpoint.RestoreValueType) {
-			recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
+		func(tableID int64, rangeKey checkpoint.RestoreValueType) error {
+			recordSet[fmt.Sprintf("%d_%s", tableID, rangeKey)] += 1
+			return nil
 		})
 	require.NoError(t, err)
 	require.Equal(t, 1, recordSet["1_123"])
@@ -512,7 +563,7 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) error {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
 		if !ok {
@@ -529,11 +580,12 @@ func TestCheckpointLogRestoreRunner(t *testing.T) {
 			for _, foff := range foffs {
 				if f.foff == foff {
 					respCount += 1
-					return
+					return nil
 				}
 			}
 		}
 		require.FailNow(t, "not found in the original data")
+		return nil
 	}
 
 	_, err = checkpoint.LoadCheckpointDataForLogRestore(ctx, se.GetSessionCtx().GetRestrictedSQLExecutor(), checker)
@@ -620,12 +672,13 @@ func TestCheckpointCompactedRestoreRunner(t *testing.T) {
 	se, err = g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
 	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
 		require.NotNil(t, resp)
 		d, ok := data[resp.Name]
 		require.True(t, ok)
 		require.Equal(t, d.Name, resp.Name)
 		respCount++
+		return nil
 	}
 
 	exists := checkpoint.ExistsSstRestoreCheckpoint(ctx, s.Mock.Domain, checkpoint.CustomSSTRestoreCheckpointDatabaseName)

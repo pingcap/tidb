@@ -806,7 +806,7 @@ func TestSplitAndScatter(t *testing.T) {
 	rules := initRewriteRules()
 	splitKeys := make([][]byte, 0, len(ranges))
 	for _, rg := range ranges {
-		tmp, err := restoreutils.RewriteRange(&rg, rules)
+		tmp, err := restoreutils.RewriteRange(&rg, map[int64]*restoreutils.RewriteRules{0: rules})
 		require.NoError(t, err)
 		splitKeys = append(splitKeys, tmp.EndKey)
 	}

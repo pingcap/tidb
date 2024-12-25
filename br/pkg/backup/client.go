@@ -5,9 +5,9 @@ package backup
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -202,7 +203,7 @@ mainLoop:
 		// Compute the left ranges that not backuped yet
 		start := time.Now()
 
-		var inCompleteRanges []rtree.Range
+		var inCompleteRanges []*backuppb.SortedSubRanges
 		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
@@ -211,8 +212,7 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			iter := loop.GlobalProgressTree.Iter()
-			inCompleteRanges = iter.GetIncompleteRanges()
+			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 			if len(inCompleteRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
@@ -225,7 +225,7 @@ mainLoop:
 		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
 			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
 
-		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+		loop.BackupReq.SortedSubRangesGroups = inCompleteRanges
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
@@ -580,10 +580,7 @@ func (bc *Client) StartCheckpointRunner(
 		// otherwise, the checkpoint meta is loaded from the external storage,
 		// no need to save it again
 		// besides, there are exist checkpoint data need to be loaded before start checkpoint runner
-		bc.checkpointMeta.CheckpointDataMap, err = bc.loadCheckpointRanges(ctx, progressCallBack)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		bc.checkpointMeta.LoadCheckpointDataMap = true
 	}
 
 	bc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForBackup(ctx, bc.storage, bc.cipher, bc.mgr.GetPDClient())
@@ -599,52 +596,17 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 // getProgressRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
 func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
-	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
-	if bc.checkpointMeta != nil && len(bc.checkpointMeta.CheckpointDataMap) > 0 {
-		rangeTree, exists := bc.checkpointMeta.CheckpointDataMap[groupKey]
-		if exists {
-			incomplete := rangeTree.GetIncompleteRange(r.StartKey, r.EndKey)
-			delete(bc.checkpointMeta.CheckpointDataMap, groupKey)
-			return &rtree.ProgressRange{
-				Res:        rangeTree,
-				Incomplete: incomplete,
-				Origin:     r,
-				GroupKey:   groupKey,
-			}
-		}
-	}
+	physicalID := tablecodec.DecodeTableID(r.StartKey)
 
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res: rtree.NewRangeTree(),
+		Res: rtree.NewRangeTreeWithPhysicalID(physicalID),
 		Incomplete: []rtree.Range{
 			r,
 		},
-		Origin:   r,
-		GroupKey: groupKey,
+		Origin: r,
 	}
-}
-
-// LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack func()) (map[string]rtree.RangeTree, error) {
-	rangeDataMap := make(map[string]rtree.RangeTree)
-
-	pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) {
-		rangeTree, exists := rangeDataMap[groupKey]
-		if !exists {
-			rangeTree = rtree.NewRangeTree()
-			rangeDataMap[groupKey] = rangeTree
-		}
-		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
-		progressCallBack()
-	})
-
-	// we should adjust start-time of the summary to `pastDureTime` earlier
-	log.Info("past cost time", zap.Duration("cost", pastDureTime))
-	summary.AdjustStartTimeToEarlierTime(pastDureTime)
-
-	return rangeDataMap, errors.Trace(err)
 }
 
 // SetStorage sets ExternalStorage for client.
@@ -1062,7 +1024,7 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, error) {
+func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Range, progressCallBack func()) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree()
@@ -1070,6 +1032,41 @@ func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRa
 		if err := progressRangeTree.Insert(bc.getProgressRange(r)); err != nil {
 			return progressRangeTree, errors.Trace(err)
 		}
+	}
+
+	// LoadCheckpointRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
+	if bc.checkpointMeta != nil && bc.checkpointMeta.LoadCheckpointDataMap {
+		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) error {
+			sortedPrs, err := progressRangeTree.FindContained(rg.StartKey, rg.EndKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			physicalIDSet := make(map[int64]struct{})
+			if len(rg.Files) > 0 {
+				for _, tableMeta := range rg.Files[0].TableMetas {
+					if tableMeta != nil {
+						physicalIDSet[tableMeta.PhysicalId] = struct{}{}
+					}
+				}
+			}
+			force := false
+			for _, pr := range sortedPrs {
+				if _, exists := physicalIDSet[pr.Res.PhysicalID]; !exists {
+					continue
+				}
+				startKey, endKey := maxStartKey(pr.Origin.StartKey, rg.StartKey), minEndKey(pr.Origin.EndKey, rg.EndKey)
+				force = pr.Res.PutForce(startKey, endKey, rg.Files, force)
+			}
+			progressCallBack()
+			return nil
+		})
+		if err != nil {
+			return progressRangeTree, errors.Trace(err)
+		}
+
+		// we should adjust start-time of the summary to `pastDureTime` earlier
+		log.Info("past cost time", zap.Duration("cost", pastDureTime))
+		summary.AdjustStartTimeToEarlierTime(pastDureTime)
 	}
 	return progressRangeTree, nil
 }
@@ -1097,7 +1094,7 @@ func (bc *Client) BackupRanges(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	globalProgressTree, err := bc.BuildProgressRangeTree(ranges)
+	globalProgressTree, err := bc.BuildProgressRangeTree(ctx, ranges, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1155,6 +1152,23 @@ func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[stri
 	return targetStores, nil
 }
 
+func minEndKey(left, right []byte) []byte {
+	if len(right) == 0 {
+		return left
+	}
+	if len(left) == 0 || bytes.Compare(left, right) > 0 {
+		return right
+	}
+	return left
+}
+
+func maxStartKey(left, right []byte) []byte {
+	if bytes.Compare(left, right) > 0 {
+		return left
+	}
+	return right
+}
+
 func (bc *Client) OnBackupResponse(
 	ctx context.Context,
 	r *ResponseAndStore,
@@ -1169,18 +1183,22 @@ func (bc *Client) OnBackupResponse(
 	storeID := r.GetStoreID()
 	if resp.GetError() == nil {
 		start := time.Now()
-		pr, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
+		sortedPrs, err := globalProgressTree.FindContained(resp.StartKey, resp.EndKey)
 		logutil.CL(ctx).Debug("find the range tree contains response ranges", zap.Duration("take", time.Since(start)))
 		if err != nil {
 			logutil.CL(ctx).Error("failed to update the backup response",
 				zap.Reflect("error", err))
 			return nil, err
 		}
-		if bc.checkpointRunner != nil {
+		force := false
+		for _, pr := range sortedPrs {
+			startKey, endKey := maxStartKey(pr.Origin.StartKey, resp.StartKey), minEndKey(pr.Origin.EndKey, resp.EndKey)
+			force = pr.Res.PutForce(startKey, endKey, resp.Files, force)
+		}
+		if force && bc.checkpointRunner != nil {
 			if err := checkpoint.AppendForBackup(
 				ctx,
 				bc.checkpointRunner,
-				pr.GroupKey,
 				resp.StartKey,
 				resp.EndKey,
 				resp.Files,
@@ -1190,7 +1208,6 @@ func (bc *Client) OnBackupResponse(
 				return nil, err
 			}
 		}
-		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
 		apiVersion := resp.ApiVersion
 		bc.SetApiVersion(apiVersion)
 	} else {
@@ -1221,14 +1238,27 @@ func (bc *Client) OnBackupResponse(
 
 func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
 	var progressRangeAscendErr error
+	var filename string
 	progressRangeTree.Ascend(func(progressRange *rtree.ProgressRange) bool {
 		var rangeAscendErr error
 		progressRange.Res.Ascend(func(i btree.Item) bool {
 			r := i.(*rtree.Range)
-			for _, f := range r.Files {
-				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+			if len(r.Files) > 0 {
+				if filename == r.Files[0].Name {
+					// skip these files because they have been sent to meta writer.
+					return true
+				} else {
+					filename = r.Files[0].Name
+				}
 			}
+			for _, file := range r.Files {
+				file.TableMetas = slices.DeleteFunc(file.TableMetas, func(tableMeta *backuppb.TableMeta) bool {
+					return tableMeta == nil
+				})
+			}
+			totalKvs, totalBytes := metautil.CalculateKvStatsOnFiles(r.Files)
+			summary.CollectSuccessUnit(summary.TotalKV, 1, totalKvs)
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, totalBytes)
 			// we need keep the files in order after we support multi_ingest sst.
 			// default_sst and write_sst need to be together.
 			if err := metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
