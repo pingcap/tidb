@@ -49,11 +49,11 @@ func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode,
 }
 
 // MatchSQLBinding returns the matched binding for this statement.
-func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Binding, matched bool, scope string) {
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
 	return matchSQLBinding(sctx, stmtNode, nil)
 }
 
-func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return

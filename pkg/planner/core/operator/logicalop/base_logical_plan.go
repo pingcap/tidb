@@ -216,11 +216,11 @@ func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column)
 		childStats[i] = childProfile
 		childSchema[i] = child.Schema()
 	}
-	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
+	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema)
 }
 
 // DeriveStats implements LogicalPlan.<11th> interface.
-func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *BaseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if len(childStats) == 1 {
 		p.SetStats(childStats[0])
 		return p.StatsInfo(), nil
