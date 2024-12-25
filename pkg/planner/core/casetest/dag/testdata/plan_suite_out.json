@@ -451,7 +451,7 @@
       },
       {
         "SQL": "delete from t where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Projection->Delete",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
         "Hints": "use_index(@`del_1` `test`.`t` ), no_order_index(@`del_1` `test`.`t` `primary`), limit_to_cop(@`del_1`)"
       },
       {
