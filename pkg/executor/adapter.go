@@ -1291,20 +1291,18 @@ func (a *ExecStmt) logAudit() {
 		return
 	}
 
-	err := plugin.ForeachPlugin(plugin.Audit, a.logAuditFn)
+	err := plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
+		audit := plugin.DeclareAuditManifest(p.Manifest)
+		if audit.OnGeneralEvent != nil {
+			cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
+			ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
+			audit.OnGeneralEvent(ctx, sessVars, plugin.Completed, cmd)
+		}
+		return nil
+	})
 	if err != nil {
 		log.Error("log audit log failure", zap.Error(err))
 	}
-}
-
-func (a *ExecStmt) logAuditFn(p *plugin.Plugin) error {
-	audit := plugin.DeclareAuditManifest(p.Manifest)
-	if audit.OnGeneralEvent != nil {
-		cmd := mysql.Command2Str[byte(atomic.LoadUint32(&a.Ctx.GetSessionVars().CommandValue))]
-		ctx := context.WithValue(context.Background(), plugin.ExecStartTimeCtxKey, a.Ctx.GetSessionVars().StartTime)
-		audit.OnGeneralEvent(ctx, a.Ctx.GetSessionVars(), plugin.Completed, cmd)
-	}
-	return nil
 }
 
 // FormatSQL is used to format the original SQL, e.g. truncating long SQL, appending prepared arguments.
