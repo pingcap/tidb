@@ -266,7 +266,7 @@ func (c *bindingCache) loadFromStore(sctx sessionctx.Context, missingSQLDigest [
 		}
 		// put binding into the cache
 		oldBinding := c.GetBinding(sqlDigest)
-		cachedBinding := pickCachedBinding(append(bindings, oldBinding)...)
+		cachedBinding := pickCachedBinding(oldBinding, bindings...)
 		if cachedBinding != nil {
 			err = c.SetBinding(sqlDigest, cachedBinding)
 			if err != nil {

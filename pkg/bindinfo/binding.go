@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"sort"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -77,6 +76,12 @@ func (b *Binding) IsBindingEnabled() bool {
 	return b.Status == Enabled || b.Status == Using
 }
 
+// size calculates the memory size of a bind info.
+func (b *Binding) size() float64 {
+	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	return float64(res)
+}
+
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
@@ -131,12 +136,45 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	return nil
 }
 
-func pickCachedBinding(bindings ...*Binding) *Binding {
-	// filter nil pointers in the binding slice
+// pickCachedBinding picks the best binding to cache.
+func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) *Binding {
+	bindings := make([]*Binding, 0, len(bindingsFromStorage)+1)
+	bindings = append(bindings, cachedBinding)
+	bindings = append(bindings, bindingsFromStorage...)
+
+	// filter nil
 	n := 0
-	for _, b := range bindings {
-		if b != nil {
-			bindings[n] = b
+	for _, binding := range bindings {
+		if binding != nil {
+			bindings[n] = binding
+			n++
+		}
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	// filter bindings whose update time is not equal to maxUpdateTime
+	maxUpdateTime := bindings[0].UpdateTime
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) > 0 {
+			maxUpdateTime = binding.UpdateTime
+		}
+	}
+	n = 0
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) == 0 {
+			bindings[n] = binding
+			n++
+		}
+	}
+	bindings = bindings[:n]
+
+	// filter deleted bindings
+	n = 0
+	for _, binding := range bindings {
+		if binding.Status != deleted {
+			bindings[n] = binding
 			n++
 		}
 	}
@@ -145,22 +183,6 @@ func pickCachedBinding(bindings ...*Binding) *Binding {
 	if len(bindings) == 0 {
 		return nil
 	}
-	sort.Slice(bindings, func(i, j int) bool {
-		cmp := bindings[i].UpdateTime.Compare(bindings[j].UpdateTime)
-		if cmp != 0 {
-			return cmp > 0
-		}
-		return bindings[i].CreateTime.Compare(bindings[j].CreateTime) > 0
-	})
-	latestBinding := bindings[0]
-	if latestBinding.Status == deleted {
-		return nil
-	}
-	return latestBinding
-}
-
-// size calculates the memory size of a bind info.
-func (b *Binding) size() float64 {
-	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
-	return float64(res)
+	// should only have one binding.
+	return bindings[0]
 }

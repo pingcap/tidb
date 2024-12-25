@@ -53,12 +53,12 @@ type SessionBindingHandle interface {
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
 	mu       sync.RWMutex
-	bindings map[string][]*Binding // sqlDigest --> Bindings
+	bindings map[string]*Binding // sqlDigest --> Binding
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.
 func NewSessionBindingHandle() SessionBindingHandle {
-	return &sessionBindingHandle{bindings: make(map[string][]*Binding)}
+	return &sessionBindingHandle{bindings: make(map[string]*Binding)}
 }
 
 // CreateSessionBinding creates a Bindings to the cache.
@@ -82,7 +82,7 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 		binding.UpdateTime = now
 
 		// update the BindMeta to the cache.
-		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = []*Binding{binding}
+		h.bindings[parser.DigestNormalized(binding.OriginalSQL).String()] = binding
 	}
 	return nil
 }
@@ -104,17 +104,15 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDB
 	// session bindings in most cases is only used for test, so there should be many session bindings, so match
 	// them one by one is acceptable.
 	possibleBindings := make([]*Binding, 0, 2)
-	for _, bindings := range h.bindings {
-		for _, binding := range bindings {
-			bindingNoDBDigest, err := noDBDigestFromBinding(binding)
-			if err != nil {
-				continue
-			}
-			if noDBDigest != bindingNoDBDigest {
-				continue
-			}
-			possibleBindings = append(possibleBindings, binding)
+	for _, binding := range h.bindings {
+		bindingNoDBDigest, err := noDBDigestFromBinding(binding)
+		if err != nil {
+			continue
 		}
+		if noDBDigest != bindingNoDBDigest {
+			continue
+		}
+		possibleBindings = append(possibleBindings, binding)
 	}
 	matchedBinding, isMatched = crossDBMatchBindings(sctx, tableNames, possibleBindings)
 	return
@@ -124,8 +122,8 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, noDB
 func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []*Binding) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	for _, bind := range h.bindings {
-		bindings = append(bindings, bind...)
+	for _, binding := range h.bindings {
+		bindings = append(bindings, binding)
 	}
 	return
 }
@@ -176,7 +174,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		if err = prepareHints(sctx, record); err != nil {
 			return err
 		}
-		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = []*Binding{record}
+		h.bindings[parser.DigestNormalized(record.OriginalSQL).String()] = record
 	}
 	return nil
 }
