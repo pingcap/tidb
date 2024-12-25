@@ -243,8 +243,11 @@ func TestCopRuntimeStats(t *testing.T) {
 	// Print all fields even though the value of some fields is 0.
 	str := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, scan_detail: {total_keys: 15, rocksdb: {delete_skipped_count: 5, block: {cache_hit_count: 10, read_byte: 100 Bytes}}}"
 	require.Equal(t, str, cop.String())
+	zeroScanDetail := util.ScanDetail{}
+	zeroCopStats := CopRuntimeStats{}
 	require.Equal(t, "", zeroScanDetail.String())
 	require.Equal(t, "", zeroTimeDetail.String())
+	require.Equal(t, "", zeroCopStats.String())
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {

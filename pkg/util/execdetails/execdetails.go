@@ -890,7 +890,6 @@ func (crs *CopRuntimeStats) GetTasks() int32 {
 	return int32(crs.stats.procTimes.size)
 }
 
-var zeroScanDetail = util.ScanDetail{}
 var zeroTimeDetail = util.TimeDetail{}
 
 func (crs *CopRuntimeStats) String() string {
@@ -926,7 +925,7 @@ func (crs *CopRuntimeStats) String() string {
 			buf.WriteString(", loops:")
 			buf.WriteString(strconv.Itoa(int(crs.stats.loop)))
 			printTiFlashSpecificInfo()
-		} else {
+		} else if totalTasks > 0 {
 			buf.WriteString(crs.storeType.Name())
 			buf.WriteString("_task:{proc max:")
 			buf.WriteString(FormatDuration(time.Duration(procTimes.GetMax().GetFloat64())))
@@ -946,12 +945,10 @@ func (crs *CopRuntimeStats) String() string {
 		}
 	}
 	if !isTiFlashCop {
-		if crs.scanDetail != zeroScanDetail {
-			detail := crs.scanDetail.String()
-			if detail != "" {
-				buf.WriteString(", ")
-				buf.WriteString(detail)
-			}
+		detail := crs.scanDetail.String()
+		if detail != "" {
+			buf.WriteString(", ")
+			buf.WriteString(detail)
 		}
 		if crs.timeDetail != zeroTimeDetail {
 			timeDetailStr := crs.timeDetail.String()
