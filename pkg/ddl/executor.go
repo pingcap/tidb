@@ -1636,6 +1636,9 @@ func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 			} else if chs != info.Name {
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
+			if len(coll) == 0 {
+				coll = info.DefaultCollation
+			}
 		case ast.TableOptionCollate:
 			info, err := collate.GetCollationByName(opt.StrValue)
 			if err != nil {
