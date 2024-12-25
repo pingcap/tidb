@@ -27,6 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -183,7 +185,7 @@ type mockPDClient struct {
 }
 
 // GetAllStores return fake stores.
-func (c *mockPDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockPDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return nil, nil
 }
 
@@ -195,13 +197,13 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	t.Cleanup(func() {
 		NewClientWithContext = bak
 	})
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 	_, _, err := GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "mock error")
 
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return &mockPDClient{}, nil
 	}
 	_, _, err = GetRegionSplitSizeKeys(context.Background())

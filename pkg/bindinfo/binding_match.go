@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -31,11 +32,11 @@ var (
 	GetGlobalBindingHandle func(sctx sessionctx.Context) GlobalBindingHandle
 )
 
-// BindingMatchInfo records necessary information for fuzzy binding matching.
+// BindingMatchInfo records necessary information for cross-db binding matching.
 // This is mainly for plan cache to avoid normalizing the same statement repeatedly.
 type BindingMatchInfo struct {
-	FuzzyDigest string
-	TableNames  []*ast.TableName
+	NoDBDigest string
+	TableNames []*ast.TableName
 }
 
 // MatchSQLBindingForPlanCache matches binding for plan cache.
@@ -49,11 +50,11 @@ func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode,
 }
 
 // MatchSQLBinding returns the matched binding for this statement.
-func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Binding, matched bool, scope string) {
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
 	return matchSQLBinding(sctx, stmtNode, nil)
 }
 
-func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
@@ -64,29 +65,29 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 
 	// record the normalization result into info to avoid repeat normalization next time.
-	var fuzzyDigest string
+	var noDBDigest string
 	var tableNames []*ast.TableName
-	if info == nil || info.TableNames == nil || info.FuzzyDigest == "" {
-		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmtNode, norm.WithFuzz(true))
+	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
+		_, noDBDigest = norm.NormalizeStmtForBinding(stmtNode, norm.WithoutDB(true))
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
-			info.FuzzyDigest = fuzzyDigest
+			info.NoDBDigest = noDBDigest
 			info.TableNames = tableNames
 		}
 	} else {
-		fuzzyDigest = info.FuzzyDigest
+		noDBDigest = info.NoDBDigest
 		tableNames = info.TableNames
 	}
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if binding, matched := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); matched {
+	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
 		return binding, matched, metrics.ScopeSession
 	}
 	globalHandle := GetGlobalBindingHandle(sctx)
 	if globalHandle == nil {
 		return
 	}
-	binding, matched = globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames)
+	binding, matched = globalHandle.MatchGlobalBinding(sctx, noDBDigest, tableNames)
 	if matched {
 		return binding, matched, metrics.ScopeGlobal
 	}
@@ -94,7 +95,34 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	return
 }
 
-func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
+func noDBDigestFromBinding(binding *Binding) (string, error) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+	if err != nil {
+		return "", err
+	}
+	_, bindingNoDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+	return bindingNoDBDigest, nil
+}
+
+func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, bindings []*Binding) (matchedBinding *Binding, isMatched bool) {
+	leastWildcards := len(tableNames) + 1
+	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, binding := range bindings {
+		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
+			continue // cross-db binding is disabled, skip this binding
+		}
+		if matched && numWildcards < leastWildcards {
+			matchedBinding = binding
+			isMatched = true
+			leastWildcards = numWildcards
+		}
+	}
+	return
+}
+
+func crossDBMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
 	if len(stmtTableNames) != len(bindingTableNames) {
 		return 0, false
 	}
@@ -107,7 +135,7 @@ func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNa
 		}
 		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
 			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == strings.ToLower(currentDB)) || // equal to the current DB, or
-			bindingTableNames[i].Schema.L == "*" { // fuzzy match successfully
+			bindingTableNames[i].Schema.L == "*" { // cross-db match successfully
 			continue
 		}
 		return 0, false
@@ -115,8 +143,8 @@ func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNa
 	return numWildcards, true
 }
 
-// isFuzzyBinding checks whether the stmtNode is a fuzzy binding.
-func isFuzzyBinding(stmt ast.Node) bool {
+// isCrossDBBinding checks whether the stmtNode is a cross-db binding.
+func isCrossDBBinding(stmt ast.Node) bool {
 	for _, t := range CollectTableNames(stmt) {
 		if t.Schema.L == "*" {
 			return true
@@ -126,7 +154,7 @@ func isFuzzyBinding(stmt ast.Node) bool {
 }
 
 // CollectTableNames gets all table names from ast.Node.
-// This function is mainly for binding fuzzy matching.
+// This function is mainly for binding cross-db matching.
 // ** the return is read-only.
 // For example:
 //

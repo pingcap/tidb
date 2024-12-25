@@ -1778,15 +1778,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
-			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
+			if sem.IsEnabled() && !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser(ctx, "RESTRICTED_USER_ADMIN", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 			}
 		}
 
-		exists, _, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1794,10 +1794,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
-		}
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(ctx, spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
 		}
 
 		type AuthTokenOptionHandler int
@@ -2311,7 +2307,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		if checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, user) {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
@@ -2522,14 +2518,13 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		h = s.User.Hostname
 
 		checker := privilege.GetPrivilegeManager(e.Ctx())
-		checker.MatchIdentity(ctx, u, h, false)
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := e.Ctx().GetSessionVars().User
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	exists, _, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err
 	}
@@ -2544,10 +2539,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		disableSandboxMode = true
 	}
 
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(ctx, u, h)
-	if err != nil {
-		return err
-	}
 	if e.isValidatePasswordEnabled() {
 		if err := pwdValidator.ValidatePassword(e.Ctx().GetSessionVars(), s.Password); err != nil {
 			return err

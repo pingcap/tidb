@@ -39,7 +39,7 @@ func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
 	return result
 }
 
-func TestFuzzyBindingBasic(t *testing.T) {
+func TestCrossDBBindingBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -74,7 +74,7 @@ func TestFuzzyBindingBasic(t *testing.T) {
 	}
 }
 
-func TestFuzzyDuplicatedBinding(t *testing.T) {
+func TestCrossDBDuplicatedBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -95,7 +95,7 @@ func TestFuzzyDuplicatedBinding(t *testing.T) {
 		[][]any{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 }
 
-func TestFuzzyBindingPriority(t *testing.T) {
+func TestCrossDBBindingPriority(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -138,7 +138,7 @@ func TestFuzzyBindingPriority(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `*`.`t3`) JOIN `*`.`t4`) JOIN `*`.`t5`"))
 }
 
-func TestCreateUpdateFuzzyBinding(t *testing.T) {
+func TestCreateUpdateCrossDBBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -170,7 +170,7 @@ func TestCreateUpdateFuzzyBinding(t *testing.T) {
 	require.Equal(t, showBinding(tk, "show session bindings"), [][]any{})
 }
 
-func TestFuzzyBindingSwitch(t *testing.T) {
+func TestCrossDBBindingSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -211,7 +211,7 @@ func TestFuzzyBindingSwitch(t *testing.T) {
 	tk3.MustQuery(`show global variables like 'tidb_opt_enable_fuzzy_binding'`).Check(testkit.Rows("tidb_opt_enable_fuzzy_binding OFF"))
 }
 
-func TestFuzzyBindingSetVar(t *testing.T) {
+func TestCrossDBBindingSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -235,7 +235,7 @@ func TestFuzzyBindingSetVar(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
-func TestFuzzyBindingGC(t *testing.T) {
+func TestCrossDBBindingGC(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -257,7 +257,7 @@ func TestFuzzyBindingGC(t *testing.T) {
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
 
-func TestFuzzyBindingInList(t *testing.T) {
+func TestCrossDBBindingInList(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`create database test1`)
@@ -297,7 +297,7 @@ func TestFuzzyBindingInList(t *testing.T) {
 	}
 }
 
-func TestFuzzyBindingPlanCache(t *testing.T) {
+func TestCrossDBBindingPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)

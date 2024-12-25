@@ -103,6 +103,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -1662,7 +1663,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return nil
 	}
 
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return err
 	}
@@ -2126,6 +2127,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
+				do.BindHandle().CloseCache()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
@@ -2133,12 +2135,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
-				}
-				bindHandle.DropInvalidGlobalBinding()
-				// Get Global
-				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
-				if err == nil && variable.TiDBOptOn(optVal) {
-					bindHandle.CaptureBaselines()
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -2446,6 +2442,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		return nil
 	}
 	do.SetStatsUpdating(true)
+	do.wg.Run(do.asyncLoadHistogram, "asyncLoadHistogram")
 	// The stats updated worker doesn't require the stats initialization to be completed.
 	// This is because the updated worker's primary responsibilities are to update the change delta and handle DDL operations.
 	// These tasks do not interfere with or depend on the initialization process.
@@ -2597,11 +2594,38 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.Update(ctx, do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				logutil.BgLogger().Warn("update stats info failed", zap.Error(err))
 			}
+		case <-do.exit:
+			return
+		}
+	}
+}
+
+func (do *Domain) asyncLoadHistogram() {
+	defer util.Recover(metrics.LabelDomain, "asyncLoadStats", nil, false)
+	lease := do.statsLease
+	if lease == 0 {
+		lease = 3 * time.Second
+	}
+	cleanupTicker := time.NewTicker(lease)
+	defer func() {
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("asyncLoadStats exited.")
+	}()
+	select {
+	case <-do.StatsHandle().InitStatsDone:
+	case <-do.exit: // It may happen that before initStatsDone, tidb receive Ctrl+C
+		return
+	}
+	statsHandle := do.StatsHandle()
+	var err error
+	for {
+		select {
+		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2680,7 +2704,7 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(false)
 			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump stats delta failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !do.statsOwner.IsOwner() {
@@ -2688,13 +2712,13 @@ func (do *Domain) updateStatsWorker(_ sessionctx.Context) {
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.GetSchemaLease())
 			if err != nil {
-				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+				logutil.BgLogger().Warn("GC stats failed", zap.Error(err))
 			}
 			do.CheckAutoAnalyzeWindows()
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
-				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
 		case <-readMemTicker.C:
 			memory.ForceReadMemStats()
