@@ -3526,7 +3526,7 @@ Error 1406 (22001): Data too long for column 'c1' at row 1
 insert into t values ('123');
 insert into t values ('1234');
 insert into t values ('12345);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 30 near "'12345)" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 29 near "'12345)" 
 drop table if exists t;
 create table t (c1 bit(62));
 insert into t values ('12345678');
