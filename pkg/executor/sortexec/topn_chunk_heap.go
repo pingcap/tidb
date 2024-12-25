@@ -55,7 +55,7 @@ func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, tot
 	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
 	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
 	ch := topnExec.Children(0)
-	h.rowChunks = chunk.NewList(ch.RetFieldTypes(), ch.InitCap(), ch.MaxChunkSize())
+	h.rowChunks = chunk.NewList(exec.RetTypes(ch), ch.InitCap(), ch.MaxChunkSize())
 	h.rowChunks.GetMemTracker().AttachTo(h.memTracker)
 	h.rowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 
@@ -121,7 +121,8 @@ func (h *topNChunkHeap) doCompaction(topnExec *TopNExec) error {
 	newRowChunks := chunk.NewList(exec.RetTypes(ch), ch.InitCap(), ch.MaxChunkSize())
 	newRowPtrs := make([]chunk.RowPtr, 0, h.rowChunks.Len())
 	for _, rowPtr := range h.rowPtrs {
-		newRowPtrs = append(newRowPtrs, newRowChunks.AppendRow(h.rowChunks.GetRow(rowPtr)))
+		newRowPtr := newRowChunks.AppendRow(h.rowChunks.GetRow(rowPtr))
+		newRowPtrs = append(newRowPtrs, newRowPtr)
 	}
 	newRowChunks.GetMemTracker().SetLabel(memory.LabelForRowChunks)
 	h.memTracker.ReplaceChild(h.rowChunks.GetMemTracker(), newRowChunks.GetMemTracker())

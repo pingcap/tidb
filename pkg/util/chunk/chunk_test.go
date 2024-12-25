@@ -1039,6 +1039,46 @@ func TestAppendRows(t *testing.T) {
 	}
 }
 
+func TestAppendRowsByColIdxs(t *testing.T) {
+	numCols := 6
+	numRows := 10
+	chk := newChunk(8, 8, 0, 0, 40, 0)
+	strFmt := "%d.12345"
+	for i := 0; i < numRows; i++ {
+		chk.AppendNull(0)
+		chk.AppendInt64(1, int64(i))
+		str := fmt.Sprintf(strFmt, i)
+		chk.AppendString(2, str)
+		chk.AppendBytes(3, []byte(str))
+		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
+		chk.AppendJSON(5, types.CreateBinaryJSON(str))
+	}
+	require.Equal(t, numCols, chk.NumCols())
+	require.Equal(t, numRows, chk.NumRows())
+
+	colsIdx := []int{5, 3, 4}
+	chk2 := newChunk(0, 0, 40)
+	require.Equal(t, numCols, chk.NumCols())
+	rows := make([]Row, numRows)
+	for i := 0; i < numRows; i++ {
+		rows[i] = chk.GetRow(i)
+	}
+	wide := chk2.AppendRowsByColIdxs(rows, colsIdx)
+	require.Equal(t, 10, chk2.NumRows())
+	require.Equal(t, numRows*len(colsIdx), wide)
+
+	for i := 0; i < numRows; i++ {
+		row := chk2.GetRow(i)
+		str := fmt.Sprintf(strFmt, i)
+		require.False(t, row.IsNull(0))
+		require.Equal(t, str, string(row.GetJSON(0).GetString()))
+		require.False(t, row.IsNull(1))
+		require.Equal(t, []byte(str), row.GetBytes(1))
+		require.False(t, row.IsNull(2))
+		require.Equal(t, str, row.GetMyDecimal(2).String())
+	}
+}
+
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
 	numRows := 4096

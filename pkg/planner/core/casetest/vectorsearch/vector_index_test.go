@@ -414,10 +414,6 @@ func TestVectorSearchWithPKForceTiKV(t *testing.T) {
 
 func TestVectorSearchHeavyFunction(t *testing.T) {
 	tk := prepareVectorSearchWithPK(t)
-	res := tk.MustQuery("explain select id from t1 order by MOD(a, 3) limit 10").Rows()
-	for _, r := range res {
-		fmt.Println(r)
-	}
 	var input []string
 	var output []struct {
 		SQL  string

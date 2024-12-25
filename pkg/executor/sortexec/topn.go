@@ -66,7 +66,7 @@ type TopNExec struct {
 
 	Concurrency int
 
-	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
 }
 
@@ -248,7 +248,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			// We should extract only the required columns from child's executor.
 			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
 			// cauz it may destroy the correctness of executor's `keyColumns`.
-			req.AppendRowByColIdxs(row.row, e.ColumnIdxsUsedByChild)
+			req.AppendRowsByColIdxs([]chunk.Row{row.row}, e.ColumnIdxsUsedByChild)
 		}
 	}
 	return nil
