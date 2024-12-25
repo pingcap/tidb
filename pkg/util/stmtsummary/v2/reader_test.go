@@ -18,7 +18,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"os"
 	"testing"
 	"time"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 

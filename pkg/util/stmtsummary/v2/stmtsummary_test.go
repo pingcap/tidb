@@ -15,9 +15,9 @@
 package stmtsummary
 
 import (
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
 
