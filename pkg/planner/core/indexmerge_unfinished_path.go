@@ -16,7 +16,6 @@ package core
 
 import (
 	"cmp"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
