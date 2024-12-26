@@ -773,11 +773,6 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	return nil
 }
 
-// OverrideDefaultForBackup override common config for backup tasks
-func (cfg *Config) OverrideDefaultForBackup() {
-	cfg.Checksum = false
-}
-
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
 	g glue.Glue, pds []string,

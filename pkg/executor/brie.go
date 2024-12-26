@@ -284,13 +284,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 	pds := strings.Split(tidbCfg.Path, ",")
 
-	// build common config and override for specific task if needed
 	cfg := task.DefaultConfig()
-	switch s.Kind {
-	case ast.BRIEKindBackup:
-		cfg.OverrideDefaultForBackup()
-	default:
-	}
 
 	cfg.PD = pds
 	cfg.TLS = tlsCfg
