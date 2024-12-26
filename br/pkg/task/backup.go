@@ -46,6 +46,7 @@ import (
 )
 
 const (
+	flagBackupChecksum   = "checksum"
 	flagBackupTimeago    = "timeago"
 	flagBackupTS         = "backupts"
 	flagLastBackupTS     = "lastbackupts"
@@ -110,6 +111,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		flagBackupTimeago, 0,
 		"The history version of the backup task, e.g. 1m, 1h. Do not exceed GCSafePoint")
 
+	flags.Bool(flagBackupChecksum, false, "Run checksum at end of task")
 	// TODO: remove experimental tag if it's stable
 	flags.Uint64(flagLastBackupTS, 0, "(experimental) the last time backup ts,"+
 		" use for incremental backup, support TSO only")
