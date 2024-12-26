@@ -19,7 +19,7 @@ import (
 )
 
 // GetDomain gets domain from context.
-func GetDomain(ctx contextutil.HasDomain) *Domain {
+func GetDomain(ctx contextutil.ValueStoreContext) *Domain {
 	v, ok := ctx.GetDomain().(*Domain)
 	if ok {
 		return v
