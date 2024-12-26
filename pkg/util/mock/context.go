@@ -67,7 +67,7 @@ type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
 	txn           wrapTxn // mock global variable
-	dom           interface{}
+	dom           any
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -641,12 +641,12 @@ func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 }
 
 // BindDomain bind domain into ctx.
-func (c *Context) BindDomain(dom interface{}) {
+func (c *Context) BindDomain(dom any) {
 	c.dom = dom
 }
 
 // GetDomain get domain from ctx.
-func (c *Context) GetDomain() interface{} {
+func (c *Context) GetDomain() any {
 	return c.dom
 }
 

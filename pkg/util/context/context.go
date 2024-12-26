@@ -41,5 +41,5 @@ func GenContextID() uint64 {
 // HasDomain indicates it has domain.
 type HasDomain interface {
 	// GetDomain returns the domain.
-	GetDomain() interface{}
+	GetDomain() any
 }
