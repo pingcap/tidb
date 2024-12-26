@@ -234,7 +234,7 @@ TableReader	3336.66	root		data:Selection
 explain format='brief' select * from t1 where a1=1 and (b1=1 or a1 <= 1);
 id	estRows	task	access object	operator info
 TableReader	10.00	root		data:Selection
-└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), or(eq(planner__core__casetest__predicate_simplification.t1.b1, 1), 1)
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='brief' select * from t1 where c1=1 and (b1=1 or c1 < 1);
 id	estRows	task	access object	operator info
@@ -292,3 +292,282 @@ HashJoin_9	12.50	root		inner join, equal:[eq(planner__core__casetest__predicate_
 └─TableReader_13(Probe)	10.00	root		data:Selection_12
   └─Selection_12	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1970-12-18 10:53:28.000000), lt(planner__core__casetest__predicate_simplification.idt_mc21780.col1, 1976-09-09 20:21:11.000000), not(isnull(planner__core__casetest__predicate_simplification.idt_mc21780.col1))
     └─TableFullScan_11	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (a1 int, b1 int, c1 int);
+create table t2 (a2 int, b2 int);
+INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 9, NULL),  (10, 11, 12);
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#5
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
+id	estRows	task	access object	operator info
+Projection	3333.33	root		1->Column#5
+└─TableReader	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t1.b1, 10)
+    └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
+id	estRows	task	access object	operator info
+Projection	3333.33	root		1->Column#5
+└─TableReader	3333.33	root		data:Selection
+  └─Selection	3333.33	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t1.b1, 10)
+    └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
+id	estRows	task	access object	operator info
+Projection	0.00	root		1->Column#5
+└─TableDual	0.00	root		rows:0
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#10
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#5
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+id	estRows	task	access object	operator info
+Projection	0.00	root		1->Column#9
+└─TableDual	0.00	root		rows:0
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 ;
+id	estRows	task	access object	operator info
+Projection	0.00	root		1->Column#5
+└─TableDual	0.00	root		rows:0
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		1->Column#10
+└─Selection	8000.00	root		or(gt(planner__core__casetest__predicate_simplification.t1.a1, 5), Column#9)
+  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10000.00	root		data:TableFullScan
+      └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#9
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
+;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#25
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
+;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#25
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
+;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#25
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+id	estRows	task	access object	operator info
+Union	20000.00	root		
+├─Projection	10000.00	root		1->Column#21
+│ └─TableReader	10000.00	root		data:TableFullScan
+│   └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+└─Projection	10000.00	root		1->Column#21
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+id	estRows	task	access object	operator info
+Union	18000.00	root		
+├─Projection	8000.00	root		1->Column#21
+│ └─Selection	8000.00	root		or(0, Column#9)
+│   └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
+│     ├─TableReader(Build)	10000.00	root		data:TableFullScan
+│     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│     └─TableReader(Probe)	10000.00	root		data:TableFullScan
+│       └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+└─Projection	10000.00	root		1->Column#21
+  └─TableReader	10000.00	root		data:TableFullScan
+    └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#10
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ))
+;
+id	estRows	task	access object	operator info
+Projection	0.00	root		1->Column#9
+└─TableDual	0.00	root		rows:0
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	10000.00	root		data:TableFullScan
+└─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) AND (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	0.01	root		data:Selection
+└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	19.99	root		data:Selection
+└─Selection	19.99	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) OR (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	19.99	root		data:Selection
+└─Selection	19.99	cop[tikv]		or(eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2))
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	0.01	root		data:Selection
+└─Selection	0.01	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 1), eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
+id	estRows	task	access object	operator info
+TableDual	0.00	root		rows:0
+EXPLAIN format=brief
+SELECT * FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.b1, 2)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+EXPLAIN format=brief
+select * from t1 where a1 = 100 and (b1<=200 or a1<=200);
+id	estRows	task	access object	operator info
+TableReader	10.00	root		data:Selection
+└─Selection	10.00	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t1.a1, 100)
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
+count(*)
+5
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
+count(*)
+1
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
+count(*)
+1
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
+count(*)
+0
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+count(*)
+5
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 ;
+count(*)
+5
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+count(*)
+0
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 ;
+count(*)
+0
+SELECT count(*) FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT count(*) FROM t2 WHERE a2 = a1 )) ;
+count(*)
+5
+SELECT count(*) FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
+count(*)
+5
+SELECT count(*) FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ));
+count(*)
+0
+SELECT 1 FROM t1 WHERE
+(1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
+;
+1
+1
+1
+1
+1
+1
+SELECT 1 FROM t1 WHERE
+(1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))));
+1
+1
+1
+1
+1
+1
+SELECT 1 FROM t1 WHERE
+(0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))));
+1
+1
+1
+1
+1
+1
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) UNION ALL
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+1
+SELECT count(*) FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
+count(*)
+5
+SELECT count(*) FROM t1 WHERE (1 = 1 OR a1 = 1) AND (b1 = 2);
+count(*)
+1
+SELECT count(*) FROM t1 WHERE (1 = 1 AND a1 = 1) AND (b1 = 2);
+count(*)
+1
+SELECT count(*) FROM t1 WHERE (1 = 1 AND a1 = 1) OR (b1 = 2);
+count(*)
+1
+SELECT count(*) FROM t1 WHERE (1 = 0 OR a1 = 1) OR (b1 = 2);
+count(*)
+1
+SELECT count(*) FROM t1 WHERE (1 = 0 OR a1 = 1) AND (b1 = 2);
+count(*)
+1
+SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) AND (b1 = 2);
+count(*)
+0
+SELECT count(*) FROM t1 WHERE (1 = 0 AND a1 = 1) OR (b1 = 2);
+count(*)
+1

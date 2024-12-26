@@ -103,6 +103,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
@@ -145,7 +146,7 @@ type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
-	bindHandle      atomic.Value
+	bindHandle      bindinfo.GlobalBindingHandle
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -1662,7 +1663,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		return nil
 	}
 
-	stores, err := pdClient.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdClient.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return err
 	}
@@ -2079,22 +2080,13 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
-	v := do.bindHandle.Load()
-	if v == nil {
-		return nil
-	}
-	return v.(bindinfo.GlobalBindingHandle)
+	return do.bindHandle
 }
 
-// LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
+// InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
-func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
-	ctxForHandle.GetSessionVars().InRestrictedSQL = true
-	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewGlobalBindingHandle(do.sysSessionPool)) {
-		do.BindHandle().Reset()
-	}
-
+func (do *Domain) InitBindingHandle() error {
+	do.bindHandle = bindinfo.NewGlobalBindingHandle(do.sysSessionPool)
 	err := do.BindHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
@@ -2126,6 +2118,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
+				do.BindHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
@@ -2133,11 +2126,6 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
-				}
-				// Get Global
-				optVal, err := do.GetGlobalVar(variable.TiDBCapturePlanBaseline)
-				if err == nil && variable.TiDBOptOn(optVal) {
-					bindHandle.CaptureBaselines()
 				}
 			case <-gcBindTicker.C:
 				if !owner.IsOwner() {
@@ -2539,9 +2527,9 @@ func (do *Domain) NewOwnerManager(prompt, ownerKey string) owner.Manager {
 	id := do.ddl.OwnerManager().ID()
 	var statsOwner owner.Manager
 	if do.etcdClient == nil {
-		statsOwner = owner.NewMockManager(context.Background(), id, do.store, ownerKey)
+		statsOwner = owner.NewMockManager(do.ctx, id, do.store, ownerKey)
 	} else {
-		statsOwner = owner.NewOwnerManager(context.Background(), do.etcdClient, prompt, id, ownerKey)
+		statsOwner = owner.NewOwnerManager(do.ctx, do.etcdClient, prompt, id, ownerKey)
 	}
 	return statsOwner
 }

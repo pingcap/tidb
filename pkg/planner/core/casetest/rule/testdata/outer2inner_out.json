@@ -151,7 +151,7 @@
           "Projection 12.49 root  test.t2.a2, test.t2.b2, test.t2.c2, test.t1.a1, test.t1.b1, test.t1.c1",
           "└─HashJoin 12.49 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9.99 root  data:Selection",
-          "  │ └─Selection 9.99 cop[tikv]  not(isnull(test.t1.a1)), or(0, eq(test.t1.b1, 5))",
+          "  │ └─Selection 9.99 cop[tikv]  eq(test.t1.b1, 5), not(isnull(test.t1.a1))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",

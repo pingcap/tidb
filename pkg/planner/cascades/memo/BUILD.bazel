@@ -35,7 +35,7 @@ go_test(
     ],
     embed = [":memo"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 9,
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",

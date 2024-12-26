@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 )
 
 func generateTables() []*snapclient.CreatedTable {
@@ -104,8 +104,8 @@ func TestContextManagerOnlineNoStores(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func generateRegions() []*pd.Region {
-	return []*pd.Region{
+func generateRegions() []*router.Region {
+	return []*router.Region{
 		{
 			Meta: &metapb.Region{
 				Id:       0,

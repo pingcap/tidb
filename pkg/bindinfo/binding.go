@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser"
@@ -41,8 +40,6 @@ const (
 	deleted = "deleted"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
-	// Capture indicates the binding is captured by TiDB automatically.
-	Capture = "capture"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest
@@ -70,16 +67,8 @@ type Binding struct {
 	SQLDigest  string
 	PlanDigest string
 
-	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	// TableNames records all schema and table names in this binding statement, which are used for cross-db matching.
 	TableNames []*ast.TableName `json:"-"`
-}
-
-func (b *Binding) isSame(rb *Binding) bool {
-	if b.ID != "" && rb.ID != "" {
-		return b.ID == rb.ID
-	}
-	// Sometimes we cannot construct `ID` because of the changed schema, so we need to compare by bind sql.
-	return b.BindSQL == rb.BindSQL
 }
 
 // IsBindingEnabled returns whether the binding is enabled.
@@ -87,44 +76,10 @@ func (b *Binding) IsBindingEnabled() bool {
 	return b.Status == Enabled || b.Status == Using
 }
 
-// IsBindingAvailable returns whether the binding is available.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func (b *Binding) IsBindingAvailable() bool {
-	return b.IsBindingEnabled() || b.Status == Disabled
-}
-
-// SinceUpdateTime returns the duration since last update time. Export for test.
-func (b *Binding) SinceUpdateTime() (time.Duration, error) {
-	updateTime, err := b.UpdateTime.GoTime(time.Local)
-	if err != nil {
-		return 0, err
-	}
-	return time.Since(updateTime), nil
-}
-
-// Bindings represents a sql bind record retrieved from the storage.
-type Bindings []Binding
-
-// Copy get the copy of bindings
-func (br Bindings) Copy() Bindings {
-	nbr := append(make(Bindings, 0, len(br)), br...)
-	return nbr
-}
-
-// HasAvailableBinding checks if there are any available bindings in bind record.
-// The available means the binding can be used or can be converted into a usable status.
-// It includes the 'Enabled', 'Using' and 'Disabled' status.
-func HasAvailableBinding(br Bindings) bool {
-	if br == nil {
-		return false
-	}
-	for _, binding := range br {
-		if binding.IsBindingAvailable() {
-			return true
-		}
-	}
-	return false
+// size calculates the memory size of a bind info.
+func (b *Binding) size() float64 {
+	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	return float64(res)
 }
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
@@ -146,7 +101,7 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isFuzzyBinding(bindingStmt)
+	isFuzzy := isCrossDBBinding(bindingStmt)
 	if isFuzzy {
 		dbName = "*" // ues '*' for universal bindings
 	}
@@ -181,55 +136,53 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	return nil
 }
 
-// `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindings, rBindings Bindings) Bindings {
-	if lBindings == nil {
-		return rBindings
-	}
-	if rBindings == nil {
-		return lBindings
-	}
-	result := lBindings.Copy()
-	for i := range rBindings {
-		rbind := rBindings[i]
-		found := false
-		for j, lbind := range lBindings {
-			if lbind.isSame(&rbind) {
-				found = true
-				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result[j] = rbind
-				}
-				break
-			}
-		}
-		if !found {
-			result = append(result, rbind)
-		}
-	}
-	return result
-}
+// pickCachedBinding picks the best binding to cache.
+func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) *Binding {
+	bindings := make([]*Binding, 0, len(bindingsFromStorage)+1)
+	bindings = append(bindings, cachedBinding)
+	bindings = append(bindings, bindingsFromStorage...)
 
-func removeDeletedBindings(br Bindings) Bindings {
-	result := make(Bindings, 0, len(br))
-	for _, binding := range br {
+	// filter nil
+	n := 0
+	for _, binding := range bindings {
+		if binding != nil {
+			bindings[n] = binding
+			n++
+		}
+	}
+	if len(bindings) == 0 {
+		return nil
+	}
+
+	// filter bindings whose update time is not equal to maxUpdateTime
+	maxUpdateTime := bindings[0].UpdateTime
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) > 0 {
+			maxUpdateTime = binding.UpdateTime
+		}
+	}
+	n = 0
+	for _, binding := range bindings {
+		if binding.UpdateTime.Compare(maxUpdateTime) == 0 {
+			bindings[n] = binding
+			n++
+		}
+	}
+	bindings = bindings[:n]
+
+	// filter deleted bindings
+	n = 0
+	for _, binding := range bindings {
 		if binding.Status != deleted {
-			result = append(result, binding)
+			bindings[n] = binding
+			n++
 		}
 	}
-	return result
-}
+	bindings = bindings[:n]
 
-// size calculates the memory size of a Bindings.
-func (br Bindings) size() float64 {
-	mem := float64(0)
-	for _, binding := range br {
-		mem += binding.size()
+	if len(bindings) == 0 {
+		return nil
 	}
-	return mem
-}
-
-// size calculates the memory size of a bind info.
-func (b *Binding) size() float64 {
-	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
-	return float64(res)
+	// should only have one binding.
+	return bindings[0]
 }
