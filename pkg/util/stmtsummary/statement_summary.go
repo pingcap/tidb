@@ -78,6 +78,19 @@ func (key *StmtDigestKey) ResetHash() {
 	key.hash = key.hash[:0]
 }
 
+func (key *StmtDigestKey) Clone() *StmtDigestKey {
+	k := &StmtDigestKey{
+		SchemaName:        key.SchemaName,
+		Digest:            key.Digest,
+		PrevDigest:        key.PrevDigest,
+		PlanDigest:        key.PlanDigest,
+		ResourceGroupName: key.ResourceGroupName,
+		hash:              make([]byte, 0, len(key.hash)),
+	}
+	k.hash = append(k.hash, key.hash...)
+	return k
+}
+
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
 type stmtSummaryByDigestMap struct {
 	// It's rare to read concurrently, so RWMutex is not needed.
@@ -371,7 +384,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(key *StmtDigestKey, sei *StmtE
 		if !ok {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
+			ssMap.summaryMap.Put(key.Clone(), summary)
 		} else {
 			summary = value.(*stmtSummaryByDigest)
 		}

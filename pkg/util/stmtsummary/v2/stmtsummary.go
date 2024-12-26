@@ -253,7 +253,7 @@ func (s *StmtSummary) Add(k *stmtsummary.StmtDigestKey, info *stmtsummary.StmtEx
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
-		s.window.lru.Put(k, record)
+		s.window.lru.Put(k.Clone(), record)
 	}
 	s.windowLock.Unlock()
 
