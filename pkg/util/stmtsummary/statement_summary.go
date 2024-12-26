@@ -250,7 +250,7 @@ type StmtExecInfo struct {
 	ParseLatency   time.Duration
 	CompileLatency time.Duration
 	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *execdetails.CopTasksDetails
+	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
 	DiskMax        int64
