@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -227,7 +228,8 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	d := r.d
 	engines := make([]ingest.Engine, 0, len(r.indexes))
-	for _, index := range r.indexes {
+	var idxNames strings.Builder
+	for i, index := range r.indexes {
 		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
 		if err != nil {
 			tidblogutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
@@ -235,9 +237,12 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			return nil, err
 		}
 		engines = append(engines, ei)
+		if i > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(index.Name.O)
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -283,8 +288,14 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	var idxNames strings.Builder
+	for _, idx := range r.indexes {
+		if idxNames.Len() > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(idx.Name.O)
+	}
+	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,
