@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -508,6 +509,8 @@ func (s *BaseScheduler) scheduleSubTask(
 		// we assign the subtask to the instance in a round-robin way.
 		pos := i % len(adjustedEligibleNodes)
 		if len(metas) == 1 {
+			// sort the adjustedEligibleNodes
+			sort.Strings(adjustedEligibleNodes)
 			pos = int(task.ID) % len(adjustedEligibleNodes)
 		}
 		instanceID := adjustedEligibleNodes[pos]
