@@ -34,6 +34,8 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 func TestLogicalPlan(t *testing.T) {
@@ -327,7 +329,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	t.Cleanup(func() {
 		importer.NewClientWithContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	importer.NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 

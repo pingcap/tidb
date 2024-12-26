@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 )
 
 func TestPublishToTableStore(t *testing.T) {
@@ -55,9 +56,12 @@ func TestPublishToTableStore(t *testing.T) {
 	event2 := notifier.NewDropTableEvent(&model.TableInfo{ID: 1001, Name: pmodel.NewCIStr("t2")})
 	err = notifier.PubSchemeChangeToStore(ctx, se, 2, -1, event2, s)
 	require.NoError(t, err)
-	got, err := s.List(ctx, se)
+	changes := make([]*notifier.SchemaChange, 8)
+	result, closeFn := s.List(ctx, se)
+	n, err := result.Read(changes)
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Equal(t, 2, n)
+	closeFn()
 }
 
 func TestBasicPubSub(t *testing.T) {
@@ -69,9 +73,9 @@ func TestBasicPubSub(t *testing.T) {
 
 	s := notifier.OpenTableStore("test", ddl.NotifierTableName)
 	sessionPool := util.NewSessionPool(
-		1,
+		2,
 		func() (pools.Resource, error) {
-			return tk.Session(), nil
+			return testkit.NewTestKit(t, store).Session(), nil
 		},
 		nil,
 		nil,
@@ -203,9 +207,12 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Eventually(t, func() bool {
-		changes, err2 := s.List(ctx, se)
+		changes := make([]*notifier.SchemaChange, 8)
+		result, closeFn := s.List(ctx, se)
+		count, err2 := result.Read(changes)
 		require.NoError(t, err2)
-		return len(changes) == 0
+		closeFn()
+		return count == 0
 	}, time.Second, 50*time.Millisecond)
 
 	require.Equal(t, []int64{1000, 1001, 1002}, *id1)
@@ -217,12 +224,12 @@ func TestDeliverOrderAndCleanup(t *testing.T) {
 }
 
 func TestPubSub(t *testing.T) {
-	events := make([]*notifier.SchemaChangeEvent, 0, 32)
-	eventsLock := sync.Mutex{}
+	tps := make([]model.ActionType, 0, 32)
+	tpsLock := sync.Mutex{}
 	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
-		eventsLock.Lock()
-		defer eventsLock.Unlock()
-		events = append(events, c)
+		tpsLock.Lock()
+		defer tpsLock.Unlock()
+		tps = append(tps, c.GetType())
 		return nil
 	}
 	testfailpoint.EnableCall(
@@ -257,15 +264,11 @@ func TestPubSub(t *testing.T) {
 	tk.MustExec("drop database test")                                                                    // ActionDropSchema
 
 	require.Eventually(t, func() bool {
-		eventsLock.Lock()
-		defer eventsLock.Unlock()
-		return len(events) == 18
+		tpsLock.Lock()
+		defer tpsLock.Unlock()
+		return len(tps) == 18
 	}, 5*time.Second, 500*time.Millisecond)
 
-	tps := make([]model.ActionType, len(events))
-	for i, event := range events {
-		tps[i] = event.GetType()
-	}
 	require.Equal(t, []model.ActionType{
 		model.ActionCreateTable,
 		model.ActionAlterTablePartitioning,
@@ -381,4 +384,71 @@ func Test2OwnerForAShortTime(t *testing.T) {
 
 	n.OnRetireOwner()
 	<-done
+}
+
+func TestPaginatedList(t *testing.T) {
+	backup := notifier.ProcessEventsBatchSize
+	notifier.ProcessEventsBatchSize = 3
+	t.Cleanup(func() {
+		notifier.ProcessEventsBatchSize = backup
+	})
+
+	names := make([]string, 0, 32)
+	namesLock := sync.Mutex{}
+	handler := func(_ context.Context, _ sessionctx.Context, c *notifier.SchemaChangeEvent) error {
+		namesLock.Lock()
+		defer namesLock.Unlock()
+		switch c.GetType() {
+		case model.ActionCreateTable:
+			names = append(names, c.GetCreateTableInfo().Name.O)
+		case model.ActionAddColumn:
+			_, colInfo := c.GetAddColumnInfo()
+			names = append(names, colInfo[0].Name.O)
+		default:
+			t.Fatalf("unexpected event type: %s", c.GetType().String())
+		}
+		return nil
+	}
+
+	blocking := atomic.NewBool(true)
+	count := atomic.NewInt32(0)
+	blockingHandler := func(context.Context, sessionctx.Context, *notifier.SchemaChangeEvent) error {
+		if blocking.Load() {
+			return notifier.ErrNotReadyRetryLater
+		}
+		count.Inc()
+		return nil
+	}
+
+	testfailpoint.EnableCall(
+		t,
+		"github.com/pingcap/tidb/pkg/domain/afterDDLNotifierCreated",
+		func(registry *notifier.DDLNotifier) {
+			registry.RegisterHandler(notifier.TestHandlerID, handler)
+			registry.RegisterHandler(10, blockingHandler)
+		},
+	)
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("USE test")
+	tk.MustExec("create table t1 (a int)")
+	tk.MustExec("create table t2 (a int)")
+	tk.MustExec("create table t3 (a int)")
+	tk.MustExec("create table t4 (a int)")
+	tk.MustExec("alter table t1 add column c5 int, add column c6 int, add column c7 int, add column c8 int")
+
+	require.Eventually(t, func() bool {
+		namesLock.Lock()
+		defer namesLock.Unlock()
+		return len(names) == 8
+	}, 5*time.Second, 500*time.Millisecond)
+
+	require.Equal(t, []string{"t1", "t2", "t3", "t4", "c5", "c6", "c7", "c8"}, names)
+
+	blocking.Store(false)
+	require.Eventually(t, func() bool {
+		return count.Load() == 8
+	}, 5*time.Second, 500*time.Millisecond)
 }

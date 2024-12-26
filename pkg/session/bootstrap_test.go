@@ -2659,3 +2659,47 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
 	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
 }
+
+// testExampleAFunc is a example func for TestGetFuncName
+func testExampleAFunc(s sessiontypes.Session, i int64) {}
+
+// testExampleBFunc is a example func for TestGetFuncName
+func testExampleBFunc(s sessiontypes.Session, i int64) {}
+
+func TestGetFuncName(t *testing.T) {
+	// Test case 1: Pass a valid function
+	t.Run("Valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleAFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleAFunc" {
+			t.Errorf("Expected function name 'testExampleAFunc', got: %s", name)
+		}
+	})
+
+	// Test case 2: Pass another valid function
+	t.Run("Another valid function", func(t *testing.T) {
+		name, err := getFunctionName(testExampleBFunc)
+		if err != nil {
+			t.Fatalf("Expected no error, got: %v", err)
+		}
+		if name != "testExampleBFunc" {
+			t.Errorf("Expected function name 'testExampleBFunc', got: %s", name)
+		}
+	})
+
+	// Test case 3: Pass nil as the function
+	t.Run("Nil function", func(t *testing.T) {
+		name, err := getFunctionName(nil)
+		if err == nil {
+			t.Fatalf("Expected an error, got nil")
+		}
+		if name != "" {
+			t.Errorf("Expected empty function name, got: %s", name)
+		}
+		if err.Error() != "function is nil" {
+			t.Errorf("Expected error 'function is nil', got: %v", err)
+		}
+	})
+}
