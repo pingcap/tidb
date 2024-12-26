@@ -32,6 +32,7 @@ go_library(
         "//br/pkg/version",
         "//pkg/distsql",
         "//pkg/infoschema",
+        "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",

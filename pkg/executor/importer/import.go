@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -169,11 +168,6 @@ const (
 func (t DataSourceType) String() string {
 	return string(t)
 }
-
-var (
-	// NewClientWithContext returns a kv.Client.
-	NewClientWithContext = pd.NewClientWithContext
-)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
