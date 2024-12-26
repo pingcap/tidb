@@ -1237,10 +1237,10 @@ const (
 	version239 = 239
 
 	// version 240
-	// Add index on user field for some mysql tables.
+	// Add indexes to mysql.analyze_jobs to speed up the query.
 	version240 = 240
 
-	// Add indexes to mysql.analyze_jobs to speed up the query.
+	// Add index on user field for some mysql tables.
 	version241 = 241
 )
 
