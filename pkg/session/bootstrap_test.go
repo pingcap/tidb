@@ -173,7 +173,7 @@ func TestBootstrapWithError(t *testing.T) {
 		dom, err := domap.Get(store)
 		require.NoError(t, err)
 		require.NoError(t, dom.Start(ddl.Bootstrap))
-		domain.BindDomain(se, dom)
+		se.dom = dom
 		b, err := checkBootstrapped(se)
 		require.False(t, b)
 		require.NoError(t, err)
@@ -2404,7 +2404,7 @@ func TestTiDBUpgradeToVer211(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, int64(ver210), ver)
 
-	domain.BindDomain(seV210, dom)
+	seV210.(*session).dom = dom
 	r := MustExecToRecodeSet(t, seV210, "select count(summary) from mysql.tidb_background_subtask_history;")
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)

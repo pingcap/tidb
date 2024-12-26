@@ -181,6 +181,7 @@ type session struct {
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan base.Plan
 
+	dom   interface{}
 	store kv.Storage
 
 	sessionPlanCache sessionctx.SessionPlanCache
@@ -3783,6 +3784,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 		return nil, err
 	}
 	s := &session{
+		dom:                   dom,
 		store:                 store,
 		ddlOwnerManager:       dom.DDL().OwnerManager(),
 		client:                store.GetClient(),
@@ -3802,7 +3804,6 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	s.advisoryLocks = make(map[string]*advisoryLock)
 
-	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()
@@ -3846,6 +3847,7 @@ func detachStatsCollector(s *session) *session {
 // a lock context, which cause we can't call createSession directly.
 func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, error) {
 	s := &session{
+		dom:                   dom,
 		store:                 store,
 		sessionVars:           variable.NewSessionVars(nil),
 		client:                store.GetClient(),
@@ -3858,7 +3860,6 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 	s.tblctx = tblsession.NewMutateContext(s)
 	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
-	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
 	s.sessionVars.GlobalVarsAccessor = s
 	s.txn.init()
@@ -4663,4 +4664,9 @@ func (s *session) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup returns the internal `sync.WaitGroup` for async commit and secondary key lock cleanup
 func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 	return &s.commitWaitGroup
+}
+
+// GetDomain get domain from session.
+func (s *session) GetDomain() interface{} {
+	return s.dom
 }
