@@ -279,9 +279,17 @@ func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 		}
 	}
 
-	n, err := pf.Read(p)
-	pf.lastOff = off + int64(n)
-	return n, err
+	read := 0
+	for read < len(p) {
+		n, err := pf.Read(p[read:])
+		read += n
+		pf.lastOff = off + int64(n)
+		if err != nil {
+			return read, err
+		}
+	}
+
+	return read, nil
 }
 
 // Seek implemement Seeker interface
