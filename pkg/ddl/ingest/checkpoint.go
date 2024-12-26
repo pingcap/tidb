@@ -211,7 +211,6 @@ func (s *CheckpointManager) UpdateTotalKeys(taskID int, delta int, last bool) {
 // UpdateWrittenKeys updates the written keys of the task.
 // This is called by the writer after writing the local engine to update the current number of rows written.
 func (s *CheckpointManager) UpdateWrittenKeys(taskID int, delta int) {
-	logutil.DDLLogger().Info("update written key", zap.Int("taskID", taskID), zap.Int("delta", delta))
 	s.mu.Lock()
 	cp := s.checkpoints[taskID]
 	cp.writtenKeys += delta
