@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
@@ -43,12 +44,16 @@ func TestStmtSummaryRetriverV2_TableStatementsSummary(t *testing.T) {
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(1000)
 	defer stmtSummary.Close()
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		stmtSummary.Add(k, info)
+	}
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
 	retriever := stmtSummaryRetrieverV2{
 		stmtSummary: stmtSummary,
@@ -88,12 +93,16 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryEvicted(t *testing.T) {
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(1)
 	defer stmtSummary.Close()
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		stmtSummary.Add(k, info)
+	}
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
 	retriever := stmtSummaryRetrieverV2{
 		stmtSummary: stmtSummary,
@@ -150,12 +159,16 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 
 	stmtSummary := stmtsummaryv2.NewStmtSummary4Test(2)
 	defer stmtSummary.Close()
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
-	stmtSummary.Add(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd := func(info *stmtsummary.StmtExecInfo) {
+		k := genStmtSummaryByDigestKey(info)
+		stmtSummary.Add(k, info)
+	}
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest1"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest2"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
+	stmtSummaryAdd(stmtsummaryv2.GenerateStmtExecInfo4Test("digest3"))
 
 	data := infoschema.NewData()
 	infoSchemaBuilder := infoschema.NewBuilder(nil, nil, data, variable.SchemaCacheSize.Load() > 0)
@@ -190,4 +203,14 @@ func TestStmtSummaryRetriverV2_TableStatementsSummaryHistory(t *testing.T) {
 		results = append(results, rows...)
 	}
 	require.Len(t, results, 7)
+}
+
+func genStmtSummaryByDigestKey(info *stmtsummary.StmtExecInfo) *stmtsummary.StmtDigestKey {
+	return &stmtsummary.StmtDigestKey{
+		SchemaName:        info.SchemaName,
+		Digest:            info.Digest,
+		PrevDigest:        info.PrevSQLDigest,
+		PlanDigest:        info.PlanDigest,
+		ResourceGroupName: info.ResourceGroupName,
+	}
 }
