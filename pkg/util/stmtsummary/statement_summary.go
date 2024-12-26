@@ -40,8 +40,15 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
+// StmtDigestKeyPool is the pool for StmtDigestKey.
+var StmtDigestKeyPool = sync.Pool{
+	New: func() interface{} {
+		return &StmtDigestKey{}
+	},
+}
+
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// Same statements may appear in different schema, but they refer to different tables.
 	schemaName string
 	digest     string
@@ -58,9 +65,12 @@ type stmtSummaryByDigestKey struct {
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
+func (key *StmtDigestKey) Hash() []byte {
 	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
+		length := len(key.schemaName) + len(key.digest) + len(key.prevDigest) + len(key.planDigest) + len(key.resourceGroupName)
+		if cap(key.hash) < length {
+			key.hash = make([]byte, 0, length)
+		}
 		key.hash = append(key.hash, hack.Slice(key.digest)...)
 		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
 		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
@@ -68,6 +78,11 @@ func (key *stmtSummaryByDigestKey) Hash() []byte {
 		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
 	}
 	return key.hash
+}
+
+// ResetHash resets the hash value.
+func (key *StmtDigestKey) ResetHash() {
+	key.hash = key.hash[:0]
 }
 
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
@@ -308,7 +323,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -335,16 +350,17 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
-	}
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+	key.ResetHash()
+	key.schemaName = sei.SchemaName
+	key.digest = sei.Digest
+	key.prevDigest = sei.PrevSQLDigest
+	key.planDigest = sei.PlanDigest
+	key.resourceGroupName = sei.ResourceGroupName
 	// Calculate hash value in advance, to reduce the time holding the lock.
 	key.Hash()
 
+	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
 	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
 		ssMap.Lock()
@@ -365,9 +381,10 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		}
 
 		beginTime := ssMap.beginTimeForCurInterval
-		value, ok := ssMap.summaryMap.Get(key)
+		var value kvcache.Value
+		value, exist = ssMap.summaryMap.Get(key)
 		var summary *stmtSummaryByDigest
-		if !ok {
+		if !exist {
 			// Lazy initialize it to release ssMap.mutex ASAP.
 			summary = new(stmtSummaryByDigest)
 			ssMap.summaryMap.Put(key, summary)
@@ -380,6 +397,9 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// Lock a single entry, not the whole cache.
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
 	}
 }
 

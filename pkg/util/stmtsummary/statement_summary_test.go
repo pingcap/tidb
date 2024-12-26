@@ -75,7 +75,7 @@ func TestAddStatement(t *testing.T) {
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -454,7 +454,7 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo4 := stmtExecInfo1
 	stmtExecInfo4.SchemaName = "schema2"
 	stmtExecInfo4.ExecDetail.CommitDetail = nil
-	key = &stmtSummaryByDigestKey{
+	key = &StmtDigestKey{
 		schemaName:        stmtExecInfo4.SchemaName,
 		digest:            stmtExecInfo4.Digest,
 		planDigest:        stmtExecInfo4.PlanDigest,
@@ -468,7 +468,7 @@ func TestAddStatement(t *testing.T) {
 	// Fifth statement has a different digest.
 	stmtExecInfo5 := stmtExecInfo1
 	stmtExecInfo5.Digest = "digest2"
-	key = &stmtSummaryByDigestKey{
+	key = &StmtDigestKey{
 		schemaName:        stmtExecInfo5.SchemaName,
 		digest:            stmtExecInfo5.Digest,
 		planDigest:        stmtExecInfo4.PlanDigest,
@@ -482,7 +482,7 @@ func TestAddStatement(t *testing.T) {
 	// Sixth statement has a different plan digest.
 	stmtExecInfo6 := stmtExecInfo1
 	stmtExecInfo6.PlanDigest = "plan_digest2"
-	key = &stmtSummaryByDigestKey{
+	key = &StmtDigestKey{
 		schemaName:        stmtExecInfo6.SchemaName,
 		digest:            stmtExecInfo6.Digest,
 		planDigest:        stmtExecInfo6.PlanDigest,
@@ -507,7 +507,7 @@ func TestAddStatement(t *testing.T) {
 		binPlan:     "",
 		planDigest:  "",
 	}
-	key = &stmtSummaryByDigestKey{
+	key = &StmtDigestKey{
 		schemaName:        stmtExecInfo7.SchemaName,
 		digest:            stmtExecInfo7.Digest,
 		planDigest:        stmtExecInfo7.PlanDigest,
@@ -1044,7 +1044,7 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// LRU cache should work.
 	for i := loops - 10; i < loops; i++ {
-		key := &stmtSummaryByDigestKey{
+		key := &StmtDigestKey{
 			schemaName:        stmtExecInfo1.SchemaName,
 			digest:            fmt.Sprintf("digest%d", i),
 			planDigest:        stmtExecInfo1.PlanDigest,
@@ -1092,7 +1092,7 @@ func TestMaxSQLLength(t *testing.T) {
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -1301,7 +1301,7 @@ func TestRefreshCurrentSummary(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now + 10
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -1352,7 +1352,7 @@ func TestSummaryHistory(t *testing.T) {
 	}()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -1425,7 +1425,7 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo1.PrevSQL = "prevSQL"
 	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -1458,7 +1458,7 @@ func TestEndTime(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        stmtExecInfo1.PlanDigest,
@@ -1508,7 +1508,7 @@ func TestPointGet(t *testing.T) {
 	stmtExecInfo1.PlanDigest = ""
 	stmtExecInfo1.LazyInfo.(*mockLazyInfo).plan = fakePlanDigestGenerator()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
+	key := &StmtDigestKey{
 		schemaName:        stmtExecInfo1.SchemaName,
 		digest:            stmtExecInfo1.Digest,
 		planDigest:        "",
