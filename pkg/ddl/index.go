@@ -563,14 +563,15 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	var sqlMode mysql.SQLMode
 	var warnings []string
 	hiddenCols := make([][]*model.ColumnInfo, 1)
+	idxArgSplitOpt := make([]*model.IndexArgSplitOpt, 1)
 
 	if isPK {
 		// Notice: sqlMode and warnings is used to support non-strict mode.
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0], &idxArgSplitOpt[0])
 	} else {
-		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		err = job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0], &idxArgSplitOpt[0])
 		if err != nil {
-			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
+			err = job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global, &idxArgSplitOpt)
 		}
 	}
 	if err != nil {
@@ -671,9 +672,9 @@ SwitchIndexState:
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, args)
+		err = preSplitIndexRegions(d.ctx, w.sess.Context, d.store, tblInfo, allIndexInfos, job.ReorgMeta, idxArgSplitOpt)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
+			if !errorIsRetryable(err, job) {
 				job.State = model.JobStateCancelled
 			}
 			return ver, err

@@ -23,20 +23,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -49,18 +46,13 @@ func preSplitIndexRegions(
 	tblInfo *model.TableInfo,
 	allIndexInfos []*model.IndexInfo,
 	reorgMeta *model.DDLReorgMeta,
-	args *model.ModifyIndexArgs,
+	splitOpts []*model.IndexArgSplitOpt,
 ) error {
-	warnHandler := contextutil.NewStaticWarnHandler(0)
-	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	splitOnTempIdx := reorgMeta.ReorgTp == model.ReorgTypeLitMerge ||
 		reorgMeta.ReorgTp == model.ReorgTypeTxnMerge
 	for i, idxInfo := range allIndexInfos {
-		idxArg := args.IndexArgs[i]
-		splitArgs, err := evalSplitDatumFromArgs(exprCtx, tblInfo, idxInfo, idxArg)
+		splitOpt := splitOpts[i]
+		splitArgs, err := evalSplitDatumFromArgs(sctx, tblInfo, idxInfo, splitOpt)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -142,7 +134,7 @@ func getSplitIdxPhysicalKeysFromValueList(
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
 	sc := sctx.GetSessionVars().StmtCtx
 	for _, v := range splitDatum {
-		idxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), v, kv.IntHandle(math.MinInt64), nil)
+		idxKey, _, err := index.GenIndexKey(sc, v, kv.IntHandle(math.MinInt64), nil)
 		if err != nil {
 			return nil, err
 		}
@@ -207,13 +199,13 @@ func getSplitIdxPhysicalKeysFromBound(
 	index := tables.NewIndex(physicalID, tblInfo, idxInfo)
 	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	sc := sctx.GetSessionVars().StmtCtx
-	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), lower, kv.IntHandle(math.MinInt64), nil)
+	lowerIdxKey, _, err := index.GenIndexKey(sc, lower, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
 	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
 	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), upper, kv.IntHandle(math.MinInt64), nil)
+	upperIdxKey, _, err := index.GenIndexKey(sc, upper, kv.IntHandle(math.MinInt64), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +253,7 @@ func splitIndexRegionAndWait(
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	if err != nil {
-		logutil.DDLLogger().Error("split table index region failed",
+		logutil.BgLogger().Error("split table index region failed",
 			zap.String("table", tblInfo.Name.L),
 			zap.String("index", tblInfo.Name.L),
 			zap.Error(err))
@@ -271,7 +263,7 @@ func splitIndexRegionAndWait(
 		failpoint.Return(context.DeadlineExceeded)
 	})
 	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
-	logutil.DDLLogger().Info("split table index region finished",
+	logutil.BgLogger().Info("split table index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
 		zap.Int("splitRegions", len(regionIDs)),
@@ -281,22 +273,21 @@ func splitIndexRegionAndWait(
 }
 
 func evalSplitDatumFromArgs(
-	buildCtx exprctx.BuildContext,
+	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
-	idxArg *model.IndexArg,
+	opt *model.IndexArgSplitOpt,
 ) (*splitArgs, error) {
-	opt := idxArg.SplitOpt
 	if opt == nil {
 		return nil, nil
 	}
 	if len(opt.ValueLists) > 0 {
 		indexValues := make([][]types.Datum, 0, len(opt.ValueLists))
-		for i, valueList := range opt.ValueLists {
+		for _, valueList := range opt.ValueLists {
 			if len(valueList) > len(idxInfo.Columns) {
-				return nil, plannererrors.ErrWrongValueCountOnRow.GenWithStackByArgs(i + 1)
+				return nil, errors.Errorf("Column count doesn't match value count")
 			}
-			values, err := evalConstExprNodes(buildCtx, valueList, tblInfo, idxInfo)
+			values, err := evalConstExprNodes(sctx, valueList, tblInfo, idxInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -313,7 +304,7 @@ func evalSplitDatumFromArgs(
 		if len(valuesItem) > len(idxInfo.Columns) {
 			return nil, errors.Errorf("Split index `%v` region column count doesn't match value count at %v", idxInfo.Name, name)
 		}
-		return evalConstExprNodes(buildCtx, valuesItem, tblInfo, idxInfo)
+		return evalConstExprNodes(sctx, valuesItem, tblInfo, idxInfo)
 	}
 	lowerValues, err := checkLowerUpperValue(opt.Lower, "lower")
 	if err != nil {
@@ -332,7 +323,7 @@ func evalSplitDatumFromArgs(
 }
 
 func evalConstExprNodes(
-	buildCtx exprctx.BuildContext,
+	sctx sessionctx.Context,
 	valueList []string,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
@@ -341,17 +332,16 @@ func evalConstExprNodes(
 	for j, value := range valueList {
 		colOffset := idxInfo.Columns[j].Offset
 		col := tblInfo.Columns[colOffset]
-		exp, err := expression.ParseSimpleExpr(buildCtx, value)
+		exp, err := expression.ParseSimpleExprWithTableInfo(sctx, value, &model.TableInfo{})
 		if err != nil {
 			return nil, err
 		}
-		evalCtx := buildCtx.GetEvalCtx()
-		evaluatedVal, err := exp.Eval(evalCtx, chunk.Row{})
+		evaluatedVal, err := exp.Eval(chunk.Row{})
 		if err != nil {
 			return nil, err
 		}
 
-		d, err := evaluatedVal.ConvertTo(evalCtx.TypeCtx(), &col.FieldType)
+		d, err := evaluatedVal.ConvertTo(sctx.GetSessionVars().StmtCtx, &col.FieldType)
 		if err != nil {
 			if !types.ErrTruncated.Equal(err) &&
 				!types.ErrTruncatedWrongVal.Equal(err) &&
@@ -396,12 +386,12 @@ func waitScatterRegionFinish(
 			finishScatterNum++
 		} else {
 			if len(indexName) == 0 {
-				logutil.DDLLogger().Warn("wait scatter region failed",
+				logutil.BgLogger().Warn("wait scatter region failed",
 					zap.Uint64("regionID", regionID),
 					zap.String("table", tableName),
 					zap.Error(err))
 			} else {
-				logutil.DDLLogger().Warn("wait scatter region failed",
+				logutil.BgLogger().Warn("wait scatter region failed",
 					zap.Uint64("regionID", regionID),
 					zap.String("table", tableName),
 					zap.String("index", indexName),

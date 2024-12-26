@@ -148,3 +148,11 @@ func (bm *BackfillMeta) Decode(b []byte) error {
 	err := json.Unmarshal(b, bm)
 	return errors.Trace(err)
 }
+
+// IndexArgSplitOpt is used by index presplit.
+type IndexArgSplitOpt struct {
+	Lower      []string   `json:"lower,omitempty"`
+	Upper      []string   `json:"upper,omitempty"`
+	Num        int64      `json:"num,omitempty"`
+	ValueLists [][]string `json:"value_lists,omitempty"`
+}

@@ -725,27 +725,7 @@ type IndexOption struct {
 	ParserName   model.CIStr
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
-<<<<<<< HEAD
-=======
-	Global       bool
 	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-}
-
-// IsEmpty is true if only default options are given
-// and it should not be added to the output
-func (n *IndexOption) IsEmpty() bool {
-	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault ||
-		n.KeyBlockSize > 0 ||
-		n.Tp != model.IndexTypeInvalid ||
-		len(n.ParserName.O) > 0 ||
-		n.Comment != "" ||
-		n.Global ||
-		n.Visibility != IndexVisibilityDefault ||
-		n.SplitOpt != nil {
-		return false
-	}
-	return true
->>>>>>> 177a03c8e51 (ddl: support pre-split index regions before creating index (#57553))
 }
 
 // Restore implements Node interface.
