@@ -225,6 +225,7 @@ func (bc *litBackendCtx) Flush(ctx context.Context) error {
 }
 
 func (bc *litBackendCtx) flushEngines(ctx context.Context) error {
+	logutil.BgLogger().Info("flush all engines")
 	for _, ei := range bc.engines {
 		ei.flushLock.Lock()
 		if err := ei.Flush(); err != nil {

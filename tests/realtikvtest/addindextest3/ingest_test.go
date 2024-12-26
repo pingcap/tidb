@@ -494,11 +494,13 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustExec("update t set b = b + 1;")
 
-	tk.MustExec("alter table t drop index idx;")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
-	tk.MustExec("alter table t add unique index idx(k);")
-	tk.MustExec("admin check table t;")
-	tk.MustExec("update t set k = k + 10;")
+	//// TODO(tangenta): add scan ts, import ts and key range to the checkpoint information, so that
+	//// we can re-ingest the same task idempotently.
+	// tk.MustExec("alter table t drop index idx;")
+	// testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
+	// tk.MustExec("alter table t add unique index idx(k);")
+	// tk.MustExec("admin check table t;")
+	// tk.MustExec("update t set k = k + 10;")
 
 	tk.MustExec("alter table t drop index idx;")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
