@@ -1059,56 +1059,6 @@ func TestFuzzyBindingHints(t *testing.T) {
 	testFuzzyBindingHints(t)
 }
 
-func TestFuzzyBindingHintsWithSourceReturning(t *testing.T) {
-	t.Skip("fix later on")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-
-	for _, db := range []string{"db1", "db2", "db3"} {
-		tk.MustExec(`create database ` + db)
-		tk.MustExec(`use ` + db)
-		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-	}
-	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
-
-	for _, c := range []struct {
-		binding   string
-		qTemplate string
-	}{
-		// use index
-		{`create global binding using select /*+ use_index(t1, c) */ * from *.t1 where a=1`,
-			`select * from %st1 where a=1000`},
-
-		// ignore index
-		{`create global binding using select /*+ ignore_index(t1, b) */ * from *.t1 where b=1`,
-			`select * from %st1 where b=1000`},
-
-		// order index hint
-		{`create global binding using select /*+ order_index(t1, a) */ a from *.t1 where a<10 order by a limit 10`,
-			`select a from %st1 where a<10000 order by a limit 10`},
-	} {
-		removeAllBindings(tk, true)
-		tk.MustExec(c.binding)
-		for _, currentDB := range []string{"db1", "db2", "db3"} {
-			tk.MustExec(`use ` + currentDB)
-			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
-				query := fmt.Sprintf(c.qTemplate, db)
-				tk.MustExec(query)
-				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-				sctx := tk.Session()
-				sctx.SetValue(bindinfo.GetBindingReturnNil, true)
-				tk.MustExec(query)
-				sctx.ClearValue(bindinfo.GetBindingReturnNil)
-				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-				bindinfo.GetBindingReturnNilBool.Store(false)
-			}
-		}
-	}
-}
-
 func TestBatchDropBindings(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

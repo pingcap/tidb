@@ -77,8 +77,8 @@ IndexMerge_9	0.01	root		type: union
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4); -- 7: OR index merge from multi complicated mv index (memberof)，each DNF item can be more complicated like a another embedded CNF member-of composition.;
 id	estRows	task	access object	operator info
 IndexMerge_9	0.20	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
 └─Selection_8(Probe)	0.20	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)))
   └─TableRowIDScan_7	0.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
@@ -89,9 +89,9 @@ TableReader_7	10.18	root		data:Selection_6
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
 id	estRows	task	access object	operator info
 IndexMerge_10	0.01	root		type: union
-├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan_5(Build)	0.10	cop[tikv]	table:t2, index:idx2(cast(`b` as signed array), c)	range:[3 4,3 4], keep order:false, stats:pseudo
+├─IndexRangeScan_6(Build)	10.00	cop[tikv]	table:t2, index:idx4(d)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan_7(Build)	0.10	cop[tikv]	table:t2, index:idx(c, cast(`a` as signed array))	range:[3 1,3 1], keep order:false, stats:pseudo
 └─Selection_9(Probe)	0.01	cop[tikv]		or(and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.a), and(json_memberof(cast(1, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 3))), or(and(json_memberof(cast(3, json BINARY), planner__core__casetest__index__index.t2.b), eq(planner__core__casetest__index__index.t2.c, 4)), eq(planner__core__casetest__index__index.t2.d, 1)))
   └─TableRowIDScan_8	10.20	cop[tikv]	table:t2	keep order:false, stats:pseudo
 drop table if exists t1, t2;
@@ -816,7 +816,7 @@ HashJoin	12.50	root		inner join, equal:[eq(planner__core__casetest__index__index
 └─TableReader(Probe)	7992.00	root		data:Selection
   └─Selection	7992.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), planner__core__casetest__index__index.t1.c)))
     └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-SHOW WARNINGS
+SHOW WARNINGS;
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
 DROP table if exists t;

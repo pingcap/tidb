@@ -2090,7 +2090,7 @@ b	b1	2	22
 c	c1	3	33
 drop database cluster_idx_unique_double_read;
 set @@tidb_enable_clustered_index = DEFAULT;
-use planner__core__integration
+use planner__core__integration;
 drop table if exists t, t2;
 set @@tidb_enable_clustered_index = 'ON';
 create table t(a int, b int, c int, primary key(a, b));

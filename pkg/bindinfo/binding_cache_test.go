@@ -33,7 +33,7 @@ func bindingNoDBDigest(t *testing.T, b *Binding) string {
 }
 
 func TestCrossDBBindingCache(t *testing.T) {
-	fbc := newBindCache(nil).(*bindingCache)
+	fbc := newBindCache().(*bindingCache)
 	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
 	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
@@ -76,7 +76,7 @@ func TestBindCache(t *testing.T) {
 		variable.MemQuotaBindingCache.Store(v)
 	}(variable.MemQuotaBindingCache.Load())
 	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
-	bindCache := newBindCache(nil)
+	bindCache := newBindCache()
 	defer bindCache.Close()
 
 	err := bindCache.SetBinding("digest1", binding)

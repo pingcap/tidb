@@ -1654,6 +1654,35 @@
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
+        "Plan": [
+          "TableReader_28 8000.00 root  MppVersion: 2, data:ExchangeSender_27",
+          "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_22 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_23, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_24 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
+        "Plan": [
+          "TableReader_28 8000.00 root  MppVersion: 2, data:ExchangeSender_27",
+          "└─ExchangeSender_27 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_22 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_23, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver_26(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_25 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_24 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan_23(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+        ]
       }
     ]
   },
