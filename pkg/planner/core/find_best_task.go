@@ -945,7 +945,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
 			alternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				res := cmpAlternativesByRowCount(alternatives[a], alternatives[b])
+				res := cmpAlternatives(ds.SCtx().GetSessionVars())(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}

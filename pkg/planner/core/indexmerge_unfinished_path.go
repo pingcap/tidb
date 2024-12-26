@@ -16,6 +16,7 @@ package core
 
 import (
 	"cmp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -475,7 +476,7 @@ func buildIntoAccessPath(
 	// comparing the row count just for estimation here.
 	pathsForEstimate := make([]*util.AccessPath, 0, len(allAlternativePaths))
 	for _, oneORBranch := range allAlternativePaths {
-		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternativesByRowCount)
+		pathsWithMinRowCount := slices.MinFunc(oneORBranch, cmpAlternatives(ds.SCtx().GetSessionVars()))
 		pathsForEstimate = append(pathsForEstimate, pathsWithMinRowCount...)
 	}
 	possiblePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, pathsForEstimate)
@@ -483,7 +484,24 @@ func buildIntoAccessPath(
 	return possiblePath
 }
 
-func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
+func cmpAlternatives(sessionVars *variable.SessionVars) func(lhs, rhs []*util.AccessPath) int {
+	allPointOrEmptyRange := func(paths []*util.AccessPath) bool {
+		// Prefer the path with empty range or all point ranges.
+		for _, path := range paths {
+			// 1. It's not empty range.
+			if len(path.Ranges) > 0 &&
+				// 2-1. It's not point range on table path.
+				((path.IsTablePath() &&
+					!path.OnlyPointRange(sessionVars.StmtCtx.TypeCtx())) ||
+					// 2-2. It's not point range on unique index.
+					(!path.IsTablePath() &&
+						len(path.Ranges) > 0 &&
+						!(path.OnlyPointRange(sessionVars.StmtCtx.TypeCtx()) && path.Index.Unique))) {
+				return false
+			}
+		}
+		return true
+	}
 	// If one alternative consists of multiple AccessPath, we use the maximum row count of them to compare.
 	getMaxRowCountFromPaths := func(paths []*util.AccessPath) float64 {
 		maxRowCount := 0.0
@@ -496,9 +514,19 @@ func cmpAlternativesByRowCount(a, b []*util.AccessPath) int {
 		}
 		return maxRowCount
 	}
-	lhsRowCount := getMaxRowCountFromPaths(a)
-	rhsRowCount := getMaxRowCountFromPaths(b)
-	return cmp.Compare(lhsRowCount, rhsRowCount)
+	return func(a, b []*util.AccessPath) int {
+		lhsBetterRange := allPointOrEmptyRange(a)
+		rhsBetterRange := allPointOrEmptyRange(b)
+		if lhsBetterRange != rhsBetterRange {
+			if lhsBetterRange {
+				return -1
+			}
+			return 1
+		}
+		lhsRowCount := getMaxRowCountFromPaths(a)
+		rhsRowCount := getMaxRowCountFromPaths(b)
+		return cmp.Compare(lhsRowCount, rhsRowCount)
+	}
 }
 
 func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPartialPaths []*util.AccessPath) float64 {

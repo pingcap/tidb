@@ -54,10 +54,11 @@ create table t1(a int primary key, b int, c int, key(b), key(c));
 INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11);
 explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
 id	estRows	task	access object	operator info
-IndexMerge	10.10	root		type: union
+IndexMerge	0.01	root		type: union
 ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:c(c)	range:[10,10], keep order:false, stats:pseudo
-├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t1, index:b(b)	range:[10 10,10 10], keep order:false, stats:pseudo
-└─TableRowIDScan(Probe)	10.10	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─TableRangeScan(Build)	1.00	cop[tikv]	table:t1	range:[10,10], keep order:false, stats:pseudo
+└─Selection(Probe)	0.01	cop[tikv]		or(eq(executor__index_merge_reader.t1.c, 10), and(eq(executor__index_merge_reader.t1.b, 10), eq(executor__index_merge_reader.t1.a, 10)))
+  └─TableRowIDScan	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
 a	b	c
 10	10	10
