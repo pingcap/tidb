@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
@@ -1185,6 +1186,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)
+	if err != nil {
+		return err
 	}
 
 	schedulersRemovable = true

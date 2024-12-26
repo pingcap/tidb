@@ -3,6 +3,7 @@ package brietest
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
@@ -19,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
 	"github.com/pingcap/tidb/pkg/config"
@@ -209,6 +212,7 @@ func (kit *LogBackupKit) WithChecker(checker func(v error), f func()) {
 
 func (kit *LogBackupKit) runAndCheck(f func(context.Context) error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	summary.SetSuccessStatus(false)
 	err := f(ctx)
 	cancel()
 	kit.checkerF(err)
@@ -410,4 +414,42 @@ func TestBothEncrypted(t *testing.T) {
 			}
 		})
 	})
+}
+
+func TestFailureRestoreAndPiTR(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	createSimpleTableWithData(kit)
+	insertSimpleIncreaseData(kit)
+
+	taskName := t.Name()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {})
+	cleanSimpleData(kit)
+
+	ts := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		bc.Storage = "local://" + kit.base + "/full2"
+		bc.BackupTS = ts
+	})
+	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
+		sc.StartTS = ts
+	})
+	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish", func(e *error) {
+		*e = errors.New("not my fault")
+	}))
+	checker := func(e error) { require.Error(t, e) }
+	kit.WithChecker(checker, func() {
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+	})
+	kit.forceFlushAndWait(taskName)
+
+	cleanSimpleData(kit)
+	kit.tk.MustExec("DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish"))
+
+	kit.StopTaskIfExists(taskName)
+	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
+		rc.FullBackupStorage = "local://" + kit.base + "/full2"
+	})
+	res := kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", t.Name()))
+	res.Check([][]any{})
 }

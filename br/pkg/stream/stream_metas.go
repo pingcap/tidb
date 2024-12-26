@@ -675,8 +675,25 @@ func (o *OrderedMigration) unmarshalContent(b []byte) error {
 	return nil
 }
 
+type LoadOptions func(*loadConfig)
+
+type loadConfig struct {
+	notFoundIsErr bool
+}
+
+func MLNotFoundIsErr() LoadOptions {
+	return func(c *loadConfig) {
+		c.notFoundIsErr = true
+	}
+}
+
 // Load loads the current living migrations from the storage.
-func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
+func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations, error) {
+	cfg := loadConfig{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
 	opt := &storage.WalkOption{
 		SubDir: m.prefix,
 	}
@@ -708,7 +725,7 @@ func (m MigrationExt) Load(ctx context.Context) (Migrations, error) {
 	if collected.Err != nil {
 		return Migrations{}, collected.Err
 	}
-	if len(collected.Item) == 0 {
+	if len(collected.Item) == 0 && cfg.notFoundIsErr {
 		return Migrations{}, errors.Annotatef(berrors.ErrMigrationNotFound, "in the storage %s", m.s.URI())
 	}
 	sort.Slice(collected.Item, func(i, j int) bool {
@@ -750,7 +767,7 @@ func (m MigrationExt) AppendMigration(ctx context.Context, mig *pb.Migration) (i
 	defer lock.Unlock(ctx)
 
 	migs, err := m.Load(ctx)
-	if err != nil && !berrors.Is(err, berrors.ErrMigrationNotFound) {
+	if err != nil {
 		return 0, err
 	}
 	newSN := 1
