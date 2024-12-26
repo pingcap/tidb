@@ -397,19 +397,7 @@ func (sv *schemaVersionManager) setSchemaVersion(jobCtx *jobContext, job *model.
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
-	// TODO we can merge this txn into job transaction to avoid schema version
-	//  without differ.
-	start := time.Now()
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
-		var err error
-		m := meta.NewMutator(txn)
-		schemaVersion, err = m.GenSchemaVersion()
-		return err
-	})
-	defer func() {
-		metrics.DDLIncrSchemaVerOpHist.Observe(time.Since(start).Seconds())
-	}()
-	return schemaVersion, err
+	return jobCtx.metaMut.GenSchemaVersion()
 }
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
