@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -27,7 +27,7 @@ import (
 	"github.com/zyedidia/generic/hashmap"
 )
 
-var _ base2.HashEquals = &Group{}
+var _ base.HashEquals = &Group{}
 
 // Group is basic infra to store all the logically equivalent expressions
 // for one logical operator in current context.
@@ -77,7 +77,7 @@ type GroupPair struct {
 // ******************************************* start of HashEqual methods *******************************************
 
 // Hash64 implements the HashEquals.<0th> interface.
-func (g *Group) Hash64(h base2.Hasher) {
+func (g *Group) Hash64(h base.Hasher) {
 	h.HashUint64(uint64(g.groupID))
 }
 
