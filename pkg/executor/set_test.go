@@ -655,11 +655,11 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
-	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
-	tk.MustExec("set global pd_enable_follower_handle_region = 1")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
 	tk.MustExec("set global pd_enable_follower_handle_region = 0")
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global pd_enable_follower_handle_region = 1")
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
