@@ -16,15 +16,12 @@ package memo
 
 import (
 	"container/list"
-<<<<<<< HEAD
-=======
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
->>>>>>> 31b88d8f66 (.)
 	"testing"
 	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
