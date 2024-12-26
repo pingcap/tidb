@@ -245,19 +245,15 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 		return
 	}
 
-	k := &stmtKey{
-		schemaName:        info.SchemaName,
-		digest:            info.Digest,
-		prevDigest:        info.PrevSQLDigest,
-		planDigest:        info.PlanDigest,
-		resourceGroupName: info.ResourceGroupName,
-	}
-	k.Hash() // Calculate hash value in advance, to reduce the time holding the window lock.
+	k := stmtsummary.StmtDigestKeyPool.Get().(*stmtsummary.StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	k.Init(info.SchemaName, info.Digest, info.PrevSQLDigest, info.PlanDigest, info.ResourceGroupName)
 
 	// Add info to the current statistics window.
 	s.windowLock.Lock()
 	var record *lockedStmtRecord
-	if v, ok := s.window.lru.Get(k); ok {
+	v, exist := s.window.lru.Get(k)
+	if exist {
 		record = v.(*lockedStmtRecord)
 	} else {
 		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
@@ -268,6 +264,9 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
+	if exist {
+		stmtsummary.StmtDigestKeyPool.Put(k)
+	}
 }
 
 // Evicted returns the number of statements evicted for the current

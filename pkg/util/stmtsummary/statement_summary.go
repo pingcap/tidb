@@ -49,40 +49,29 @@ var StmtDigestKeyPool = sync.Pool{
 
 // StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
 type StmtDigestKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
 	// `hash` is the hash value of this object.
 	hash []byte
+}
+
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+	if cap(key.hash) < length {
+		key.hash = make([]byte, 0, length)
+	} else {
+		key.hash = key.hash[:0]
+	}
+	key.hash = append(key.hash, hack.Slice(digest)...)
+	key.hash = append(key.hash, hack.Slice(schemaName)...)
+	key.hash = append(key.hash, hack.Slice(prevDigest)...)
+	key.hash = append(key.hash, hack.Slice(planDigest)...)
+	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
 func (key *StmtDigestKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		length := len(key.schemaName) + len(key.digest) + len(key.prevDigest) + len(key.planDigest) + len(key.resourceGroupName)
-		if cap(key.hash) < length {
-			key.hash = make([]byte, 0, length)
-		}
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
-	}
 	return key.hash
-}
-
-// ResetHash resets the hash value.
-func (key *StmtDigestKey) ResetHash() {
-	key.hash = key.hash[:0]
 }
 
 // stmtSummaryByDigestMap is a LRU cache that stores statement summaries.
@@ -351,14 +340,8 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	}
 
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	key.ResetHash()
-	key.schemaName = sei.SchemaName
-	key.digest = sei.Digest
-	key.prevDigest = sei.PrevSQLDigest
-	key.planDigest = sei.PlanDigest
-	key.resourceGroupName = sei.ResourceGroupName
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
+	// Init hash value in advance, to reduce the time holding the lock.
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
 	var exist bool
 	// Enclose the block in a function to ensure the lock will always be released.
