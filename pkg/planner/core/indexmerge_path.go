@@ -589,8 +589,8 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 	return "", nil
 }
 
-// generateANDIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for (
-//json_member_of / json_overlaps / json_contains) on multiple multi-valued or normal indexes.
+// generateANDIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for ( json_member_of /
+// json_overlaps / json_contains) on multiple multi-valued or normal indexes.
 /*
 	1. select * from t where ((1 member of (a) and c=1) and (2 member of (b) and d=2) and (other index predicates))
 		flatten as: select * from t where 1 member of (a) and 2 member of (b) and c=1 and c=2 and other index predicates
@@ -719,8 +719,8 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 	return nil
 }
 
-// generateANDIndexMerge4MVIndex tries to generate AND type index merge AccessPath for (
-//json_member_of / json_overlaps / json_contains) on a single multi-valued index.
+// generateANDIndexMerge4MVIndex tries to generate AND type index merge AccessPath for ( json_member_of /
+// json_overlaps / json_contains) on a single multi-valued index.
 /*
 	1. select * from t where 1 member of (a)
 		IndexMerge(AND)
