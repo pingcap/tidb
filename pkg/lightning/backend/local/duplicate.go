@@ -941,7 +941,6 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 				logutil.Key("dupDetectStartKey", kr.StartKey),
 				logutil.Key("dupDetectEndKey", kr.EndKey),
 			)
-			// TODO(lance6716): retry
 			err := func() error {
 				stream, err := NewRemoteDupKVStream(ctx, region, kr, importClientFactory, m.resourceGroupName, m.taskType, m.minCommitTS)
 				if err != nil {
