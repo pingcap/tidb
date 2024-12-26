@@ -256,20 +256,16 @@ func checkStableResultMode(sctx base.PlanContext) bool {
 // doOptimize optimizes a logical plan into a physical plan,
 // while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
-func doOptimize(
-	ctx context.Context,
-	sctx base.PlanContext,
-	flag uint64,
-	logic base.LogicalPlan,
-) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (
+	base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	if sctx.GetSessionVars().GetSessionVars().EnableCascadesPlanner {
-		return OptimizeV2(ctx, sctx, flag, logic)
+		return CascadesOptimize(ctx, sctx, flag, logic)
 	}
-	return OptimizeV1(ctx, sctx, flag, logic)
+	return VolcanoOptimize(ctx, sctx, flag, logic)
 }
 
-// OptimizeV2 includes: normalization, cascadesOptimize, and physicalOptimize.
-func OptimizeV2(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+// CascadesOptimize includes: normalization, cascadesOptimize, and physicalOptimize.
+func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := normalizeOptimize(ctx, flag, logic)
@@ -300,8 +296,8 @@ func OptimizeV2(ctx context.Context, sctx base.PlanContext, flag uint64, logic b
 	return logic, finalPlan, cost, nil
 }
 
-// OptimizeV1 includes: logicalOptimize, physicalOptimize
-func OptimizeV1(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
+// VolcanoOptimize includes: logicalOptimize, physicalOptimize
+func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
