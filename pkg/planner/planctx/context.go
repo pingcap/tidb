@@ -32,7 +32,6 @@ import (
 // PlanContext is the context for building plan.
 type PlanContext interface {
 	contextutil.ValueStoreContext
-	contextutil.HasDomain
 	tablelock.TableLockReadContext
 	// GetSQLExecutor gets the SQLExecutor.
 	GetSQLExecutor() sqlexec.SQLExecutor

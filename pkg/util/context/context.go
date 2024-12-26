@@ -29,6 +29,9 @@ type ValueStoreContext interface {
 
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
+
+	// GetDomain returns the domain.
+	GetDomain() any
 }
 
 var contextIDGenerator atomic.Uint64
@@ -36,10 +39,4 @@ var contextIDGenerator atomic.Uint64
 // GenContextID generates a unique context ID.
 func GenContextID() uint64 {
 	return contextIDGenerator.Add(1)
-}
-
-// HasDomain indicates it has domain.
-type HasDomain interface {
-	// GetDomain returns the domain.
-	GetDomain() any
 }
