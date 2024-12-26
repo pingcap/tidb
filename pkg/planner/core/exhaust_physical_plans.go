@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -387,13 +388,23 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(p, prop, 1, false))
-		} else if !forceRightToBuild {
-			joins = append(joins, getHashJoin(p, prop, 1, true))
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && join.IsHashJoinV2Supported() {
+			if !forceLeftToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, false))
+			} else if !forceRightToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, true))
+			} else {
+				joins = append(joins, getHashJoin(p, prop, 1, false))
+				joins = append(joins, getHashJoin(p, prop, 1, true))
+			}
 		} else {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
-			joins = append(joins, getHashJoin(p, prop, 1, true))
+			if forceLeftToBuild || forceRightToBuild {
+				// Do not support specifying the build and probe side for semi join.
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+				forceLeftToBuild = false
+				forceRightToBuild = false
+			}
 		}
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
