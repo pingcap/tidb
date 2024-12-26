@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -277,7 +276,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	var cas *cascades.Optimizer
-	if cas, err = cascades.NewCascades(logic); err == nil {
+	if cas, err = cascades.NewOptimizer(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
 	}
