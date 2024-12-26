@@ -182,7 +182,7 @@ type session struct {
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan base.Plan
 
-	dom   interface{}
+	dom   any
 	store kv.Storage
 
 	sessionPlanCache sessionctx.SessionPlanCache
@@ -4677,6 +4677,6 @@ func (s *session) GetCommitWaitGroup() *sync.WaitGroup {
 }
 
 // GetDomain get domain from session.
-func (s *session) GetDomain() interface{} {
+func (s *session) GetDomain() any {
 	return s.dom
 }
