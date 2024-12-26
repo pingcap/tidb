@@ -325,9 +325,9 @@ func main() {
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func() {
 		svr.Close()
+		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.InstanceResourceManager.Stop()
 		executor.Stop()
 		close(exited)
 	})
