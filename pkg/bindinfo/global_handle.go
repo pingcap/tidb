@@ -23,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -129,14 +129,6 @@ func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
 	return h
 }
 
-func (h *globalBindingHandle) getLastUpdateTime() types.Time {
-	return h.lastUpdateTime.Load().(types.Time)
-}
-
-func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
-	h.lastUpdateTime.Store(t)
-}
-
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
@@ -145,7 +137,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
 	} else {
-		lastUpdateTime = h.getLastUpdateTime()
+		lastUpdateTime = h.lastUpdateTime.Load().(types.Time)
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 
@@ -160,8 +152,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		}
 
 		defer func() {
-			h.setLastUpdateTime(lastUpdateTime)
-
+			h.lastUpdateTime.Store(lastUpdateTime)
 			metrics.BindingCacheMemUsage.Set(float64(h.GetMemUsage()))
 			metrics.BindingCacheMemLimit.Set(float64(h.GetMemCapacity()))
 			metrics.BindingCacheNumBindings.Set(float64(len(h.bindingCache.GetAllBindings())))
@@ -172,7 +163,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 				continue
 			}
-			sqlDigest, binding, err := newBinding(sctx, row)
+			sqlDigest, binding, err := newBindingFromStorage(sctx, row)
 
 			// Update lastUpdateTime to the newest one.
 			// Even if this one is an invalid bind.
@@ -181,7 +172,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			if err != nil {
-				logutil.BindLogger().Warn("failed to generate bind record from data row", zap.Error(err))
+				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(err))
 				continue
 			}
 
@@ -193,7 +184,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
 					// Only needs to be handled once.
-					logutil.BindLogger().Warn("BindHandle.Update", zap.Error(err))
+					bindingLogger().Warn("BindHandle.Update", zap.Error(err))
 				}
 			} else {
 				h.bindingCache.RemoveBinding(sqlDigest)
@@ -272,8 +263,17 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 	})
 }
 
-// dropGlobalBinding drops a Bindings to the storage and Bindings int the cache.
-func (h *globalBindingHandle) dropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
+// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
+func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
+	if len(sqlDigests) == 0 {
+		return 0, errors.New("sql digest is empty")
+	}
+	defer func() {
+		if err == nil {
+			err = h.LoadFromStorageToCache(false)
+		}
+	}()
+
 	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -301,20 +301,7 @@ func (h *globalBindingHandle) dropGlobalBinding(sqlDigests []string) (deletedRow
 	if err != nil {
 		deletedRows = 0
 	}
-	return
-}
-
-// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
-func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
-	if len(sqlDigests) == 0 {
-		return 0, errors.New("sql digest is empty")
-	}
-	defer func() {
-		if err == nil {
-			err = h.LoadFromStorageToCache(false)
-		}
-	}()
-	return h.dropGlobalBinding(sqlDigests)
+	return deletedRows, err
 }
 
 // SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
@@ -405,8 +392,8 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 	return h.bindingCache.GetMemCapacity()
 }
 
-// newBinding builds Bindings from a tuple in storage.
-func newBinding(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
+// newBindingFromStorage builds Bindings from a tuple in storage.
+func newBindingFromStorage(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
@@ -501,7 +488,7 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasPa
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				logutil.BindLogger().Debug("restore SQL failed", zap.Error(err))
+				bindingLogger().Debug("restore SQL failed", zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -523,7 +510,7 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasPa
 		bindSQL = bindSQL[insertIdx:]
 		return strings.Replace(bindSQL, "SELECT", fmt.Sprintf("SELECT /*+ %s*/", planHint), 1)
 	}
-	logutil.BindLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
+	bindingLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
 
@@ -584,7 +571,7 @@ func (*globalBindingHandle) GetScope(_ string) variable.ScopeFlag {
 // Stats returns the server statistics.
 func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	m := make(map[string]any)
-	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
+	m[lastPlanBindingUpdateTime] = h.lastUpdateTime.Load().(types.Time).String()
 	return m, nil
 }
 
@@ -605,4 +592,9 @@ func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 	sqlExec := sctx.GetRestrictedSQLExecutor()
 	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
+}
+
+// bindingLogger with category "sql-bind" is used to log statistic related messages.
+func bindingLogger() *zap.Logger {
+	return logutil.BgLogger().With(zap.String("category", "sql-bind"))
 }

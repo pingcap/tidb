@@ -18,7 +18,6 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/ristretto"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -215,7 +214,7 @@ func (c *bindingCache) SetBinding(sqlDigest string, binding *Binding) (err error
 	if err != nil {
 		return err
 	}
-	_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+	_, noDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
 	c.digestBiMap.Add(noDBDigest, sqlDigest)
 	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with digestBiMap,
 	// but it's acceptable, the optimizer will load the binding when cache-miss.
