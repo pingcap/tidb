@@ -37,3 +37,8 @@ var contextIDGenerator atomic.Uint64
 func GenContextID() uint64 {
 	return contextIDGenerator.Add(1)
 }
+
+type HasDomain interface {
+	// GetDomain returns the domain.
+	GetDomain() interface{}
+}

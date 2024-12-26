@@ -87,6 +87,7 @@ type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
 	tablelock.TableLockContext
+	contextutil.HasDomain
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.
