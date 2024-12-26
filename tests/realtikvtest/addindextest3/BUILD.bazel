@@ -4,6 +4,7 @@ go_test(
     name = "addindextest3_test",
     timeout = "long",
     srcs = [
+        "functional_test.go",
         "main_test.go",
         "operator_test.go",
     ],
