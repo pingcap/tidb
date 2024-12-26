@@ -53,6 +53,7 @@ type StmtDigestKey struct {
 	hash []byte
 }
 
+// Init initialize the hash key.
 func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
 	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
 	if cap(key.hash) < length {
