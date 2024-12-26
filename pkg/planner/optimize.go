@@ -269,7 +269,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		err                        error
 	)
 	if useBinding {
-		minCost := math.MaxFloat64
 		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
 		if binding != nil && binding.IsBindingEnabled() {
@@ -289,13 +288,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				}
 				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
-			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
+			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
 				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
 			}
-			if cost < minCost {
-				bindStmtHints, warns, minCost, names, bestPlanFromBind, chosenBinding = curStmtHints, curWarns, cost, curNames, plan, binding
-			}
+			bindStmtHints, warns, names, bestPlanFromBind, chosenBinding = curStmtHints, curWarns, curNames, plan, binding
 		}
 		if bestPlanFromBind == nil {
 			sessVars.StmtCtx.AppendWarning(errors.NewNoStackError("no plan generated from bindings"))
