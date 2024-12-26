@@ -78,6 +78,7 @@ func (key *StmtDigestKey) ResetHash() {
 	key.hash = key.hash[:0]
 }
 
+// Clone returns a new cloned StmtDigestKey.
 func (key *StmtDigestKey) Clone() *StmtDigestKey {
 	k := &StmtDigestKey{
 		SchemaName:        key.SchemaName,
