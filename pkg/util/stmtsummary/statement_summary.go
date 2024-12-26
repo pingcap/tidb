@@ -42,7 +42,7 @@ import (
 
 // StmtDigestKeyPool is the pool for StmtDigestKey.
 var StmtDigestKeyPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return &StmtDigestKey{}
 	},
 }
