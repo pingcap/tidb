@@ -86,8 +86,8 @@ type InstancePlanCache interface {
 type Context interface {
 	SessionStatesHandler
 	contextutil.ValueStoreContext
-	tablelock.TableLockContext
 	contextutil.HasDomain
+	tablelock.TableLockContext
 	// RollbackTxn rolls back the current transaction.
 	RollbackTxn(ctx context.Context)
 	// CommitTxn commits the current transaction.

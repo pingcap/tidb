@@ -32,8 +32,8 @@ import (
 // PlanContext is the context for building plan.
 type PlanContext interface {
 	contextutil.ValueStoreContext
-	tablelock.TableLockReadContext
 	contextutil.HasDomain
+	tablelock.TableLockReadContext
 	// GetSQLExecutor gets the SQLExecutor.
 	GetSQLExecutor() sqlexec.SQLExecutor
 	// GetRestrictedSQLExecutor gets the RestrictedSQLExecutor.
@@ -79,8 +79,6 @@ type PlanContext interface {
 	GetReadonlyUserVarMap() map[string]struct{}
 	// Reset reset the local context.
 	Reset()
-	// GetDomain get domain from ctx.
-	GetDomain() interface{}
 }
 
 // EmptyPlanContextExtended is used to provide some empty implementations for PlanContext.
