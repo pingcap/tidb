@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -176,6 +177,22 @@ func TestAddIndexDistCancel(t *testing.T) {
 	tk2.MustExec("create table t2 (a int, b int);")
 	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
 
+	var counter atomic.Int32
+	var enableTrigger atomic.Bool
+	var targetJobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+		// fail for one index when finish backfill, and check row count right
+		if counter.Add(1) == 1 {
+			targetJobID.Store(job.ID)
+			enableTrigger.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, errP *error) {
+		if enableTrigger.Load() && job.ID == targetJobID.Load() {
+			*errP = errors.New("mock error")
+			enableTrigger.Store(false)
+		}
+	})
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
@@ -193,6 +210,8 @@ func TestAddIndexDistCancel(t *testing.T) {
 	require.True(t, strings.Contains(rows[1][12].(string) /* comments */, "ingest"))
 	require.Equal(t, rows[0][7].(string) /* row_count */, "3")
 	require.Equal(t, rows[1][7].(string) /* row_count */, "3")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable")
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 
