@@ -443,7 +443,7 @@ outside:
 		// end of a line, the substring can still be dropped by rule 2.
 		if len(parser.startingBy) > 0 && !foundStartingByThisLine {
 			oldPos := parser.pos
-			content, _, err := parser.ReadUntilTerminator()
+			content, _, err := parser.readUntilTerminator()
 			if err != nil {
 				if !(errors.Cause(err) == io.EOF) {
 					return nil, err
@@ -710,6 +710,12 @@ func (parser *CSVParser) ReadColumns() error {
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
 func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+	return parser.readUntilTerminator()
+}
+
+func (parser *CSVParser) readUntilTerminator() ([]byte, int64, error) {
 	var ret []byte
 	for {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)
