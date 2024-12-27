@@ -399,7 +399,8 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if len(buf) > LargestEntryLimit {
+		roughRowSize := parser.pos - parser.rowStartPos + int64(len(buf))
+		if parser.checkRowLen && roughRowSize > int64(LargestEntryLimit) {
 			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
 		}
 		parser.buf = nil
@@ -630,6 +631,8 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -680,6 +683,8 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
