@@ -718,8 +718,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 		return 0
 	}
 
-	// If either index doesn't have statistics, then choose the index with the most equal/IN predicates.
-	// If both indexes have the same number of predicates - choose the one with statistics.
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
 	lhsHasStatistics := statsTbl.Pseudo
 	if statsTbl != nil && lhs.path.Index != nil {
 		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
@@ -728,15 +728,16 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if statsTbl != nil && rhs.path.Index != nil {
 		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
 	}
-	if !lhs.path.IsIntHandlePath && !rhs.path.IsIntHandlePath &&
-		(!lhsHasStatistics || !rhsHasStatistics) &&
-		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
+	if !lhs.path.IsIntHandlePath && !rhs.path.IsIntHandlePath && // Not a table scan
+		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
+		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
 		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
 		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-		if lhsTotalEqual > rhsTotalEqual || (lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual == rhsTotalEqual) {
+		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
 			return 1
 		}
-		if rhsTotalEqual > lhsTotalEqual || (rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual == lhsTotalEqual) {
+		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
 			return -1
 		}
 	}
