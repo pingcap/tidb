@@ -1004,7 +1004,7 @@ func (do *Domain) CheckAutoAnalyzeWindows() {
 	}
 }
 
-func (do *Domain) refreshMDLCheckTableInfo() {
+func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	se, err := do.sysSessionPool.Get()
 
 	if err != nil {
@@ -1013,7 +1013,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	}
 	// Make sure the session is new.
 	sctx := se.(sessionctx.Context)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnMeta)
 	if _, err := sctx.GetSQLExecutor().ExecuteInternal(ctx, "rollback"); err != nil {
 		se.Close()
 		return
@@ -1182,7 +1182,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 		case <-do.exit:
 			return
 		}
-		do.refreshMDLCheckTableInfo()
+		do.refreshMDLCheckTableInfo(ctx)
 		select {
 		case do.mdlCheckCh <- struct{}{}:
 		default:

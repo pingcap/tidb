@@ -511,6 +511,25 @@ func (s *SyncExecDetails) CopTasksDetails() *CopTasksDetails {
 	return d
 }
 
+// CopTasksSummary returns some summary information of cop-tasks for statement summary.
+func (s *SyncExecDetails) CopTasksSummary() *CopTasksSummary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.detailsSummary.NumCopTasks
+	if n == 0 {
+		return nil
+	}
+	return &CopTasksSummary{
+		NumCopTasks:       n,
+		MaxProcessAddress: s.detailsSummary.ProcessTimePercentile.GetMax().Addr,
+		MaxProcessTime:    s.detailsSummary.ProcessTimePercentile.GetMax().D,
+		TotProcessTime:    s.execDetails.TimeDetail.ProcessTime,
+		MaxWaitAddress:    s.detailsSummary.WaitTimePercentile.GetMax().Addr,
+		MaxWaitTime:       s.detailsSummary.WaitTimePercentile.GetMax().D,
+		TotWaitTime:       s.execDetails.TimeDetail.WaitTime,
+	}
+}
+
 // CopTasksDetails collects some useful information of cop-tasks during execution.
 type CopTasksDetails struct {
 	NumCopTasks int
@@ -533,6 +552,17 @@ type CopTasksDetails struct {
 	P90BackoffTime    map[string]time.Duration
 	TotBackoffTime    map[string]time.Duration
 	TotBackoffTimes   map[string]int
+}
+
+// CopTasksSummary collects some summary information of cop-tasks for statement summary.
+type CopTasksSummary struct {
+	NumCopTasks       int
+	MaxProcessAddress string
+	MaxProcessTime    time.Duration
+	TotProcessTime    time.Duration
+	MaxWaitAddress    string
+	MaxWaitTime       time.Duration
+	TotWaitTime       time.Duration
 }
 
 // ToZapFields wraps the CopTasksDetails as zap.Fileds.

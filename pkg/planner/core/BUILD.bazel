@@ -92,7 +92,6 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/bindinfo",
-        "//pkg/bindinfo/norm",
         "//pkg/config",
         "//pkg/distsql",
         "//pkg/domain",

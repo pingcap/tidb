@@ -91,6 +91,7 @@ go_test(
         "join_stats_test.go",
         "join_table_meta_test.go",
         "joiner_test.go",
+        "left_outer_anti_semi_join_probe_test.go",
         "left_outer_join_probe_test.go",
         "left_outer_semi_join_probe_test.go",
         "merge_join_test.go",

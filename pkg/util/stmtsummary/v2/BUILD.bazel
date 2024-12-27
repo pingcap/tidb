@@ -20,7 +20,6 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/execdetails",
-        "//pkg/util/hack",
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/plancodec",
