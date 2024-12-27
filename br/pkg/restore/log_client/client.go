@@ -265,6 +265,26 @@ func (rc *LogClient) Close(ctx context.Context) {
 	log.Info("Restore client closed")
 }
 
+func rewriteRewriteRuleBy(sst SSTs, rules *restoreutils.RewriteRules) (*restoreutils.RewriteRules, error) {
+	if r, ok := sst.(RewrittenSST); ok {
+		rewritten := r.RewrittenTo()
+		if rewritten > 0 && rewritten != sst.TableID() {
+			rewriteRules := rules.Clone()
+			if !rewriteRules.RewriteSourceTableID(rewritten, sst.TableID()) {
+				return nil, errors.Annotatef(
+					berrors.ErrUnknown,
+					"table rewritten from a table id (%d) to (%d) which doesn't exist in the stream",
+					rewritten,
+					sst.TableID(),
+				)
+			}
+			log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", sst.TableID()), zap.Int64("rewritten_to", rewritten))
+			return rewriteRules, nil
+		}
+	}
+	return rules, nil
+}
+
 func (rc *LogClient) RestoreCompactedSstFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
@@ -293,27 +313,15 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 			log.Warn("[Compacted SST Restore] Skipping excluded table during restore.", zap.Int64("table_id", i.TableID()))
 			continue
 		}
-
-		if r, ok := i.(RewrittenSST); ok {
-			rewritten := r.RewrittenTo()
-			if rewritten > 0 && rewritten != i.TableID() {
-				rewriteRules = rewriteRules.Clone()
-				if !rewriteRules.RewriteSourceTableID(rewritten, i.TableID()) {
-					return errors.Annotatef(
-						berrors.ErrUnknown,
-						"table rewritten from a table id (%d) to (%d) which doesn't exist in the stream",
-						rewritten,
-						i.TableID(),
-					)
-				}
-				log.Info("Rewritten rewrite rules.", zap.Stringer("rules", rewriteRules), zap.Int64("table_id", i.TableID()), zap.Int64("rewritten_to", rewritten))
-			}
+		newRules, err := rewriteRewriteRuleBy(i, rewriteRules)
+		if err != nil {
+			return err
 		}
 
 		set := restore.BackupFileSet{
 			TableID:      i.TableID(),
 			SSTFiles:     i.GetSSTs(),
-			RewriteRules: rewriteRules,
+			RewriteRules: newRules,
 		}
 		backupFileSets = append(backupFileSets, set)
 	}

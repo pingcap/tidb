@@ -7,7 +7,9 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
@@ -37,16 +39,58 @@ func NewCompactedFileSplitStrategy(
 	}
 }
 
+type sstIdentity struct {
+	EffectiveID     int64
+	RewriteBoundary *restoreutils.RewriteRules
+}
+
+func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
+	r, ok := ssts.(RewrittenSST)
+	if !ok {
+		return sstIdentity{
+			EffectiveID:     ssts.TableID(),
+			RewriteBoundary: nil,
+		}
+	}
+
+	rule, ok := cs.Rules[r.RewrittenTo()]
+	if !ok {
+		log.Panic("[unreachable] failed to find rewrite rule for a SST",
+			zap.Int64("rewrite", r.RewrittenTo()), zap.Int64("table-id", ssts.TableID()))
+	}
+	rule = rule.Clone()
+	rule.RewriteSourceTableID(r.RewrittenTo(), ssts.TableID())
+
+	return sstIdentity{
+		EffectiveID:     r.RewrittenTo(),
+		RewriteBoundary: rule,
+	}
+}
+
 func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
-	splitHelper, exist := cs.TableSplitter[ssts.TableID()]
+	identity := cs.inspect(ssts)
+
+	splitHelper, exist := cs.TableSplitter[identity.EffectiveID]
 	if !exist {
 		splitHelper = split.NewSplitHelper()
-		cs.TableSplitter[ssts.TableID()] = splitHelper
+		cs.TableSplitter[identity.EffectiveID] = splitHelper
 	}
 
 	for _, f := range ssts.GetSSTs() {
-		startKey := codec.EncodeBytes(nil, f.StartKey)
-		endKey := codec.EncodeBytes(nil, f.EndKey)
+		startKey := f.StartKey
+		endKey := f.EndKey
+		var err error
+		if identity.RewriteBoundary != nil {
+			startKey, endKey, err = utils.GetRewriteRawKeys(f, identity.RewriteBoundary)
+		}
+		if err != nil {
+			log.Panic("[unreachable] the rewrite rule doesn't match the SST file, this shouldn't happen...",
+				logutil.ShortError(err), zap.Stringer("rule", identity.RewriteBoundary), zap.Int64("effective-id", identity.EffectiveID),
+				zap.Stringer("file", f),
+			)
+		}
+		startKey = codec.EncodeBytes(nil, startKey)
+		endKey = codec.EncodeBytes(nil, startKey)
 		cs.AccumulateCount += 1
 		if f.TotalKvs == 0 || f.Size_ == 0 {
 			log.Warn("No key-value pairs in subcompaction", zap.String("name", f.Name))
