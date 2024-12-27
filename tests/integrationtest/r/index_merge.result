@@ -767,11 +767,11 @@ c1	c2	c3	c4	c5
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
 id	estRows	task	access object	operator info
 Sort_5	138.56	root		index_merge.t1.c1
-└─IndexMerge_12	138.56	root		type: union
-  ├─IndexRangeScan_8(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+└─IndexMerge_12	87.26	root		type: union
+  ├─IndexRangeScan_8(Build)	250.00	cop[tikv]	table:t1, index:c1(c1)	range:[1,2], keep order:false, stats:pseudo
   ├─IndexRangeScan_9(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─Selection_11(Probe)	138.56	cop[tikv]		ge(index_merge.t1.c1, 1), le(index_merge.t1.c1, 2)
-    └─TableRowIDScan_10	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─Selection_11(Probe)	87.26	cop[tikv]		ge(index_merge.t1.c1, 1), le(index_merge.t1.c1, 2)
+    └─TableRowIDScan_10	3490.25	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and (c1 between 1 and 2) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
