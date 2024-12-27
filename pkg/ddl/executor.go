@@ -1565,11 +1565,13 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 }
 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
-// and returns the last charset and collate in options. If there is no charset in the options,
-// the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
-	for i := startIdx; i < len(options); i++ {
-		opt := options[i]
+// and returns the last charset (chs) and collation (coll) in options.
+//
+// If there is no TableOptionCharset or TableOptionCollate in the options, this functions returns "" for both.
+// If there is only a TableOptionCharset then coll will be set to the default collation for the charset.
+// If there is only a TableOptionCollate then the chs will be set to the charset of the collation.
+func GetCharsetAndCollateInTableOption(options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
+	for _, opt := range options {
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
@@ -1838,7 +1840,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
-			for i, opt := range spec.Options {
+			for _, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > variable.MaxShardRowIDBits {
@@ -1865,7 +1867,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					if err != nil {
 						return err
 					}

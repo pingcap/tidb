@@ -706,7 +706,7 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
