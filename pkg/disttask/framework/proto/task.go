@@ -15,6 +15,8 @@
 package proto
 
 import (
+	"cmp"
+	"fmt"
 	"time"
 )
 
@@ -146,16 +148,19 @@ func (t *TaskBase) CompareTask(other *Task) int {
 // Compare compares two tasks by task rank.
 // returns < 0 represents rank of t is higher than 'other'.
 func (t *TaskBase) Compare(other *TaskBase) int {
-	if t.Priority != other.Priority {
-		return t.Priority - other.Priority
+	if r := cmp.Compare(t.Priority, other.Priority); r != 0 {
+		return r
 	}
-	if t.CreateTime != other.CreateTime {
-		if t.CreateTime.Before(other.CreateTime) {
-			return -1
-		}
-		return 1
+	if r := t.CreateTime.Compare(other.CreateTime); r != 0 {
+		return r
 	}
-	return int(t.ID - other.ID)
+	return cmp.Compare(t.ID, other.ID)
+}
+
+// String implements fmt.Stringer interface.
+func (t *TaskBase) String() string {
+	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, concurrency: %d, target scope: %s, create time: %s}",
+		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.Concurrency, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
 }
 
 // Task represents the task of distributed framework.

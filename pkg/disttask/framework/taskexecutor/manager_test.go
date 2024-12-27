@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
@@ -131,7 +132,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutor
 		})
 
@@ -153,7 +154,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	ch := make(chan struct{})
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(*proto.StepResource) {
+	mockInternalExecutor.EXPECT().Run().DoAndReturn(func() {
 		<-ch
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task.ID).Return(&proto.Task{TaskBase: *task}, nil)
@@ -181,7 +182,7 @@ func TestManager(t *testing.T) {
 		3: mock.NewMockTaskExecutor(ctrl),
 	}
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutors[task.ID]
 		})
 	id := "test"
@@ -201,7 +202,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutors[task1.ID].EXPECT().GetTaskBase().Return(task1).Times(2)
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any())
+	mockInternalExecutors[task1.ID].EXPECT().Run()
 	mockInternalExecutors[task1.ID].EXPECT().Close()
 	// task2
 	mockTaskTable.EXPECT().CancelSubtask(m.ctx, m.id, task2.ID)
@@ -222,7 +223,7 @@ func TestManagerHandleTasks(t *testing.T) {
 	mockTaskTable := mock.NewMockTaskTable(ctrl)
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutor
 		})
 	id := "test"
@@ -256,7 +257,7 @@ func TestManagerHandleTasks(t *testing.T) {
 		Return([]*storage.TaskExecInfo{{TaskBase: task1}}, nil)
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutor.EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutor.EXPECT().Run().DoAndReturn(func() error {
 		return <-ch
 	})
 	m.handleTasks()
@@ -303,7 +304,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		3: mock.NewMockTaskExecutor(ctrl),
 	}
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, task *proto.Task, param Param) TaskExecutor {
 			return mockInternalExecutors[task.ID]
 		})
 	id := "test"
@@ -340,6 +341,16 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task2.ID].EXPECT().GetTaskBase().Return(task2).AnyTimes()
 	mockInternalExecutors[task3.ID].EXPECT().GetTaskBase().Return(task3).AnyTimes()
 
+	// init error, allocated slot will be released
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
+	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(errors.New("some error"))
+	mockInternalExecutors[task1.ID].EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{TaskBase: task1}})
+	require.True(t, ctrl.Satisfied())
+	require.False(t, m.isExecutorStarted(task1.ID))
+	require.Equal(t, 10, m.slotManager.availableSlots())
+	require.Empty(t, m.slotManager.executorTasks)
+
 	ch := make(chan error)
 	defer close(ch)
 
@@ -352,7 +363,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
 	// task1 start running
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Run().DoAndReturn(func() error {
 		return <-ch
 	})
 
@@ -373,11 +384,11 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
 
-	// ******** Test task occupation ********
+	// ******** Test task preemption ********
 	// task1 start running
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
 	mockInternalExecutors[task1.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task1.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task1.ID].EXPECT().Run().DoAndReturn(func() error {
 		return <-ch
 	})
 
@@ -412,12 +423,12 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 5. available is enough, task3/task2 alloc success,
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task2.ID).Return(&proto.Task{TaskBase: *task2}, nil)
 	mockInternalExecutors[task2.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task2.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task2.ID].EXPECT().Run().DoAndReturn(func() error {
 		return <-ch
 	})
 	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task3.ID).Return(&proto.Task{TaskBase: *task3}, nil)
 	mockInternalExecutors[task3.ID].EXPECT().Init(gomock.Any()).Return(nil)
-	mockInternalExecutors[task3.ID].EXPECT().Run(gomock.Any()).DoAndReturn(func(_ *proto.StepResource) error {
+	mockInternalExecutors[task3.ID].EXPECT().Run().DoAndReturn(func() error {
 		return <-ch
 	})
 
@@ -434,6 +445,41 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutors[task2.ID].EXPECT().Close()
 	mockInternalExecutors[task3.ID].EXPECT().Close()
 	ch <- nil
+	ch <- nil
+	m.executorWG.Wait()
+	require.Equal(t, 10, m.slotManager.availableSlots())
+	require.Equal(t, 0, len(m.slotManager.executorTasks))
+	require.True(t, ctrl.Satisfied())
+
+	// task rank: task3(1), task1(4), task2(1)
+	task1.Concurrency = 4
+	// task3 exchange to 8 slots, task1 cannot start, and we will skip task2 too.
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task3.ID).Return(&proto.Task{TaskBase: *task3}, nil)
+	mockInternalExecutors[task3.ID].EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutors[task3.ID].EXPECT().Run().DoAndReturn(func() error {
+		return <-ch
+	})
+	mockTaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(&proto.Task{TaskBase: *task1}, nil)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/beforeCallStartTaskExecutor",
+		func(task *proto.TaskBase) {
+			if task.ID == task1.ID {
+				newTask3 := *task3
+				newTask3.Concurrency = 8
+				require.True(t, m.slotManager.exchange(&newTask3))
+				require.Equal(t, 2, m.slotManager.availableSlots())
+			}
+		},
+	)
+	m.handleExecutableTasks([]*storage.TaskExecInfo{{TaskBase: task3}, {TaskBase: task1}, {TaskBase: task2}})
+	require.Eventually(t, func() bool {
+		return ctrl.Satisfied()
+	}, 2*time.Second, 300*time.Millisecond)
+	require.Equal(t, 2, m.slotManager.availableSlots())
+	require.Len(t, m.slotManager.executorTasks, 1)
+	require.EqualValues(t, 8, m.slotManager.executorTasks[0].Concurrency)
+	require.True(t, m.isExecutorStarted(task3.ID))
+	// finish
+	mockInternalExecutors[task3.ID].EXPECT().Close()
 	ch <- nil
 	m.executorWG.Wait()
 	require.Equal(t, 10, m.slotManager.availableSlots())

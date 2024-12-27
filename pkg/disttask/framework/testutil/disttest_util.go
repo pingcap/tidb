@@ -86,8 +86,8 @@ func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt schedu
 	})
 
 	taskexecutor.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, task, param)
 			s.Extension = executorExt
 			return s
 		},

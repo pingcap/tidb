@@ -17,6 +17,7 @@ package execute
 import (
 	"context"
 	"reflect"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
@@ -49,6 +50,10 @@ type StepExecutor interface {
 	// the returned error will not affect task/subtask state, it's only logged,
 	// so don't put code that's prone to error in it.
 	Cleanup(context.Context) error
+	// TaskMetaModified is called when the task meta is modified, if any error
+	// happen, framework might recreate the step executor, so don't put code
+	// that's prone to error in it.
+	TaskMetaModified(newTask *proto.Task) error
 }
 
 // SubtaskSummary contains the summary of a subtask.
@@ -71,14 +76,18 @@ type StepExecFrameworkInfo interface {
 	GetStep() proto.Step
 	// GetResource returns the expected resource of this step executor.
 	GetResource() *proto.StepResource
+	// SetResource sets the resource of this step executor.
+	SetResource(resource *proto.StepResource)
 }
 
 var stepExecFrameworkInfoName = reflect.TypeFor[StepExecFrameworkInfo]().Name()
 
 type frameworkInfo struct {
 	step     proto.Step
-	resource *proto.StepResource
+	resource atomic.Pointer[proto.StepResource]
 }
+
+var _ StepExecFrameworkInfo = (*frameworkInfo)(nil)
 
 func (*frameworkInfo) restricted() {}
 
@@ -87,7 +96,11 @@ func (f *frameworkInfo) GetStep() proto.Step {
 }
 
 func (f *frameworkInfo) GetResource() *proto.StepResource {
-	return f.resource
+	return f.resource.Load()
+}
+
+func (f *frameworkInfo) SetResource(resource *proto.StepResource) {
+	f.resource.Store(resource)
 }
 
 // SetFrameworkInfo sets the framework info for the StepExecutor.
@@ -96,9 +109,9 @@ func SetFrameworkInfo(exec StepExecutor, step proto.Step, resource *proto.StepRe
 		return
 	}
 	toInject := &frameworkInfo{
-		step:     step,
-		resource: resource,
+		step: step,
 	}
+	toInject.resource.Store(resource)
 	// use reflection to set the framework info
 	e := reflect.ValueOf(exec)
 	if e.Kind() == reflect.Ptr || e.Kind() == reflect.Interface {
