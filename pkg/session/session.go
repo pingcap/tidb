@@ -182,6 +182,7 @@ type session struct {
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
 	currentPlan base.Plan
 
+	// dom is *domain.Domain, use `any` to avoid import cycle.
 	dom   any
 	store kv.Storage
 
