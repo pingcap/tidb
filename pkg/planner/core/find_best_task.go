@@ -1318,6 +1318,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
 			tmpOneItemAlternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
+<<<<<<< HEAD
 				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
 				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
 					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
@@ -1327,6 +1328,9 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
 				}
 				res := cmp.Compare(lhsCountAfter, rhsCountAfter)
+=======
+				res := cmpAlternatives(ds.SCtx().GetSessionVars())(alternatives[a], alternatives[b])
+>>>>>>> e44c60c0456 (planner: unify OR type IndexMerge code paths (#58396))
 				if res != 0 {
 					return res
 				}
@@ -1376,6 +1380,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
+<<<<<<< HEAD
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for _, path := range determinedIndexPartialPaths {
 		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
@@ -1397,6 +1402,14 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
 		shouldKeepCurrentFilter = true
 	}
+=======
+	for _, p := range determinedIndexPartialPaths {
+		if p.KeepIndexMergeORSourceFilter {
+			shouldKeepCurrentFilter = true
+			break
+		}
+	}
+>>>>>>> e44c60c0456 (planner: unify OR type IndexMerge code paths (#58396))
 	if shouldKeepCurrentFilter {
 		// add the cnf expression back as table filer.
 		indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.IndexMergeORSourceFilter)
