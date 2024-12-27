@@ -257,12 +257,32 @@ innodb_default_row_format	dynamic
 SHOW VARIABLES LIKE 'character_set_server';
 Variable_name	Value
 character_set_server	utf8mb4
+SHOW VARIABLES LIKE 'innodb_additional_mem_pool_size';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_checksums';
+Variable_name	Value
 SHOW VARIABLES LIKE 'innodb_file_format';
 Variable_name	Value
-innodb_file_format	Barracuda
+SHOW VARIABLES LIKE 'innodb_file_format_check';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_file_format_max';
+Variable_name	Value
 SHOW VARIABLES LIKE 'innodb_large_prefix';
 Variable_name	Value
-innodb_large_prefix	ON
+SHOW VARIABLES LIKE 'innodb_locks_unsafe_for_binlog';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_log_checksum_algorithm';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_mirrored_log_groups';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_stats_sample_pages';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_support_xa';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_undo_logs';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_use_sys_malloc';
+Variable_name	Value
 drop table if exists t;
 create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";

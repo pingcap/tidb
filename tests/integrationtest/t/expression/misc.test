@@ -181,8 +181,22 @@ set global innodb_default_row_format = dynamic;
 set global innodb_default_row_format = 'dynamic';
 SHOW VARIABLES LIKE 'innodb_default_row_format';
 SHOW VARIABLES LIKE 'character_set_server';
+
+# Removed InnoDB variables, these are from before MySQL 8.0
+# https://github.com/pingcap/tidb/issues/9142
+SHOW VARIABLES LIKE 'innodb_additional_mem_pool_size';
+SHOW VARIABLES LIKE 'innodb_checksums';
 SHOW VARIABLES LIKE 'innodb_file_format';
+SHOW VARIABLES LIKE 'innodb_file_format_check';
+SHOW VARIABLES LIKE 'innodb_file_format_max';
 SHOW VARIABLES LIKE 'innodb_large_prefix';
+SHOW VARIABLES LIKE 'innodb_locks_unsafe_for_binlog';
+SHOW VARIABLES LIKE 'innodb_log_checksum_algorithm';
+SHOW VARIABLES LIKE 'innodb_mirrored_log_groups';
+SHOW VARIABLES LIKE 'innodb_stats_sample_pages';
+SHOW VARIABLES LIKE 'innodb_support_xa';
+SHOW VARIABLES LIKE 'innodb_undo_logs';
+SHOW VARIABLES LIKE 'innodb_use_sys_malloc';
 
 # TestIfNullParamMarker
 drop table if exists t;
