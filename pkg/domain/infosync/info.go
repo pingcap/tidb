@@ -131,7 +131,10 @@ type InfoSyncer struct {
 	infoCache             infoschemaMinTS
 }
 
-// ServerInfo is server's basic information.
+// ServerInfo represents the server's basic information.
+// It consists of two sections: static and dynamic.
+// The static information is generated during the startup of the TiDB server and should never be modified while the TiDB server is running.
+// The dynamic information can be updated while the TiDB server is running and should be synchronized with PD's etcd.
 type ServerInfo struct {
 	StaticServerInfo
 	DynamicServerInfo
@@ -168,6 +171,7 @@ func (info *ServerInfo) Unmarshal(v []byte) error {
 
 // StaticServerInfo is server static information.
 // It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
+// DO NOT edit it after tidb-server started.
 type StaticServerInfo struct {
 	ServerVersionInfo
 	ID             string `json:"ddl_id"`
@@ -184,8 +188,10 @@ type StaticServerInfo struct {
 	JSONServerID uint64 `json:"server_id"`
 }
 
-// DynamicServerInfo is server dynamic information.
-// It will be updated when tidb-server running. Take care it may be changed when TiDB is running.
+// DynamicServerInfo represents the dynamic information of the server.
+// Please note that it may change when TiDB is running.
+// To update the dynamic server information, use `InfoSyncer.cloneDynamicServerInfo` to obtain a copy of the dynamic server info.
+// After making modifications, use `InfoSyncer.setDynamicServerInfo` to update the dynamic server information.
 type DynamicServerInfo struct {
 	Labels map[string]string `json:"labels"`
 }
