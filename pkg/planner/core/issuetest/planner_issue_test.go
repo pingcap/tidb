@@ -177,3 +177,12 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestIssue58685(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE `t174f86ac` (`col_82` decimal(21,13) NOT NULL,`col_83` json NOT NULL,`col_84` time NOT NULL,`col_85` date NOT NULL DEFAULT '1996-11-01',`col_86` tinyint(1) NOT NULL DEFAULT '1',`col_87` decimal(19,3) NOT NULL DEFAULT '7149.18',`col_88` json NOT NULL,`col_89` json NOT NULL,KEY `idx_41` (`col_82`,(cast(`col_83` as signed array)))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;")
+	tk.MustQuery("explain SELECT * FROM `t174f86ac` JOIN (SELECT LOWER(`t174f86ac`.`col_84`) AS `r3` FROM `t174f86ac`) AS `st_440` ON `t174f86ac`.`col_84`=`st_440`.`r3` WHERE `t174f86ac`.`col_84` IN ('02:13:25');").
+		Check(testkit.Rows())
+}
