@@ -105,6 +105,7 @@ type litBackendCtx struct {
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
 	initTS          uint64
+	importTS        uint64
 
 	// unregisterMu prevents concurrent calls of `FinishAndUnregisterEngines`.
 	// For details, see https://github.com/pingcap/tidb/issues/53843.
@@ -411,7 +412,7 @@ func (bc *litBackendCtx) GetImportTS() uint64 {
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.GetTS()
 	}
-	return 0
+	return bc.importTS
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.

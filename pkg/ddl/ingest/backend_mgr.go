@@ -59,13 +59,16 @@ type BackendCtxBuilder struct {
 	job   *model.Job
 
 	etcdClient *clientv3.Client
+	importTS   uint64
+
 	sessPool   *sess.Pool
 	physicalID int64
 }
 
 // WithImportDistributedLock needs a etcd client to maintain a distributed lock during partial import.
-func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client) *BackendCtxBuilder {
+func (b *BackendCtxBuilder) WithImportDistributedLock(etcdCli *clientv3.Client, importTS uint64) *BackendCtxBuilder {
 	b.etcdClient = etcdCli
+	b.importTS = importTS
 	return b
 }
 
@@ -139,7 +142,7 @@ func (b *BackendCtxBuilder) Build() (BackendCtx, error) {
 	}
 
 	bCtx := newBackendContext(ctx, job.ID, bd, cfg,
-		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, cpMgr)
+		defaultImportantVariables, LitMemRoot, b.etcdClient, job.RealStartTS, b.importTS, cpMgr)
 
 	logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", job.ID),
 		zap.Int64("current memory usage", LitMemRoot.CurrentUsage()),
@@ -199,7 +202,7 @@ func newBackendContext(
 	vars map[string]string,
 	memRoot MemRoot,
 	etcdClient *clientv3.Client,
-	initTS uint64,
+	initTS, importTS uint64,
 	cpMgr *CheckpointManager,
 ) *litBackendCtx {
 	bCtx := &litBackendCtx{
@@ -213,6 +216,7 @@ func newBackendContext(
 		updateInterval: checkpointUpdateInterval,
 		etcdClient:     etcdClient,
 		initTS:         initTS,
+		importTS:       importTS,
 		checkpointMgr:  cpMgr,
 	}
 	bCtx.timeOfLastFlush.Store(time.Now())
