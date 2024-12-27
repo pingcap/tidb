@@ -372,8 +372,7 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
-func isGAForHashJoinV2(p *logicalop.LogicalJoin, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
-
+func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
 	// nullaware join
 	if len(leftNAJoinKeys) > 0 {
 		return false
@@ -388,7 +387,7 @@ func isGAForHashJoinV2(p *logicalop.LogicalJoin, leftJoinKeys []*expression.Colu
 			return false
 		}
 	}
-	switch p.JoinType {
+	switch joinType {
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
 		return true
 	default:
@@ -400,7 +399,7 @@ func isGAForHashJoinV2(p *logicalop.LogicalJoin, leftJoinKeys []*expression.Colu
 func canUseHashJoinV2(p *logicalop.LogicalJoin) bool {
 	leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
 	leftNAJoinKeys, _ := p.GetNAJoinKeys()
-	if !isGAForHashJoinV2(p, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+	if !isGAForHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
 	switch p.JoinType {

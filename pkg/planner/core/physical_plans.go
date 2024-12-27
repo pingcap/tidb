@@ -1491,26 +1491,7 @@ type PhysicalHashJoin struct {
 }
 
 func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
-	// nullaware join
-	if len(p.LeftNAJoinKeys) > 0 {
-		return false
-	}
-	// cross join
-	if len(p.LeftJoinKeys) == 0 {
-		return false
-	}
-	// join with null equal condition
-	for _, value := range p.IsNullEQ {
-		if value {
-			return false
-		}
-	}
-	switch p.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
-		return true
-	default:
-		return false
-	}
+	return isGAForHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
 }
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
