@@ -3236,3 +3236,19 @@ insert into test.t values('20000102030405.0078125');
 select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
 a
 20000102030405.008
+drop table if exists t0;
+create table `t0`
+(
+`vkey` integer,
+`pkey` integer,
+`c0`   integer
+);
+insert into `t0`
+values (1, 2, 3);
+select *
+from `t0`
+where (nullif(
+3 ^ 10 & (abs(-50)) ,
+round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
+)) in (select `vkey` from `t0` where false);
+vkey	pkey	c0
