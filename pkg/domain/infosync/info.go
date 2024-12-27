@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -191,12 +192,8 @@ type DynamicServerInfo struct {
 
 // clone the DynamicServerInfo.
 func (d *DynamicServerInfo) clone() *DynamicServerInfo {
-	labels := make(map[string]string, len(d.Labels))
-	for k, v := range d.Labels {
-		labels[k] = v
-	}
 	return &DynamicServerInfo{
-		Labels: labels,
+		Labels: maps.Clone(d.Labels),
 	}
 }
 
@@ -1077,10 +1074,6 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 // getServerInfo gets self tidb server information.
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
-	labels := make(map[string]string, len(cfg.Labels))
-	for k, v := range cfg.Labels {
-		labels[k] = v
-	}
 	info := &ServerInfo{
 		StaticServerInfo: StaticServerInfo{
 			ID:             id,
@@ -1092,7 +1085,7 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			ServerIDGetter: serverIDGetter,
 		},
 		DynamicServerInfo: DynamicServerInfo{
-			Labels: labels,
+			Labels: maps.Clone(cfg.Labels),
 		},
 	}
 	info.Version = mysql.ServerVersion
