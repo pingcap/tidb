@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	onceSetToSuccess atomic.Bool
+	lastStatus atomic.Bool
 )
 
 // SetUnit set unit "backup/restore" for summary log.
@@ -45,15 +45,13 @@ func CollectUint(name string, t uint64) {
 
 // SetSuccessStatus sets final success status.
 func SetSuccessStatus(success bool) {
-	if success {
-		onceSetToSuccess.Store(true)
-	}
+	lastStatus.Store(success)
 	collector.SetSuccessStatus(success)
 }
 
-// Succeed returns whether a `SetSuccessStatus(true)` was call.
+// Succeed returns whether the last call to `SetSuccessStatus` passes `true`.
 func Succeed() bool {
-	return onceSetToSuccess.Load()
+	return lastStatus.Load()
 }
 
 // NowDureTime returns the duration between start time and current time

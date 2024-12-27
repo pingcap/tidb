@@ -451,5 +451,5 @@ func TestFailureRestoreAndPiTR(t *testing.T) {
 		rc.FullBackupStorage = "local://" + kit.base + "/full2"
 	})
 	res := kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", t.Name()))
-	res.Check([][]any{})
+	res.Check([][]any{{0}})
 }
