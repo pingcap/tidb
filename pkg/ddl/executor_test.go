@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -315,4 +316,83 @@ func TestHandleLockTable(t *testing.T) {
 		require.Len(t, se.GetAllTableLocks(), 1)
 		checkTableLocked(1, pmodel.TableLockRead)
 	})
+}
+
+func TestGetCharsetAndCollateInTableOption(t *testing.T) {
+	cases := []struct {
+		opts       []*ast.TableOption
+		utf8mb4def string
+		err        bool
+		chs        string
+		coll       string
+	}{
+		{
+			[]*ast.TableOption{},
+			"utf8mb4_bin",
+			false,
+			"",
+			"",
+		},
+		{
+			[]*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"}},
+			"utf8mb4_bin",
+			false,
+			"utf8mb4",
+			"utf8mb4_bin",
+		},
+		{
+			[]*ast.TableOption{{Tp: ast.TableOptionCollate, StrValue: "utf8_general_ci"}},
+			"utf8mb4_bin",
+			false,
+			"utf8",
+			"utf8_general_ci",
+		},
+		{
+			[]*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: "utf8"}, {Tp: ast.TableOptionCollate, StrValue: "utf8_unicode_ci"}},
+			"utf8mb4_bin",
+			false,
+			"utf8",
+			"utf8_unicode_ci",
+		},
+
+		// Error cases below
+		{
+			// Unknown collation
+			[]*ast.TableOption{{Tp: ast.TableOptionCollate, StrValue: "utf7_bin"}},
+			"utf8mb4_bin",
+			true,
+			"",
+			"",
+		},
+		{
+			// Unknown charset
+			[]*ast.TableOption{{Tp: ast.TableOptionCharset, StrValue: "utf7"}},
+			"utf8mb4_bin",
+			true,
+			"",
+			"",
+		},
+		{
+			// Invalid charset/collation combination
+			[]*ast.TableOption{
+				{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+				{Tp: ast.TableOptionCollate, StrValue: "utf8_unicode_ci"},
+			},
+			"utf8mb4_bin",
+			true,
+			"",
+			"",
+		},
+	}
+
+	for _, tc := range cases {
+		chs, coll, err := ddl.GetCharsetAndCollateInTableOption(tc.opts, tc.utf8mb4def)
+		if tc.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tc.chs, chs)
+			require.Equal(t, tc.coll, coll)
+		}
+	}
 }
