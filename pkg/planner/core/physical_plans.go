@@ -1062,7 +1062,7 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	for i := oldNumColumns - 1; i >= 0; i-- {
 		cid := schema.Columns[i].ID
 		// All columns with negative cid should be placed at last.
-		if cid < 0 {
+		if cid >= 0 {
 			break
 		}
 		numExtraColumns++
