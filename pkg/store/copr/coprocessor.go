@@ -733,6 +733,7 @@ type liteCopIteratorWorker struct {
 	ctx              context.Context
 	worker           *copIteratorWorker
 	batchCopRespList []*copResponse
+	tryCopLiteWorker *uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -878,8 +879,9 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
 		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
 		// see more detail in TestQueryWithConcurrentSmallCop.
 		it.liteWorker = &liteCopIteratorWorker{
-			ctx:    ctx,
-			worker: newCopIteratorWorker(it, nil),
+			ctx:              ctx,
+			worker:           newCopIteratorWorker(it, nil),
+			tryCopLiteWorker: tryCopLiteWorker,
 		}
 		return
 	}
@@ -1194,6 +1196,9 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 			it.tasks = append(result.remains, it.tasks[1:]...)
 		} else {
 			it.tasks = it.tasks[1:]
+		}
+		if len(it.tasks) == 0 {
+			atomic.StoreUint32(w.tryCopLiteWorker, 0)
 		}
 		if result != nil {
 			if result.resp != nil {
