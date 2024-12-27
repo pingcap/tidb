@@ -386,7 +386,16 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+		if !forceLeftToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+		} else if !forceRightToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, true))
+		} else {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+			joins = append(joins, getHashJoin(p, prop, 1, true))
+		}
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build and probe side for semi join.

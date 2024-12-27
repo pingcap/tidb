@@ -1582,7 +1582,7 @@ Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(92233720368547758
 select 1 / '2007' div 1;
 1 / '2007' div 1
 0
-set sql_mode=default
+set sql_mode=default;
 DROP TABLE IF EXISTS table_string;
 CREATE TABLE table_string(a CHAR(20), b VARCHAR(20), c TINYTEXT, d TEXT(20), e MEDIUMTEXT, f LONGTEXT, g BIGINT);
 INSERT INTO table_string (a, b, c, d, e, f, g) VALUES ('a', 'b', 'c', 'd', 'e', 'f', 2);
@@ -3340,31 +3340,31 @@ SELECT MID('abc',2);
 MID('abc',2)
 bc
 SELECT CURRENT_TIME(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 21 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 21 near "-1)" 
 SELECT CURRENT_TIME(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'current_time'. Maximum is 6.
 SELECT CURRENT_TIME(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT CURRENT_TIMESTAMP(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 26 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 26 near "-1)" 
 SELECT CURRENT_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'current_timestamp'. Maximum is 6.
 SELECT CURRENT_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT CURTIME(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "-1)" 
 SELECT CURTIME(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'curtime'. Maximum is 6.
 SELECT CURTIME(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT LOCALTIME(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 18 near "-1)" 
 SELECT LOCALTIME(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'localtime'. Maximum is 6.
 SELECT LOCALTIME(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT LOCALTIMESTAMP(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 23 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 23 near "-1)" 
 SELECT LOCALTIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'localtimestamp'. Maximum is 6.
 SELECT LOCALTIMESTAMP(2147483648);
@@ -3376,19 +3376,19 @@ Error 1426 (42000): Too-big precision 2147483647 specified for 'now'. Maximum is
 SELECT NOW(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT SYSDATE(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 16 near "-1)" 
 SELECT SYSDATE(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'sysdate'. Maximum is 6.
 SELECT SYSDATE(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT UTC_TIME(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 17 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 17 near "-1)" 
 SELECT UTC_TIME(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_time'. Maximum is 6.
 SELECT UTC_TIME(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
 SELECT UTC_TIMESTAMP(-1);
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 22 near "-1);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 22 near "-1)" 
 SELECT UTC_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. Maximum is 6.
 SELECT UTC_TIMESTAMP(2147483648);

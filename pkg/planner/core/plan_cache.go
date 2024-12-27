@@ -64,7 +64,11 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		var (
+			val types.Datum
+			err error
+		)
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
