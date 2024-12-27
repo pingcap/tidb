@@ -37,7 +37,7 @@ import (
 )
 
 type conflictResolutionStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	taskID   int64
 	store    tidbkv.Storage
 	taskMeta *TaskMeta

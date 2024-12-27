@@ -31,7 +31,7 @@ import (
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	job           *model.Job
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
