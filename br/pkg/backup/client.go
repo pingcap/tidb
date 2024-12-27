@@ -48,6 +48,8 @@ const (
 	// MaxResolveLocksbackupOffSleep is the maximum sleep time for resolving locks.
 	// 10 minutes for every round.
 	MaxResolveLocksbackupOffSleepMs = 600000
+
+	IncompleteRangesUpdateInterval = time.Second * 10
 )
 
 // ClientMgr manages connections needed by backup.
@@ -183,6 +185,9 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 	round := uint64(0)
 	// reset grpc connection every round except key_locked error.
 	reset := true
+	// update incompleteRanges to advance the progress and the request.
+	incompleteRangesUpdateTicker := time.NewTicker(IncompleteRangesUpdateInterval)
+	defer incompleteRangesUpdateTicker.Stop()
 mainLoop:
 	for {
 		round += 1
@@ -265,6 +270,7 @@ mainLoop:
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
+		incompleteRangesUpdateTicker.Reset(IncompleteRangesUpdateInterval)
 	handleLoop:
 		for {
 			select {
@@ -272,6 +278,9 @@ mainLoop:
 				handleCancel()
 				mainCancel()
 				return ctx.Err()
+			case <-incompleteRangesUpdateTicker.C:
+				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
+				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
