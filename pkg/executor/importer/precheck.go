@@ -63,11 +63,6 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
 		}
-		// run global sort with < 8 thread might OOM on ingest step
-		// TODO: remove this limit after control memory usage.
-		if e.IsGlobalSort() && e.ThreadCnt < 8 {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
-		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
