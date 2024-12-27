@@ -19,7 +19,6 @@ import (
 	"context"
 	"crypto/tls"
 	"slices"
-	goatomic "sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -328,7 +327,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
-	TryCopLiteWorker           *goatomic.Uint32
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.

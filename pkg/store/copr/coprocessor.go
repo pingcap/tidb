@@ -63,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
+	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -733,7 +734,7 @@ type liteCopIteratorWorker struct {
 	ctx              context.Context
 	worker           *copIteratorWorker
 	batchCopRespList []*copResponse
-	tryCopLiteWorker *atomic.Uint32
+	tryCopLiteWorker *atomic2.Uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -874,7 +875,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic.Uint32) {
+func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint32) {
 	if len(it.tasks) == 1 && tryCopLiteWorker != nil && tryCopLiteWorker.CompareAndSwap(0, 1) {
 		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
 		// see more detail in TestQueryWithConcurrentSmallCop.

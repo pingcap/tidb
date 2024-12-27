@@ -15,7 +15,6 @@
 package context
 
 import (
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"go.uber.org/atomic"
 )
 
 // DistSQLContext provides all information needed by using functions in `distsql`
