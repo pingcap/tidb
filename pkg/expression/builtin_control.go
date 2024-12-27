@@ -255,7 +255,8 @@ func InferType4ControlFuncs(ctx BuildContext, funcName string, args ...Expressio
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
-		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull {
+		ci, ok := args[i].(*Constant)
+		if args[i].GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeNull || (ok && ci.Value.Kind() == types.KindNull) {
 			nullFields = append(nullFields, args[i].GetType(ctx.GetEvalCtx()))
 		} else {
 			notNullFields = append(notNullFields, args[i].GetType(ctx.GetEvalCtx()))
