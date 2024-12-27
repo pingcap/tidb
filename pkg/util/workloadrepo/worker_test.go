@@ -556,7 +556,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 	require.NotNil(t, tbInfo)
 	pi := tbInfo.GetPartitionInfo()
 	tp := make(map[string]struct{})
-	if pi != nil {
+	if pi != nil && pi.Definitions != nil {
 		for _, p := range pi.Definitions {
 			tp[p.Name.L] = struct{}{}
 		}

@@ -84,7 +84,7 @@ func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
 		return fmt.Errorf("workload repository could not load information for '%s'", tbl.destTable)
 	}
 	pi := tbInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || pi.Definitions == nil {
 		return fmt.Errorf("workload repository could not load partition information for '%s'", tbl.destTable)
 	}
 	for _, pt := range pi.Definitions {

@@ -173,7 +173,7 @@ func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName
 		return false
 	}
 	pi := tbInfo.GetPartitionInfo()
-	if pi == nil {
+	if pi == nil || pi.Definitions == nil || len(pi.Definitions) == 0 {
 		return false
 	}
 	ptInfos := pi.Definitions

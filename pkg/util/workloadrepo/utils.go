@@ -44,7 +44,7 @@ func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now t
 	firstPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	if tbInfo != nil {
 		pi := tbInfo.GetPartitionInfo()
-		if pi != nil {
+		if pi != nil && pi.Definitions != nil && len(pi.Definitions) > 0 {
 			ptInfos := pi.Definitions
 			lastPartDate, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
 			if err != nil {
