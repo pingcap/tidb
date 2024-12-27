@@ -434,11 +434,11 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-	leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
-	leftNAJoinKeys, _ := p.GetNAJoinKeys()
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
+		leftNAJoinKeys, _ := p.GetNAJoinKeys()
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, false))
