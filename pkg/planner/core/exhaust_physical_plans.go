@@ -396,13 +396,11 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 }
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
-func canUseHashJoinV2(p *logicalop.LogicalJoin) bool {
-	leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
-	leftNAJoinKeys, _ := p.GetNAJoinKeys()
-	if !isGAForHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+	if !isGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
-	switch p.JoinType {
+	switch joinType {
 	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
 		// null aware join is not supported yet
 		if len(leftNAJoinKeys) > 0 {
@@ -436,11 +434,12 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-
+	leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
+	leftNAJoinKeys, _ := p.GetNAJoinKeys()
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p) {
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, false))
 			} else if !forceRightToBuild {

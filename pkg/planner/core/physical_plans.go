@@ -21,7 +21,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1496,29 +1495,7 @@ func (p *PhysicalHashJoin) isGAForHashJoinV2() bool {
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
-	if !p.isGAForHashJoinV2() && !joinversion.UseHashJoinV2ForNonGAJoin {
-		return false
-	}
-	switch p.JoinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
-		// null aware join is not supported yet
-		if len(p.LeftNAJoinKeys) > 0 {
-			return false
-		}
-		// cross join is not supported
-		if len(p.LeftJoinKeys) == 0 {
-			return false
-		}
-		// NullEQ is not supported yet
-		for _, value := range p.IsNullEQ {
-			if value {
-				return false
-			}
-		}
-		return true
-	default:
-		return false
-	}
+	return canUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
 }
 
 // Clone implements op.PhysicalPlan interface.
