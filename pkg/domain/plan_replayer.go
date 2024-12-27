@@ -571,7 +571,7 @@ type PlanReplayerDumpTask struct {
 
 	// variables used to dump the plan
 	StartTS           uint64
-	SessionBindings   []bindinfo.Bindings
+	SessionBindings   [][]*bindinfo.Binding
 	EncodedPlan       string
 	SessionVars       *variable.SessionVars
 	ExecStmts         []ast.StmtNode

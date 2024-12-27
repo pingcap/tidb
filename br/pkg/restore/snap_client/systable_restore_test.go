@@ -116,5 +116,5 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(240), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(241), session.CurrentBootstrapVersion)
 }

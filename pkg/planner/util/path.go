@@ -52,17 +52,41 @@ type AccessPath struct {
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
 
-	// ************************************************** special field below *********************************************************
-	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
-	// when PartialAlternativeIndexPaths is not empty, it means a special state for index merge path, and it can't have PartialIndexPaths
-	// at same time. Normal single index or table path also doesn't use this field.
-	PartialAlternativeIndexPaths [][]*AccessPath
-	// KeepIndexMergeORSourceFilter and IndexMergeORSourceFilter are only used with PartialAlternativeIndexPaths, which means for
-	// the new state/type of access path. (undetermined index merge path)
+	// The 3 fields below are for another case for building IndexMerge path besides AccessPath.PartialIndexPaths.
+	// Currently, it only applies to OR type IndexMerge.
+	// For every item in the OR list, there might be multiple candidate paths that satisfy the filters.
+	// The AccessPath.PartialIndexPaths case decides on one of them when building AccessPath. But here, we keep all the
+	// alternatives and make the decision later in findBestTask (see matchPropForIndexMergeAlternatives()).
+	// It's because we only know the required Sort property at that time. Delaying the decision to findBestTask can make
+	// us able to consider and try to satisfy the required Sort property.
+	/* For example:
+		create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+		explain format='verbose' select * from t where a=1 or b=1 order by c;
+	For a=1, it has two partial alternative paths: [a, ac]
+	For b=1, it has two partial alternative paths: [b, bc]
+	Then we build such a AccessPath:
+		AccessPath {
+			PartialAlternativeIndexPaths: [[[a], [ac]], [[b], [bc]]]
+			IndexMergeORSourceFilter: a = 1 or b = 1
+		}
+	*/
+
+	// PartialAlternativeIndexPaths stores all the alternative paths for each OR branch.
+	// meaning of the 3 dimensions:
+	// each OR branch -> each alternative for this OR branch -> each access path of this alternative (One JSON filter on
+	// MV index may build into multiple partial paths. For example, json_overlap(a, '[1, 2, 3]') builds into 3 partial
+	// paths in the final plan. For non-MV index, each alternative only has one AccessPath.)
+	PartialAlternativeIndexPaths [][][]*AccessPath
+	// KeepIndexMergeORSourceFilter indicates if we need to keep IndexMergeORSourceFilter in the final Selection of the
+	// IndexMerge plan.
+	// It has 2 cases:
+	// 1. The AccessPath.PartialAlternativeIndexPaths is set.
+	// If this field is true, the final plan should keep the filter.
+	// 2. It's a children of AccessPath.PartialAlternativeIndexPaths.
+	// If the final plan contains this alternative, it should keep the filter.
 	KeepIndexMergeORSourceFilter bool
-	// IndexMergeORSourceFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	// IndexMergeORSourceFilter is the original OR list for building the IndexMerge path.
 	IndexMergeORSourceFilter expression.Expression
-	// ********************************************************************************************************************************
 
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
@@ -131,15 +155,15 @@ func (path *AccessPath) Clone() *AccessPath {
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
-	for _, partialPath := range path.PartialIndexPaths {
-		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
-	}
-	for _, onePartialAlternative := range path.PartialAlternativeIndexPaths {
-		tmp := make([]*AccessPath, 0, len(onePartialAlternative))
-		for _, oneAlternative := range onePartialAlternative {
-			tmp = append(tmp, oneAlternative.Clone())
+	ret.PartialIndexPaths = SliceDeepClone(path.PartialIndexPaths)
+	ret.PartialAlternativeIndexPaths = make([][][]*AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	for _, oneORBranch := range path.PartialAlternativeIndexPaths {
+		clonedORBranch := make([][]*AccessPath, 0, len(oneORBranch))
+		for _, oneAlternative := range oneORBranch {
+			clonedOneAlternative := SliceDeepClone(oneAlternative)
+			clonedORBranch = append(clonedORBranch, clonedOneAlternative)
 		}
-		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, tmp)
+		ret.PartialAlternativeIndexPaths = append(ret.PartialAlternativeIndexPaths, clonedORBranch)
 	}
 	return ret
 }

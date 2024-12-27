@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bindinfo_test
+package tests
 
 import (
 	"fmt"
@@ -20,24 +20,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
-
-// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
-func showBinding(tk *testkit.TestKit, showStmt string) [][]any {
-	rows := tk.MustQuery(showStmt).Sort().Rows()
-	result := make([][]any, len(rows))
-	for i, r := range rows {
-		result[i] = append(result[i], r[:4]...)
-		result[i] = append(result[i], r[8:10]...)
-	}
-	return result
-}
 
 func TestCrossDBBindingBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -340,3 +331,15 @@ func TestCrossDBBindingPlanCache(t *testing.T) {
 	tk.MustExec(`execute stmt using @v`)
 	hasPlan("IndexFullScan", "index:c(c)")
 }
+
+type mockSessionPool struct {
+	se sessiontypes.Session
+}
+
+func (p *mockSessionPool) Get() (pools.Resource, error) {
+	return p.se, nil
+}
+
+func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Close() {}

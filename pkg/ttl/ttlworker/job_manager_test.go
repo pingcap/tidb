@@ -210,6 +210,16 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
+// ID returns the id of JobManager
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
+}
+
 // CheckFinishedJob is an exported version of checkFinishedJob
 func (m *JobManager) CheckFinishedJob(se session.Session) {
 	m.checkFinishedJob(se)
@@ -694,4 +704,11 @@ func TestSplitCnt(t *testing.T) {
 			require.Equal(t, int(i), getScanSplitCnt(s))
 		}
 	}
+}
+
+// SetTimeFormat sets the time format used by the test.
+// Some tests require a greater precision than the default time format. We don't change it globally to avoid potential compatibility issues.
+// Therefore, the format for most tests are also not changed, to make sure the tests can represent the real-world scenarios.
+func SetTimeFormat(format string) {
+	timeFormat = format
 }

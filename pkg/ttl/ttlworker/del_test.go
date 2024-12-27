@@ -22,6 +22,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -394,10 +395,21 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 }
 
 func TestTTLDeleteRateLimiter(t *testing.T) {
-	origDeleteLimit := variable.TTLDeleteRateLimit.Load()
+	origGlobalDelRateLimiter := globalDelRateLimiter
 	defer func() {
-		variable.TTLDeleteRateLimit.Store(origDeleteLimit)
+		globalDelRateLimiter = origGlobalDelRateLimiter
+		variable.TTLDeleteRateLimit.Store(variable.DefTiDBTTLDeleteRateLimit)
 	}()
+
+	// The global inner limiter should have a default config
+	require.Equal(t, 0, variable.DefTiDBTTLDeleteRateLimit)
+	require.Equal(t, int64(0), variable.TTLDeleteRateLimit.Load())
+	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	// The newDelRateLimiter() should return a default config
+	globalDelRateLimiter = newDelRateLimiter()
+	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer func() {
@@ -413,7 +425,7 @@ func TestTTLDeleteRateLimiter(t *testing.T) {
 
 	variable.TTLDeleteRateLimit.Store(0)
 	require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
-	require.Equal(t, rate.Limit(0), globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
+	require.Equal(t, rate.Inf, globalDelRateLimiter.(*defaultDelRateLimiter).limiter.Limit())
 	require.Equal(t, int64(0), globalDelRateLimiter.(*defaultDelRateLimiter).limit.Load())
 
 	// 0 stands for no limit
@@ -568,4 +580,63 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	// t5 should be success because the buffer flush success while the worker stopping.
 	require.Equal(t, uint64(3), tasks[4].statistics.SuccessRows.Load())
 	require.Equal(t, uint64(0), tasks[4].statistics.ErrorRows.Load())
+}
+
+// TestDelRateLimiterConcurrency is used to test some concurrency cases of delRateLimiter.
+// See issue: https://github.com/pingcap/tidb/issues/58484
+// It tests the below case:
+//  1. The `tidb_ttl_delete_rate_limit` set to some non-zero value such as 128.
+//  2. Some delWorker delete rows concurrency and try to wait for the inner `rate.Limiter`.
+//  3. Before internal `l.limiter.Wait` is called, the `tidb_ttl_delete_rate_limit` is set to 0.
+//     It resets the internal `rate.Limiter` (in the bug codes, its rate is set to 0).
+//  4. The delWorkers in step 2 continue to call l.limiter.Wait.
+//     In the bug codes, some of them are blocked forever because the rate is set to 0.
+func TestDelRateLimiterConcurrency(t *testing.T) {
+	origGlobalDelRateLimiter := globalDelRateLimiter
+	defer func() {
+		globalDelRateLimiter = origGlobalDelRateLimiter
+		variable.TTLDeleteRateLimit.Store(variable.DefTiDBTTLDeleteRateLimit)
+	}()
+
+	globalDelRateLimiter = newDelRateLimiter()
+	require.NoError(t, globalDelRateLimiter.WaitDelToken(context.Background()))
+
+	variable.TTLDeleteRateLimit.Store(128)
+	var waiting atomic.Int64
+	continue1 := make(chan struct{})
+	continue2 := make(chan struct{})
+	continue3 := make(chan struct{})
+	cnt := 4
+	for i := 0; i < cnt; i++ {
+		go func() {
+			ctx := context.WithValue(context.Background(), beforeWaitLimiterForTest, func() {
+				if waiting.Add(1) == int64(cnt) {
+					close(continue1)
+				}
+				<-continue2
+			})
+			require.NoError(t, globalDelRateLimiter.WaitDelToken(ctx))
+			if waiting.Add(-1) == 0 {
+				close(continue3)
+			}
+		}()
+	}
+
+	timeCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	select {
+	case <-continue1:
+		variable.TTLDeleteRateLimit.Store(0)
+		require.NoError(t, globalDelRateLimiter.WaitDelToken(timeCtx))
+		close(continue2)
+	case <-timeCtx.Done():
+		require.FailNow(t, "timeout")
+	}
+
+	select {
+	case <-continue3:
+	case <-timeCtx.Done():
+		require.FailNow(t, "timeout")
+	}
 }
