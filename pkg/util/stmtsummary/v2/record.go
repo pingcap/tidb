@@ -623,14 +623,10 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
