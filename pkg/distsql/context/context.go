@@ -15,6 +15,7 @@
 package context
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -87,7 +88,7 @@ type DistSQLContext struct {
 	ExecDetails *execdetails.SyncExecDetails
 
 	// Only one cop-reader can use lite worker at the same time. Using lite-worker in multiple readers will affect the concurrent execution of readers.
-	TryCopLiteWorker uint32
+	TryCopLiteWorker atomic.Uint32
 }
 
 // AppendWarning appends the warning to the warning handler.

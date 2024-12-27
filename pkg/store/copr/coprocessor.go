@@ -733,7 +733,7 @@ type liteCopIteratorWorker struct {
 	ctx              context.Context
 	worker           *copIteratorWorker
 	batchCopRespList []*copResponse
-	tryCopLiteWorker *uint32
+	tryCopLiteWorker *atomic.Uint32
 }
 
 // copIteratorWorker receives tasks from copIteratorTaskSender, handles tasks and sends the copResponse to respChan.
@@ -874,8 +874,8 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 }
 
 // open starts workers and sender goroutines.
-func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *uint32) {
-	if len(it.tasks) == 1 && tryCopLiteWorker != nil && atomic.CompareAndSwapUint32(tryCopLiteWorker, 0, 1) {
+func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic.Uint32) {
+	if len(it.tasks) == 1 && tryCopLiteWorker != nil && tryCopLiteWorker.CompareAndSwap(0, 1) {
 		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
 		// see more detail in TestQueryWithConcurrentSmallCop.
 		it.liteWorker = &liteCopIteratorWorker{
@@ -1199,7 +1199,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		}
 		if len(it.tasks) == 0 {
 			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-			atomic.StoreUint32(w.tryCopLiteWorker, 0)
+			w.tryCopLiteWorker.Store(0)
 		}
 		if result != nil {
 			if result.resp != nil {
