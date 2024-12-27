@@ -329,7 +329,7 @@ type ParquetParser struct {
 	colMetas    []convertedType
 	columnNames []string
 
-	alloc *allocatorWithStats
+	alloc memory.Allocator
 
 	// colBuffers is used to store raw data read from parquet columns.
 	// rows stores the actual data after parsing.
@@ -353,14 +353,48 @@ type ParquetParser struct {
 }
 
 // GetMemoryUage estimate the memory usage for this file.
-func (pp *ParquetParser) GetMemoryUage() int64 {
-	// The reason for multiplying by six is as follows:
-	// 1. The file reader requires a buffer to accommodate at least one data page.
-	// 2. The page reader needs two buffers: one for storing compressed data and another for uncompressed data.
-	// 3. Only the uncompressed data will be recorded in the parser.
-	// 4. When moving to the next row group, we may allocate three additional buffers.
-	// Therefore, we multiply the memory usage by six to estimate the memory usage.
-	return pp.alloc.Allocated() * 6
+func (pp *ParquetParser) GetMemoryUage() int {
+	// Initialize column reader
+	if pp.dumpers[0].reader == nil {
+		pp.ReadRow()
+	}
+
+	// All the columns share the same data page size,
+	// so we only need to read one column chunk.
+	dumper := pp.dumpers[0]
+	for true {
+		read := dumper.readNextBatch(defaultBatchSize)
+		if read == 0 {
+			break
+		}
+	}
+
+	alloc, ok := pp.alloc.(*sampleAllocator)
+	if !ok {
+		return 0
+	}
+	bufSizes := alloc.allocated
+
+	// We have collected all the allocation for one column chunk.
+	// The allocation order are:
+	// read buffer, decompressed dict buffer, compressed buffer, decompressed data page buffer, compressed data page buffer...
+	// and compressed buffer is released after decompression.
+	// So we estimate the memory usage as:
+	// (roundup(decompressed dict buffer) + roundup(decompressed data page buffer) + roundup(read buffer) + roundup(parquet read buffer)) * num_cols
+
+	dictUsage := 0
+	dataPageUsage := 0
+	readBufferUsage := roundup(bufSizes[0]) + roundup(defaultBufSize)
+	if len(bufSizes) == 3 {
+		dataPageUsage = roundup(bufSizes[1])
+	} else {
+		dictUsage = roundup(bufSizes[1])
+		for i := 3; i < len(bufSizes); i += 2 {
+			dataPageUsage = max(bufSizes[i], dataPageUsage)
+		}
+		dataPageUsage = roundup(dataPageUsage)
+	}
+	return roundup(dataPageUsage+dictUsage+readBufferUsage) * len(pp.columnNames)
 }
 
 func (pp *ParquetParser) setStringData(readNum, col, offset int) {
@@ -553,6 +587,15 @@ func (pp *ParquetParser) Init() error {
 	return nil
 }
 
+// resetReader is used to reclaim the memory used by the column reader.
+func (pp *ParquetParser) resetReader() {
+	for _, d := range pp.dumpers {
+		if d.reader != nil {
+			d.reader.Reset()
+		}
+	}
+}
+
 // ReadRows read several rows internally and store them in the row buffer.
 func (pp *ParquetParser) ReadRows(num int) (int, error) {
 	readNum := min(num, pp.totalRows-pp.curRows)
@@ -564,6 +607,9 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 	for read < readNum {
 		// Move to next row group
 		if pp.curRowInGroup == pp.totalRowsInGroup {
+			if pp.curRowGroup >= 0 {
+				pp.resetReader()
+			}
 			pp.curRowGroup++
 			for c := 0; c < len(pp.dumpers); c++ {
 				rowGroupReader := pp.readers[c].RowGroup(pp.curRowGroup)
@@ -689,6 +735,7 @@ func (pp *ParquetParser) ScannedPos() (int64, error) {
 // Close closes the parquet file of the parser.
 // It implements the Parser interface.
 func (pp *ParquetParser) Close() error {
+	pp.resetReader()
 	for _, r := range pp.readers {
 		if err := r.Close(); err != nil {
 			return errors.Trace(err)
@@ -837,6 +884,7 @@ func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
+	allocator memory.Allocator,
 	path string,
 ) (*ParquetParser, error) {
 	wrapper, ok := r.(*parquetFileWrapper)
@@ -850,8 +898,7 @@ func NewParquetParser(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
-	alloc := &allocatorWithStats{baseAllocator: memory.DefaultAllocator}
-	prop := parquet.NewReaderProperties(alloc)
+	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
@@ -885,6 +932,109 @@ func NewParquetParser(
 			return nil, errors.Trace(err)
 		}
 		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		subreaders = append(subreaders, reader)
+	}
+
+	parser := &ParquetParser{
+		readers:     subreaders,
+		colMetas:    columnMetas,
+		columnNames: columnNames,
+		alloc:       allocator,
+		logger:      log.FromContext(ctx),
+	}
+	parser.Init()
+
+	return parser, nil
+}
+
+type sampleAllocator struct {
+	allocated []int
+}
+
+func (sa *sampleAllocator) Allocate(size int) []byte {
+	sa.allocated = append(sa.allocated, size)
+	return make([]byte, size)
+}
+
+func (sa *sampleAllocator) Free(buf []byte) {}
+
+func (sa *sampleAllocator) Reallocate(size int, buf []byte) []byte {
+	sa.allocated = append(sa.allocated, size)
+	return make([]byte, size)
+}
+
+func roundup(n int) int {
+	v := uint(n)
+	v--
+	v |= v >> 1
+	v |= v >> 2
+	v |= v >> 4
+	v |= v >> 8
+	v |= v >> 16
+	return max(int(v+1), 256<<10)
+}
+
+// NewParquetParserForSampling generates a parquet parser used in sampling.
+// The only difference is that we use a special allocator to track the memory allocation.
+func NewParquetParserForSampling(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	r storage.ReadSeekCloser,
+	path string,
+) (*ParquetParser, error) {
+	wrapper, ok := r.(*parquetFileWrapper)
+	if !ok {
+		wrapper = &parquetFileWrapper{
+			ReadSeekCloser: r,
+			store:          store,
+			ctx:            ctx,
+			path:           path,
+		}
+		wrapper.InitBuffer(defaultBufSize)
+	}
+
+	alloc := &sampleAllocator{}
+	prop := parquet.NewReaderProperties(alloc)
+	prop.BufferedStreamEnabled = true
+
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	fileSchema := reader.MetaData().Schema
+	columnMetas := make([]convertedType, fileSchema.NumColumns())
+	columnNames := make([]string, 0, fileSchema.NumColumns())
+
+	for i := range columnMetas {
+		desc := reader.MetaData().Schema.Column(i)
+		columnNames = append(columnNames, strings.ToLower(desc.Name()))
+
+		logicalType := desc.LogicalType()
+		if logicalType.IsValid() {
+			columnMetas[i].converted, columnMetas[i].decimalMeta = logicalType.ToConvertedType()
+		} else {
+			columnMetas[i].converted = desc.ConvertedType()
+			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
+			columnMetas[i].decimalMeta = pnode.DecimalMetadata()
+		}
+	}
+
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+	for i := 1; i < fileSchema.NumColumns(); i++ {
+		newWrapper, err := wrapper.Open("")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		prop := parquet.NewReaderProperties(nil)
+		prop.BufferedStreamEnabled = true
+		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
+
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

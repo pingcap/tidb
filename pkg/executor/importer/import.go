@@ -1229,6 +1229,7 @@ func (e *LoadDataController) GetParser(
 			ctx,
 			e.dataStore,
 			reader,
+			nil,
 			dataFileInfo.Remote.Path,
 		)
 	}

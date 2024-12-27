@@ -28,6 +28,7 @@ import (
 	"time"
 
 	dmysql "github.com/go-sql-driver/mysql"
+	pmemory "github.com/joechenrh/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -63,6 +64,8 @@ import (
 )
 
 var memLimiter *membuf.Limiter
+var memoryForAllocator int
+var memoryAllocator pmemory.Allocator
 
 func init() {
 	memTotal, err := memory.MemTotal()
@@ -71,7 +74,11 @@ func init() {
 		memTotal = math.MaxInt32
 	}
 	// TODO(joechenrh): set a more proper waterline
-	memLimiter = membuf.NewLimiter(int(memTotal / 5 * 4))
+	memoryForAllocator = int(memTotal / 2)
+	memLimiter = membuf.NewLimiter(memoryForAllocator)
+	allocator := &pmemory.BuddyAllocator{}
+	allocator.Init(memoryForAllocator)
+	memoryAllocator = allocator
 }
 
 // TableImporter is a helper struct to import a table.
@@ -724,8 +731,6 @@ func (tr *TableImporter) preprocessEngine(
 
 	metrics, _ := metric.FromContext(ctx)
 
-	maxMemoryUsage := 0
-
 	// Restore table data
 ChunkLoop:
 	for chunkIndex, chunk := range cp.Chunks {
@@ -793,7 +798,7 @@ ChunkLoop:
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core, memoryAllocator)
 		if err != nil {
 			setError(err)
 			break
@@ -801,21 +806,10 @@ ChunkLoop:
 
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			// To avoid OOM during file opening,
-			// we have to ensure that we have enough memory budget before reading.
-			// Here we use the maximum memory usage we have ever seen as the memory usage estimation.
-			memLimiter.Acquire(maxMemoryUsage)
-			pp := cr.parser.(*mydump.ParquetParser)
-			if _, err := pp.ReadRows(64); err != nil {
-				return nil, errors.Trace(err)
-			}
-			memoryUsage := int(pp.GetMemoryUage())
-			memLimiter.Release(maxMemoryUsage)
-
+			memoryUsage := tr.tableMeta.DataFiles[0].FileMeta.MemoryUsage
 			memLimiter.Acquire(memoryUsage)
 			cr.memLimiter = memLimiter
 			cr.memoryUsage = memoryUsage
-			maxMemoryUsage = max(maxMemoryUsage, memoryUsage)
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()
