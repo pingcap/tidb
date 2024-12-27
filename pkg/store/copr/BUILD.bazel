@@ -67,6 +67,7 @@ go_library(
         "@com_github_twmb_murmur3//:murmur3",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
