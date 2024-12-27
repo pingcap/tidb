@@ -89,8 +89,7 @@ OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR 
 OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
 OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
 OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
-OR Variable_name = 'license' OR Variable_name = 'init_connect';
+OR Variable_name = 'sql_mode' OR Variable_name = 'license' OR Variable_name = 'init_connect';
 
 # TestFloat64Inf
 select '1e800' + 1e100;

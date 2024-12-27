@@ -3638,8 +3638,6 @@ const (
 	SuperReadOnly = "super_read_only"
 	// SQLNotes is the name for 'sql_notes' system variable.
 	SQLNotes = "sql_notes"
-	// QueryCacheType is the name for 'query_cache_type' system variable.
-	QueryCacheType = "query_cache_type"
 	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
 	SlaveCompressedProtocol = "slave_compressed_protocol"
 	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
@@ -3650,8 +3648,6 @@ const (
 	LogSlowAdminStatements = "log_slow_admin_statements"
 	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
 	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
-	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
-	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
 	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
 	SQLAutoIsNull = "sql_auto_is_null"
 	// RelayLogPurge is the name for 'relay_log_purge' system variable.
@@ -3738,8 +3734,6 @@ const (
 	InnodbStatusOutput = "innodb_status_output"
 	// NetBufferLength is the name for 'net_buffer_length' system variable.
 	NetBufferLength = "net_buffer_length"
-	// QueryCacheSize is the name of 'query_cache_size' system variable.
-	QueryCacheSize = "query_cache_size"
 	// TxReadOnly is the name of 'tx_read_only' system variable.
 	TxReadOnly = "tx_read_only"
 	// TransactionReadOnly is the name of 'transaction_read_only' system variable.
