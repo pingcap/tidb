@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/hint",
+        "//pkg/util/intest",
         "//pkg/util/intset",
         "//pkg/util/ranger",
         "//pkg/util/size",
@@ -46,9 +47,11 @@ go_test(
     srcs = [
         "main_test.go",
         "path_test.go",
+        "slice_recursive_flatten_iter_test.go",
     ],
     embed = [":util"],
     flaky = True,
+    shard_count = 3,
     deps = [
         "//pkg/domain",
         "//pkg/meta/model",

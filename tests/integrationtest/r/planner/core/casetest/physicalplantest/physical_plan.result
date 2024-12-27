@@ -3604,12 +3604,12 @@ Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 or b = 2) and c = 3 order by c limit 2;
 id	estRows	task	access object	operator info
 TopN	0.02	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	0.02	root		type: union
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx2(b, c)	range:[2,2], keep order:false, stats:pseudo
-  └─TopN(Probe)	0.02	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─Selection	0.02	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.c, 3)
-      └─TableRowIDScan	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─IndexMerge	0.20	root		type: union
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx(a, c)	range:[1 3,1 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:idx2(b, c)	range:[2 3,2 3], keep order:false, stats:pseudo
+  └─TopN(Probe)	0.20	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
+    └─Selection	0.20	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.c, 3)
+      └─TableRowIDScan	0.20	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'brief' select * from t where (a = 1 or b = 2) and c in (1, 2, 3) order by c limit 2;
@@ -3820,12 +3820,12 @@ explain format = 'brief' select min(col_304) from (select /*+ use_index_merge( t
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─IndexMerge	1.00	root		type: union, limit embedded(offset:0, count:1)
+  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.33	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
+  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
   ├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
-  │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
-  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
-  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
-  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
-  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	0.00	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:["LUBGzGMA","LUBGzGMA"], keep order:true, stats:pseudo
   ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
   │ └─TableRangeScan	0.33	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, stats:pseudo
   ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
@@ -3838,12 +3838,12 @@ explain format = 'brief' select max(col_304) from (select /*+ use_index_merge( t
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#2
 └─IndexMerge	1.00	root		type: union, limit embedded(offset:0, count:1)
+  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
+  │ └─TableRangeScan	0.33	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
+  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
+  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
   ├─Limit(Build)	0.00	cop[tikv]		offset:0, count:1
-  │ └─TableRangeScan	0.00	cop[tikv]	table:tbl_43	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
-  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
-  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_261(col_304)	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo
-  ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
-  │ └─IndexRangeScan	0.33	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:("PE",+inf], keep order:true, desc, stats:pseudo
+  │ └─IndexRangeScan	0.00	cop[tikv]	table:tbl_43, index:idx_262(col_304)	range:["LUBGzGMA","LUBGzGMA"], keep order:true, desc, stats:pseudo
   ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
   │ └─TableRangeScan	0.33	cop[tikv]	table:tbl_43	range:[-inf,"MFWmuOsoyDv"), keep order:true, desc, stats:pseudo
   ├─Limit(Build)	0.33	cop[tikv]		offset:0, count:1
