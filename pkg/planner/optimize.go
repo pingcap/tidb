@@ -27,10 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/planner/cascades/old"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -242,32 +240,13 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
-	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
-	var bindings bindinfo.Bindings
+	binding, match, _ := bindinfo.MatchSQLBinding(sctx, stmtNode)
+	var bindings []*bindinfo.Binding
 	if match {
-		bindings = []bindinfo.Binding{binding}
+		bindings = []*bindinfo.Binding{binding}
 	}
 
 	useBinding := enableUseBinding && isStmtNode && match
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
-			if val.(bool) && bindings != nil {
-				bindings = bindings.Copy()
-				for i := range bindings {
-					bindings[i].CreateTime = types.ZeroTime
-					bindings[i].UpdateTime = types.ZeroTime
-				}
-			}
-		})
-		debugtrace.RecordAnyValuesWithNames(pctx,
-			"Used binding", useBinding,
-			"Enable binding", enableUseBinding,
-			"IsStmtNode", isStmtNode,
-			"Matched", match,
-			"Scope", scope,
-			"Matched bindings", bindings,
-		)
-	}
 	if isStmtNode {
 		// add the extra Limit after matching the bind record
 		stmtNode = core.TryAddExtraLimit(sctx, stmtNode)
@@ -290,7 +269,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	var (
 		names                      types.NameSlice
 		bestPlan, bestPlanFromBind base.Plan
-		chosenBinding              bindinfo.Binding
+		chosenBinding              *bindinfo.Binding
 		err                        error
 	)
 	if useBinding {
@@ -320,8 +299,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 			plan, curNames, cost, err := optimize(ctx, pctx, node, is)
 			if err != nil {
-				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, pctx, scope, binding)
+				sessVars.StmtCtx.AppendWarning(errors.Errorf("binding %s failed: %v", binding.BindSQL, err))
 				continue
 			}
 			if cost < minCost {
@@ -519,12 +497,6 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 
 	core.RecheckCTE(logic)
 
-	// Handle the logical plan statement, use cascades planner if enabled.
-	if sessVars.GetEnableCascadesPlanner() {
-		finalPlan, cost, err := old.DefaultOptimizer.FindBestPlan(sctx, logic)
-		return finalPlan, names, cost, err
-	}
-
 	beginOpt := time.Now()
 	finalPlan, cost, err := core.DoOptimize(ctx, sctx, builder.GetOptFlag(), logic)
 	// TODO: capture plan replayer here if it matches sql and plan digest
@@ -583,20 +555,6 @@ func buildLogicalPlan(ctx context.Context, sctx planctx.PlanContext, node *resol
 		sctx.GetSessionVars().StmtCtx.Tables = core.GetDBTableInfo(builder.GetVisitInfo())
 	}
 	return p, nil
-}
-
-func handleInvalidBinding(ctx context.Context, sctx planctx.PlanContext, level string, binding bindinfo.Binding) {
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding([]string{binding.SQLDigest})
-	if err != nil {
-		logutil.Logger(ctx).Info("drop session bindings failed")
-	}
-	if level == metrics.ScopeSession {
-		return
-	}
-
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
 // setVarHintChecker checks whether the variable name in set_var hint is valid.

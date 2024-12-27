@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/caller"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 

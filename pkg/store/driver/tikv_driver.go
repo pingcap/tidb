@@ -43,6 +43,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -155,7 +156,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		}
 	}()
 
-	pdCli, err = pd.NewClient("test", etcdAddrs, pd.SecurityOption{
+	pdCli, err = pd.NewClient(caller.Component("tidb-tikv-driver"), etcdAddrs, pd.SecurityOption{
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,

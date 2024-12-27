@@ -1565,14 +1565,9 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 	case ast.AdminFlushBindings:
 		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
 	case ast.AdminCaptureBindings:
-		return &SQLBindPlan{SQLBindOp: OpCaptureBindings}, nil
+		return nil, errors.Errorf("Auto Capture is not supported")
 	case ast.AdminEvolveBindings:
-		var err error
-		// The 'baseline evolution' only work in the test environment before the feature is GA.
-		if !config.CheckTableBeforeDrop {
-			err = errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
-		}
-		return &SQLBindPlan{SQLBindOp: OpEvolveBindings}, err
+		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
 	case ast.AdminReloadStatistics:
@@ -3331,6 +3326,19 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 	return cols.col2Schema(), cols.names
 }
 
+func buildShowTrafficJobsSchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(7)
+	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
+	schema.Append(buildColumnWithName("", "INSTANCE", mysql.TypeVarchar, 256))
+	schema.Append(buildColumnWithName("", "TYPE", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "PROGRESS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "STATUS", mysql.TypeVarchar, 32))
+	schema.Append(buildColumnWithName("", "FAIL_REASON", mysql.TypeVarchar, 256))
+
+	return schema.col2Schema(), schema.names
+}
+
 func buildColumnWithName(tableName, name string, tp byte, size int) (*expression.Column, *types.FieldName) {
 	cs, cl := types.DefaultCharsetForType(tp)
 	flag := mysql.UnsignedFlag
@@ -3658,7 +3666,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -3672,7 +3680,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			if err != nil {
 				return nil, err
 			}
-			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS); err != nil {
+			if err := sessionctx.ValidateSnapshotReadTS(ctx, b.ctx.GetStore(), startTS, true); err != nil {
 				return nil, err
 			}
 			p.StaleTxnStartTS = startTS
@@ -5830,11 +5838,15 @@ func findStmtAsViewSchema(stmt ast.Node) *ast.SelectStmt {
 }
 
 func (*PlanBuilder) buildTraffic(pc *ast.TrafficStmt) base.Plan {
-	return &Traffic{
+	p := &Traffic{
 		OpType:  pc.OpType,
 		Options: pc.Options,
 		Dir:     pc.Dir,
 	}
+	if pc.OpType == ast.TrafficOpShow {
+		p.setSchemaAndNames(buildShowTrafficJobsSchema())
+	}
+	return p
 }
 
 // buildCompactTable builds a plan for the "ALTER TABLE [NAME] COMPACT ..." statement.
@@ -5875,6 +5887,7 @@ func (*PlanBuilder) buildRecommendIndex(v *ast.RecommendIndexStmt) (base.Plan, e
 		schema.Append(buildColumnWithName("", "index_size", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "reason", mysql.TypeVarchar, 256))
 		schema.Append(buildColumnWithName("", "top_impacted_query", mysql.TypeBlob, -1))
+		schema.Append(buildColumnWithName("", "create_index_statement", mysql.TypeBlob, -1))
 		p.setSchemaAndNames(schema.col2Schema(), schema.names)
 	case "set":
 		if len(p.Options) == 0 {

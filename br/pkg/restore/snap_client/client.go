@@ -76,6 +76,8 @@ const minBatchDdlSize = 1
 
 type SnapClient struct {
 	restorer restore.SstRestorer
+	// Use a closure to lazy load checkpoint runner
+	getRestorerFn func(*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer
 	// Tool clients used by SnapClient
 	pdClient     pd.Client
 	pdHTTPClient pdhttp.Client
@@ -148,7 +150,8 @@ type SnapClient struct {
 	rewriteMode RewriteMode
 
 	// checkpoint information for snapshot restore
-	checkpointRunner   *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 }
 
@@ -168,7 +171,10 @@ func NewRestoreClient(
 	}
 }
 
-func (rc *SnapClient) GetRestorer() restore.SstRestorer {
+func (rc *SnapClient) GetRestorer(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+	if rc.restorer == nil {
+		rc.restorer = rc.getRestorerFn(checkpointRunner)
+	}
 	return rc.restorer
 }
 
@@ -389,7 +395,10 @@ func (rc *SnapClient) InitCheckpoint(
 		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
-	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
+	if err != nil {
+		return checkpointSetWithTableID, nil, errors.Trace(err)
+	}
+	return checkpointSetWithTableID, checkpointClusterConfig, nil
 }
 
 func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
@@ -539,7 +548,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
-		rc.restorer = restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+		}
 	} else {
 		// or create a fileImporter with the cluster API version
 		fileImporter, err = NewSnapFileImporter(
@@ -547,7 +558,9 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rc.restorer = restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, rc.checkpointRunner)
+		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
+			return restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, checkpointRunner)
+		}
 	}
 	return nil
 }

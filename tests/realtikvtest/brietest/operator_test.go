@@ -31,7 +31,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/caller"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )

@@ -15,10 +15,14 @@
 package memo
 
 import (
+	"github.com/bits-and-blooms/bitset"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/expression"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -39,6 +43,15 @@ type GroupExpression struct {
 
 	// hash64 is the unique fingerprint of the GroupExpression.
 	hash64 uint64
+
+	// mask indicate what rules have been applied in this group expression.
+	mask *bitset.BitSet
+
+	// abandoned is used in a case, when this gE has been encapsulated (say) 3 tasks
+	// and pushed into the task, this 3 task are all referring to this same gE, one
+	// of them has been substituted halfway, the successive task waiting on the task
+	// should feel this gE is out of date, and this task is abandoned.
+	abandoned bool
 }
 
 // GetGroup returns the Group that this GroupExpression belongs to.
@@ -107,18 +120,68 @@ func (e *GroupExpression) Equals(other any) bool {
 	return true
 }
 
-// NewGroupExpression creates a new GroupExpression with the given logical plan and children.
-func NewGroupExpression(lp base.LogicalPlan, inputs []*Group) *GroupExpression {
-	return &GroupExpression{
-		group:       nil,
-		Inputs:      inputs,
-		LogicalPlan: lp,
-		hash64:      0,
-	}
-}
-
 // Init initializes the GroupExpression with the given group and hasher.
 func (e *GroupExpression) Init(h base2.Hasher) {
 	e.Hash64(h)
 	e.hash64 = h.Sum64()
+}
+
+// IsExplored return whether this gE has explored rule i.
+func (e *GroupExpression) IsExplored(i uint) bool {
+	return e.mask.Test(i)
+}
+
+// SetExplored set this gE as explored in rule i.
+func (e *GroupExpression) SetExplored(i uint) {
+	e.mask.Set(i)
+}
+
+// IsAbandoned returns whether this gE is abandoned.
+func (e *GroupExpression) IsAbandoned() bool {
+	return e.abandoned
+}
+
+// SetAbandoned set this gE as abandoned.
+func (e *GroupExpression) SetAbandoned() {
+	e.abandoned = true
+}
+
+// DeriveLogicalProp derive the new group's logical property from a specific GE.
+// DeriveLogicalProp is not called with recursive, because we only examine and
+// init new group from bottom-up, so we can sure that this new group's children
+// has already gotten its logical prop.
+func (e *GroupExpression) DeriveLogicalProp() (err error) {
+	if e.GetGroup().HasLogicalProperty() {
+		return nil
+	}
+	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
+	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
+	for _, childG := range e.Inputs {
+		childGProp := childG.GetLogicalProperty()
+		childStats = append(childStats, childGProp.Stats)
+		childSchema = append(childSchema, childGProp.Schema)
+	}
+	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
+	// currently the schemaProducer side logical op is still useful for group schema.
+	// just add this mock for a mocked logical-plan which is with the id less than 0.
+	//  todo: functional dependency
+	tmpSchema := e.LogicalPlan.Schema()
+	tmpStats := e.LogicalPlan.StatsInfo()
+	// the leaves node may have already had their stats in join reorder est phase, while
+	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
+	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
+	skipDeriveStats := false
+	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+		skipDeriveStats = val.(bool)
+	})
+	if !skipDeriveStats {
+		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
+		if err != nil {
+			return err
+		}
+	}
+	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
+	e.GetGroup().GetLogicalProperty().Stats = tmpStats
+	return nil
 }

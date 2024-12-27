@@ -32,7 +32,11 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/clients/tso"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"google.golang.org/grpc"
 )
 
@@ -125,28 +129,28 @@ func (c *pdClient) GetLocalTS(ctx context.Context, dcLocation string) (int64, in
 	return c.GetTS(ctx)
 }
 
-func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
+func (c *pdClient) GetTSAsync(ctx context.Context) tso.TSFuture {
 	return &mockTSFuture{c, ctx, false}
 }
 
-func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
+func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) tso.TSFuture {
 	return &mockTSFuture{c, ctx, false}
 }
 
-func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
+func (c *pdClient) GetServiceDiscovery() sd.ServiceDiscovery {
 	return NewMockPDServiceDiscovery(c.addrs)
 }
 
 var (
-	_ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
-	_ pd.ServiceClient    = (*mockPDServiceClient)(nil)
+	_ sd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
+	_ sd.ServiceClient    = (*mockPDServiceClient)(nil)
 )
 
 type mockPDServiceClient struct {
 	addr string
 }
 
-func newMockPDServiceClient(addr string) pd.ServiceClient {
+func newMockPDServiceClient(addr string) sd.ServiceClient {
 	if !strings.HasPrefix(addr, "http") {
 		addr = fmt.Sprintf("%s://%s", "http", addr)
 	}
@@ -183,13 +187,13 @@ func (c *mockPDServiceClient) IsConnectedToLeader() bool {
 
 type mockPDServiceDiscovery struct {
 	addrs []string
-	clis  []pd.ServiceClient
+	clis  []sd.ServiceClient
 }
 
 // NewMockPDServiceDiscovery returns a mock PD ServiceDiscovery
-func NewMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
+func NewMockPDServiceDiscovery(addrs []string) sd.ServiceDiscovery {
 	addresses := make([]string, 0)
-	clis := make([]pd.ServiceClient, 0)
+	clis := make([]sd.ServiceClient, 0)
 	for _, addr := range addrs {
 		if check := govalidator.IsURL(addr); !check {
 			continue
@@ -210,6 +214,8 @@ func (c *mockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
 
 func (c *mockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
 
+func (c *mockPDServiceDiscovery) SetKeyspaceID(uint32) {}
+
 func (c *mockPDServiceDiscovery) GetKeyspaceGroupID() uint32 { return 0 }
 
 func (c *mockPDServiceDiscovery) GetServiceURLs() []string {
@@ -224,14 +230,18 @@ func (c *mockPDServiceDiscovery) GetServingURL() string { return "" }
 
 func (c *mockPDServiceDiscovery) GetBackupURLs() []string { return nil }
 
-func (c *mockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
+func (c *mockPDServiceDiscovery) GetServiceClient() sd.ServiceClient {
 	if len(c.clis) > 0 {
 		return c.clis[0]
 	}
 	return nil
 }
 
-func (c *mockPDServiceDiscovery) GetAllServiceClients() []pd.ServiceClient {
+func (c *mockPDServiceDiscovery) GetServiceClientByKind(sd.APIKind) sd.ServiceClient {
+	return c.GetServiceClient()
+}
+
+func (c *mockPDServiceDiscovery) GetAllServiceClients() []sd.ServiceClient {
 	return c.clis
 }
 
@@ -316,7 +326,7 @@ func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byt
 	return nil, nil
 }
 
-func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string, opts ...opt.GetRegionOption) (*pd.Region, error) {
+func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string, opts ...opt.GetRegionOption) (*router.Region, error) {
 	return nil, nil
 }
 
@@ -384,7 +394,7 @@ func (c *pdClient) GetTSWithinKeyspace(ctx context.Context, keyspaceID uint32) (
 	return 0, 0, nil
 }
 
-func (c *pdClient) GetTSWithinKeyspaceAsync(ctx context.Context, keyspaceID uint32) pd.TSFuture {
+func (c *pdClient) GetTSWithinKeyspaceAsync(ctx context.Context, keyspaceID uint32) tso.TSFuture {
 	return nil
 }
 
@@ -392,7 +402,7 @@ func (c *pdClient) GetLocalTSWithinKeyspace(ctx context.Context, dcLocation stri
 	return 0, 0, nil
 }
 
-func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation string, keyspaceID uint32) pd.TSFuture {
+func (c *pdClient) GetLocalTSWithinKeyspaceAsync(ctx context.Context, dcLocation string, keyspaceID uint32) tso.TSFuture {
 	return nil
 }
 
@@ -422,4 +432,8 @@ func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint
 
 func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
 	panic("unimplemented")
+}
+
+func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
+	return c
 }

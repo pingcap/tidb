@@ -61,7 +61,9 @@ import (
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -545,7 +547,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
@@ -594,7 +596,7 @@ func NewBackend(
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
 	pdCli, err = pd.NewClientWithContext(
-		ctx, "LocalImport", pdAddrs, tls.ToPDSecurityOption(),
+		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
 		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
@@ -1367,7 +1369,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 

@@ -1062,7 +1062,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-				planBuilder, _ := plannercore.NewPlanBuilder().Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema, tbl, nil, nil)
 				return errors.Trace(err)
@@ -3910,7 +3910,7 @@ func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sess
 			usage := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 			row = append(row, types.NewStringDatum(schema.O))
 			row = append(row, types.NewStringDatum(tbl.Name.O))
-			row = append(row, types.NewStringDatum(idx.Name.O))
+			row = append(row, types.NewStringDatum(idx.Name))
 			row = append(row, types.NewIntDatum(int64(usage.QueryTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.KvReqTotal)))
 			row = append(row, types.NewIntDatum(int64(usage.RowAccessTotal)))

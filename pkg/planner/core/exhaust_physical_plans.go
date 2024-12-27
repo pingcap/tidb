@@ -386,7 +386,16 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
-	case logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
+	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
+		if !forceLeftToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+		} else if !forceRightToBuild {
+			joins = append(joins, getHashJoin(p, prop, 1, true))
+		} else {
+			joins = append(joins, getHashJoin(p, prop, 1, false))
+			joins = append(joins, getHashJoin(p, prop, 1, true))
+		}
+	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
 			// Do not support specifying the build and probe side for semi join.
@@ -2189,7 +2198,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		if len(lt.ByItems) != 1 {
 			return ret
 		}
-		vs := expression.ExtractVectorHelper(lt.ByItems[0].Expr)
+		vs := expression.InterpretVectorSearchExpr(lt.ByItems[0].Expr)
 		if vs == nil {
 			return ret
 		}
@@ -2211,7 +2220,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			ExpectedCnt:       math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus,
 		}
-		resultProp.VectorProp.VectorHelper = vs
+		resultProp.VectorProp.VSInfo = vs
 		resultProp.VectorProp.TopK = uint32(lt.Count + lt.Offset)
 		topN := PhysicalTopN{
 			ByItems:     lt.ByItems,

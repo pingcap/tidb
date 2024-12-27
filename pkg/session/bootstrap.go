@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"os"
 	osuser "os/user"
+	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -118,14 +120,15 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		PRIMARY KEY (Host, User));`
+		PRIMARY KEY (Host, User),
+		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
 	CreateGlobalPrivTable = "CREATE TABLE IF NOT EXISTS mysql.global_priv (" +
 		"Host CHAR(255) NOT NULL DEFAULT ''," +
 		"User CHAR(80) NOT NULL DEFAULT ''," +
 		"Priv LONGTEXT NOT NULL DEFAULT ''," +
-		"PRIMARY KEY (Host, User)" +
-		")"
+		"PRIMARY KEY (Host, User)," +
+		"KEY i_user (User))"
 
 	// For `mysql.db`, `mysql.tables_priv` and `mysql.columns_priv` table, we have a slight different
 	// schema definition with MySQL: columns `DB`/`Table_name`/`Column_name` are defined with case-insensitive
@@ -163,7 +166,8 @@ const (
 		Execute_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Event_priv				ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Trigger_priv			ENUM('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (Host, DB, User));`
+		PRIMARY KEY (Host, DB, User),
+		KEY i_user (User));`
 	// CreateTablePrivTable is the SQL statement creates table scope privilege table in system db.
 	CreateTablePrivTable = `CREATE TABLE IF NOT EXISTS mysql.tables_priv (
 		Host		CHAR(255),
@@ -174,7 +178,8 @@ const (
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Table_priv	SET('Select','Insert','Update','Delete','Create','Drop','Grant','Index','Alter','Create View','Show View','Trigger','References'),
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name));`
+		PRIMARY KEY (Host, DB, User, Table_name),
+		KEY i_user (User));`
 	// CreateColumnPrivTable is the SQL statement creates column scope privilege table in system db.
 	CreateColumnPrivTable = `CREATE TABLE IF NOT EXISTS mysql.columns_priv(
 		Host		CHAR(255),
@@ -184,7 +189,8 @@ const (
 		Column_name	CHAR(64) CHARSET utf8mb4 COLLATE utf8mb4_general_ci,
 		Timestamp	TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		Column_priv	SET('Select','Insert','Update','References'),
-		PRIMARY KEY (Host, DB, User, Table_name, Column_name));`
+		PRIMARY KEY (Host, DB, User, Table_name, Column_name),
+		KEY i_user (User));`
 	// CreateGlobalVariablesTable is the SQL statement creates global variable table in system db.
 	// TODO: MySQL puts GLOBAL_VARIABLES table in INFORMATION_SCHEMA db.
 	// INFORMATION_SCHEMA is a virtual db in TiDB. So we put this table in system db.
@@ -319,8 +325,8 @@ const (
 		USER 				CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
 		DEFAULT_ROLE_HOST 	CHAR(60) COLLATE utf8_bin NOT NULL DEFAULT '%',
 		DEFAULT_ROLE_USER 	CHAR(32) COLLATE utf8_bin NOT NULL DEFAULT '',
-		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER)
-	)`
+		PRIMARY KEY (HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER),
+		KEY i_user (USER))`
 
 	// CreateStatsTopNTable stores topn data of a cmsketch with top n.
 	CreateStatsTopNTable = `CREATE TABLE IF NOT EXISTS mysql.stats_top_n (
@@ -382,7 +388,8 @@ const (
 		HOST char(255) NOT NULL DEFAULT '',
 		PRIV char(32) NOT NULL DEFAULT '',
 		WITH_GRANT_OPTION enum('N','Y') NOT NULL DEFAULT 'N',
-		PRIMARY KEY (USER,HOST,PRIV)
+		PRIMARY KEY (USER,HOST,PRIV),
+		KEY i_user (USER)
 	);`
 	// CreateCapturePlanBaselinesBlacklist stores the baseline capture filter rules.
 	CreateCapturePlanBaselinesBlacklist = `CREATE TABLE IF NOT EXISTS mysql.capture_plan_baselines_blacklist (
@@ -458,7 +465,9 @@ const (
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the analyze job',
 		process_id BIGINT(64) UNSIGNED comment 'ID of the process executing the analyze job',
 		PRIMARY KEY (id),
-		KEY (update_time)
+		KEY (update_time),
+		INDEX idx_schema_table_state (table_schema, table_name, state),
+		INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)
 	);`
 	// CreateAdvisoryLocks stores the advisory locks (get_lock, release_lock).
 	CreateAdvisoryLocks = `CREATE TABLE IF NOT EXISTS mysql.advisory_locks (
@@ -800,6 +809,29 @@ func bootstrap(s sessiontypes.Session) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func getFunctionName(f func(sessiontypes.Session, int64)) (string, error) {
+	if f == nil {
+		return "", errors.New("function is nil")
+	}
+
+	funcPtr := reflect.ValueOf(f).Pointer()
+	if funcPtr == 0 {
+		return "", errors.New("invalid function pointer")
+	}
+
+	fullName := runtime.FuncForPC(funcPtr).Name()
+	if fullName == "" {
+		return "", errors.New("unable to retrieve function name")
+	}
+
+	parts := strings.Split(fullName, ".")
+	if len(parts) == 0 {
+		return "", errors.New("invalid function name structure")
+	}
+
+	return parts[len(parts)-1], nil
 }
 
 const (
@@ -1203,11 +1235,18 @@ const (
 	// version 239
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version239 = 239
+
+	// version 240
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version240 = 240
+
+	// Add index on user field for some mysql tables.
+	version241 = 241
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version239
+var currentBootstrapVersion int64 = version241
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1382,6 +1421,8 @@ var (
 		upgradeToVer217,
 		upgradeToVer218,
 		upgradeToVer239,
+		upgradeToVer240,
+		upgradeToVer241,
 	}
 )
 
@@ -1547,7 +1588,13 @@ func upgrade(s sessiontypes.Session) {
 	// It is only used in test.
 	addMockBootstrapVersionForTest(s)
 	for _, upgrade := range bootstrapVersion {
+		funcName, err := getFunctionName(upgrade)
+		terror.MustNil(err)
 		upgrade(s, ver)
+		logutil.BgLogger().Info("upgrade in progress, a version has just been completed or be skipped.",
+			zap.Int64("old-start-version", ver),
+			zap.String("in-progress-version", funcName),
+			zap.Int64("latest-version", currentBootstrapVersion))
 	}
 	if isNull {
 		upgradeToVer99After(s)
@@ -3285,6 +3332,37 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+const (
+	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
+	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
+	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
+	// simpler index directly for non-partitioned tables.
+	addAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
+	// addAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
+	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
+)
+
+func upgradeToVer240(s sessiontypes.Session, ver int64) {
+	if ver >= version240 {
+		return
+	}
+	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
+	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer241(s sessiontypes.Session, ver int64) {
+	if ver >= version241 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.db ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tables_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.columns_priv ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.global_grants ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

@@ -782,7 +782,7 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, _ ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
 	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
 		return nil, errors.New("unsupported configPath")
 	}
