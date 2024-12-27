@@ -31,7 +31,15 @@ type pitrCollectorT struct {
 	cx      context.Context
 }
 
-func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
+func (p *pitrCollector) hackyCloseWriterWithoutPanic() {
+	defer func() {
+		_ = recover()
+	}()
+
+	p.writerRoutine.close()
+}
+
+func (p *pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error {
 	for _, b := range fs {
 		for _, file := range b.SSTFiles {
 			require.NoError(p.t, p.coll.restoreStorage.WriteFile(p.cx, file.Name, []byte("something")))
@@ -43,11 +51,11 @@ func (p pitrCollectorT) RestoreAFile(fs restore.BatchBackupFileSet) func() error
 	return res
 }
 
-func (p pitrCollectorT) Done() {
+func (p *pitrCollectorT) Done() {
 	require.NoError(p.t, p.coll.close())
 }
 
-func (p pitrCollectorT) ExtFullBkups() []backuppb.ExtraFullBackup {
+func (p *pitrCollectorT) ExtFullBkups() []backuppb.ExtraFullBackup {
 	est := stream.MigrationExtension(p.coll.taskStorage)
 	migs, err := est.Load(p.cx)
 	require.NoError(p.t, err)
@@ -78,11 +86,13 @@ func (p *pitrCollectorT) Reopen() {
 		tso:            p.coll.tso,
 		restoreSuccess: p.coll.restoreSuccess,
 	}
+	p.t.Cleanup(newColl.hackyCloseWriterWithoutPanic)
 	p.success.Store(false)
+	newColl.goWriter()
 	p.coll = newColl
 }
 
-func (p pitrCollectorT) RequireCopied(extBk backuppb.ExtraFullBackup, files ...string) {
+func (p *pitrCollectorT) RequireCopied(extBk backuppb.ExtraFullBackup, files ...string) {
 	extFiles := make([]string, 0)
 	for _, f := range extBk.Files {
 		extFiles = append(extFiles, f.Name)
@@ -96,7 +106,7 @@ func (p pitrCollectorT) RequireCopied(extBk backuppb.ExtraFullBackup, files ...s
 	require.ElementsMatch(p.t, extFiles, locatedFiles)
 }
 
-func (p pitrCollectorT) RequireRewrite(extBk backuppb.ExtraFullBackup, rules ...utils.TableIDRemap) {
+func (p *pitrCollectorT) RequireRewrite(extBk backuppb.ExtraFullBackup, rules ...utils.TableIDRemap) {
 	rulesInExtBk := []utils.TableIDRemap{}
 	for _, f := range extBk.RewrittenTables {
 		rulesInExtBk = append(rulesInExtBk, utils.TableIDRemap{
@@ -107,7 +117,7 @@ func (p pitrCollectorT) RequireRewrite(extBk backuppb.ExtraFullBackup, rules ...
 	require.ElementsMatch(p.t, rulesInExtBk, rules)
 }
 
-func newPiTRCollForTest(t *testing.T) pitrCollectorT {
+func newPiTRCollForTest(t *testing.T) *pitrCollectorT {
 	taskStorage := tmp(t)
 	restoreStorage := tmp(t)
 
@@ -124,14 +134,18 @@ func newPiTRCollForTest(t *testing.T) pitrCollectorT {
 		return tsoCnt.Add(1), nil
 	}
 	coll.restoreSuccess = restoreSuccess.Load
+	coll.goWriter()
+	t.Cleanup(coll.hackyCloseWriterWithoutPanic)
 
-	return pitrCollectorT{
+	p := &pitrCollectorT{
 		t:       t,
 		coll:    coll,
 		tsoCnt:  tsoCnt,
 		success: restoreSuccess,
 		cx:      context.Background(),
 	}
+
+	return p
 }
 
 type backupFileSetOp func(*restore.BackupFileSet)

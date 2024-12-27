@@ -27,6 +27,67 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+type writerCall struct {
+	cx context.Context
+	cb func(error)
+}
+
+type writerRoutine struct {
+	hnd chan<- writerCall
+}
+
+func (w writerRoutine) close() {
+	close(w.hnd)
+}
+
+func (w writerRoutine) write(ctx context.Context) error {
+	ch := make(chan error)
+	w.hnd <- writerCall{
+		cx: ctx,
+		cb: func(err error) {
+			select {
+			case ch <- err:
+			default:
+			}
+		},
+	}
+	return <-ch
+}
+
+func (c *pitrCollector) goWriter() {
+	hnd := make(chan writerCall, 2048)
+	exhaust := func(f func(writerCall)) {
+		select {
+		case cb, ok := <-hnd:
+			if !ok {
+				log.Warn("Early channel close. Should not happen.")
+				return
+			}
+			f(cb)
+		default:
+		}
+	}
+
+	go func() {
+		for newCall := range hnd {
+			cs := []writerCall{newCall}
+			exhaust(func(newCall writerCall) {
+				cs = append(cs, newCall)
+			})
+
+			err := c.doPersistExtraBackupMeta(cs[0].cx)
+
+			for _, c := range cs {
+				c.cb(err)
+			}
+		}
+	}()
+
+	c.writerRoutine = writerRoutine{
+		hnd: hnd,
+	}
+}
+
 type pitrCollector struct {
 	// Immutable state.
 	taskStorage    storage.ExternalStorage
@@ -39,6 +100,8 @@ type pitrCollector struct {
 	extraBackupMeta     extraBackupMeta
 	extraBackupMetaLock sync.Mutex
 	putMigOnce          sync.Once
+
+	writerRoutine writerRoutine
 
 	// Delegates.
 	tso            func(ctx context.Context) (uint64, error)
@@ -78,8 +141,9 @@ func (c *pitrCollector) close() error {
 	}
 	log.Info("Log backup SSTs are committed.",
 		zap.Uint64("commitTS", commitTS), zap.String("committedTo", c.outputPath()))
-	return nil
 
+	c.writerRoutine.close()
+	return nil
 }
 
 func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) (func() error, error) {
@@ -206,7 +270,7 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 	return err
 }
 
-func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) {
+func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error) {
 	c.extraBackupMetaLock.Lock()
 	defer c.extraBackupMetaLock.Unlock()
 
@@ -221,6 +285,10 @@ func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) 
 		return errors.Annotatef(err, "failed to put content to meta to %s", c.metaPath())
 	}
 	return nil
+}
+
+func (c *pitrCollector) persistExtraBackupMeta(ctx context.Context) (err error) {
+	return c.writerRoutine.write(ctx)
 }
 
 // Commit commits the collected SSTs to a migration.
@@ -322,6 +390,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 	coll.restoreStorage = restoreStrg
 	coll.restoreSuccess = summary.Succeed
+	coll.goWriter()
 	coll.resetCommitting()
 	return coll, nil
 }
