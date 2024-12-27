@@ -385,12 +385,14 @@ func GetRewriteEncodedKeys(file AppliedFile, rewriteRules *RewriteRules) (startK
 	if startID == endID {
 		startKey, rule = rewriteEncodedKey(file.GetStartKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s", redact.Key(file.GetStartKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for start key, startKey: %s; rewrite rules: %s",
+				redact.Key(file.GetStartKey()), rewriteRules)
 			return
 		}
 		endKey, rule = rewriteEncodedKey(file.GetEndKey(), rewriteRules)
 		if rewriteRules != nil && rule == nil {
-			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s", redact.Key(file.GetEndKey()))
+			err = errors.Annotatef(berrors.ErrRestoreInvalidRewrite, "cannot find encode rewrite rule for end key, endKey: %s; rewrite rules: %s",
+				redact.Key(file.GetEndKey()), rewriteRules)
 			return
 		}
 	} else {

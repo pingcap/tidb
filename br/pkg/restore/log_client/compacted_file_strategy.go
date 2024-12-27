@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -53,13 +52,7 @@ func (cs *CompactedFileSplitStrategy) inspect(ssts SSTs) sstIdentity {
 		}
 	}
 
-	rule, ok := cs.Rules[r.RewrittenTo()]
-	if !ok {
-		log.Panic("[unreachable] failed to find rewrite rule for a SST",
-			zap.Int64("rewrite", r.RewrittenTo()), zap.Int64("table-id", ssts.TableID()))
-	}
-	rule = rule.Clone()
-	rule.RewriteSourceTableID(r.RewrittenTo(), ssts.TableID())
+	rule := restoreutils.GetRewriteRuleOfTable(ssts.TableID(), r.RewrittenTo(), 0, map[int64]int64{}, false)
 
 	return sstIdentity{
 		EffectiveID:     r.RewrittenTo(),
@@ -77,20 +70,13 @@ func (cs *CompactedFileSplitStrategy) Accumulate(ssts SSTs) {
 	}
 
 	for _, f := range ssts.GetSSTs() {
-		startKey := f.StartKey
-		endKey := f.EndKey
-		var err error
-		if identity.RewriteBoundary != nil {
-			startKey, endKey, err = utils.GetRewriteRawKeys(f, identity.RewriteBoundary)
-		}
+		startKey, endKey, err := utils.GetRewriteRawKeys(f, identity.RewriteBoundary)
 		if err != nil {
 			log.Panic("[unreachable] the rewrite rule doesn't match the SST file, this shouldn't happen...",
 				logutil.ShortError(err), zap.Stringer("rule", identity.RewriteBoundary), zap.Int64("effective-id", identity.EffectiveID),
 				zap.Stringer("file", f),
 			)
 		}
-		startKey = codec.EncodeBytes(nil, startKey)
-		endKey = codec.EncodeBytes(nil, startKey)
 		cs.AccumulateCount += 1
 		if f.TotalKvs == 0 || f.Size_ == 0 {
 			log.Warn("No key-value pairs in subcompaction", zap.String("name", f.Name))
