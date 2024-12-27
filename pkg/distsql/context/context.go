@@ -86,7 +86,7 @@ type DistSQLContext struct {
 
 	ExecDetails *execdetails.SyncExecDetails
 
-	// Only one cop-reader can use lite worker. Using lite-worker in multiple readers will affect the concurrent execution of readers.
+	// Only one cop-reader can use lite worker at the same time. Using lite-worker in multiple readers will affect the concurrent execution of readers.
 	TryCopLiteWorker uint32
 }
 

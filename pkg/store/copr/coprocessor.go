@@ -1198,6 +1198,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 			it.tasks = it.tasks[1:]
 		}
 		if len(it.tasks) == 0 {
+			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
 			atomic.StoreUint32(w.tryCopLiteWorker, 0)
 		}
 		if result != nil {
