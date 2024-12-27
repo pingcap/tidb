@@ -593,7 +593,11 @@ func (c *localMppCoordinator) handleAllReports() error {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+<<<<<<< HEAD
 							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+=======
+							RecordOneCopTask(-1, kv.TiFlash, detail)] = 0
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 					}
 				}
 				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
@@ -602,7 +606,11 @@ func (c *localMppCoordinator) handleAllReports() error {
 					}
 				}
 			}
+<<<<<<< HEAD
 			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+=======
+			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl, kv.TiFlash, c.planIDs, recordedPlanIDs)
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),

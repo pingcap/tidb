@@ -367,8 +367,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
 					return err
 				}
-				copStats.CopTime = duration
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
@@ -473,36 +472,55 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
+<<<<<<< HEAD
 func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+=======
+func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, storeType kv.StoreType, allPlanIDs []int, recordedPlanIDs map[int]int) {
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
+<<<<<<< HEAD
 			runtimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+=======
+			runtimeStatsColl.RecordOneCopTask(planID, storeType, dummySummary)
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
+<<<<<<< HEAD
 func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+=======
+func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, storeType kv.StoreType, allPlanIDs []int) {
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
 			recordedPlanIDs[runtimeStatsColl.
+<<<<<<< HEAD
 				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
 		}
 	}
 	FillDummySummariesForTiFlashTasks(runtimeStatsColl, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+=======
+				RecordOneCopTask(-1, storeType, detail)] = 0
+		}
+	}
+	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || len(copStats.ReqStats.RPCStats) == 0)) {
+	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
 
-	if copStats.ScanDetail != nil {
+	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
 		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
@@ -511,8 +529,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
-			backoffSleep:       make(map[string]time.Duration),
-			reqStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		if ci, ok := r.resp.(copr.CopInfo); ok {
@@ -523,6 +539,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	}
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
 
+<<<<<<< HEAD
 	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
 		r.ctx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
@@ -530,6 +547,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.RuntimeStatsColl.RecordTimeDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), &copStats.TimeDetail)
 	}
 
+=======
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
 	hasExecutor := false
 	for _, detail := range r.selectResp.GetExecutionSummaries() {
@@ -551,7 +570,14 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
 	}
 	if hasExecutor {
+<<<<<<< HEAD
 		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
+=======
+		if len(r.copPlanIDs) > 0 {
+			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, &copStats.ScanDetail, copStats.TimeDetail, nil)
+		}
+		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
@@ -566,11 +592,22 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			return
 		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
+			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
+<<<<<<< HEAD
 				planID := r.copPlanIDs[i]
 				r.ctx.RuntimeStatsColl.
 					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
+=======
+				summary = detail
+			}
+			planID := r.copPlanIDs[i]
+			if i == len(r.copPlanIDs)-1 {
+				r.ctx.RuntimeStatsColl.RecordCopStats(planID, r.storeType, &copStats.ScanDetail, copStats.TimeDetail, summary)
+			} else if summary != nil {
+				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 			}
 		}
 	}
@@ -610,7 +647,7 @@ func (r *selectResult) Close() error {
 			unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
 			for _, copStats := range unconsumedCopStats {
 				_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0))
-				r.ctx.ExecDetails.MergeExecDetails(&copStats.ExecDetails, nil)
+				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
 			}
 		}
 	}
@@ -652,15 +689,22 @@ type selectResultRuntimeStats struct {
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	if copStats.ScanDetail != nil {
-		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
-	} else {
-		s.procKeys.Add(0)
+	s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	if len(copStats.BackoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	}
-	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	s.reqStat.Merge(copStats.ReqStats)
+	if copStats.ReqStats != nil {
+		if s.reqStat == nil {
+			s.reqStat = copStats.ReqStats
+		} else {
+			s.reqStat.Merge(copStats.ReqStats)
+		}
+	}
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -698,8 +742,13 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.copRespTime.MergePercentile(&other.copRespTime)
 	s.procKeys.MergePercentile(&other.procKeys)
 
-	for k, v := range other.backoffSleep {
-		s.backoffSleep[k] += v
+	if len(other.backoffSleep) > 0 {
+		if s.backoffSleep == nil {
+			s.backoffSleep = make(map[string]time.Duration)
+		}
+		for k, v := range other.backoffSleep {
+			s.backoffSleep[k] += v
+		}
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime

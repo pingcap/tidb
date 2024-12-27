@@ -67,7 +67,11 @@ func TestIndexUsageReporter(t *testing.T) {
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
+<<<<<<< HEAD
 	runtimeStatsColl.GetOrCreateCopStats(planID, "test-store").RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
+=======
+	runtimeStatsColl.RecordOneCopTask(planID, kv.TiKV, &tipb.ExecutorExecutionSummary{
+>>>>>>> a82a3b41e7d (*: Optimize collecting executor runtime stats performance (#58420))
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,
