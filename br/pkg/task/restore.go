@@ -231,6 +231,7 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
+	Checksum           bool          `json:"checksum" toml:"checksum"`
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
@@ -357,6 +358,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.Checksum, err = flags.GetBool(flagRestoreChecksum)
 	if err != nil {
 		return errors.Trace(err)
 	}
