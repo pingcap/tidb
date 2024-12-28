@@ -236,11 +236,6 @@ func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
-// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
-func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnsSizeHelper {
-	return opt.columnSize
-}
-
 // NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
 func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 	opt := &RemoveRecordOpt{}
@@ -257,13 +252,11 @@ type RemoveRecordOption interface {
 
 // ExtraPartialRowOption is the combined one of IndexesLayout and ColumnSizeOption.
 type ExtraPartialRowOption struct {
-	IndexesRowLayout  IndexesLayout
-	ColumnsSizeHelper *ColumnsSizeHelper
+	IndexesRowLayout IndexesLayout
 }
 
 func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
 	opt.indexesLayoutOffset = e.IndexesRowLayout
-	opt.columnSize = e.ColumnsSizeHelper
 }
 
 // IndexRowLayoutOption is the option for index row layout.
