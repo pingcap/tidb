@@ -643,8 +643,7 @@ func TestCreatePartition(t *testing.T) {
 
 	now := time.Now()
 
-	/* Tables without partitions are not currently supported.  This also does
-	   not test cases with partitions in the future beyond what will be created. */
+	/* Tables without partitions are not currently supported. */
 
 	// Should create one partition for today and tomorrow on a table with only old partitions before today.
 	partitions := []time.Time{now.AddDate(0, 0, -1)}
@@ -665,6 +664,16 @@ func TestCreatePartition(t *testing.T) {
 	partitions = []time.Time{now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
 	validatePartitionCreation(ctx, now, t, sess, tk, false, "MEMORY_USAGE", partitions, expectedParts)
+
+	// Should not create any partitions on a table with a partition for the day after tomorrow.
+	partitions = []time.Time{now.AddDate(0, 0, 2)}
+	expectedParts = []time.Time{now.AddDate(0, 0, 2)}
+	validatePartitionCreation(ctx, now, t, sess, tk, false, "CLUSTER_LOAD", partitions, expectedParts)
+
+	// Should not fill in missing partitions on a table with a partition for dates beyond tomorrow.
+	partitions = []time.Time{now, now.AddDate(0, 0, 3)}
+	expectedParts = []time.Time{now, now.AddDate(0, 0, 3)}
+	validatePartitionCreation(ctx, now, t, sess, tk, false, "TIDB_HOT_REGIONS", partitions, expectedParts)
 
 	// this table should be updated when the repository is enabled
 	partitions = []time.Time{now}

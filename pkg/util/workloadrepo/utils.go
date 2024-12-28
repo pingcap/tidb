@@ -41,34 +41,37 @@ func parsePartitionName(part string) (time.Time, error) {
 }
 
 func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now time.Time) (bool, error) {
-	firstPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
+	// Set lastPart to the lastest partition found in table or the date for
+	// yesterday's partition if none is found. Note: The partition named for
+	// today's date holds yesterday's data.
+	lastPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
 	if tbInfo != nil {
 		pi := tbInfo.GetPartitionInfo()
 		if pi != nil && pi.Definitions != nil && len(pi.Definitions) > 0 {
 			ptInfos := pi.Definitions
-			lastPartDate, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
+			partDate, err := parsePartitionName(ptInfos[len(ptInfos)-1].Name.L)
 			if err != nil {
-				// not sure what to do
 				return true, err
 			}
-			if firstPart.Before(lastPartDate) {
-				firstPart = lastPartDate
+
+			if partDate.After(lastPart) {
+				lastPart = partDate
 			}
 		}
 	}
 
+	// Add partitions for today and tomorrow.
 	allExisted := true
-	for firstPart.Before(now.AddDate(0, 0, 1)) {
-		newPtTime := firstPart.AddDate(0, 0, 1)
-		newPtName := generatePartitionName(newPtTime)
-
-		if !allExisted {
-			fmt.Fprintf(sb, ", ")
+	for i := range 2 {
+		newPartDate := time.Date(now.Year(), now.Month(), now.Day()+i+1, 0, 0, 0, 0, time.Local)
+		if newPartDate.After(lastPart) {
+			if !allExisted {
+				fmt.Fprintf(sb, ", ")
+			}
+			newPartName := generatePartitionName(newPartDate)
+			fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPartName, newPartDate.Format("2006-01-02"))
+			allExisted = false
 		}
-		fmt.Fprintf(sb, "PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))", newPtName, newPtTime.Format("2006-01-02"))
-
-		firstPart = newPtTime
-		allExisted = false
 	}
 
 	return allExisted, nil
