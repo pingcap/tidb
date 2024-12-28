@@ -38,7 +38,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/statistics/asyncload",
         "//pkg/statistics/handle/logutil",
-        "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/chunk",
