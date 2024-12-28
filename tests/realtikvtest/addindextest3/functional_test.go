@@ -117,6 +117,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	bCtx.Close()
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {
