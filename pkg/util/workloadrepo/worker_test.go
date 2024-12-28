@@ -464,7 +464,7 @@ func TestSettingSQLVariables(t *testing.T) {
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
 
 	/* Order of less than minimum, maximum, minimum, and greater than maximum
-	tests are not random. Because we need to know of the invalid values are
+	tests are not random. Because we need to know if the invalid values are
 	converted to the minimum or maximum. */
 
 	// Test values less than minimum
@@ -576,7 +576,7 @@ func validatePartitionsMatchExpected(ctx context.Context, t *testing.T,
 	return true
 }
 
-func buildPartitonRow(now time.Time) string {
+func buildPartitionRow(now time.Time) string {
 	newPtTime := now.AddDate(0, 0, 1)
 	newPtName := "p" + newPtTime.Format("20060102")
 	parttemp := `PARTITION %s VALUES LESS THAN (TO_DAYS('%s'))`
@@ -592,7 +592,7 @@ func buildPartitionString(partitions []time.Time) string {
 			if !first {
 				fmt.Fprint(sb, ", ")
 			}
-			fmt.Fprint(sb, buildPartitonRow(p))
+			fmt.Fprint(sb, buildPartitionRow(p))
 			first = false
 		}
 		fmt.Fprint(sb, `)`)
@@ -660,7 +660,7 @@ func TestCreatePartition(t *testing.T) {
 	expectedParts = []time.Time{now.AddDate(0, 0, 1)}
 	validatePartitionCreation(ctx, now, t, sess, tk, false, "TIDB_TRX", partitions, expectedParts)
 
-	// Should not create any partitions on a table with only a partitions for both today and tomorrow.
+	// Should not create any partitions on a table with only partitions for both today and tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
 	validatePartitionCreation(ctx, now, t, sess, tk, false, "MEMORY_USAGE", partitions, expectedParts)
@@ -743,7 +743,7 @@ func TestDropOldPartitions(t *testing.T) {
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
 	validatePartitionDrop(ctx, now, t, sess, tk, "MEMORY_USAGE", partitions, 2, false, expectedParts)
 
-	// should one partition
+	// should trim one partition
 	partitions = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
 	validatePartitionDrop(ctx, now, t, sess, tk, "CLUSTER_LOAD", partitions, 2, false, expectedParts)
@@ -761,7 +761,6 @@ func TestDropOldPartitions(t *testing.T) {
 
 func TestAddNewPartitionsOnStart(t *testing.T) {
 	ctx, _, dom, addr := setupDomainAndContext(t)
-	//tk := testkit.NewTestKit(t, store)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 	fillInTableNames()
@@ -802,7 +801,7 @@ func TestHouseKeeperThread(t *testing.T) {
 	now := time.Now()
 	var parts []time.Time
 
-	// This will have a partiton added for tomorrow.
+	// This will have a partition added for tomorrow.
 	parts = []time.Time{now.AddDate(0, 0, -1), now}
 	plTbl := getTable(t, "PROCESSLIST")
 	createTableWithParts(ctx, t, tk, plTbl, sess, parts)
