@@ -758,6 +758,9 @@ func TestIssue55808(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 	tk.MustExec("set global tidb_ddl_error_count_limit = 0")
+	defer func() {
+		tk.MustExec("set global tidb_ddl_error_count_limit = default;")
+	}()
 
 	backup := local.MaxWriteAndIngestRetryTimes
 	local.MaxWriteAndIngestRetryTimes = 1

@@ -260,7 +260,9 @@ func splitIndexRegionAndWait(
 		return nil
 	}
 	start := time.Now()
-	regionIDs, err := s.SplitRegions(ctx, splitIdxKeys, true, &tblInfo.ID)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, sctx.GetSessionVars().GetSplitRegionTimeout())
+	defer cancel()
+	regionIDs, err := s.SplitRegions(ctxWithTimeout, splitIdxKeys, true, &tblInfo.ID)
 	if err != nil {
 		logutil.DDLLogger().Error("split table index region failed",
 			zap.String("table", tblInfo.Name.L),
@@ -271,7 +273,7 @@ func splitIndexRegionAndWait(
 	failpoint.Inject("mockSplitIndexRegionAndWaitErr", func(_ failpoint.Value) {
 		failpoint.Return(context.DeadlineExceeded)
 	})
-	finishScatterRegions := waitScatterRegionFinish(ctx, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
+	finishScatterRegions := waitScatterRegionFinish(ctxWithTimeout, sctx, start, s, regionIDs, tblInfo.Name.L, idxInfo.Name.L)
 	logutil.DDLLogger().Info("split table index region finished",
 		zap.String("table", tblInfo.Name.L),
 		zap.String("index", idxInfo.Name.L),
@@ -410,18 +412,11 @@ func waitScatterRegionFinish(
 		if err == nil {
 			finishScatterNum++
 		} else {
-			if len(indexName) == 0 {
-				logutil.DDLLogger().Warn("wait scatter region failed",
-					zap.Uint64("regionID", regionID),
-					zap.String("table", tableName),
-					zap.Error(err))
-			} else {
-				logutil.DDLLogger().Warn("wait scatter region failed",
-					zap.Uint64("regionID", regionID),
-					zap.String("table", tableName),
-					zap.String("index", indexName),
-					zap.Error(err))
-			}
+			logutil.DDLLogger().Warn("wait scatter region failed",
+				zap.Uint64("regionID", regionID),
+				zap.String("table", tableName),
+				zap.String("index", indexName),
+				zap.Error(err))
 		}
 	}
 	return finishScatterNum
