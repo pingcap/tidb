@@ -12,18 +12,18 @@ select @@global.tidb_max_delta_schema_count;
 set @@global.tidb_max_delta_schema_count= default;
 
 # TestGetSetNoopVars
-SELECT @@query_cache_type;
-SHOW VARIABLES LIKE 'query_cache_type';
-SET query_cache_type=2;
-SELECT @@query_cache_type;
+SELECT @@innodb_buffer_pool_size;
+SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
+SET GLOBAL innodb_buffer_pool_size=134217728;
+SELECT @@innodb_buffer_pool_size;
 SET GLOBAL tidb_enable_noop_variables = OFF;
 SELECT @@global.tidb_enable_noop_variables;
-SELECT @@query_cache_type;
+SELECT @@innodb_buffer_pool_size;
 SHOW WARNINGS;
-SHOW VARIABLES LIKE 'query_cache_type';
-SET query_cache_type = OFF;
+SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
+SET GLOBAL innodb_buffer_pool_size = 805306368;
 SHOW WARNINGS;
-SELECT @@query_cache_type;
+SELECT @@innodb_buffer_pool_size;
 -- error 1231
 SET GLOBAL tidb_enable_noop_variables = 2;
 -- error 1231
@@ -31,7 +31,7 @@ SET GLOBAL tidb_enable_noop_variables = 'warn';
 SET GLOBAL tidb_enable_noop_variables = ON;
 
 SET GLOBAL tidb_enable_noop_variables = default;
-SET query_cache_type = default;
+SET GLOBAL innodb_buffer_pool_size = default;
 
 # TestSetCharset
 show VARIABLES like 'character_set_%';

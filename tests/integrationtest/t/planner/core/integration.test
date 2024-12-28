@@ -727,7 +727,7 @@ insert t values ('a', 'a1', 1, 11), ('b', 'b1', 2, 22), ('c', 'c1', 3, 33);
 select * from t use index (uuk);
 drop database cluster_idx_unique_double_read;
 set @@tidb_enable_clustered_index = DEFAULT;
-use planner__core__integration
+use planner__core__integration;
 
 
 # TestIssue18984

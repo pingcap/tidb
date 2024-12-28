@@ -89,8 +89,7 @@ OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR 
 OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
 OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
 OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
-OR Variable_name = 'license' OR Variable_name = 'init_connect';
+OR Variable_name = 'sql_mode' OR Variable_name = 'license' OR Variable_name = 'init_connect';
 
 # TestFloat64Inf
 select '1e800' + 1e100;
@@ -181,8 +180,22 @@ set global innodb_default_row_format = dynamic;
 set global innodb_default_row_format = 'dynamic';
 SHOW VARIABLES LIKE 'innodb_default_row_format';
 SHOW VARIABLES LIKE 'character_set_server';
+
+# Removed InnoDB variables, these are from before MySQL 8.0
+# https://github.com/pingcap/tidb/issues/9142
+SHOW VARIABLES LIKE 'innodb_additional_mem_pool_size';
+SHOW VARIABLES LIKE 'innodb_checksums';
 SHOW VARIABLES LIKE 'innodb_file_format';
+SHOW VARIABLES LIKE 'innodb_file_format_check';
+SHOW VARIABLES LIKE 'innodb_file_format_max';
 SHOW VARIABLES LIKE 'innodb_large_prefix';
+SHOW VARIABLES LIKE 'innodb_locks_unsafe_for_binlog';
+SHOW VARIABLES LIKE 'innodb_log_checksum_algorithm';
+SHOW VARIABLES LIKE 'innodb_mirrored_log_groups';
+SHOW VARIABLES LIKE 'innodb_stats_sample_pages';
+SHOW VARIABLES LIKE 'innodb_support_xa';
+SHOW VARIABLES LIKE 'innodb_undo_logs';
+SHOW VARIABLES LIKE 'innodb_use_sys_malloc';
 
 # TestIfNullParamMarker
 drop table if exists t;

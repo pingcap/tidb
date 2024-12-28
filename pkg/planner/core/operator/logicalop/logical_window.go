@@ -370,10 +370,10 @@ func (p *LogicalWindow) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.GetGroupNDVs(colGroups, childStats)
+		p.StatsInfo().GroupNDVs = p.GetGroupNDVs(childStats)
 		return p.StatsInfo(), nil
 	}
 	childProfile := childStats[0]
@@ -389,7 +389,7 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 	for i := childLen; i < selfSchema.Len(); i++ {
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = childProfile.RowCount
 	}
-	p.StatsInfo().GroupNDVs = p.GetGroupNDVs(colGroups, childStats)
+	p.StatsInfo().GroupNDVs = p.GetGroupNDVs(childStats)
 	return p.StatsInfo(), nil
 }
 
@@ -595,9 +595,6 @@ func (p *LogicalWindow) GetPartitionByCols() []*expression.Column {
 }
 
 // GetGroupNDVs gets the GroupNDVs of the LogicalWindow.
-func (*LogicalWindow) GetGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
-	if len(colGroups) > 0 {
-		return childStats[0].GroupNDVs
-	}
-	return nil
+func (*LogicalWindow) GetGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
+	return childStats[0].GroupNDVs
 }

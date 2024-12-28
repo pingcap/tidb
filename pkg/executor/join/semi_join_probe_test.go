@@ -418,13 +418,13 @@ func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 }
 
 func TestSemiJoinProbeBasic(t *testing.T) {
-	testLeftOuterSemiOrSemiJoinProbeBasic(t, false)
+	testLeftOuterSemiOrSemiJoinProbeBasic(t, false, false)
 }
 
 func TestSemiJoinProbeAllJoinKeys(t *testing.T) {
-	testLeftOuterSemiJoinProbeAllJoinKeys(t, false)
+	testLeftOuterSemiJoinProbeAllJoinKeys(t, false, false)
 }
 
 func TestSemiJoinProbeWithSel(t *testing.T) {
-	testLeftOuterSemiJoinProbeWithSel(t, false)
+	testLeftOuterSemiJoinProbeWithSel(t, false, false)
 }
