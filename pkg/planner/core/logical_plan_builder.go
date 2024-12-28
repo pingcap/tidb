@@ -5380,7 +5380,6 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	// Columns can be seen by DELETE are the deletable columns.
 	deletableCols := t.DeletableCols()
 	deletableIdxs := t.DeletableIndices()
-	publicCols := t.Cols()
 	tblLen := len(deletableCols)
 
 	// Fix the start position of the columns.
@@ -5415,25 +5414,6 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 		fixedPos[i] = i - pruned
 	}
 
-	// Fill in the ColumnSizes.
-	colPosInfo.ColumnsSizeHelper = &table.ColumnsSizeHelper{
-		NotPruned:        bitset.New(uint(len(publicCols))),
-		AvgSizes:         make([]float64, 0, len(publicCols)),
-		PublicColsLayout: make([]int, 0, len(publicCols)),
-	}
-	colPosInfo.ColumnsSizeHelper.NotPruned.SetAll()
-	for i, col := range publicCols {
-		// If the column is not pruned, we can use the column data to get a more accurate size.
-		// We just need to record its position info.
-		if _, ok := fixedPos[col.Offset]; ok {
-			colPosInfo.ColumnsSizeHelper.PublicColsLayout = append(colPosInfo.ColumnsSizeHelper.PublicColsLayout, fixedPos[col.Offset])
-			continue
-		}
-		// Otherwise we need to get the average size of the column by its field type.
-		// TODO: use statistics to get a maybe more accurate size.
-		colPosInfo.ColumnsSizeHelper.NotPruned.Clear(uint(i))
-		colPosInfo.ColumnsSizeHelper.AvgSizes = append(colPosInfo.ColumnsSizeHelper.AvgSizes, float64(chunk.EstimateTypeWidth(&col.FieldType)))
-	}
 	// Fix the index layout and fill in table.IndexRowLayoutOption.
 	indexColMap := make(map[int64]table.IndexRowLayoutOption, len(deletableIdxs))
 	for _, idx := range deletableIdxs {
