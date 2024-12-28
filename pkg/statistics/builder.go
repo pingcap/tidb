@@ -16,16 +16,20 @@ package statistics
 
 import (
 	"bytes"
+	"context"
 	"math"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -260,6 +264,7 @@ func BuildColumn(ctx sessionctx.Context, numBuckets, id int64, collector *Sample
 func BuildHistAndTopN(
 	ctx sessionctx.Context,
 	numBuckets, numTopN int,
+	tableID int64,
 	id int64,
 	collector *SampleCollector,
 	tp *types.FieldType,
@@ -276,6 +281,9 @@ func BuildHistAndTopN(
 		}
 	}()
 	var getComparedBytes func(datum types.Datum) ([]byte, error)
+	// Set isPredicateCol to true by default, because we need to collect stats
+	// unless we can be sure it qualifies as a predicate column.
+	isPredicateCol := true
 	if isColumn {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
 			encoded, err := codec.EncodeKey(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, datum)
@@ -287,6 +295,10 @@ func BuildHistAndTopN(
 				memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 			}
 			return encoded, err
+		}
+		// Get the predicate columns from session variable
+		if tableID > 0 {
+			isPredicateCol = IsPredicateColumn(ctx, tableID, id)
 		}
 	} else {
 		getComparedBytes = func(datum types.Datum) ([]byte, error) {
@@ -322,8 +334,13 @@ func BuildHistAndTopN(
 	sampleFactor := float64(count) / float64(len(samples))
 	// If a numTopn value other than 100 is passed in, we assume it's a value that the user wants us to honor
 	allowPruning := true
-	if numTopN != 100 {
+	if numTopN != 100 || !isPredicateCol {
 		allowPruning = false
+		// If the column is not a predicate column, collect the minimum number of buckets and topn.
+		if isColumn && !isPredicateCol {
+			numTopN = 1
+			numBuckets = 1
+		}
 	}
 
 	// Step1: collect topn from samples
@@ -539,4 +556,42 @@ func pruneTopNItem(topns []TopNMeta, ndv, nullCount, sampleRows, totalRows int64
 		sumCount -= topns[topNNum-1].Count
 	}
 	return topns[:topNNum]
+}
+
+// Add these constants at the package level
+const (
+	// TiDBAnalyzeColumnOptions is the name of the global variable
+	TiDBAnalyzeColumnOptions = "tidb_analyze_column_options"
+	// AnalyzeColumnsAll indicates all columns should be analyzed
+	AnalyzeColumnsAll = "ALL"
+	// AnalyzeColumnsPredicate indicates only predicate columns should be analyzed
+	AnalyzeColumnsPredicate = "PREDICATE"
+)
+
+// IsPredicateColumn returns true if the column is a predicate column.
+func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
+	// Check tidb_analyze_column_options global variable first
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeColumnOptions)
+	if err != nil {
+		return true // Default to analyzing all columns if error
+	}
+
+	switch val {
+	case AnalyzeColumnsAll:
+		return true
+	case AnalyzeColumnsPredicate:
+		sql := "SELECT 1 FROM mysql.column_stats_usage WHERE table_id = ? AND column_id = ? AND last_used_at IS NOT NULL"
+		rows, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql, tableID, columnID)
+		if err != nil {
+			return false
+		}
+		defer rows.Close()
+		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, 1)
+		if err := rows.Next(context.Background(), chk); err == nil && chk.NumRows() > 0 {
+			return true
+		}
+		return false
+	default:
+		return true // Default to analyzing all columns for unknown values
+	}
 }
