@@ -181,7 +181,7 @@ func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSuppo
 }
 
 // UpdatePhysicalTableDelta implements the `table.StatisticsSupport` interface.
-func (ctx *litTableMutateContext) UpdatePhysicalTableDelta(
+func (*litTableMutateContext) UpdatePhysicalTableDelta(
 	_, _, _ int64,
 ) {
 }
