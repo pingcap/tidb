@@ -395,18 +395,26 @@ func TestGetCharsetAndCollateInTableOption(t *testing.T) {
 		{"utf8mb4", "", false, []*ast.TableOption{
 			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
 		}},
-		{"utf8mb4", "", true, []*ast.TableOption{
+		{"", "", true, []*ast.TableOption{
 			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
 			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
 			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
 		}},
-		{"utf8mb4", "", true, []*ast.TableOption{
+		{"", "", true, []*ast.TableOption{
 			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
 			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
 			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
 		}},
-		{"utf8mb4", "", true, []*ast.TableOption{
+		{"", "", true, []*ast.TableOption{
 			{Tp: ast.TableOptionCollate, StrValue: "ascii_bin"},
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCharset, StrValue: "latin1"},
+		}},
+		{"", "", true, []*ast.TableOption{
 			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
 			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
 		}},

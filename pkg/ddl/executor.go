@@ -1606,6 +1606,7 @@ func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll st
 			if collChs != "" && collChs != chs {
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(collChs, chs)
 			}
+			collChs = chs
 		case ast.TableOptionCollate:
 			if len(options) > 1 {
 				// ALTER TABLE .. COLLATE aaa_bin COLLATE bbb_bin COLLATE ccc_bin
