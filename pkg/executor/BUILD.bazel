@@ -129,6 +129,7 @@ go_library(
         "//pkg/executor/internal/util",
         "//pkg/executor/internal/vecgroupchecker",
         "//pkg/executor/join",
+        "//pkg/executor/join/joinversion",
         "//pkg/executor/lockstats",
         "//pkg/executor/metrics",
         "//pkg/executor/sortexec",

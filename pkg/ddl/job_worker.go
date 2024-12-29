@@ -620,6 +620,7 @@ func (w *worker) transitOneJobStep(
 		return 0, err
 	}
 	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
 	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
 		w.sess.Rollback()
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)

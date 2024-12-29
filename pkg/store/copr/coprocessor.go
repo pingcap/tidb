@@ -1926,36 +1926,32 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 	if resp == nil {
 		return nil
 	}
-	sd := &util.ScanDetail{}
-	td := util.TimeDetail{}
 	if pbDetails := resp.pbResp.ExecDetailsV2; pbDetails != nil {
 		// Take values in `ExecDetailsV2` first.
 		if pbDetails.TimeDetail != nil || pbDetails.TimeDetailV2 != nil {
-			td.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(pbDetails.TimeDetailV2, pbDetails.TimeDetail)
 		}
 		if scanDetailV2 := pbDetails.ScanDetailV2; scanDetailV2 != nil {
-			sd.MergeFromScanDetailV2(scanDetailV2)
+			copStats.ScanDetail.MergeFromScanDetailV2(scanDetailV2)
 		}
 	} else if pbDetails := resp.pbResp.ExecDetails; pbDetails != nil {
 		if timeDetail := pbDetails.TimeDetail; timeDetail != nil {
-			td.MergeFromTimeDetail(nil, timeDetail)
+			copStats.TimeDetail.MergeFromTimeDetail(nil, timeDetail)
 		}
 		if scanDetail := pbDetails.ScanDetail; scanDetail != nil {
 			if scanDetail.Write != nil {
-				sd.ProcessedKeys = scanDetail.Write.Processed
-				sd.TotalKeys = scanDetail.Write.Total
+				copStats.ScanDetail.ProcessedKeys = scanDetail.Write.Processed
+				copStats.ScanDetail.TotalKeys = scanDetail.Write.Total
 			}
 		}
 	}
-	copStats.ScanDetail = sd
-	copStats.TimeDetail = td
 
 	if worker.req.RunawayChecker != nil {
 		var ruDetail *util.RUDetails
 		if ruDetailRaw := bo.GetCtx().Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 			ruDetail = ruDetailRaw.(*util.RUDetails)
 		}
-		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, sd.ProcessedKeys, nil); err != nil {
+		if err := worker.req.RunawayChecker.CheckThresholds(ruDetail, copStats.ScanDetail.ProcessedKeys, nil); err != nil {
 			return err
 		}
 	}
@@ -1971,12 +1967,14 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 	}()
 	copStats.ReqStats = worker.kvclient.Stats
 	backoffTimes := bo.GetBackoffTimes()
-	copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
-	copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
-	copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
-	for backoff := range backoffTimes {
-		copStats.BackoffTimes[backoff] = backoffTimes[backoff]
-		copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+	if len(backoffTimes) > 0 {
+		copStats.BackoffTime = time.Duration(bo.GetTotalSleep()) * time.Millisecond
+		copStats.BackoffSleep = make(map[string]time.Duration, len(backoffTimes))
+		copStats.BackoffTimes = make(map[string]int, len(backoffTimes))
+		for backoff := range backoffTimes {
+			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
+			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
+		}
 	}
 	if rpcCtx != nil {
 		copStats.CalleeAddress = rpcCtx.Addr
@@ -1995,7 +1993,7 @@ func (worker *copIteratorWorker) collectUnconsumedCopRuntimeStats(bo *Backoffer,
 
 // CopRuntimeStats contains execution detail information.
 type CopRuntimeStats struct {
-	execdetails.ExecDetails
+	execdetails.CopExecDetails
 	ReqStats *tikv.RegionRequestRuntimeStats
 
 	CoprCacheHit bool

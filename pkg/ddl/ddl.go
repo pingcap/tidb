@@ -711,8 +711,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, task, param, d)
 		},
 	)
 

@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -371,6 +372,56 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
+func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+	// nullaware join
+	if len(leftNAJoinKeys) > 0 {
+		return false
+	}
+	// cross join
+	if len(leftJoinKeys) == 0 {
+		return false
+	}
+	// join with null equal condition
+	for _, value := range isNullEQ {
+		if value {
+			return false
+		}
+	}
+	switch joinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+		return true
+	default:
+		return false
+	}
+}
+
+// CanUseHashJoinV2 returns true if current join is supported by hash join v2
+func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+	if !isGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+		return false
+	}
+	switch joinType {
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
+		// null aware join is not supported yet
+		if len(leftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(leftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range isNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
@@ -383,17 +434,28 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
-
 	joins = make([]base.PhysicalPlan, 0, 2)
 	switch p.JoinType {
 	case logicalop.SemiJoin, logicalop.AntiSemiJoin:
-		if !forceLeftToBuild {
-			joins = append(joins, getHashJoin(p, prop, 1, false))
-		} else if !forceRightToBuild {
-			joins = append(joins, getHashJoin(p, prop, 1, true))
+		leftJoinKeys, _, isNullEQ, _ := p.GetJoinKeys()
+		leftNAJoinKeys, _ := p.GetNAJoinKeys()
+		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
+			if !forceLeftToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, false))
+			} else if !forceRightToBuild {
+				joins = append(joins, getHashJoin(p, prop, 1, true))
+			} else {
+				joins = append(joins, getHashJoin(p, prop, 1, false))
+				joins = append(joins, getHashJoin(p, prop, 1, true))
+			}
 		} else {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
-			joins = append(joins, getHashJoin(p, prop, 1, true))
+			if forceLeftToBuild || forceRightToBuild {
+				// Do not support specifying the build and probe side for semi join.
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+				forceLeftToBuild = false
+				forceRightToBuild = false
+			}
 		}
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))

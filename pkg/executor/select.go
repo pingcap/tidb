@@ -1160,11 +1160,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}
-	if vars.StmtCtx.LastInsertID > 0 {
+	if vars.StmtCtx.LastInsertIDSet {
 		sc.PrevLastInsertID = vars.StmtCtx.LastInsertID
 	} else {
 		sc.PrevLastInsertID = vars.StmtCtx.PrevLastInsertID
 	}
+	sc.LastInsertIDSet = false
 	sc.PrevAffectedRows = 0
 	if vars.StmtCtx.InUpdateStmt || vars.StmtCtx.InDeleteStmt || vars.StmtCtx.InInsertStmt || vars.StmtCtx.InSetSessionStatesStmt {
 		sc.PrevAffectedRows = int64(vars.StmtCtx.AffectedRows())

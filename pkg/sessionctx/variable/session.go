@@ -2445,6 +2445,7 @@ func (s *SessionVars) SetStringUserVar(name string, strVal string, collation str
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
+	s.StmtCtx.LastInsertIDSet = true
 	s.StmtCtx.LastInsertID = insertID
 }
 
