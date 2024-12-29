@@ -371,3 +371,49 @@ func TestResolveCharsetCollation(t *testing.T) {
 		}
 	}
 }
+
+func TestGetCharsetAndCollateInTableOption(t *testing.T) {
+	cases := []struct {
+		chs  string
+		coll string
+		err  bool
+		opts []*ast.TableOption
+	}{
+		{"utf8mb4", "utf8mb4_bin", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+		}},
+		{"", "utf8mb4_bin", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+		}},
+		{"utf8mb4", "", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+		}},
+		{"utf8mb4", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
+		}},
+		{"utf8mb4", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+		{"utf8mb4", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "ascii_bin"},
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+	}
+
+	for _, tc := range cases {
+		chs, coll, err := ddl.GetCharsetAndCollateInTableOption(tc.opts)
+		if tc.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tc.chs, chs, tc.opts)
+			require.Equal(t, tc.coll, coll, tc.opts)
+		}
+	}
+}

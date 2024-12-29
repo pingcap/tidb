@@ -1588,15 +1588,32 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset (chs) and collation (coll) in options.
 func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll string, err error) {
+	var collChs string
 	for _, opt := range options {
-		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
-		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
 			chs = opt.StrValue
+			if collChs != "" && collChs != chs {
+				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(collChs, chs)
+			}
 		case ast.TableOptionCollate:
+			if len(options) > 1 {
+				// ALTER TABLE .. COLLATE aaa_bin COLLATE bbb_bin COLLATE ccc_bin
+				// The character set of the first collation (aaa_bin) is compared
+				// with the character set of the second collation and an error is
+				// returned if it doesn't match
+				collation, err := collate.GetCollationByName(opt.StrValue)
+				if err != nil {
+					return "", "", err
+				}
+				if collChs != "" && collation.CharsetName != collChs {
+					return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(collation.Name, collChs)
+				}
+				collChs = collation.CharsetName
+			}
 			coll = opt.StrValue
 		}
+
 	}
 	return
 }
