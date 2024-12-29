@@ -571,10 +571,7 @@ const (
 // IsPredicateColumn returns true if the column is a predicate column.
 func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
 	// Check tidb_analyze_column_options global variable first
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeColumnOptions)
-	if err != nil {
-		return true // Default to analyzing all columns if error
-	}
+	val, _ := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeColumnOptions)
 
 	switch val {
 	case AnalyzeColumnsAll:
