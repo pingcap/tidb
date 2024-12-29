@@ -339,7 +339,6 @@ func TestTableDeltaClone(t *testing.T) {
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
-	require.NotEqual(t, td0, td1)
 
 	td2 := td0.Clone()
 	require.Equal(t, td0, td2)
