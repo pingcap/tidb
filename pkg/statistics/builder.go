@@ -584,7 +584,7 @@ func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
 		}
 		defer rows.Close()
 		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, 1)
-		if err := rows.Next(context.Background(), chk); err == nil && chk.NumRows() > 0 {
+		if _ = rows.Next(context.Background(), chk); chk.NumRows() > 0 {
 			return true
 		}
 		return false
