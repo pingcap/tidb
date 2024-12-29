@@ -198,18 +198,19 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := ast.CharsetOpt{}
+	charsetOptServer := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
+		charsetOptServer.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
+		charsetOptServer.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
 	}
 
+	charsetOpt := ast.CharsetOpt{}
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
@@ -223,7 +224,7 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 		}
 	}
 
-	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
+	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt, charsetOptServer}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	if err != nil {
 		return errors.Trace(err)
 	}
