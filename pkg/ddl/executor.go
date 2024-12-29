@@ -886,34 +886,82 @@ func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, err
 }
 
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
-// * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
-// * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
+//
+// charsetOpts[0] == explicitly set charset/collation for the object (object can be a table, database, etc)
+// charsetOpts[1] == Template object charset/collation. For example a CREATE TABLE uses the charset/collation
+// of the schema as template.
 func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
-	for _, v := range charsetOpts {
-		if v.Col != "" {
-			collation, err := collate.GetCollationByName(v.Col)
+	if len(charsetOpts) == 0 {
+		chs, _ = charset.GetDefaultCharsetAndCollate()
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+		return
+	}
+
+	// Handle explicit collation and charset for the object
+	if len(charsetOpts) > 0 {
+		if charsetOpts[0].Col != "" {
+			coll = charsetOpts[0].Col
+		}
+		if charsetOpts[0].Chs != "" {
+			_, err := charset.GetCharsetInfo(charsetOpts[0].Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			if v.Chs != "" && collation.CharsetName != v.Chs {
-				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.Col, v.Chs)
-			}
-			return collation.CharsetName, v.Col, nil
+			chs = charsetOpts[0].Chs
 		}
-		if v.Chs != "" {
-			coll, err := GetDefaultCollation(v.Chs, utf8MB4DefaultColl)
+
+		if coll != "" {
+			collation, err := collate.GetCollationByName(coll)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.Chs, coll, nil
+
+			if chs == "" {
+				chs = collation.CharsetName
+			} else if collation.CharsetName != chs {
+				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
+			}
 		}
 	}
-	chs, coll = charset.GetDefaultCharsetAndCollate()
-	utf8mb4Coll := getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
-	if utf8mb4Coll != "" {
-		return chs, utf8mb4Coll, nil
+
+	// Handle implicit options for the object, e.g. use the schema charset for a
+	// new table if none is specified
+	if len(charsetOpts) > 1 {
+		if charsetOpts[1].Col != "" && coll == "" {
+			collation, err := collate.GetCollationByName(charsetOpts[1].Col)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+
+			// 1. Explicit charset for object, use the collation of the template object
+			// for the collation if it matches.
+			//
+			// 2. If no charset is set explicitly, set the collation.
+			if collation.CharsetName == chs || chs == "" {
+				coll = charsetOpts[1].Col
+			}
+		}
+		if charsetOpts[1].Chs != "" && chs == "" {
+			chs = charsetOpts[1].Chs
+			_, err := charset.GetCharsetInfo(chs)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+		}
 	}
-	return chs, coll, nil
+
+	// Set the collation if it is not set and when the charset is set.
+	if coll == "" && chs != "" {
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+
+	return
 }
 
 // IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.

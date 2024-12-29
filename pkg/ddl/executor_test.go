@@ -409,7 +409,7 @@ func TestResolveCharsetCollation(t *testing.T) {
 		{"utf8mb4", "utf8mb4_general_ci", false, []ast.CharsetOpt{
 			{Chs: "utf8mb4", Col: "utf8mb4_general_ci"},
 		}, ""},
-		{"utf8", "utf8_bin", false, []ast.CharsetOpt{
+		{"utf8", "utf8_general_ci", false, []ast.CharsetOpt{
 			{Chs: "utf8"},
 			{Chs: "utf8", Col: "utf8_general_ci"}}, ""},
 		{"latin1", "latin1_bin", false, []ast.CharsetOpt{
