@@ -962,9 +962,11 @@ func (s *indexWriteResultSink) collectResult() error {
 				if err != nil {
 					s.ctx.onError(err)
 				}
-				total := s.backendCtx.TotalKeyCount()
-				if total > 0 {
-					s.rowCntListener.SetTotal(total)
+				if s.backendCtx != nil {
+					total := s.backendCtx.TotalKeyCount()
+					if total > 0 {
+						s.rowCntListener.SetTotal(total)
+					}
 				}
 				return err
 			}
