@@ -1866,6 +1866,9 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					toCharset, toCollate, err = ResolveCharsetCollation([]ast.CharsetOpt{
 						{Chs: toCharset, Col: toCollate},
 					}, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					if err != nil {
+						return err
+					}
 					needsOverwriteCols := NeedToOverwriteColCharset(spec.Options)
 					err = e.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true

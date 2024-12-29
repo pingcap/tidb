@@ -983,6 +983,9 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 					toCharset, toCollate, err = ddl.ResolveCharsetCollation([]ast.CharsetOpt{
 						{Chs: toCharset, Col: toCollate},
 					}, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					if err != nil {
+						return err
+					}
 					needsOverwriteCols := ddl.NeedToOverwriteColCharset(spec.Options)
 
 					tblInfo = tblInfo.Clone()
