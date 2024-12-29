@@ -1613,7 +1613,6 @@ func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll st
 			}
 			coll = opt.StrValue
 		}
-
 	}
 	return
 }
