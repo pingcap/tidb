@@ -577,7 +577,7 @@ func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
 	case AnalyzeColumnsAll:
 		return true
 	case AnalyzeColumnsPredicate:
-		sql := "SELECT 1 FROM mysql.column_stats_usage WHERE table_id = ? AND column_id = ? AND last_used_at IS NOT NULL"
+		sql := "SELECT 1 FROM mysql.column_stats_usage WHERE table_id = %? AND column_id = %? AND last_used_at IS NOT NULL"
 		rows, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql, tableID, columnID)
 		if err != nil {
 			return false
