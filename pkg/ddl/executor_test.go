@@ -347,6 +347,12 @@ func TestResolveCharsetCollation(t *testing.T) {
 			{Chs: "latin1"},
 			{Chs: "utf8", Col: "utf8_unicode_ci"},
 		}, ""},
+		{"utf8mb4", "utf8mb4_bin", false, []ast.CharsetOpt{
+			{Chs: "", Col: ""},
+		}, ""},
+		{"utf8mb4", "utf8mb4_unicode_ci", false, []ast.CharsetOpt{
+			{Chs: "", Col: ""},
+		}, "utf8mb4_unicode_ci"},
 
 		// Error cases
 		{"", "", true, []ast.CharsetOpt{

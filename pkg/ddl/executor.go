@@ -934,6 +934,15 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 		}
 	}
 
+	// This happens with {Chs: "", Col: ""}
+	if chs == "" {
+		chs, _ = charset.GetDefaultCharsetAndCollate()
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+
 	return
 }
 
