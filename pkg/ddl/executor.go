@@ -898,7 +898,6 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
 			}
 		}
-		fmt.Printf("=== 0 After parsing %v: chs=%s,coll=%s\n", charsetOpts[0], chs, coll)
 	}
 
 	// Handle implicit options for the object, e.g. use the schema charset for a
@@ -925,7 +924,6 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 				return "", "", errors.Trace(err)
 			}
 		}
-		fmt.Printf("=== 1 After parsing %v: chs=%s,coll=%s\n", charsetOpts[1], chs, coll)
 	}
 
 	// Set the collation if it is not set and when the charset is set.
@@ -936,7 +934,6 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 		}
 	}
 
-	fmt.Printf("=== 3 Final: chs=%s,coll=%s\n", chs, coll)
 	return
 }
 
