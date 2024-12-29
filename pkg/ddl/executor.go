@@ -210,16 +210,12 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 		}
 	}
 
-	explicitCharset := false
-	explicitCollation := false
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
 			charsetOpt.Chs = val.Value
-			explicitCharset = true
 		case ast.DatabaseOptionCollate:
 			charsetOpt.Col = val.Value
-			explicitCollation = true
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{
 				Name: pmodel.NewCIStr(val.Value),
@@ -227,39 +223,16 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 		}
 	}
 
-	if charsetOpt.Col != "" {
-		coll, err := collate.GetCollationByName(charsetOpt.Col)
-		if err != nil {
-			return err
-		}
-
-		// The collation is not valid for the specified character set.
-		// Try to remove any of them, but not if they are explicitly defined.
-		if coll.CharsetName != charsetOpt.Chs {
-			if explicitCollation && !explicitCharset {
-				// Use the explicitly set collation, not the implicit charset.
-				charsetOpt.Chs = ""
-			}
-			if !explicitCollation && explicitCharset {
-				// Use the explicitly set charset, not the (session) collation.
-				charsetOpt.Col = ""
-			}
-		}
-	}
-	if !explicitCollation && explicitCharset {
-		coll := getDefaultCollationForUTF8MB4(charsetOpt.Chs, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
-		if len(coll) != 0 {
-			charsetOpt.Col = coll
-		}
-	}
-	dbInfo := &model.DBInfo{Name: stmt.Name}
 	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbInfo.Charset = chs
-	dbInfo.Collate = coll
-	dbInfo.PlacementPolicyRef = placementPolicyRef
+	dbInfo := &model.DBInfo{
+		Name:               stmt.Name,
+		Charset:            chs,
+		Collate:            coll,
+		PlacementPolicyRef: placementPolicyRef,
+	}
 
 	onExist := OnExistError
 	if stmt.IfNotExists {
@@ -925,6 +898,7 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
 			}
 		}
+		fmt.Printf("=== 0 After parsing %v: chs=%s,coll=%s\n", charsetOpts[0], chs, coll)
 	}
 
 	// Handle implicit options for the object, e.g. use the schema charset for a
@@ -951,6 +925,7 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 				return "", "", errors.Trace(err)
 			}
 		}
+		fmt.Printf("=== 1 After parsing %v: chs=%s,coll=%s\n", charsetOpts[1], chs, coll)
 	}
 
 	// Set the collation if it is not set and when the charset is set.
@@ -961,6 +936,7 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 		}
 	}
 
+	fmt.Printf("=== 3 Final: chs=%s,coll=%s\n", chs, coll)
 	return
 }
 
@@ -1614,44 +1590,15 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset (chs) and collation (coll) in options.
-//
-// If there is no TableOptionCharset or TableOptionCollate in the options, this functions returns "" for both.
-// If there is only a TableOptionCharset then coll will be set to the default collation for the charset.
-// If there is only a TableOptionCollate then the chs will be set to the charset of the collation.
-func GetCharsetAndCollateInTableOption(options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll string, err error) {
 	for _, opt := range options {
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
 		// the charset will be utf8, collate will be utf8_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			info, err := charset.GetCharsetInfo(opt.StrValue)
-			if err != nil {
-				return "", "", err
-			}
-			if len(chs) == 0 {
-				chs = info.Name
-			} else if chs != info.Name {
-				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
-			}
-			if len(coll) == 0 {
-				defaultColl := getDefaultCollationForUTF8MB4(chs, defaultUTF8MB4Coll)
-				if len(defaultColl) == 0 {
-					coll = info.DefaultCollation
-				} else {
-					coll = defaultColl
-				}
-			}
+			chs = opt.StrValue
 		case ast.TableOptionCollate:
-			info, err := collate.GetCollationByName(opt.StrValue)
-			if err != nil {
-				return "", "", err
-			}
-			if len(chs) == 0 {
-				chs = info.CharsetName
-			} else if chs != info.CharsetName {
-				return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
-			}
-			coll = info.Name
+			coll = opt.StrValue
 		}
 	}
 	return
@@ -1915,10 +1862,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options)
 					if err != nil {
 						return err
 					}
+					toCharset, toCollate, err = ResolveCharsetCollation([]ast.CharsetOpt{
+						{Chs: toCharset, Col: toCollate},
+					}, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					needsOverwriteCols := NeedToOverwriteColCharset(spec.Options)
 					err = e.AlterTableCharsetAndCollate(sctx, ident, toCharset, toCollate, needsOverwriteCols)
 					handledCharsetOrCollate = true

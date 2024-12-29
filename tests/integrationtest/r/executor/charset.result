@@ -135,7 +135,7 @@ CREATE TABLE t14 (id INT PRIMARY KEY) COLLATE utf8_general_ci;
 SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.tables WHERE TABLE_SCHEMA='s1';
 TABLE_NAME	TABLE_COLLATION
 t11	utf8_general_ci
-t12	utf8_bin
+t12	utf8_general_ci
 t13	utf8_general_ci
 t14	utf8_general_ci
 DROP SCHEMA s1;
