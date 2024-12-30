@@ -110,6 +110,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tidb/pkg/util/username"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -824,8 +825,8 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 
 // checkUserVarintMismatch checks if the user has different prefix than the assigned keyspace.
 func checkUserVarintMismatch(ctx context.Context, user string) error {
-	if keyspace.GetUsernamePolicy().ValidateUsername(user) != nil &&
-		keyspace.GetUsernamePolicy().ValidateUsernameFormat(user) {
+	if username.GetUsernamePolicy().ValidateUsername(user) != nil &&
+		username.GetUsernamePolicy().ValidateUsernameFormat(user) {
 		logutil.Logger(ctx).Warn("username variants mismatch",
 			zap.String("user", user),
 			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
@@ -836,7 +837,7 @@ func checkUserVarintMismatch(ctx context.Context, user string) error {
 }
 
 func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPassword string) (*auth.UserIdentity, error) {
-	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
+	for _, variant := range username.GetUsernamePolicy().GetUsernameVariants(cc.user) {
 		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
 		if err != nil {
 			continue
