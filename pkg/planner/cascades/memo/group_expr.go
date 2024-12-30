@@ -161,8 +161,8 @@ func (e *GroupExpression) mergeTo(target *GroupExpression) {
 	e.group = nil
 }
 
-func (e *GroupExpression) addr() uintptr {
-	return uintptr(unsafe.Pointer(e))
+func (e *GroupExpression) addr() unsafe.Pointer {
+	return unsafe.Pointer(e)
 }
 
 // DeriveLogicalProp derive the new group's logical property from a specific GE.

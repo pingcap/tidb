@@ -59,7 +59,7 @@ type Group struct {
 	//   │         │                    \  │
 	//  srcG ---> dstG          srcG ---> dstG
 	//
-	hash2ParentGroupExpr *hashmap.Map[uintptr, *GroupExpression]
+	hash2ParentGroupExpr *hashmap.Map[unsafe.Pointer, *GroupExpression]
 
 	// logicalProp indicates the logical property.
 	logicalProp *property.LogicalProperty
@@ -218,7 +218,7 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 
 // removeParentGEs remove the current Group's parent GE ref which is pointed to parent.
 func (g *Group) removeParentGEs(parent *GroupExpression) {
-	addr := uintptr(unsafe.Pointer(parent))
+	addr := unsafe.Pointer(parent)
 	_, ok := g.hash2ParentGroupExpr.Get(addr)
 	intest.Assert(ok)
 	g.hash2ParentGroupExpr.Remove(addr)
@@ -226,7 +226,7 @@ func (g *Group) removeParentGEs(parent *GroupExpression) {
 
 // addParentGEs is used to maintain the reverted parent pointer from Group to parent GEs.
 func (g *Group) addParentGEs(parent *GroupExpression) {
-	addr := uintptr(unsafe.Pointer(parent))
+	addr := unsafe.Pointer(parent)
 	_, ok := g.hash2ParentGroupExpr.Get(addr)
 	intest.Assert(!ok)
 	g.hash2ParentGroupExpr.Put(addr, parent)
@@ -235,7 +235,7 @@ func (g *Group) addParentGEs(parent *GroupExpression) {
 // mergeTo will merge src group's element into target group.
 func (g *Group) mergeTo(target *Group) {
 	// maintain target group's parent GE refs, except the triggering src GE.
-	g.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	g.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		target.hash2ParentGroupExpr.Put(key, val)
 	})
 	// maintain the ge migration, two groups may have the equivalent two,
@@ -254,11 +254,11 @@ func (g *Group) mergeTo(target *Group) {
 			target.Insert(ge)
 		}
 		// note:
-		// 1: for distinct ge among two groups: since ge's global register info, mm.hash2GlobalGroupExpr has already done
+		// 1: for distinct GE among two groups: since GE's global register info, mm.hash2GlobalGroupExpr has already done
 		// when inserting themselves into src group or dst group, nothing to do here. childG's parentGERefs is also maintained
 		// before, nothing to do here.
-		// 2: for the duplicated ge in two groups, which is the root cause for a recursive group merge of this two groups, as
-		// the same way, mm.hash2GlobalGroupExpr is done once before, the re-inserted ge doesn't do it again, so nothing to do
+		// 2: for the duplicated GE in two groups, which is the root cause for a recursive group merge of this two groups, as
+		// the same way, mm.hash2GlobalGroupExpr is done once before, the re-inserted GE doesn't do it again, so nothing to do
 		// here. childG's parentGERefs is done for re-inserted GE, but it's cleared ge.MergeTo(existedGE) here.
 		return true
 	})
@@ -268,9 +268,7 @@ func (g *Group) mergeTo(target *Group) {
 // Clear clean and release the group element in the container.
 func (g *Group) Clear() {
 	// clean the list.
-	g.hash2GroupExpr.Each(func(key *GroupExpression, val *list.Element) {
-		g.logicalExpressions.Remove(val)
-	})
+	g.logicalExpressions.Init()
 	// clean the map.
 	g.hash2GroupExpr.Clear()
 	g.hash2ParentGroupExpr.Clear()
@@ -299,7 +297,7 @@ func (g *Group) Check() {
 		intest.Assert(ok)
 	}
 	// assert the parent GE ref.
-	g.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	g.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		found := false
 		for _, childG := range val.Inputs {
 			if childG.GetGroupID() == g.GetGroupID() {
@@ -326,13 +324,13 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 				return t.GetHash64()
 			},
 		),
-		hash2ParentGroupExpr: hashmap.New[uintptr, *GroupExpression](
+		hash2ParentGroupExpr: hashmap.New[unsafe.Pointer, *GroupExpression](
 			4,
-			func(a, b uintptr) bool {
+			func(a, b unsafe.Pointer) bool {
 				return a == b
 			},
-			func(t uintptr) uint64 {
-				return uint64(t)
+			func(t unsafe.Pointer) uint64 {
+				return uint64(uintptr(t))
 			},
 		),
 	}

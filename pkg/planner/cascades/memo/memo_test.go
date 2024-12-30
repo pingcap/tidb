@@ -17,6 +17,7 @@ package memo
 import (
 	"container/list"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -153,7 +154,7 @@ func TestMergeGroup(t *testing.T) {
 	existedGE.GetGroup().Check()
 	require.Equal(t, existedGE.GetGroup().hash2ParentGroupExpr.Size(), 2)
 	mask := [2]bool{}
-	existedGE.GetGroup().hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	existedGE.GetGroup().hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == srcParentGroup.GetGroupID() {
 			mask[0] = true
 		}
@@ -176,7 +177,7 @@ func TestMergeGroup(t *testing.T) {
 	require.Equal(t, dstG.hash2GroupExpr.Size(), 2)
 	require.Equal(t, len(dstG.Operand2FirstExpr), 1)
 	mask = [2]bool{}
-	dstG.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	dstG.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == srcParentGroup.GetGroupID() {
 			mask[0] = true
 		}
@@ -195,7 +196,7 @@ func TestMergeGroup(t *testing.T) {
 	// assert childG
 	require.Equal(t, childG1.hash2ParentGroupExpr.Size(), 2)
 	mask = [2]bool{}
-	childG1.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	childG1.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == srcG.GetGroupID() {
 			mask[0] = true
 		}
@@ -279,7 +280,7 @@ func TestRecursiveMergeGroup(t *testing.T) {
 	existedGE.GetGroup().Check()
 	require.Equal(t, existedGE.GetGroup().hash2ParentGroupExpr.Size(), 1)
 	var mask bool
-	existedGE.GetGroup().hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	existedGE.GetGroup().hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == dstParentGroup.GetGroupID() {
 			mask = true
 		}
@@ -298,7 +299,7 @@ func TestRecursiveMergeGroup(t *testing.T) {
 	require.Equal(t, dstG.hash2GroupExpr.Size(), 2)
 	require.Equal(t, len(dstG.Operand2FirstExpr), 1)
 	mask = false
-	dstG.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	dstG.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == dstParentGroup.GetGroupID() {
 			mask = true
 		}
@@ -324,7 +325,7 @@ func TestRecursiveMergeGroup(t *testing.T) {
 	// assert projG
 	projG2.Check()
 	require.Equal(t, projG2.hash2ParentGroupExpr.Size(), 1)
-	projG2.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	projG2.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == dstG.GetGroupID() {
 			mask = true
 		}
@@ -335,7 +336,7 @@ func TestRecursiveMergeGroup(t *testing.T) {
 	childG1.Check()
 	require.Equal(t, childG1.hash2ParentGroupExpr.Size(), 2)
 	mask2 := [2]bool{}
-	childG1.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	childG1.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
 		if val.GetGroup().GetGroupID() == srcG.GetGroupID() {
 			mask2[0] = true
 		}
