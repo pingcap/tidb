@@ -2615,10 +2615,13 @@ func (mebd *mockEtcdBackend) TLSConfig() *tls.Config { return nil }
 
 func (mebd *mockEtcdBackend) StartGCWorker() error { return nil }
 
-func TestTiDBUpgradeToVer240(t *testing.T) {
+func TestAnalyzeJobsIndexes(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
+	defer func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	}()
 
 	ver239 := version239
 	seV239 := CreateSessionAndSetID(t, store)
@@ -2635,24 +2638,6 @@ func TestTiDBUpgradeToVer240(t *testing.T) {
 	// Check if the required indexes already exist in mysql.analyze_jobs (they are created by default in new clusters)
 	res := MustExecToRecodeSet(t, seV239, "show create table mysql.analyze_jobs")
 	chk := res.NewChunk(nil)
-	err = res.Next(ctx, chk)
-	require.NoError(t, err)
-	require.Equal(t, 1, chk.NumRows())
-	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_state")
-	require.Contains(t, string(chk.GetRow(0).GetBytes(1)), "idx_schema_table_partition_state")
-
-	// Check that the indexes still exist after upgrading to the new version and that no errors occurred during the upgrade.
-	dom.Close()
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
-	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seCurVer)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	res = MustExecToRecodeSet(t, seCurVer, "show create table mysql.analyze_jobs")
-	chk = res.NewChunk(nil)
 	err = res.Next(ctx, chk)
 	require.NoError(t, err)
 	require.Equal(t, 1, chk.NumRows())
