@@ -20,33 +20,21 @@ func (e *Explain) unityPlan() (string, error) {
 	basicStats, _ := rootStats.MergeStats()
 	up.TimeInMS = float64(basicStats.GetTime()) / 1e6
 	up.MemInByte = memTracker.MaxConsumed()
+	up.SubPlans = append(up.SubPlans, e.unitySubPlan())
 	data, err := json.Marshal(up)
 	return string(data), err
 }
 
-func (e *Explain) unitySubPlan() {
-
-}
-
-type UnityPlanNode struct {
-	ID                  string                  `json:"id"`
-	EstRows             string                  `json:"estRows"`
-	ActRows             string                  `json:"actRows,omitempty"`
-	TaskType            string                  `json:"taskType"`
-	AccessObject        string                  `json:"accessObject,omitempty"`
-	ExecuteInfo         string                  `json:"executeInfo,omitempty"`
-	OperatorInfo        string                  `json:"operatorInfo,omitempty"`
-	EstCost             string                  `json:"estCost,omitempty"`
-	MemoryInfo          string                  `json:"memoryInfo,omitempty"`
-	TotalMemoryConsumed string                  `json:"totalMemoryConsumed,omitempty"`
-	SubOperators        []*ExplainInfoForEncode `json:"subOperators,omitempty"`
+func (e *Explain) unitySubPlan() *ExplainInfoForEncode {
+	flat := FlattenPhysicalPlan(e.TargetPlan, true)
+	return e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main)
 }
 
 type UnityPlan struct {
-	PlanDigest string           `json:"plan_digest"`
-	TimeInMS   float64          `json:"time_in_ms"`
-	MemInByte  int64            `json:"mem_in_byte"`
-	SubPlans   []*UnityPlanNode `json:"sub_plans"`
+	PlanDigest string                  `json:"planDigest"`
+	TimeInMS   float64                 `json:"TimeInMS"`
+	MemInByte  int64                   `json:"memInByte"`
+	SubPlans   []*ExplainInfoForEncode `json:"subPlans"`
 }
 
 func planDigest(p base.Plan) string {
