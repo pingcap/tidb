@@ -124,7 +124,7 @@ func TestDeadlockHistoryCollection(t *testing.T) {
 	expectedItems := []*DeadlockRecord{rec1, rec2, rec3}
 	expectedIDs := []uint64{1, 2, 3}
 	expectedDequeHead := 0
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		newRec := &DeadlockRecord{
 			OccurTime: time.Now(),
 		}

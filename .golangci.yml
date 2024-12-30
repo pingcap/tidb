@@ -26,6 +26,7 @@ linters:
     - revive
     - lll
     - gofmt
+    - intrange
 
 linters-settings:
   staticcheck:

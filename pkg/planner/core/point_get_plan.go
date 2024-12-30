@@ -80,14 +80,14 @@ type PointGetPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	dbName           string
-	schema           *expression.Schema
-	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
-	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
+	schema           *expression.Schema `plan-cache-clone:"shallow"`
+	TblInfo          *model.TableInfo   `plan-cache-clone:"shallow"`
+	IndexInfo        *model.IndexInfo   `plan-cache-clone:"shallow"`
 	PartitionIdx     *int
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
@@ -99,21 +99,22 @@ type PointGetPlan struct {
 	IdxCols          []*expression.Column
 	IdxColLens       []int
 	AccessConditions []expression.Expression
-	ctx              base.PlanContext
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
 	outputNames      []*types.FieldName `plan-cache-clone:"shallow"`
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost             float64
 
 	// required by cost model
+	cost         float64
 	planCostInit bool
 	planCost     float64
 	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -420,7 +421,7 @@ type BatchPointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []pmodel.CIStr `plan-cache-clone:"shallow"`
 
 	ctx              base.PlanContext
 	dbName           string
@@ -1394,6 +1395,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		if idxInfo.Global {
 			if tblName.TableInfo == nil ||
 				len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+				len(tbl.GetPartitionInfo().NewPartitionIDs) > 0 ||
 				len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
 				continue
 			}
@@ -2005,7 +2007,11 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetStaticType())
+		castToTP := col.GetStaticType()
+		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -2040,18 +2046,18 @@ func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCt
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			pointGet.Lock, pointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo)
+		return buildPointDeletePlan(ctx, pointGet, pointGet.dbName, pointGet.TblInfo, delStmt.IgnoreErr)
 	}
 	if batchPointGet := tryWhereIn2BatchPointGet(ctx, selStmt, resolveCtx); batchPointGet != nil {
 		if ctx.GetSessionVars().TxnCtx.IsPessimistic {
 			batchPointGet.Lock, batchPointGet.LockWaitTime = getLockWaitTime(ctx, &ast.SelectLockInfo{LockType: ast.SelectLockForUpdate})
 		}
-		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo)
+		return buildPointDeletePlan(ctx, batchPointGet, batchPointGet.dbName, batchPointGet.TblInfo, delStmt.IgnoreErr)
 	}
 	return nil
 }
 
-func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo) base.Plan {
+func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbName string, tbl *model.TableInfo, ignoreErr bool) base.Plan {
 	if checkFastPlanPrivilege(ctx, dbName, tbl.Name.L, mysql.SelectPriv, mysql.DeletePriv) != nil {
 		return nil
 	}
@@ -2071,6 +2077,7 @@ func buildPointDeletePlan(ctx base.PlanContext, pointPlan base.PhysicalPlan, dbN
 	delPlan := Delete{
 		SelectPlan:     pointPlan,
 		TblColPosInfos: []TblColPosInfo{colPosInfo},
+		IgnoreErr:      ignoreErr,
 	}.Init(ctx)
 	tblID2Table := map[int64]table.Table{tbl.ID: t}
 	err = delPlan.buildOnDeleteFKTriggers(ctx, is, tblID2Table)

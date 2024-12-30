@@ -69,7 +69,7 @@ func onCreateResourceGroup(jobCtx *jobContext, job *model.Job) (ver int64, _ err
 			return ver, errors.Trace(err)
 		}
 
-		ctx, cancel := context.WithTimeout(jobCtx.ctx, defaultInfosyncTimeout)
+		ctx, cancel := context.WithTimeout(jobCtx.stepCtx, defaultInfosyncTimeout)
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {

@@ -33,6 +33,9 @@ var (
 	instancePlanCacheInstancePlanNumCounter prometheus.Gauge
 	instancePlanCacheInstanceMemoryUsage    prometheus.Gauge
 	instancePlanCacheInstanceNumEvict       prometheus.Gauge
+	sessionPlanCacheLookupDuration          prometheus.Observer
+	instancePlanCacheLookupDuration         prometheus.Observer
+	instancePlanCacheCloneDuration          prometheus.Observer
 )
 
 func init() {
@@ -54,6 +57,9 @@ func InitMetricsVars() {
 	instancePlanCacheInstancePlanNumCounter = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache")
 	instancePlanCacheInstanceMemoryUsage = metrics.PlanCacheInstanceMemoryUsage.WithLabelValues(" instance-plan-cache")
 	instancePlanCacheInstanceNumEvict = metrics.PlanCacheInstancePlanNumCounter.WithLabelValues(" instance-plan-cache-last-evict")
+	sessionPlanCacheLookupDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" session-plan-cache-lookup")
+	instancePlanCacheLookupDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" instance-plan-cache-lookup")
+	instancePlanCacheCloneDuration = metrics.PlanCacheProcessDuration.WithLabelValues(" instance-plan-cache-clone")
 }
 
 // GetPlanCacheHitCounter get different plan cache hit counter
@@ -91,6 +97,19 @@ func GetPlanCacheInstanceMemoryUsage(instancePlanCache bool) prometheus.Gauge {
 		return instancePlanCacheInstanceMemoryUsage
 	}
 	return sessionPlanCacheInstanceMemoryUsage
+}
+
+// GetPlanCacheCloneDuration get different plan cache clone duration.
+func GetPlanCacheCloneDuration() prometheus.Observer {
+	return instancePlanCacheCloneDuration
+}
+
+// GetPlanCacheLookupDuration get different plan cache lookup duration.
+func GetPlanCacheLookupDuration(instancePlanCache bool) prometheus.Observer {
+	if instancePlanCache {
+		return instancePlanCacheLookupDuration
+	}
+	return sessionPlanCacheLookupDuration
 }
 
 // GetPlanCacheInstanceEvict get instance plan cache evict counter.

@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -217,13 +217,13 @@ func cancelSuccess(rs *testkit.Result) bool {
 func TestCancelVariousJobs(t *testing.T) {
 	var enterCnt, exitCnt atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.Job) { exitCnt.Add(1) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) { exitCnt.Add(1) })
 	waitDDLWorkerExited := func() {
 		require.Eventually(t, func() bool {
 			return enterCnt.Load() == exitCnt.Load()
 		}, 10*time.Second, 10*time.Millisecond)
 	}
-	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, withMockTiFlash(2))
+	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -261,7 +261,6 @@ func TestCancelVariousJobs(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(2048)`)
 
 	// Change some configurations.
-	ddl.ReorgWaitTimeout = 10 * time.Millisecond
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
@@ -288,14 +287,14 @@ func TestCancelVariousJobs(t *testing.T) {
 	}
 
 	resetHook := func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 	registerHook := func(onJobRunBefore bool) {
 		if onJobRunBefore {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
 		} else {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", hookFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hookFunc)
 		}
 	}
 
@@ -358,7 +357,7 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1)")
 
 	var testCancelState model.SchemaState
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
@@ -378,4 +377,27 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 0, len(tbl.Meta().Indices))
+}
+
+func TestCancelJobBeforeRun(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tkCancel := testkit.NewTestKit(t, store)
+
+	// Prepare schema.
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
+	tk.MustExec("insert into t values(1, 1, 1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
+
+	counter := 0
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
+		if counter == 0 && jobW.TableName == "t" {
+			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobW.ID))
+			counter++
+		}
+	})
+
+	tk.MustGetErrCode("truncate table t", errno.ErrCancelledDDLJob)
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 }

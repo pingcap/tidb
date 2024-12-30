@@ -91,7 +91,7 @@ func GetHistoryJobByID(sess sessionctx.Context, id int64) (*model.Job, error) {
 
 // GetLastNHistoryDDLJobs returns the DDL history jobs and an error.
 // The maximum count of history jobs is num.
-func GetLastNHistoryDDLJobs(t *meta.Mutator, maxNumJobs int) ([]*model.Job, error) {
+func GetLastNHistoryDDLJobs(t meta.Reader, maxNumJobs int) ([]*model.Job, error) {
 	iterator, err := GetLastHistoryDDLJobsIterator(t)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -101,7 +101,7 @@ func GetLastNHistoryDDLJobs(t *meta.Mutator, maxNumJobs int) ([]*model.Job, erro
 
 // IterHistoryDDLJobs iterates history DDL jobs until the `finishFn` return true or error.
 func IterHistoryDDLJobs(txn kv.Transaction, finishFn func([]*model.Job) (bool, error)) error {
-	txnMeta := meta.NewMutator(txn)
+	txnMeta := meta.NewReader(txn)
 	iter, err := GetLastHistoryDDLJobsIterator(txnMeta)
 	if err != nil {
 		return err

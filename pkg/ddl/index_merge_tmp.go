@@ -350,7 +350,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(
 
 			// Extract the operations on the original index and replay them later.
 			for _, elem := range tempIdxVal {
-				if elem.KeyVer == tables.TempIndexKeyTypeMerge || elem.KeyVer == tables.TempIndexKeyTypeDelete {
+				if elem.KeyVer == tablecodec.TempIndexKeyTypeMerge || elem.KeyVer == tablecodec.TempIndexKeyTypeDelete {
 					// For 'm' version kvs, they are double-written.
 					// For 'd' version kvs, they are written in the delete-only state and can be dropped safely.
 					continue

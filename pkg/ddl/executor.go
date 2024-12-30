@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -47,9 +48,11 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	parser_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -66,8 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -421,7 +422,7 @@ func (e *executor) getPendingTiFlashTableCount(originVersion int64, pendingCount
 		return originVersion, pendingCount
 	}
 	cnt := uint32(0)
-	dbs := is.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	dbs := is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(db.DBName.L) {
 			continue
@@ -962,15 +963,6 @@ func checkGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexInfo *mo
 		if !indexInfo.Unique {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("GLOBAL IndexOption on non-unique index")
 		}
-		// TODO: remove limitation
-		// check that not all partitioned columns are included.
-		inAllPartitionColumns, err := checkPartitionKeysConstraint(pi, indexInfo.Columns, tblInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if inAllPartitionColumns {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index including all columns in the partitioning expression")
-		}
 		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexInfo.Name.O, indexInfo.Columns)
 	}
 	return nil
@@ -1028,8 +1020,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return errors.Trace(err)
 	}
 
-	if s.Partition != nil {
-		rewritePartitionQueryString(ctx, s.Partition, tbInfo)
+	if err = rewritePartitionQueryString(ctx, s.Partition, tbInfo); err != nil {
+		return err
 	}
 
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
@@ -1089,7 +1081,7 @@ func (e *executor) createTableWithInfoJob(
 		}
 	}
 
-	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), tbInfo); err != nil {
+	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
 		return nil, err
 	}
 
@@ -1986,23 +1978,10 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 
-	logFn := logutil.DDLLogger().Warn
-	if intest.InTest {
-		logFn = logutil.DDLLogger().Fatal
-	}
-
-	// to do:(joccau)
-	// we need refactor this part to support V2 job version after refactor all of ddl types.
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
 	for _, j := range subJobs {
 		if j.Type == model.ActionAddForeignKey {
-			ref, ok := j.Args[0].(*model.FKInfo)
-			if !ok {
-				logFn("unexpected type of foreign key info",
-					zap.Any("args[0]", j.Args[0]),
-					zap.String("type", fmt.Sprintf("%T", j.Args[0])))
-				continue
-			}
+			ref := j.JobArgs.(*model.AddForeignKeyArgs).FkInfo
 			involvingSchemaInfo = append(involvingSchemaInfo, model.InvolvingSchemaInfo{
 				Database: ref.RefSchema.L,
 				Table:    ref.RefTable.L,
@@ -2019,44 +1998,28 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 	}
 
 	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
 		SchemaID:            schema.ID,
 		TableID:             t.Meta().ID,
 		SchemaName:          schema.Name.L,
 		TableName:           t.Meta().Name.L,
 		Type:                model.ActionMultiSchemaChange,
 		BinlogInfo:          &model.HistoryInfo{},
-		Args:                nil,
 		MultiSchemaInfo:     info,
-		ReorgMeta:           nil,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	if containsDistTaskSubJob(subJobs) {
-		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		job.ReorgMeta = NewDDLReorgMeta(ctx)
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
 	return e.DoDDLJob(ctx, job)
-}
-
-func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
-	for _, sub := range subJobs {
-		if sub.Type == model.ActionAddIndex ||
-			sub.Type == model.ActionAddPrimaryKey {
-			return true
-		}
-	}
-	return false
 }
 
 func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
@@ -2100,7 +2063,7 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		newBase = newBaseTemp
 	}
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -2114,8 +2077,6 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		NewBase: newBase,
 		Force:   force,
 	}
-	// need fill args, the job will be pushed subjob.
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -2134,7 +2095,7 @@ func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp a
 	// If the user sends SQL `alter table t1 auto_increment = 100` to TiDB-B,
 	// and TiDB-B finds 100 < 30001 but returns without any handling,
 	// then TiDB-A may still allocate 99 for auto_increment column. This doesn't make sense for the user.
-	return int64(mathutil.Max(uint64(newBase), uint64(autoID))), nil
+	return int64(max(uint64(newBase), uint64(autoID))), nil
 }
 
 // ShardRowID shards the implicit row ID by adding shard value to the row ID's first few bits.
@@ -2225,7 +2186,7 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
 		SchemaName:     schema.Name.L,
@@ -2235,12 +2196,12 @@ func (e *executor) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Alt
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.TableColumnArgs{
 		Col:                col.ColumnInfo,
 		Pos:                spec.Position,
 		IgnoreExistenceErr: spec.IfNotExists,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -2328,7 +2289,12 @@ func (e *executor) AddTablePartitions(ctx sessionctx.Context, ident ast.Ident, s
 			AppendPartitionDefs(partInfo, &buf, sqlMode)
 
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "ADD PARTITION (" + buf.String() + ")" + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -2388,12 +2354,12 @@ func getReplacedPartitionIDs(names []string, pi *model.PartitionInfo) (firstPart
 		if firstPartIdx == -1 {
 			firstPartIdx = partIdx
 		} else {
-			firstPartIdx = mathutil.Min[int](firstPartIdx, partIdx)
+			firstPartIdx = min(firstPartIdx, partIdx)
 		}
 		if lastPartIdx == -1 {
 			lastPartIdx = partIdx
 		} else {
-			lastPartIdx = mathutil.Max[int](lastPartIdx, partIdx)
+			lastPartIdx = max(lastPartIdx, partIdx)
 		}
 	}
 	switch pi.Type {
@@ -2452,7 +2418,9 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	newPartInfo := newMeta.Partition
-	rewritePartitionQueryString(ctx, spec.Partition, newMeta)
+	if err = rewritePartitionQueryString(ctx, spec.Partition, newMeta); err != nil {
+		return errors.Trace(err)
+	}
 
 	if err = handlePartitionPlacement(ctx, newPartInfo); err != nil {
 		return errors.Trace(err)
@@ -2468,9 +2436,12 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionAlterTablePartitioning,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
 	}
 
 	args := &model.TablePartitionArgs{
@@ -2534,9 +2505,12 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionReorganizePartition,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2600,9 +2574,12 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		TableName:      meta.Name.L,
 		Type:           model.ActionRemovePartitioning,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2880,7 +2857,12 @@ func (e *executor) DropTablePartition(ctx sessionctx.Context, ident ast.Ident, s
 				partNames = append(partNames, stringutil.Escape(spec.PartitionNames[i].O, sqlMode))
 			}
 			syntacticSugar := spec.Partition.PartitionMethod.OriginalText()
-			syntacticStart := spec.Partition.PartitionMethod.OriginTextPosition()
+			syntacticStart := strings.Index(query, syntacticSugar)
+			if syntacticStart == -1 {
+				logutil.DDLLogger().Error("Can't find related PARTITION definition in prepare stmt",
+					zap.String("PARTITION definition", syntacticSugar), zap.String("prepare stmt", query))
+				return errors.Errorf("Can't find related PARTITION definition in PREPARE STMT")
+			}
 			newQuery := query[:syntacticStart] + "DROP PARTITION " + strings.Join(partNames, ", ") + query[syntacticStart+len(syntacticSugar):]
 			defer ctx.SetValue(sessionctx.QueryString, query)
 			ctx.SetValue(sessionctx.QueryString, newQuery)
@@ -3164,9 +3146,7 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 	}
 
 	job := &model.Job{
-		// to do(joccau)
-		// we should  set Version = model.GetJobVerInUse() after refactor the actionMultiSchemaChange.
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3177,12 +3157,11 @@ func (e *executor) DropColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.Al
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.TableColumnArgs{
 		Col:                &model.ColumnInfo{Name: colName},
 		IgnoreExistenceErr: spec.IfExists,
 	}
-	// we need fill args here, because it will be added subjob which contains args and rawArgs from job.
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3294,8 +3273,10 @@ func checkModifyCharsetAndCollation(toCharset, toCollate, origCharset, origColla
 	return nil
 }
 
-func (e *executor) getModifiableColumnJob(ctx context.Context, sctx sessionctx.Context, ident ast.Ident, originalColName pmodel.CIStr,
-	spec *ast.AlterTableSpec) (*model.Job, error) {
+func (e *executor) getModifiableColumnJob(
+	ctx context.Context, sctx sessionctx.Context,
+	ident ast.Ident, originalColName pmodel.CIStr, spec *ast.AlterTableSpec,
+) (*JobWrapper, error) {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -3327,7 +3308,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return dbterror.ErrWrongTableName.GenWithStackByArgs(spec.OldColumnName.Table.O)
 	}
 
-	job, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
@@ -3336,7 +3317,7 @@ func (e *executor) ChangeColumn(ctx context.Context, sctx sessionctx.Context, id
 		return errors.Trace(err)
 	}
 
-	err = e.DoDDLJob(sctx, job)
+	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3391,18 +3372,27 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tbl.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tbl.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
-		Args:           []any{&newCol, oldColName, spec.Position, 0, 0},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	err = e.DoDDLJob(ctx, job)
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
+	}
+
+	args := &model.ModifyColumnArgs{
+		Column:        newCol,
+		OldColumnName: oldColName,
+		Position:      spec.Position,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -3418,7 +3408,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 	}
 
 	originalColName := specNewColumn.Name.Name
-	job, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
+	jobW, err := e.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
@@ -3427,7 +3417,7 @@ func (e *executor) ModifyColumn(ctx context.Context, sctx sessionctx.Context, id
 		return errors.Trace(err)
 	}
 
-	err = e.DoDDLJob(sctx, job)
+	err = e.DoDDLJobWrapper(sctx, jobW)
 	// column not exists, but if_exists flags is true, so we ignore this error.
 	if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
 		sctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -3479,7 +3469,7 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3489,10 +3479,10 @@ func (e *executor) AlterColumn(ctx sessionctx.Context, ident ast.Ident, spec *as
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.SetDefaultValueArgs{
 		Col: col.ColumnInfo,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3515,7 +3505,7 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3525,8 +3515,9 @@ func (e *executor) AlterTableComment(ctx sessionctx.Context, ident ast.Ident, sp
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	args := &model.ModifyTableCommentArgs{Comment: spec.Comment}
-	job.FillArgs(args)
+	args := &model.ModifyTableCommentArgs{
+		Comment: spec.Comment,
+	}
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3600,7 +3591,7 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -3616,7 +3607,6 @@ func (e *executor) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast
 		ToCollate:          toCollate,
 		NeedsOverwriteCols: needsOverwriteCols,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -3795,7 +3785,7 @@ func isTableTiFlashSupported(dbName pmodel.CIStr, tbl *model.TableInfo) error {
 	if util.IsMemOrSysDB(dbName.L) {
 		return errors.Trace(dbterror.ErrUnsupportedTiFlashOperationForSysOrMemTable)
 	} else if tbl.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set on tiflash")
+		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("set TiFlash replica")
 	} else if tbl.IsView() || tbl.IsSequence() {
 		return dbterror.ErrWrongObject.GenWithStackByArgs(dbName, tbl.Name, "BASE TABLE")
 	}
@@ -3918,6 +3908,7 @@ func (e *executor) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.UpdateTiFlashReplicaStatusArgs{
 		Available:  available,
 		PhysicalID: physicalID,
@@ -3969,6 +3960,10 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		return doNothing, nil
 	}
 
+	if err = checkIndexLengthWithNewCharset(tblInfo, toCharset, toCollate); err != nil {
+		return doNothing, err
+	}
+
 	for _, col := range tblInfo.Columns {
 		if col.GetType() == mysql.TypeVarchar {
 			if err = types.IsVarcharTooBigFieldLength(col.GetFlen(), col.Name.O, toCharset); err != nil {
@@ -3990,6 +3985,30 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 		}
 	}
 	return doNothing, nil
+}
+
+func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toCollate string) error {
+	// Copy all columns and replace the charset and collate.
+	columns := make([]*model.ColumnInfo, 0, len(tblInfo.Columns))
+	for _, col := range tblInfo.Columns {
+		newCol := col.Clone()
+		if parser_types.HasCharset(&newCol.FieldType) {
+			newCol.SetCharset(toCharset)
+			newCol.SetCollate(toCollate)
+		} else {
+			newCol.SetCharset(charset.CharsetBin)
+			newCol.SetCollate(charset.CharsetBin)
+		}
+		columns = append(columns, newCol)
+	}
+
+	for _, indexInfo := range tblInfo.Indices {
+		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RenameIndex renames an index.
@@ -4018,18 +4037,24 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tb.Meta().Name.L,
 		Type:           model.ActionRenameIndex,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{spec.FromKey, spec.ToKey},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{
+			{IndexName: spec.FromKey},
+			{IndexName: spec.ToKey},
+		},
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4042,6 +4067,9 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
+	if schema == "workload_schema" {
+		return true
+	}
 	if schema != mysql.SystemDB {
 		return false
 	}
@@ -4507,6 +4535,29 @@ func GetName4AnonymousIndex(t table.Table, colName pmodel.CIStr, idxName pmodel.
 	return indexName
 }
 
+func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexName string, indexColumns []*model.IndexColumn, isUnique bool, isGlobal bool) error {
+	pi := tblInfo.GetPartitionInfo()
+	if isGlobal && pi == nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
+	}
+	if isGlobal && !isUnique {
+		// TODO: remove this limitation
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
+	}
+	if isUnique && pi != nil {
+		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
+		if err != nil {
+			return err
+		}
+		if !ck && !isGlobal {
+			// index columns does not contain all partition columns, must be global
+			return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName)
+		}
+		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexName, indexColumns)
+	}
+	return nil
+}
+
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
 	if indexOption != nil && indexOption.PrimaryKeyTp == pmodel.PrimaryKeyTypeClustered {
@@ -4552,18 +4603,8 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		return err
 	}
 
-	if tblInfo.GetPartitionInfo() != nil {
-		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			// index columns does not contain all partition columns, must be global
-			if indexOption == nil || !indexOption.Global {
-				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs("PRIMARY")
-			}
-			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
-		}
+	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
+		return err
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4574,12 +4615,15 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
-	unique := true
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
-	global := false
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -4587,18 +4631,31 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		Type:           model.ActionAddPrimaryKey,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      nil,
-		Args:           []any{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			Unique:                  true,
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			SQLMode:                 sqlMode,
+			Global:                  false,
+			IsPK:                    true,
+			SplitOpt:                splitOpt,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
-	job.ReorgMeta = reorgMeta
 
-	err = e.DoDDLJob(ctx, job)
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -4705,16 +4762,25 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 		return errors.Trace(err)
 	}
 
-	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil
-	job.Args = []any{indexName, indexPartSpecifications[0], indexOption, funcExpr}
+
 	// TODO: support CDCWriteSource
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			FuncExpr:                funcExpr,
+			IsVector:                true,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -4723,8 +4789,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	return errors.Trace(err)
 }
 
-func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) (*model.Job, error) {
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -4732,23 +4797,12 @@ func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DB
 		SchemaName: schema.Name.L,
 		TableName:  t.Meta().Name.L,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
-		Charset:  charset,
-		Collate:  collate,
-		SQLMode:  ctx.GetSessionVars().SQLMode,
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		Charset:    charset,
+		Collate:    collate,
+		SQLMode:    ctx.GetSessionVars().SQLMode,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	job.ReorgMeta = reorgMeta
-	return job, nil
+	return job
 }
 
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
@@ -4818,35 +4872,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
-	globalIndex := false
-	if indexOption != nil && indexOption.Global {
-		globalIndex = true
+	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
+		return err
 	}
-	if globalIndex {
-		if tblInfo.GetPartitionInfo() == nil {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global Index on non-partitioned table")
-		}
-		if !unique {
-			// TODO: remove this limitation
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on non-unique index")
-		}
-	}
-	if unique && tblInfo.GetPartitionInfo() != nil {
-		ck, err := checkPartitionKeysConstraint(tblInfo.GetPartitionInfo(), indexColumns, tblInfo)
-		if err != nil {
-			return err
-		}
-		if !ck {
-			// index columns does not contain all partition columns, must be global
-			if !globalIndex {
-				return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName.O)
-			}
-			validateGlobalIndexWithGeneratedColumns(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns)
-		} else if globalIndex {
-			// TODO: remove this restriction
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Global IndexOption on index including all columns in the partitioning expression")
-		}
-	}
+
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
 	if indexOption != nil {
 		sessionVars := ctx.GetSessionVars()
@@ -4864,18 +4893,39 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	// global is set to  'false' is just there to be backwards compatible,
-	// to avoid unmarshal issues, it is now part of indexOption.
-	global := false
-	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+
+	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
-	job.Args = []any{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global}
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
 
-	err = e.DoDDLJob(ctx, job)
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			Unique:                  unique,
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			HiddenCols:              hiddenCols,
+			Global:                  global,
+			SplitOpt:                splitOpt,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
 		ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -4884,44 +4934,143 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
-	reorgMeta := NewDDLReorgMeta(sctx)
-	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
-	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
-	reorgMeta.TargetScope = variable.ServiceScope.Load()
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
-		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
-	}
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
-		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
-	}
-
-	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
-		return nil, dbterror.ErrUnsupportedDistTask
-	}
-	if hasSysDB(job) {
-		if reorgMeta.IsDistReorg {
-			logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
-				zap.Stringer("job", job))
+func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
+	m := NewDDLReorgMeta(sctx)
+	setReorgParam := func() {
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+			m.SetConcurrency(variable.TidbOptInt(sv, 0))
 		}
-		reorgMeta.IsDistReorg = false
-		reorgMeta.IsFastReorg = false
-		failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
-			LastReorgMetaFastReorgDisabled = true
-		})
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+			m.SetBatchSize(variable.TidbOptInt(sv, 0))
+		}
+		m.SetMaxWriteSpeed(int(variable.DDLReorgMaxWriteSpeed.Load()))
+	}
+	setDistTaskParam := func() error {
+		m.IsDistReorg = variable.EnableDistTask.Load()
+		m.IsFastReorg = variable.EnableFastReorg.Load()
+		m.TargetScope = variable.ServiceScope.Load()
+		if hasSysDB(job) {
+			if m.IsDistReorg {
+				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
+					zap.Stringer("job", job))
+			}
+			m.IsDistReorg = false
+			m.IsFastReorg = false
+			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+				LastReorgMetaFastReorgDisabled = true
+			})
+		}
+		if m.IsDistReorg && !m.IsFastReorg {
+			return dbterror.ErrUnsupportedDistTask
+		}
+		return nil
 	}
 
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		setReorgParam()
+		err := setDistTaskParam()
+		if err != nil {
+			return err
+		}
+	case model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
+		model.ActionModifyColumn:
+		setReorgParam()
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			switch sub.Type {
+			case model.ActionAddIndex, model.ActionAddPrimaryKey:
+				setReorgParam()
+				err := setDistTaskParam()
+				if err != nil {
+					return err
+				}
+			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
+				model.ActionAlterTablePartitioning,
+				model.ActionModifyColumn:
+				setReorgParam()
+			}
+		}
+	default:
+		return nil
+	}
+	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
-		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
-		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
-		zap.String("targetScope", reorgMeta.TargetScope),
-		zap.Int("concurrency", reorgMeta.Concurrency),
-		zap.Int("batchSize", reorgMeta.BatchSize),
+		zap.Bool("enableDistTask", m.IsDistReorg),
+		zap.Bool("enableFastReorg", m.IsFastReorg),
+		zap.String("targetScope", m.TargetScope),
+		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
+		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)
-	return reorgMeta, nil
+	return nil
+}
+
+func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+	if indexOpt == nil {
+		return nil, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, nil
+	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &model.IndexArgSplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, nil
+	}
+
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should be greater than 0")
+	}
+	return &model.IndexArgSplitOpt{
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
+	}, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -5074,7 +5223,7 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5095,11 +5244,11 @@ func (e *executor) CreateForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName
 		},
 		SQLMode: ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.AddForeignKeyArgs{
 		FkInfo:  fkInfo,
 		FkCheck: fkCheck,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5116,8 +5265,19 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
 	}
 
+	foundFK := false
+	for _, fk := range t.Meta().ForeignKeys {
+		if fk.Name.L == fkName.L {
+			foundFK = true
+			break
+		}
+	}
+	if !foundFK {
+		return infoschema.ErrForeignKeyNotExists.GenWithStackByArgs(fkName)
+	}
+
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5128,8 +5288,8 @@ func (e *executor) DropForeignKey(ctx sessionctx.Context, ti ast.Ident, fkName p
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.DropForeignKeyArgs{FkName: fkName}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5161,7 +5321,7 @@ func (*executor) dropHypoIndexFromCtx(ctx sessionctx.Context, schema, table, ind
 
 // dropIndex drops the specified index.
 // isHypo is used to indicate whether this operation is for a hypo-index.
-func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExists, isHypo bool) error {
+func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr, ifExist, isHypo bool) error {
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ti.Schema)
 	if !ok {
@@ -5176,7 +5336,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	}
 
 	if isHypo {
-		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExists)
+		return e.dropHypoIndexFromCtx(ctx, ti.Schema, ti.Name, indexName, ifExist)
 	}
 
 	indexInfo := t.Meta().FindIndexByName(indexName.L)
@@ -5192,7 +5352,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 
 	if indexInfo == nil {
 		err = dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexName)
-		if ifExists {
+		if ifExist {
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
@@ -5210,6 +5370,7 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 	}
 
 	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        t.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5217,12 +5378,18 @@ func (e *executor) dropIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmo
 		TableName:      t.Meta().Name.L,
 		Type:           jobTp,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []any{indexName, ifExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
 
-	err = e.DoDDLJob(ctx, job)
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName: indexName,
+			IfExist:   ifExist,
+		}},
+		OpType: model.OpDropIndex,
+	}
+	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
 
@@ -5578,8 +5745,8 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if createStmt.Partition != nil {
-		rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo)
+	if err = rewritePartitionQueryString(ctx, createStmt.Partition, newTableInfo); err != nil {
+		return errors.Trace(err)
 	}
 	// Override newTableInfo with oldTableInfo's element necessary.
 	// TODO: There may be more element assignments here, and the new TableInfo should be verified with the actual data.
@@ -5746,7 +5913,7 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 	}
 
 	job := &model.Job{
-		Version:        model.JobVersion1,
+		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
 		TableID:        tb.Meta().ID,
 		SchemaName:     schema.Name.L,
@@ -5756,11 +5923,11 @@ func (e *executor) AlterIndexVisibility(ctx sessionctx.Context, ident ast.Ident,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
+
 	args := &model.AlterIndexVisibilityArgs{
 		IndexName: indexName,
 		Invisible: invisible,
 	}
-	job.FillArgs(args)
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
 }
@@ -5998,7 +6165,7 @@ func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResou
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	user, matched := checker.MatchUserResourceGroupName(ctx.GetRestrictedSQLExecutor(), groupName.L)
 	if matched {
 		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
 		return err
@@ -6487,15 +6654,22 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			<-jobW.ResultCh[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			newJobW := NewJobWrapper(job, jobW.IDAllocated)
+			newJobW := NewJobWrapperWithArgs(job, jobW.JobArgs, jobW.IDAllocated)
 			e.deliverJobTask(newJobW)
 			// The second job result is used for test.
 			jobW = newJobW
 		}
 	})
 
-	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
-	result := <-jobW.ResultCh[0]
+	var result jobSubmitResult
+	select {
+	case <-e.ctx.Done():
+		logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+		return e.ctx.Err()
+	case res := <-jobW.ResultCh[0]:
+		// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
+		result = res
+	}
 	// job.ID must be allocated after previous channel receive returns nil.
 	jobID, err := result.jobID, result.err
 	defer e.delJobDoneCh(jobID)
@@ -6565,7 +6739,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
 		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
-			return context.Canceled
+			return e.ctx.Err()
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.

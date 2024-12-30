@@ -27,10 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -156,24 +154,19 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 		discovery,
 		job.ReorgMeta.ResourceGroupName,
 		job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter())),
+		job.ReorgMeta.GetMaxWriteSpeedOrDefault(),
 		job.RealStartTS,
 	)
 }
 
 func hasUniqueIndex(job *model.Job) (bool, error) {
-	var unique bool
-	err := job.DecodeArgs(&unique)
-	if err == nil {
-		return unique, nil
-	}
-
-	var uniques []bool
-	err = job.DecodeArgs(&uniques)
+	args, err := model.GetModifyIndexArgs(job)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	for _, b := range uniques {
-		if b {
+
+	for _, a := range args.IndexArgs {
+		if a.Unique {
 			return true, nil
 		}
 	}
@@ -182,19 +175,17 @@ func hasUniqueIndex(job *model.Job) (bool, error) {
 
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d         *ddl
-	task      *proto.Task
-	taskTable taskexecutor.TaskTable
-	taskMeta  *BackfillTaskMeta
-	jobID     int64
+	d        *ddl
+	task     *proto.Task
+	taskMeta *BackfillTaskMeta
+	jobID    int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,
 		task:             task,
-		taskTable:        taskTable,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -227,17 +218,6 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
-}
-
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

@@ -23,18 +23,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	. "github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
 	util2 "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/etcdserver"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc/codes"
@@ -42,7 +37,6 @@ import (
 )
 
 const minInterval = 10 * time.Nanosecond // It's used to test timeout.
-const testLease = 5 * time.Millisecond
 
 func TestSyncerSimple(t *testing.T) {
 	variable.EnableMDL.Store(false)
@@ -57,59 +51,31 @@ func TestSyncerSimple(t *testing.T) {
 		schemaver.CheckVersFirstWaitTime = origin
 	}()
 
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() { require.NoError(t, store.Close()) }()
-	domain, err := session.GetDomain(store)
-	require.NoError(t, err)
-
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	cli := cluster.RandClient()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	ic := infoschema.NewCache(nil, 2)
-	ic.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d, _ := NewDDL(
-		ctx,
-		WithEtcdClient(cli),
-		WithStore(store),
-		WithLease(testLease),
-		WithInfoCache(ic),
-		WithSchemaLoader(domain),
-	)
-	go func() {
-		require.NoError(t, d.OwnerManager().CampaignOwner())
+	syncers := make([]schemaver.Syncer, 0, 2)
+	for i := 0; i < 2; i++ {
+		id := strconv.Itoa(i + 1)
+		schemaVerSyncer := schemaver.NewEtcdSyncer(cli, id)
+		require.NoError(t, schemaVerSyncer.Init(ctx))
+		syncers = append(syncers, schemaVerSyncer)
+	}
+	defer func() {
+		for _, syncer := range syncers {
+			syncer.Close()
+		}
 	}()
-	defer d.OwnerManager().Cancel()
 
-	// for init function
-	require.NoError(t, d.SchemaSyncer().Init(ctx))
-	resp, err := cli.Get(ctx, util2.DDLAllSchemaVersions, clientv3.WithPrefix())
-	require.NoError(t, err)
-
-	defer d.SchemaSyncer().Close()
-
-	key := util2.DDLAllSchemaVersions + "/" + d.OwnerManager().ID()
-	checkRespKV(t, 1, key, schemaver.InitialVersion, resp.Kvs...)
-
-	ic2 := infoschema.NewCache(nil, 2)
-	ic2.Insert(infoschema.MockInfoSchemaWithSchemaVer(nil, 0), 0)
-	d1, _ := NewDDL(
-		ctx,
-		WithEtcdClient(cli),
-		WithStore(store),
-		WithLease(testLease),
-		WithInfoCache(ic2),
-		WithSchemaLoader(domain),
-	)
-
-	go func() {
-		require.NoError(t, d1.OwnerManager().CampaignOwner())
-	}()
-	defer d1.OwnerManager().Cancel()
-	require.NoError(t, d1.SchemaSyncer().Init(ctx))
-	defer d.SchemaSyncer().Close()
+	for i := range syncers {
+		id := strconv.Itoa(i + 1)
+		key := util2.DDLAllSchemaVersions + "/" + id
+		resp, err := cli.Get(ctx, key)
+		require.NoError(t, err)
+		checkRespKV(t, 1, key, schemaver.InitialVersion, resp.Kvs...)
+	}
 
 	// for watchCh
 	var wg util.WaitGroupWrapper
@@ -117,7 +83,7 @@ func TestSyncerSimple(t *testing.T) {
 	var checkErr string
 	wg.Run(func() {
 		select {
-		case resp := <-d.SchemaSyncer().GlobalVersionCh():
+		case resp := <-syncers[0].GlobalVersionCh():
 			if len(resp.Events) < 1 {
 				checkErr = "get chan events count less than 1"
 				return
@@ -130,7 +96,7 @@ func TestSyncerSimple(t *testing.T) {
 	})
 
 	// for update latestSchemaVersion
-	require.NoError(t, d.SchemaSyncer().OwnerUpdateGlobalVersion(ctx, currentVer))
+	require.NoError(t, syncers[0].OwnerUpdateGlobalVersion(ctx, currentVer))
 
 	wg.Wait()
 
@@ -138,34 +104,35 @@ func TestSyncerSimple(t *testing.T) {
 
 	// for CheckAllVersions
 	childCtx, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	require.Error(t, d.SchemaSyncer().WaitVersionSynced(childCtx, 0, currentVer))
+	require.Error(t, syncers[0].WaitVersionSynced(childCtx, 0, currentVer))
 	cancel()
 
 	// for UpdateSelfVersion
-	require.NoError(t, d.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, currentVer))
-	require.NoError(t, d1.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, currentVer))
+	require.NoError(t, syncers[0].UpdateSelfVersion(context.Background(), 0, currentVer))
+	require.NoError(t, syncers[1].UpdateSelfVersion(context.Background(), 0, currentVer))
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = d1.SchemaSyncer().UpdateSelfVersion(childCtx, 0, currentVer)
+	err := syncers[1].UpdateSelfVersion(childCtx, 0, currentVer)
 	require.True(t, isTimeoutError(err))
 
 	// for CheckAllVersions
-	require.NoError(t, d.SchemaSyncer().WaitVersionSynced(context.Background(), 0, currentVer-1))
-	require.NoError(t, d.SchemaSyncer().WaitVersionSynced(context.Background(), 0, currentVer))
+	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer-1))
+	require.NoError(t, syncers[0].WaitVersionSynced(context.Background(), 0, currentVer))
 
 	childCtx, cancel = context.WithTimeout(ctx, minInterval)
 	defer cancel()
-	err = d.SchemaSyncer().WaitVersionSynced(childCtx, 0, currentVer)
+	err = syncers[0].WaitVersionSynced(childCtx, 0, currentVer)
 	require.True(t, isTimeoutError(err))
 
 	// for Close
-	resp, err = cli.Get(context.Background(), key)
+	key := util2.DDLAllSchemaVersions + "/1"
+	resp, err := cli.Get(context.Background(), key)
 	require.NoError(t, err)
 
 	currVer := fmt.Sprintf("%v", currentVer)
 	checkRespKV(t, 1, key, currVer, resp.Kvs...)
-	d.SchemaSyncer().Close()
+	syncers[0].Close()
 	resp, err = cli.Get(context.Background(), key)
 	require.NoError(t, err)
 	require.Len(t, resp.Kvs, 0)

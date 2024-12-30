@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
@@ -54,6 +55,8 @@ type Session interface {
 	ResetWithGlobalTimeZone(ctx context.Context) error
 	// GlobalTimeZone returns the global timezone. It is used to compute expire time for TTL
 	GlobalTimeZone(ctx context.Context) (*time.Location, error)
+	// KillStmt kills the current statement execution
+	KillStmt()
 	// Close closes the session
 	Close()
 	// Now returns the current time in location specified by session var
@@ -178,6 +181,11 @@ func (s *session) GlobalTimeZone(ctx context.Context) (*time.Location, error) {
 		return nil, err
 	}
 	return timeutil.ParseTimeZone(str)
+}
+
+// KillStmt kills the current statement execution
+func (s *session) KillStmt() {
+	s.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 }
 
 // Close closes the session

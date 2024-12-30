@@ -125,7 +125,7 @@ echo "backup start with stats..."
 unset BR_LOG_TO_TERM
 cluster_index_before_backup=$(run_sql "show variables like '%cluster%';" | awk '{print $2}')
 
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false || cat $LOG
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB" --log-file $LOG --ignore-stats=false --checksum=true || cat $LOG
 checksum_count=$(cat $LOG | grep "checksum success" | wc -l | xargs)
 
 if [ "${checksum_count}" -lt "1" ];then

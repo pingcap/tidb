@@ -414,3 +414,14 @@ func TestPreprocessCTE(t *testing.T) {
 		require.Equal(t, tc.after, rs.String())
 	}
 }
+
+func TestPreprocessDeleteFromWithAlias(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/56726
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int);")
+	tk.MustExec(" create table t2(id int);")
+	tk.MustExec("delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
+	tk.MustExec("create global binding for delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id using delete /*+ MAX_EXECUTION_TIME(10)*/ tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id;")
+}

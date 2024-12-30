@@ -111,11 +111,12 @@ explain format = 'brief' select * from (select a, row_number() over (partition b
 id	estRows	task	access object	operator info
 Projection	8000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a, Column#6
 └─Selection	8000.00	root		le(Column#6, 1)
-  └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.ti.c rows between current row and current row)
-    └─Projection	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.a, planner__core__casetest__rule__rule_derive_topn_from_window.ti.c
-      └─IndexLookUp	10000.00	root		
-        ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:ti, index:c(c)	keep order:true, stats:pseudo
-        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
+  └─Shuffle	10000.00	root		execution info: concurrency:5, data sources:[TableReader]
+    └─Window	10000.00	root		row_number()->Column#6 over(partition by planner__core__casetest__rule__rule_derive_topn_from_window.ti.c rows between current row and current row)
+      └─Sort	10000.00	root		planner__core__casetest__rule__rule_derive_topn_from_window.ti.c
+        └─ShuffleReceiver	10000.00	root		
+          └─TableReader	10000.00	root		data:TableFullScan
+            └─TableFullScan	10000.00	cop[tikv]	table:ti	keep order:false, stats:pseudo
 explain format = 'brief' with agg_t as (select count(*) cnt, a from t group by a) select * from (select row_number() over () as rownumber from agg_t) DT where rownumber <= 3 -- pattern on non-data source;
 id	estRows	task	access object	operator info
 Projection	6400.00	root		Column#14

@@ -51,6 +51,9 @@ import (
 type extractHelper struct {
 	enableScalarPushDown bool
 	pushedDownFuncs      map[string]func(string) string
+
+	// Store whether the extracted strings for a specific column are converted to lower case
+	extractLowerString map[string]bool
 }
 
 func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
@@ -342,6 +345,11 @@ func (helper *extractHelper) extractCol(
 			break
 		}
 	}
+
+	if helper.extractLowerString == nil {
+		helper.extractLowerString = make(map[string]bool)
+	}
+	helper.extractLowerString[extractColName] = valueToLower
 	return
 }
 
@@ -1305,22 +1313,19 @@ func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 }
 
 func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
-	const defaultSlowQueryDuration = 24 * time.Hour
-	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return
 	}
+	var startTime, endTime time.Time
 	if start != 0 {
 		startTime = e.convertToTime(start)
+	} else {
+		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	}
-	if start == 0 {
-		startTime = endTime.Add(-defaultSlowQueryDuration)
-	}
-	if end == 0 {
-		endTime = startTime.Add(defaultSlowQueryDuration)
+	} else {
+		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
 	}
 	timeRange := &TimeRange{
 		StartTime: startTime,

@@ -33,7 +33,10 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -110,16 +113,29 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 	return e
 }
 
-// ListSchemas lists related schemas from predicate.
+// ListSchemas lists all schemas from predicate. If no schema is specified, it lists
+// all schemas in the storage.
 func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel.CIStr {
-	ec := e.extractableColumns
-	schemas := e.getSchemaObjectNames(ec.schema)
-	if len(schemas) == 0 {
+	extractedSchemas, unspecified := e.listPredicateSchemas(is)
+	if unspecified {
 		ret := is.AllSchemaNames()
 		slices.SortFunc(ret, func(a, b pmodel.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
-		return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr)
+		return filterSchemaObjectByRegexp(e, e.extractableColumns.schema, ret, extractStrCIStr)
+	}
+	return extractedSchemas
+}
+
+// listPredicateSchemas lists all schemas specified in predicates.
+// If no schema is specified in predicates, return `unspecified` as true.
+func (e *InfoSchemaBaseExtractor) listPredicateSchemas(
+	is infoschema.InfoSchema,
+) (schemas []pmodel.CIStr, unspecified bool) {
+	ec := e.extractableColumns
+	schemas = e.getSchemaObjectNames(ec.schema)
+	if len(schemas) == 0 {
+		return nil, true
 	}
 	ret := schemas[:0]
 	for _, s := range schemas {
@@ -127,7 +143,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel
 			ret = append(ret, n.Name)
 		}
 	}
-	return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr)
+	return filterSchemaObjectByRegexp(e, ec.schema, ret, extractStrCIStr), false
 }
 
 // ListSchemasAndTables lists related tables and their corresponding schemas from predicate.
@@ -137,7 +153,6 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 	is infoschema.InfoSchema,
 ) ([]pmodel.CIStr, []*model.TableInfo, error) {
 	ec := e.extractableColumns
-	schemas := e.ListSchemas(is)
 	var tableNames []pmodel.CIStr
 	if ec.table != "" {
 		tableNames = e.getSchemaObjectNames(ec.table)
@@ -150,7 +165,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByID(is, tableIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			return findSchemasForTables(ctx, is, schemas, tableSlice)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if ec.partitionID != "" {
@@ -160,13 +175,15 @@ func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 			findTablesByPartID(is, partIDs, tableNames, tableMap)
 			tableSlice := maps.Values(tableMap)
 			tableSlice = filterSchemaObjectByRegexp(e, ec.table, tableSlice, extractStrTableInfo)
-			return findSchemasForTables(ctx, is, schemas, tableSlice)
+			return findSchemasForTables(e, is, tableSlice)
 		}
 	}
 	if len(tableNames) > 0 {
 		tableNames = filterSchemaObjectByRegexp(e, ec.table, tableNames, extractStrCIStr)
+		schemas := e.ListSchemas(is)
 		return findTableAndSchemaByName(ctx, is, schemas, tableNames)
 	}
+	schemas := e.ListSchemas(is)
 	return listTablesForEachSchema(ctx, e, is, schemas)
 }
 
@@ -260,8 +277,17 @@ func (e *InfoSchemaBaseExtractor) filter(colName string, val string) bool {
 			return true
 		}
 	}
+
+	toLower := false
+	if e.extractLowerString != nil {
+		toLower = e.extractLowerString[colName]
+	}
+
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
+		if toLower {
+			return !predVals.Exist(strings.ToLower(val))
+		}
 		fn, ok := e.pushedDownFuncs[colName]
 		if ok {
 			return !predVals.Exist(fn(val))
@@ -698,6 +724,9 @@ func listTablesForEachSchema(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		if ctx.Err() != nil {
+			return nil, nil, errors.Trace(err)
+		}
 		tables = filterSchemaObjectByRegexp(e, ec.table, tables, extractStrTableInfo)
 		for _, t := range tables {
 			schemaSlice = append(schemaSlice, s)
@@ -711,23 +740,28 @@ func listTablesForEachSchema(
 // returns a schema slice and a table slice that has the same length.
 // Note that input arg "tableSlice" will be changed in place.
 func findSchemasForTables(
-	ctx context.Context,
+	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
-	schemas []pmodel.CIStr,
 	tableSlice []*model.TableInfo,
 ) ([]pmodel.CIStr, []*model.TableInfo, error) {
+	schemas, unspecified := e.listPredicateSchemas(is)
 	schemaSlice := make([]pmodel.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
+		dbInfo, ok := is.SchemaByID(tbl.DBID)
+		intest.Assert(ok)
+		if !ok {
+			logutil.BgLogger().Warn("schema not found for table info",
+				zap.Int64("tableID", tbl.ID), zap.Int64("dbID", tbl.DBID))
+			continue
+		}
+		if unspecified { // all schemas should be included.
+			schemaSlice = append(schemaSlice, dbInfo.Name)
+			continue
+		}
+
 		found := false
 		for _, s := range schemas {
-			isTbl, err := is.TableByName(ctx, s, tbl.Name)
-			if err != nil {
-				if terror.ErrorEqual(err, infoschema.ErrTableNotExists) {
-					continue
-				}
-				return nil, nil, errors.Trace(err)
-			}
-			if isTbl.Meta().ID == tbl.ID {
+			if s.L == dbInfo.Name.L {
 				schemaSlice = append(schemaSlice, s)
 				found = true
 				break
@@ -907,6 +941,13 @@ type InfoSchemaTiDBIndexUsageExtractor struct {
 	predIdxNamesInited bool
 }
 
+// IndexUsageIndexInfo is the necessary index info for information_schema.tidb_index_usage. It only includes the index name
+// and ID in lower case.
+type IndexUsageIndexInfo struct {
+	Name string
+	ID   int64
+}
+
 // NewInfoSchemaTiDBIndexUsageExtractor creates a new InfoSchemaTiDBIndexUsageExtractor.
 func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 	e := &InfoSchemaTiDBIndexUsageExtractor{}
@@ -923,7 +964,7 @@ func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 // If no index found in predicate, it return all indexes.
 func (e *InfoSchemaTiDBIndexUsageExtractor) ListIndexes(
 	tbl *model.TableInfo,
-) []*model.IndexInfo {
+) []IndexUsageIndexInfo {
 	ec := e.extractableColumns
 	if !e.predIdxNamesInited {
 		e.predIdxNames = set.NewStringSet()
@@ -936,23 +977,31 @@ func (e *InfoSchemaTiDBIndexUsageExtractor) ListIndexes(
 	predCol := e.predIdxNames
 	regexp := e.GetBase().colsRegexp[ec.indexName]
 
+	indexes := make([]IndexUsageIndexInfo, 0, len(tbl.Indices))
+	// Append the int primary key. The clustered index is already included in the `tbl.Indices`, but the int primary key is not.
+	if tbl.PKIsHandle {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: primaryKeyName, ID: 0})
+	}
+	for _, index := range tbl.Indices {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: index.Name.L, ID: index.ID})
+	}
 	if len(predCol) == 0 && len(regexp) == 0 {
-		return tbl.Indices
+		return indexes
 	}
 
-	indexes := make([]*model.IndexInfo, 0, len(predCol))
+	retIndexes := make([]IndexUsageIndexInfo, 0, len(indexes))
 ForLoop:
-	for _, index := range tbl.Indices {
-		if len(predCol) > 0 && !predCol.Exist(index.Name.L) {
+	for _, index := range indexes {
+		if len(predCol) > 0 && !predCol.Exist(index.Name) {
 			continue
 		}
 		for _, re := range regexp {
-			if !re.DoMatch(index.Name.L) {
+			if !re.DoMatch(index.Name) {
 				continue ForLoop
 			}
 		}
-		indexes = append(indexes, index)
+		retIndexes = append(retIndexes, IndexUsageIndexInfo{Name: index.Name, ID: index.ID})
 	}
 
-	return indexes
+	return retIndexes
 }

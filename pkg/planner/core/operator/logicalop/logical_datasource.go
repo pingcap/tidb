@@ -47,23 +47,23 @@ import (
 
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	AstIndexHints []*ast.IndexHint
 	IndexHints    []h.HintedIndex
 	Table         table.Table
-	TableInfo     *model.TableInfo
+	TableInfo     *model.TableInfo `hash64-equals:"true"`
 	Columns       []*model.ColumnInfo
 	DBName        pmodel.CIStr
 
-	TableAsName *pmodel.CIStr
+	TableAsName *pmodel.CIStr `hash64-equals:"true"`
 	// IndexMergeHints are the hint for indexmerge.
 	IndexMergeHints []h.HintedIndex
 	// PushedDownConds are the conditions that will be pushed down to coprocessor.
-	PushedDownConds []expression.Expression
+	PushedDownConds []expression.Expression `hash64-equals:"true"`
 	// AllConds contains all the filters on this table. For now it's maintained
 	// in predicate push down and used in partition pruning/index merge.
-	AllConds []expression.Expression
+	AllConds []expression.Expression `hash64-equals:"true"`
 
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
@@ -91,7 +91,7 @@ type DataSource struct {
 	// it is converted from StatisticTable, and used for IO/network cost estimating.
 	TblColHists *statistics.HistColl
 	// PreferStoreType means the DataSource is enforced to which storage.
-	PreferStoreType int
+	PreferStoreType int `hash64-equals:"true"`
 	// PreferPartitions store the map, the key represents store type, the value represents the partition name list.
 	PreferPartitions map[int][]pmodel.CIStr
 	SampleInfo       *tablesampler.TableSampleInfo
@@ -99,7 +99,7 @@ type DataSource struct {
 	// IsForUpdateRead should be true in either of the following situations
 	// 1. use `inside insert`, `update`, `delete` or `select for update` statement
 	// 2. isolation level is RC
-	IsForUpdateRead bool
+	IsForUpdateRead bool `hash64-equals:"true"`
 
 	// contain unique index and the first field is tidb_shard(),
 	// such as (tidb_shard(a), a ...), the fields are more than 2
@@ -113,6 +113,9 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
+
+	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
+	AskedColumnGroup [][]*expression.Column
 }
 
 // Init initializes DataSource.
@@ -234,7 +237,7 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
-	selfSchema.Keys = nil
+	selfSchema.PKOrUK = nil
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
 	var err error
@@ -257,15 +260,15 @@ func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expressio
 			continue
 		}
 		if uniqueKey, newKey := ruleutil.CheckIndexCanBeKey(index, ds.Columns, selfSchema); newKey != nil {
-			selfSchema.Keys = append(selfSchema.Keys, newKey)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 		} else if uniqueKey != nil {
-			selfSchema.UniqueKeys = append(selfSchema.UniqueKeys, uniqueKey)
+			selfSchema.NullableUK = append(selfSchema.NullableUK, uniqueKey)
 		}
 	}
 	if ds.TableInfo.PKIsHandle {
 		for i, col := range ds.Columns {
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
-				selfSchema.Keys = append(selfSchema.Keys, []*expression.Column{selfSchema.Columns[i]})
+				selfSchema.PKOrUK = append(selfSchema.PKOrUK, []*expression.Column{selfSchema.Columns[i]})
 				break
 			}
 		}
@@ -291,8 +294,8 @@ func (ds *DataSource) PredicateSimplification(*optimizetrace.LogicalOptimizeOp) 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	return utilfuncp.DeriveStats4DataSource(ds, colGroups)
+func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
+	return utilfuncp.DeriveStats4DataSource(ds)
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
@@ -300,7 +303,6 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
 	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()

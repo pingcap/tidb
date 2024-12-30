@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -56,11 +57,11 @@ func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo
 	cols := tblInfo.Columns
 	colInfo.ID = AllocateColumnID(tblInfo)
 	colInfo.State = model.StateNone
-	// To support add column asynchronous, we should mark its offset as the last column.
+	// To support add column asynchronously, we should mark its offset as the last column.
 	// So that we can use origin column offset to get value from row.
 	colInfo.Offset = len(cols)
 	// Append the column info to the end of the tblInfo.Columns.
-	// It will reorder to the right offset in "Columns" when it state change to public.
+	// It will be reordered to the right offset in "Columns" when its state is changed to public.
 	tblInfo.Columns = append(cols, colInfo)
 	return colInfo
 }
@@ -473,7 +474,11 @@ func BuildElements(changingCol *model.ColumnInfo, changingIdxs []*model.IndexInf
 	return elements
 }
 
-func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) error {
+func (w *worker) updatePhysicalTableRow(
+	ctx context.Context,
+	t table.Table,
+	reorgInfo *reorgInfo,
+) error {
 	logutil.DDLLogger().Info("start to update table row", zap.Stringer("job", reorgInfo.Job), zap.Stringer("reorgInfo", reorgInfo))
 	if tbl, ok := t.(table.PartitionedTable); ok {
 		done := false
@@ -494,7 +499,7 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 				// https://github.com/pingcap/tidb/issues/38297
 				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
 			}
-			err := w.writePhysicalTableRecord(w.ctx, w.sessPool, p, workType, reorgInfo)
+			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
 			if err != nil {
 				return err
 			}
@@ -506,34 +511,30 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 		return nil
 	}
 	if tbl, ok := t.(table.PhysicalTable); ok {
-		return w.writePhysicalTableRecord(w.ctx, w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
+		return w.writePhysicalTableRecord(ctx, w.sessPool, tbl, typeUpdateColumnWorker, reorgInfo)
 	}
 	return dbterror.ErrCancelledDDLJob.GenWithStack("internal error for phys tbl id: %d tbl id: %d", reorgInfo.PhysicalTableID, t.Meta().ID)
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
-var TestReorgGoroutineRunning = make(chan any)
+var TestReorgGoroutineRunning = make(chan struct{})
 
 // updateCurrentElement update the current element for reorgInfo.
-func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
-	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
-		//nolint:forcetypeassert
-		if val.(bool) {
-			a := new(any)
-			TestReorgGoroutineRunning <- a
-			for {
-				time.Sleep(30 * time.Millisecond)
-				if w.isReorgCancelled(reorgInfo.Job.ID) {
-					// Job is cancelled. So it can't be done.
-					failpoint.Return(dbterror.ErrCancelledDDLJob)
-				}
-			}
-		}
+func (w *worker) updateCurrentElement(
+	ctx context.Context,
+	t table.Table,
+	reorgInfo *reorgInfo,
+) error {
+	failpoint.Inject("mockInfiniteReorgLogic", func() {
+		TestReorgGoroutineRunning <- struct{}{}
+		<-ctx.Done()
+		// Job is cancelled. So it can't be done.
+		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
 	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -587,7 +588,7 @@ func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = w.addTableIndex(t, reorgInfo)
+		err = w.addTableIndex(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -609,8 +610,22 @@ type updateColumnWorker struct {
 	checksumNeeded bool
 }
 
+func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
+	for _, col := range t.WritableCols() {
+		if col.ID == currElementID {
+			changeColumnOrigName := table.FindCol(t.Cols(), getChangingColumnOriginName(col.ColumnInfo))
+			if changeColumnOrigName != nil {
+				newCol = col.ColumnInfo
+				oldCol = changeColumnOrigName.ColumnInfo
+				return
+			}
+		}
+	}
+	return
+}
+
 func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*updateColumnWorker, error) {
-	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, "update_col_rate", false, true)
+	bCtx, err := newBackfillCtx(id, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblUpdateColRate, false, true)
 	if err != nil {
 		return nil, err
 	}
@@ -620,14 +635,7 @@ func newUpdateColumnWorker(id int, t table.PhysicalTable, decodeColMap map[int64
 			zap.Stringer("reorgInfo", reorgInfo))
 		return nil, nil
 	}
-	var oldCol, newCol *model.ColumnInfo
-	for _, col := range t.WritableCols() {
-		if col.ID == reorgInfo.currElement.ID {
-			newCol = col.ColumnInfo
-			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
-			break
-		}
-	}
+	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
 		orig := variable.EnableRowLevelChecksum.Load()
@@ -779,7 +787,7 @@ func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, ra
 	ec := w.exprCtx.GetEvalCtx().ErrCtx()
 	var checksum rowcodec.Checksum
 	if w.checksumNeeded {
-		checksum = rowcodec.RawChecksum{Key: recordKey}
+		checksum = rowcodec.RawChecksum{Handle: handle}
 	}
 	newRowVal, err := tablecodec.EncodeRow(sysTZ, newRow, newColumnIDs, nil, nil, checksum, rd)
 	err = ec.HandleError(err)
@@ -1151,7 +1159,15 @@ func checkAddColumnTooManyColumns(colNum int) error {
 
 // modifyColsFromNull2NotNull modifies the type definitions of 'null' to 'not null'.
 // Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
-func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.TableInfo, cols []*model.ColumnInfo, newCol *model.ColumnInfo, isDataTruncated bool) error {
+func modifyColsFromNull2NotNull(
+	ctx context.Context,
+	w *worker,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	cols []*model.ColumnInfo,
+	newCol *model.ColumnInfo,
+	isDataTruncated bool,
+) error {
 	// Get sessionctx from context resource pool.
 	var sctx sessionctx.Context
 	sctx, err := w.sessPool.Get()
@@ -1169,7 +1185,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	})
 	if !skipCheck {
 		// If there is a null value inserted, it cannot be modified and needs to be rollback.
-		err = checkForNullValue(w.ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
+		err = checkForNullValue(ctx, sctx, isDataTruncated, dbInfo.Name, tblInfo.Name, newCol, cols...)
 		if err != nil {
 			return errors.Trace(err)
 		}

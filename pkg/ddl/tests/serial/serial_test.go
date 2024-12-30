@@ -446,10 +446,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
-	ddl.ReorgWaitTimeout = 50 * time.Millisecond
-	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
@@ -503,20 +500,20 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover1")
 	tk.MustExec("recover table t_recover1")
-	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// recover table with job id
 	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover2")
 	jobID := getDDLJobID("t_recover2", "drop table")
 	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
-	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// flashback table
 	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover3")
 	tk.MustExec("flashback table t_recover3")
-	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// flashback database
 	tk.MustExec("create database if not exists test_recover2")
@@ -524,8 +521,8 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop database test_recover2")
 	tk.MustExec("flashback database test_recover2")
-	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
@@ -686,7 +683,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -743,7 +740,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -815,7 +812,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	tk.MustExec("create table t_cjtt(a int)")
 
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -100,7 +101,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 		constraintInfoInMeta.State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	case model.StateWriteReorganization:
-		err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfoInMeta)
+		err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfoInMeta)
 		if err != nil {
 			if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 				job.State = model.JobStateRollingback
@@ -245,7 +246,7 @@ func (w *worker) onAlterCheckConstraint(jobCtx *jobContext, job *model.Job) (ver
 			constraintInfo.State = model.StateWriteOnly
 			ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 		case model.StateWriteOnly:
-			err = w.verifyRemainRecordsForCheckConstraint(dbInfo, tblInfo, constraintInfo)
+			err = w.verifyRemainRecordsForCheckConstraint(jobCtx.stepCtx, dbInfo, tblInfo, constraintInfo)
 			if err != nil {
 				if dbterror.ErrCheckConstraintIsViolated.Equal(err) {
 					job.State = model.JobStateRollingback
@@ -351,7 +352,12 @@ func findDependentColsInExpr(expr ast.ExprNode) map[string]struct{} {
 	return colsMap
 }
 
-func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tableInfo *model.TableInfo, constr *model.ConstraintInfo) error {
+func (w *worker) verifyRemainRecordsForCheckConstraint(
+	ctx context.Context,
+	dbInfo *model.DBInfo,
+	tableInfo *model.TableInfo,
+	constr *model.ConstraintInfo,
+) error {
 	// Inject a fail-point to skip the remaining records check.
 	failpoint.Inject("mockVerifyRemainDataSuccess", func(val failpoint.Value) {
 		if val.(bool) {
@@ -371,7 +377,7 @@ func (w *worker) verifyRemainRecordsForCheckConstraint(dbInfo *model.DBInfo, tab
 	// can let the check expression restored string as the filter in where clause directly.
 	// Prepare internal SQL to fetch data from physical table under this filter.
 	sql := fmt.Sprintf("select 1 from `%s`.`%s` where not %s limit 1", dbInfo.Name.L, tableInfo.Name.L, constr.ExprString)
-	ctx := kv.WithInternalSourceType(w.ctx, kv.InternalTxnDDL)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	rows, _, err := sctx.GetRestrictedSQLExecutor().ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)

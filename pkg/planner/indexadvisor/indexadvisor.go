@@ -153,14 +153,14 @@ func prepareQuerySet(ctx context.Context, sctx sessionctx.Context,
 }
 
 func loadQuerySetFromStmtSummary(sctx sessionctx.Context, option *Option) (s.Set[Query], error) {
-	template := `SELECT any_value(schema_name) as schema_name,
+	template := `SELECT any_value(ifnull(schema_name, "")) as schema_name,
 				any_value(query_sample_text) as query_sample_text,
 				sum(cast(exec_count as double)) as exec_count
 			FROM information_schema.statements_summary_history
 			WHERE stmt_type = "Select" AND
 				summary_begin_time >= date_sub(now(), interval 1 day) AND
 				prepared = 0 AND
-				upper(schema_name) not in ("MYSQL", "INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA")
+				upper(ifnull(schema_name, "")) not in ("MYSQL", "INFORMATION_SCHEMA", "METRICS_SCHEMA", "PERFORMANCE_SCHEMA")
 			GROUP BY digest
 			ORDER BY sum(exec_count) DESC
 			LIMIT %?`

@@ -1115,6 +1115,13 @@ func (c *CopClient) sendBatch(ctx context.Context, req *kv.Request, vars *tikv.V
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
 	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
 
+	if req.MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the deadline for the whole batch coprocessor request context.
+		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
+	}
+
 	var tasks []*batchCopTask
 	var err error
 	if req.PartitionIDAndRanges != nil {
@@ -1320,7 +1327,7 @@ func (b *batchCopIterator) retryBatchCopTask(ctx context.Context, bo *backoff.Ba
 const TiFlashReadTimeoutUltraLong = 3600 * time.Second
 
 func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backoffer, task *batchCopTask) ([]*batchCopTask, error) {
-	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.enableCollectExecutionInfo)
+	sender := NewRegionBatchRequestSender(b.store.GetRegionCache(), b.store.GetTiKVClient(), b.store.store.GetOracle(), b.enableCollectExecutionInfo)
 	var regionInfos = make([]*coprocessor.RegionInfo, 0, len(task.regionInfos))
 	for _, ri := range task.regionInfos {
 		regionInfos = append(regionInfos, ri.toCoprocessorRegionInfo())

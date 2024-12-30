@@ -70,7 +70,7 @@ func TestPProfCPUProfile(t *testing.T) {
 	dataChLen := len(mc.dataCh)
 	deltaLen := 0
 	topsqlstate.EnableTopSQL()
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		t1 := time.Now()
 		data = <-mc.dataCh
 		require.True(t, time.Since(t1) < interval*4)

@@ -44,6 +44,7 @@ type Node interface {
 	// SetText sets original text to the Node.
 	SetText(enc charset.Encoding, text string)
 	// SetOriginTextPosition set the start offset of this node in the origin text.
+	// Only be called when `parser.lexer.skipPositionRecording` equals to false.
 	SetOriginTextPosition(offset int)
 	// OriginTextPosition get the start offset of this node in the origin text.
 	OriginTextPosition() int

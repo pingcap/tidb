@@ -119,8 +119,9 @@ func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.Schema
 	// bundle ops
 	if diff.Type == model.ActionTruncateTable {
 		b.deleteBundle(b.infoSchema, diff.OldTableID)
-		b.markTableBundleShouldUpdate(diff.TableID)
 	}
+	b.markTableBundleShouldUpdate(diff.TableID)
+	// TODO: check that all partitions are updated to the cache!
 
 	for _, opt := range diff.AffectedOpts {
 		if diff.Type == model.ActionTruncateTablePartition {
@@ -128,7 +129,6 @@ func applyTruncateTableOrPartition(b *Builder, m meta.Reader, diff *model.Schema
 			// While session 1 performs the DML operation associated with partition 1,
 			// the TRUNCATE operation of session 2 on partition 2 does not cause the operation of session 1 to fail.
 			tblIDs = append(tblIDs, opt.OldTableID)
-			b.markPartitionBundleShouldUpdate(opt.TableID)
 		}
 		b.deleteBundle(b.infoSchema, opt.OldTableID)
 	}
@@ -155,15 +155,17 @@ func applyReorganizePartition(b *Builder, m meta.Reader, diff *model.SchemaDiff)
 		return nil, errors.Trace(err)
 	}
 
+	// The table might have changed TableID
+	if diff.TableID != diff.OldTableID && diff.OldTableID != 0 {
+		b.deleteBundle(b.infoSchema, diff.OldTableID)
+	}
+	b.markTableBundleShouldUpdate(diff.TableID)
+
 	// bundle ops
 	for _, opt := range diff.AffectedOpts {
 		if opt.OldTableID != 0 {
 			b.deleteBundle(b.infoSchema, opt.OldTableID)
 		}
-		if opt.TableID != 0 {
-			b.markTableBundleShouldUpdate(opt.TableID)
-		}
-		// TODO: Should we also check markPartitionBundleShouldUpdate?!?
 	}
 	return tblIDs, nil
 }
@@ -228,6 +230,7 @@ func applyExchangeTablePartition(b *Builder, m meta.Reader, diff *model.SchemaDi
 	}
 	// partID is the new id for the non-partitioned table!
 	b.markTableBundleShouldUpdate(partID)
+	b.markTableBundleShouldUpdate(ptID)
 	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
@@ -238,7 +241,6 @@ func applyExchangeTablePartition(b *Builder, m meta.Reader, diff *model.SchemaDi
 		return nil, errors.Trace(err)
 	}
 	// ntID is the new id for the partition!
-	b.markPartitionBundleShouldUpdate(ntID)
 	err = updateAutoIDForExchangePartition(b.Requirement.Store(), ptSchemaID, ptID, ntSchemaID, ntID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -323,7 +325,7 @@ func applyDefaultAction(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]in
 	return b.applyAffectedOpts(m, tblIDs, diff, diff.Type)
 }
 
-func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID int64) {
+func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID, newTableID int64, err error) {
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
@@ -341,6 +343,18 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
+
+		// Still keep the table in infoschema until when the state of table reaches StateNone. This is because
+		// the `ON DELETE/UPDATE CASCADE` function of foreign key may need to find the table in infoschema. Not
+		// only the table with foreign keys are stored in the infoschema to keep a consistent behavior for all
+		// tables.
+		tblInfo, err := m.GetTable(diff.SchemaID, oldTableID)
+		if err != nil {
+			return 0, 0, err
+		}
+		if tblInfo != nil && tblInfo.State != model.StateNone {
+			newTableID = diff.TableID
+		}
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition, model.ActionAlterTablePartitioning,
 		model.ActionRemovePartitioning:
@@ -356,7 +370,7 @@ func (b *Builder) getTableIDs(diff *model.SchemaDiff) (oldTableID, newTableID in
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
@@ -365,7 +379,7 @@ func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID,
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionAlterTablePlacement:
+	case model.ActionAlterTablePlacement, model.ActionAlterTablePartitionPlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
 }
@@ -421,7 +435,10 @@ func (b *Builder) applyTableUpdate(m meta.Reader, diff *model.SchemaDiff) ([]int
 		)
 	}
 	dbInfo := b.getSchemaAndCopyIfNecessary(roDBInfo.Name.L)
-	oldTableID, newTableID := b.getTableIDs(diff)
+	oldTableID, newTableID, err := b.getTableIDs(m, diff)
+	if err != nil {
+		return nil, err
+	}
 	b.updateBundleForTableUpdate(diff, newTableID, oldTableID)
 	b.copySortedTables(oldTableID, newTableID)
 
@@ -600,23 +617,6 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.infoSchema.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) updateBundleForCreateTable(tblInfo *model.TableInfo, tp model.ActionType) {
-	switch tp {
-	case model.ActionDropTablePartition:
-	case model.ActionTruncateTablePartition:
-	// ReorganizePartition handle the bundles in applyReorganizePartition
-	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
-		model.ActionAlterTablePartitioning:
-	default:
-		pi := tblInfo.GetPartitionInfo()
-		if pi != nil {
-			for _, partition := range pi.Definitions {
-				b.markPartitionBundleShouldUpdate(partition.ID)
-			}
-		}
-	}
-}
-
 func (b *Builder) buildAllocsForCreateTable(tp model.ActionType, dbInfo *model.DBInfo, tblInfo *model.TableInfo, allocs autoid.Allocators) autoid.Allocators {
 	if len(allocs.Allocs) != 0 {
 		tblVer := autoid.AllocOptionTableInfoVersion(tblInfo.Version)
@@ -662,8 +662,6 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 			fmt.Sprintf("(Table ID %d)", tableID),
 		)
 	}
-
-	b.updateBundleForCreateTable(tblInfo, tp)
 
 	if tp != model.ActionTruncateTablePartition {
 		affected = appendAffectedIDs(affected, tblInfo)
@@ -967,8 +965,8 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 				tableID:       id,
 				schemaVersion: schemaVersion,
 			}
-			b.infoData.byID.Set(item)
-			b.infoData.byName.Set(item)
+			btreeSet(&b.infoData.byID, &item)
+			btreeSet(&b.infoData.byName, &item)
 		}
 	}
 	b.addDB(schemaVersion, di, schTbls)

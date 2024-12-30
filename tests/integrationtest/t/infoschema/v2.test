@@ -41,3 +41,9 @@ show databases like 'infoschema%';
 
 
 set @@global.tidb_schema_cache_size = default;
+
+# TestIssue57657
+use infoschema__v2;
+select TABLE_SCHEMA, TABLE_NAME, TIDB_TABLE_ID from information_schema.tables where TIDB_TABLE_ID = 4611686018427387967;
+select TABLE_SCHEMA from information_schema.tables where TIDB_TABLE_ID = 4611686018427387967;
+select TABLE_NAME, TABLE_CATALOG from information_schema.tables where TABLE_CATALOG != 'def';

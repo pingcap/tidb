@@ -66,7 +66,7 @@ func uniqInt64Value(column *column, minv int64, maxv int64) int64 {
 
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		data, err := genRowData(table)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -243,7 +243,7 @@ func closeDB(db *sql.DB) error {
 
 func createDBs(cfg dbutil.DBConfig, count int) ([]*sql.DB, error) {
 	dbs := make([]*sql.DB, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		db, err := createDB(cfg)
 		if err != nil {
 			return nil, errors.Trace(err)

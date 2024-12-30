@@ -34,7 +34,6 @@ import (
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -310,7 +309,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
-	rows[1][2] = `eq(cast(test.t1.a, var_string(1)), "A")`
+	rows[1][2] = `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`
 	sql = "select a from t1 where cast(a as char)='A'"
 	tk.MustQuery(sql).Check(testkit.Rows("A"))
 	tk.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
@@ -318,7 +317,7 @@ func TestBitColumnPushDown(t *testing.T) {
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
 	tk.MustExec("admin reload expr_pushdown_blacklist;")
 	rows = [][]any{
-		{"Selection_5", "root", `eq(cast(test.t1.a, var_string(1)), "A")`},
+		{"Selection_5", "root", `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`},
 		{"└─TableReader_7", "root", "data:TableFullScan_6"},
 		{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
 	}
@@ -2046,8 +2045,8 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
 
 	// Create virtual tiflash replica info.
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "first_range_d64")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range")
+	testkit.SetTiFlashReplica(t, dom, "test", "first_range_d64")
 
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 

@@ -152,7 +152,7 @@ func createTable(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs
 	}
 }
 
-func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	failpoint.Inject("mockExceedErrorLimit", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(ver, errors.New("mock do job error"))
@@ -165,10 +165,12 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	jobCtx.jobArgs = args
+
 	tbInfo := args.TableInfo
 
 	if len(tbInfo.ForeignKeys) > 0 {
-		return createTableWithForeignKeys(jobCtx, job, args)
+		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
 	tbInfo, err = createTable(jobCtx, job, args)
@@ -180,15 +182,18 @@ func onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
-	createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-	asyncNotifyEvent(jobCtx, createTableEvent, job)
 	return ver, errors.Trace(err)
 }
 
-func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	switch tbInfo.State {
 	case model.StateNone, model.StatePublic:
@@ -200,21 +205,32 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tbInfo.State = model.StateWriteOnly
+		tbInfo.State = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.SchemaState = model.StateWriteOnly
-	case model.StateWriteOnly:
+		job.SchemaState = model.StateDeleteOnly
+	// The `tblInfo.State` should be transformed from `None/Public` to `DeleteOnly`. In the `DeleteOnly` state, the table cannot be used explicitly
+	// in any SQL statement, but if this table has a `ON DELETE CASCADE` or `ON UPDATE CASCADE`, it'll still be deleted/updated automatically to keep
+	// consistency.
+	//
+	// This branch handles both `StateDeleteOnly` and `StateWriteOnly` to avoid compatibility issues. If the TiDB is upgraded from an old version,
+	// there may be a DDL job in the `StateWriteOnly` state. Now, we handle it in the same way as the `StateDeleteOnly` state. When we believe it's
+	// impossible to upgrade from a too old version to the current version, we can remove the `StateWriteOnly` branch.
+	case model.StateDeleteOnly, model.StateWriteOnly:
 		tbInfo.State = model.StatePublic
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 		return ver, nil
 	default:
 		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
@@ -222,7 +238,7 @@ func createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.
 	return ver, errors.Trace(err)
 }
 
-func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
+func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	var ver int64
 
 	args, err := model.GetBatchCreateTableArgs(job)
@@ -238,7 +254,6 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 	//
 	// it clones a stub job from the ActionCreateTables job
 	stubJob := job.Clone()
-	stubJob.Args = make([]any, 1)
 	for i := range args.Tables {
 		tblArgs := args.Tables[i]
 		tableInfo := tblArgs.TableInfo
@@ -259,20 +274,21 @@ func onCreateTables(jobCtx *jobContext, job *model.Job) (int64, error) {
 			tableInfos = append(tableInfos, tbInfo)
 		}
 	}
-
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	for i := range tableInfos {
+		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, int64(i), w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
-	for i := range tableInfos {
-		createTableEvent := notifier.NewCreateTableEvent(tableInfos[i])
-		asyncNotifyEvent(jobCtx, createTableEvent, job)
-	}
-
 	return ver, errors.Trace(err)
 }
 
@@ -410,7 +426,7 @@ func buildTableInfoWithCheck(ctx *metabuild.Context, store kv.Storage, s *ast.Cr
 	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
 		return nil, err
 	}
-	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, tbInfo); err != nil {
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
 		return nil, err
 	}
 	return tbInfo, nil
@@ -511,7 +527,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName pmodel.CIStr, table
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.TableInfo) error {
+func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName pmodel.CIStr, tblInfo *model.TableInfo) error {
 	var hasVectorIndex bool
 	for _, idx := range tblInfo.Indices {
 		if idx.VectorInfo != nil {
@@ -524,6 +540,9 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.Table
 	}
 	if store == nil {
 		return errors.New("the store is nil")
+	}
+	if err := isTableTiFlashSupported(dbName, tblInfo); err != nil {
+		return errors.Trace(err)
 	}
 
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
@@ -551,7 +570,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, tblInfo *model.Table
 // name length and column count.
 // (checkTableInfoValid is also used in repairing objects which don't perform
 // these checks. Perhaps the two functions should be merged together regardless?)
-func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model.TableInfo) error {
+func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName pmodel.CIStr, tbInfo *model.TableInfo) error {
 	if err := checkTooLongTable(tbInfo.Name); err != nil {
 		return err
 	}
@@ -574,7 +593,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, tbInfo *model
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, tbInfo); err != nil {
+	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1262,10 +1281,14 @@ func BuildTableInfo(
 					tbInfo.CommonHandleVersion = 1
 				}
 			}
-			if tbInfo.HasClusteredIndex() {
+			if tbInfo.HasClusteredIndex() && constr.Option != nil {
 				// Primary key cannot be invisible.
-				if constr.Option != nil && constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 					return nil, dbterror.ErrPKIndexCantBeInvisible
+				}
+				// A clustered index cannot be a global index.
+				if constr.Option.Global {
+					return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("create an index that is both a global index and a clustered index")
 				}
 			}
 			if tbInfo.PKIsHandle {

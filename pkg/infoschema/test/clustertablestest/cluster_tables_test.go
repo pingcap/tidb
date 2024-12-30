@@ -261,7 +261,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time desc limit 1").Check(testkit.Rows("25.571605962 40507 alias123"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
 	tk.MustQuery("select digest, count(*) from `CLUSTER_SLOW_QUERY` group by digest order by digest").Check(testkit.Rows("124acb3a0bec903176baca5f9da00b4e7512a41c93b417923f26502edeb324cc 1", "42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772 1"))
-	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953"))
+	tk.MustQuery(`select length(query) as l,time from information_schema.cluster_slow_query where time > "2019-02-12 19:33:56" order by abs(l) desc limit 10;`).Check(testkit.Rows("21 2019-02-12 19:33:56.571953", "16 2021-09-08 14:39:54.506967"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` where time > now() group by digest").Check(testkit.Rows())
 	re := tk.MustQuery("select * from `CLUSTER_statements_summary`")
 	require.NotNil(t, re)
@@ -1971,4 +1971,55 @@ func TestMDLViewIDConflict(t *testing.T) {
 	txnTK1.MustExec("COMMIT")
 	txnTK2.MustExec("COMMIT")
 	wg.Wait()
+}
+
+func TestPlanCacheView(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+
+	tk := s.newTestKitWithRoot(t)
+	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_enable_instance_plan_cache=1`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select a from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
+
+	tk.MustExec("use test")
+	tk.MustExec(`prepare st from 'select a from t where a in (?)'`)
+	tk.MustExec(`set @a=2`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustExec(`execute st using @a`)
+	tk.RefreshSession()
+	require.Eventually(t, func() bool {
+		result := tk.MustQuery(`select instance, sql_text, executions from information_schema.cluster_tidb_plan_cache order by executions`)
+		expectedResult := testkit.Rows(
+			":10080 select a from t where a<? 2",
+			":10080 select a from t where a in (?) 3")
+		if !result.Equal(expectedResult) {
+			logutil.BgLogger().Warn("result not equal", zap.Any("rows", result.Rows()))
+			return false
+		}
+		return true
+	}, time.Second*2, time.Millisecond*100)
 }

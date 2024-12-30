@@ -246,7 +246,7 @@ func TestSetTableFlashReplicaForSystemTable(t *testing.T) {
 				if tbl.Meta().View != nil {
 					require.ErrorIs(t, err, dbterror.ErrWrongObject)
 				} else {
-					require.Equal(t, "[ddl:8200]Unsupported ALTER TiFlash settings for system table and memory table", err.Error())
+					require.Equal(t, "[ddl:8200]Unsupported `set TiFlash replica` settings for system table and memory table", err.Error())
 				}
 			} else {
 				require.Equal(t, fmt.Sprintf("[planner:1142]ALTER command denied to user 'root'@'%%' for table '%s'", strings.ToLower(one)), err.Error())
@@ -312,7 +312,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 	tbl1 := external.GetTableByName(t, tk, "test", "t1")
 	doneCh := make(chan error, 2)
 	var onceChecker sync.Map
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddColumn && job.Type != model.ActionDropColumn &&
 			job.Type != model.ActionAddIndex && job.Type != model.ActionDropIndex {
 			return
@@ -375,7 +375,7 @@ func TestCreateTableWithLike2(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (a int) partition by hash(a) partitions 2;")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")

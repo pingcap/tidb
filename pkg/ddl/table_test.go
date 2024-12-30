@@ -652,7 +652,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 	for _, tc := range testCases {
 		runInsert := false
 		var jobID int64 = 0
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 			if job.ID <= finishedJobID {
 				// The job has been done, OnJobUpdated may be invoked later asynchronously.
 				// We should skip the done job.
@@ -720,7 +720,7 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	)
 	enableWaitSubmit.Store(true)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() { time.Sleep(300 * time.Millisecond) })
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStepAndWaitSync", func() { time.Sleep(300 * time.Millisecond) })
 	// create and wait all jobs are submitted to tidb_ddl_job before they are run.
 	// we are creating same table/database, only the first will success.
 	var wg util.WaitGroupWrapper
@@ -763,4 +763,32 @@ func TestCreateSameTableOrDBOnOwnerChange(t *testing.T) {
 	wg.Wait()
 	finished.Store(true)
 	ownerWg.Wait()
+}
+
+func TestDropTableAccessibleInInfoSchema(t *testing.T) {
+	// The dropped table should always be accessible until the state reaches `StateNone`.
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tkDDL := testkit.NewTestKit(t, store)
+	tkDDL.MustExec("use test")
+	tkDDL.MustExec("create table t (id int key)")
+
+	var errs []error
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropTable && job.TableName == "t" {
+			if job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateWriteOnly {
+				_, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+				errs = append(errs, err)
+			}
+		}
+	})
+	tkDDL.MustExec("drop table t")
+
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	for _, err := range errs {
+		require.NoError(t, err)
+	}
+	require.True(t, len(errs) > 0)
 }

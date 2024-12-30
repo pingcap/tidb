@@ -19,6 +19,7 @@ import (
 	"math"
 	"testing"
 
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -491,7 +492,7 @@ func TestReferredFKInfo(t *testing.T) {
 }
 
 func updateTableSpecialAttribute(t *testing.T, dbInfo *model.DBInfo, tblInfo *model.TableInfo, builder *Builder, r autoid.Requirement,
-	actionType model.ActionType, ver int64, filter specialAttributeFilter, add bool) *model.TableInfo {
+	actionType model.ActionType, ver int64, filter infoschemacontext.SpecialAttributeFilter, add bool) *model.TableInfo {
 	internal.UpdateTable(t, r.Store(), dbInfo, tblInfo)
 	txn, err := r.Store().Begin()
 	require.NoError(t, err)
@@ -561,11 +562,11 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		DDLState: model.StatePublic,
 	}
 	// add partition
-	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 	// drop partition
 	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
 
 	// test placement policy correctness in schema change
@@ -573,10 +574,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		ID:   1,
 		Name: pmodel.NewCIStr("p3"),
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, PlacementPolicyAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 5, infoschemacontext.PlacementPolicyAttribute, true)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfo1.PlacementPolicyRef)
 	tblInfo.PlacementPolicyRef = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 6, PlacementPolicyAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAlterTablePlacement, 6, infoschemacontext.PlacementPolicyAttribute, false)
 
 	// test tiflash replica correctness in schema change
 	tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
@@ -584,10 +585,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		Available:      true,
 		LocationLabels: []string{"zone"},
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 7, TiFlashAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 7, infoschemacontext.TiFlashAttribute, true)
 	require.Equal(t, tblInfo.TiFlashReplica, tblInfo1.TiFlashReplica)
 	tblInfo.TiFlashReplica = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 8, TiFlashAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionSetTiFlashReplica, 8, infoschemacontext.TiFlashAttribute, false)
 
 	// test table lock correctness in schema change
 	tblInfo.Lock = &model.TableLockInfo{
@@ -595,10 +596,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		State: model.TableLockStatePublic,
 		TS:    1,
 	}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionLockTable, 9, TableLockAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionLockTable, 9, infoschemacontext.TableLockAttribute, true)
 	require.Equal(t, tblInfo.Lock, tblInfo1.Lock)
 	tblInfo.Lock = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, TableLockAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionUnlockTable, 10, infoschemacontext.TableLockAttribute, false)
 
 	// test foreign key correctness in schema change
 	tblInfo.ForeignKeys = []*model.FKInfo{{
@@ -610,10 +611,10 @@ func TestSpecialAttributeCorrectnessInSchemaChange(t *testing.T) {
 		Cols:      []pmodel.CIStr{pmodel.NewCIStr("t_a")},
 		State:     model.StateWriteOnly,
 	}}
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, ForeignKeysAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddForeignKey, 11, infoschemacontext.ForeignKeysAttribute, true)
 	require.Equal(t, tblInfo.ForeignKeys, tblInfo1.ForeignKeys)
 	tblInfo.ForeignKeys = nil
-	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, ForeignKeysAttribute, false)
+	updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropForeignKey, 12, infoschemacontext.ForeignKeysAttribute, false)
 }
 
 func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
@@ -638,10 +639,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateSchema, Version: 1, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
-	dbIDName, ok := v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
+	dbIDName, ok := v2.Data.schemaID2Name.Load().Get(schemaIDName{id: dbInfo.ID, schemaVersion: 1})
 	require.True(t, ok)
 	require.Equal(t, dbIDName.name, dbInfo.Name)
-	dbItem, ok := v2.Data.schemaMap.Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	dbItem, ok := v2.Data.schemaMap.Load().Get(schemaItem{schemaVersion: 1, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.Equal(t, dbItem.dbInfo.ID, dbInfo.ID)
 
@@ -652,10 +653,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	tblItem, ok := v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
+	tblItem, ok := v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 2})
 	require.True(t, ok)
 	require.Equal(t, tblItem.tableID, tblInfo.ID)
-	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 2})
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 2})
 	require.True(t, ok)
 	require.Equal(t, tblItem.dbID, dbInfo.ID)
 	tbl, ok := v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 2})
@@ -663,7 +664,7 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.Equal(t, tbl.Meta().Name, tblInfo.Name)
 
 	// verify partition related fields after add partition
-	require.Equal(t, v2.Data.pid2tid.Len(), 0)
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 0)
 	tblInfo.Partition = &model.PartitionInfo{
 		Definitions: []model.PartitionDefinition{
 			{ID: 1, Name: pmodel.NewCIStr("p1")},
@@ -672,40 +673,59 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 		Enable:   true,
 		DDLState: model.StatePublic,
 	}
-	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, PartitionAttribute, true)
+	tblInfo1 := updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionAddTablePartition, 3, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
-	require.Equal(t, v2.Data.pid2tid.Len(), 2)
-	tblInfoItem, ok := v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 3})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 2)
+	tblInfoItem, ok := v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 2, schemaVersion: 3})
 	require.True(t, ok)
 	require.Equal(t, tblInfoItem.tableID, tblInfo.ID)
 
 	// verify partition related fields drop partition
 	tblInfo.Partition.Definitions = tblInfo.Partition.Definitions[:1]
-	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, PartitionAttribute, true)
+	tblInfo1 = updateTableSpecialAttribute(t, dbInfo, tblInfo, builder, r, model.ActionDropTablePartition, 4, infoschemacontext.PartitionAttribute, true)
 	require.Equal(t, tblInfo.Partition, tblInfo1.Partition)
-	require.Equal(t, v2.Data.pid2tid.Len(), 4)
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 4})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 4)
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 4})
 	require.True(t, ok)
 	require.False(t, tblInfoItem.tomb)
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 2, schemaVersion: 4})
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 2, schemaVersion: 4})
 	require.True(t, ok)
 	require.True(t, tblInfoItem.tomb)
 
 	// verify table and partition related fields after drop table
 	txn, err = r.Store().Begin()
 	require.NoError(t, err)
-	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	m := meta.NewMutator(txn)
+	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	tblItem, ok = v2.Data.byName.Get(tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	// at first, the table will not be removed
+	tblItem, ok = v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblItem.tomb)
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblItem.tomb)
+	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	require.True(t, ok)
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.True(t, ok)
+	require.False(t, tblInfoItem.tomb)
+	// after actually drop the table, the info will be tomb
+	m.DropTableOrView(dbInfo.ID, tblInfo.ID)
+	_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
+	require.NoError(t, err)
+	// at first, the table will not be removed
+	tblItem, ok = v2.Data.byName.Load().Get(&tableItem{dbName: dbInfo.Name, tableName: tblInfo.Name, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
-	tblItem, ok = v2.Data.byID.Get(tableItem{tableID: tblInfo.ID, schemaVersion: 5})
+	tblItem, ok = v2.Data.byID.Load().Get(&tableItem{tableID: tblInfo.ID, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblItem.tomb)
-	tbl, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
+	_, ok = v2.Data.tableCache.Get(tableCacheKey{tableID: tblInfo.ID, schemaVersion: 5})
 	require.False(t, ok)
-	require.Equal(t, v2.Data.pid2tid.Len(), 5) // tomb partition info
-	tblInfoItem, ok = v2.Data.pid2tid.Get(partitionItem{partitionID: 1, schemaVersion: 5})
+	require.Equal(t, v2.Data.pid2tid.Load().Len(), 5) // tomb partition info
+	tblInfoItem, ok = v2.Data.pid2tid.Load().Get(partitionItem{partitionID: 1, schemaVersion: 5})
 	require.True(t, ok)
 	require.True(t, tblInfoItem.tomb)
 
@@ -714,10 +734,10 @@ func TestDataStructFieldsCorrectnessInSchemaChange(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropSchema, Version: 6, SchemaID: dbInfo.ID})
 	require.NoError(t, err)
-	dbIDName, ok = v2.Data.schemaID2Name.Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
+	dbIDName, ok = v2.Data.schemaID2Name.Load().Get(schemaIDName{id: dbInfo.ID, schemaVersion: 6})
 	require.True(t, ok)
 	require.True(t, dbIDName.tomb)
-	dbItem, ok = v2.Data.schemaMap.Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
+	dbItem, ok = v2.Data.schemaMap.Load().Get(schemaItem{schemaVersion: 6, dbInfo: &model.DBInfo{Name: dbInfo.Name}})
 	require.True(t, ok)
 	require.True(t, dbItem.tomb)
 }

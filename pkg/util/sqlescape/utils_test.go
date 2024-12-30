@@ -464,25 +464,25 @@ func TestEscapeString(t *testing.T) {
 }
 
 func BenchmarkEscapeString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", "3")
 	}
 }
 
 func BenchmarkUnderlyingString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", myStr("3"))
 	}
 }
 
 func BenchmarkEscapeInt(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", 3)
 	}
 }
 
 func BenchmarkUnderlyingInt(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", myInt(3))
 	}
 }

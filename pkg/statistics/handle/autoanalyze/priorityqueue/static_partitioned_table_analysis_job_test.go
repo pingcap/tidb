@@ -28,7 +28,7 @@ import (
 
 func TestGenSQLForAnalyzeStaticPartitionedTable(t *testing.T) {
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test_schema",
+		SchemaName:          "test_schema",
 		GlobalTableName:     "test_table",
 		StaticPartitionName: "p0",
 	}
@@ -44,7 +44,7 @@ func TestGenSQLForAnalyzeStaticPartitionedTable(t *testing.T) {
 
 func TestGenSQLForAnalyzeStaticPartitionedTableIndex(t *testing.T) {
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test_schema",
+		SchemaName:          "test_schema",
 		GlobalTableName:     "test_table",
 		StaticPartitionName: "p0",
 	}
@@ -68,11 +68,15 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
 
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test",
-		GlobalTableName:     "t",
-		StaticPartitionName: "p0",
-		TableStatsVer:       2,
+		GlobalTableID:     tableInfo.Meta().ID,
+		StaticPartitionID: partitionInfo.Definitions[0].ID,
+		TableStatsVer:     2,
 	}
 
 	// Before analyze the partition.
@@ -84,6 +88,9 @@ func TestAnalyzeStaticPartitionedTable(t *testing.T) {
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
 	require.True(t, tblStats.Pseudo)
 
+	valid, failReason := job.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is = dom.InfoSchema()
@@ -99,15 +106,17 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
 	tk.MustExec("create table t (a int, b int, index idx(a), index idx1(b)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "test",
-		GlobalTableName:     "t",
-		StaticPartitionName: "p0",
-		Indexes:             []string{"idx", "idx1"},
-		TableStatsVer:       2,
+		GlobalTableID:     tableInfo.Meta().ID,
+		StaticPartitionID: partitionInfo.Definitions[0].ID,
+		IndexIDs:          map[int64]struct{}{1: {}, 2: {}},
+		TableStatsVer:     2,
 	}
 	handle := dom.StatsHandle()
 	// Before analyze indexes.
@@ -117,6 +126,10 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.GetIdx(1).IsAnalyzed())
+
+	valid, failReason := job.ValidateAndPrepare(tk.Session())
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 
 	job.Analyze(handle, dom.SysProcTracker())
 	// Check the result of analyze.
@@ -135,54 +148,58 @@ func TestAnalyzeStaticPartitionedTableIndexes(t *testing.T) {
 	require.Len(t, rows, 4)
 }
 
-func TestStaticPartitionedTableIsValidToAnalyze(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+func TestStaticPartitionedTableValidateAndPrepare(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
+	tk.MustExec("create schema example_schema")
+	tk.MustExec("use example_schema")
+	tk.MustExec("create table example_table (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tableInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("example_schema"), model.NewCIStr("example_table"))
+	require.NoError(t, err)
+	partitionInfo := tableInfo.Meta().GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
 	job := &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "example_schema",
-		GlobalTableName:     "example_table",
-		StaticPartitionName: "p0",
-		Weight:              2,
+		GlobalTableID:     tableInfo.Meta().ID,
+		StaticPartitionID: partitionInfo.Definitions[0].ID,
+		Weight:            2,
 	}
 	initJobs(tk)
-	insertMultipleFinishedJobs(tk, job.GlobalTableName, "p0")
-	insertMultipleFinishedJobs(tk, job.GlobalTableName, "p1")
+	insertMultipleFinishedJobs(tk, "example_table", "p0")
+	insertMultipleFinishedJobs(tk, "example_table", "p1")
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	valid, failReason := job.IsValidToAnalyze(sctx)
+	valid, failReason := job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", now)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", now)
 	// Note: The failure reason is not checked in this test because the time duration can sometimes be inaccurate.(not now)
-	valid, _ = job.IsValidToAnalyze(sctx)
+	valid, _ = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	// Failed 10 seconds ago.
 	startTime := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", startTime)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
-	insertFailedJobWithStartTime(tk, job.TableSchema, job.GlobalTableName, "p0", startTime)
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	insertFailedJobWithStartTime(tk, job.SchemaName, "example_table", "p0", startTime)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 	// Do not affect other partitions.
 	job = &priorityqueue.StaticPartitionedTableAnalysisJob{
-		TableSchema:         "example_schema",
-		GlobalTableName:     "example_table",
-		StaticPartitionName: "p1",
-		Weight:              2,
+		GlobalTableID:     tableInfo.Meta().ID,
+		StaticPartitionID: partitionInfo.Definitions[1].ID,
+		Weight:            2,
 	}
-	valid, failReason = job.IsValidToAnalyze(sctx)
+	valid, failReason = job.ValidateAndPrepare(sctx)
 	require.True(t, valid)
 	require.Equal(t, "", failReason)
 }

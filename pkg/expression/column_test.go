@@ -493,3 +493,22 @@ func TestColumnHashEuqals4VirtualExpr(t *testing.T) {
 	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
 	require.True(t, col1.Equals(col2))
 }
+
+func TestColumnEqualsWithNilWrappedInAny(t *testing.T) {
+	col1 := &Column{UniqueID: 1}
+	// Test: other is nil
+	require.False(t, col1.Equals(nil))
+	// Test: other is *Column(nil) wrapped in any
+	var col2 *Column = nil
+	var col2AsAny any = col2
+	require.False(t, col1.Equals(col2AsAny))
+	// Test: both Columns are nil
+	var col3 *Column = nil
+	require.True(t, col3.Equals(col2AsAny))
+	// Test: two Columns with the same values
+	col4 := &Column{UniqueID: 1}
+	require.True(t, col1.Equals(col4))
+	// Test: two Columns with different values
+	col5 := &Column{UniqueID: 2}
+	require.False(t, col1.Equals(col5))
+}

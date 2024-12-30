@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -234,4 +235,15 @@ func TestClearReorgIntermediateInfo(t *testing.T) {
 	require.Equal(t, "", ptInfo.DDLExpr)
 	require.Equal(t, true, ptInfo.DDLColumns == nil)
 	require.Equal(t, int64(0), ptInfo.NewTableID)
+}
+
+func TestTTLDefaultJobInterval(t *testing.T) {
+	// test default value of `DefaultTTLJobInterval` is valid.
+	d, err := duration.ParseDuration(DefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, 24*time.Hour, d)
+	// test default value of `OldDefaultTTLJobInterval` is valid.
+	d, err = duration.ParseDuration(OldDefaultTTLJobInterval)
+	require.NoError(t, err)
+	require.Equal(t, time.Hour, d)
 }

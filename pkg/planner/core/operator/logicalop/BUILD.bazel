@@ -4,6 +4,7 @@ go_library(
     name = "logicalop",
     srcs = [
         "base_logical_plan.go",
+        "hash64_equals_generated.go",
         "logical_aggregation.go",
         "logical_apply.go",
         "logical_cte.go",
@@ -79,4 +80,10 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
     ],
+)
+
+filegroup(
+    name = "generator_files",
+    srcs = ["hash64_equals_generated.go"],
+    visibility = ["//visibility:public"],
 )

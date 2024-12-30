@@ -254,8 +254,6 @@ const (
 	JobVersion1 JobVersion = 1
 	// JobVersion2 is the second version of DDL job where job args are stored as
 	// typed structs, we start to use this version from v8.4.0.
-	// Note: this version is not enabled right now except in some test cases, will
-	// enable it after we have CI to run both versions.
 	JobVersion2 JobVersion = 2
 )
 
@@ -308,15 +306,9 @@ type Job struct {
 	// E.g. passing arguments between functions by one single *Job pointer.
 	// for ExchangeTablePartition, RenameTables, RenameTable, it's [slice-of-db-id, slice-of-table-id]
 	CtxVars []any `json:"-"`
-	// Note: it might change when state changes, such as when rollback on AddColumn.
-	// - CreateTable, it's [TableInfo, foreignKeyCheck]
-	// - AddIndex or AddPrimaryKey: [unique, ....
-	// - TruncateTable: [new-table-id, foreignKeyCheck, ...
-	// - RenameTable: [old-db-id, new-table-name, old-db-name]
-	// - ExchangeTablePartition: [partition-id, pt-db-id, pt-id, partition-name, with-validation]
+	// it's a temporary place to cache job args.
 	// when Version is JobVersion2, Args contains a single element of type JobArgs.
-	// TODO make it private after we finish the migration to JobVersion2.
-	Args []any `json:"-"`
+	args []any
 	// we use json raw message to delay parsing special args.
 	// the args are cleared out unless Job.FillFinishedArgs is called.
 	RawArgs json.RawMessage `json:"raw_args"`
@@ -427,6 +419,7 @@ func (job *Job) MarkNonRevertible() {
 }
 
 // Clone returns a copy of the job.
+// Note: private args fields are not copied.
 func (job *Job) Clone() *Job {
 	encode, err := job.Encode(true)
 	if err != nil {
@@ -437,14 +430,9 @@ func (job *Job) Clone() *Job {
 	if err != nil {
 		return nil
 	}
-	if len(job.Args) > 0 {
-		clone.Args = make([]any, len(job.Args))
-		copy(clone.Args, job.Args)
-	}
 	if job.MultiSchemaInfo != nil {
 		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			clone.MultiSchemaInfo.SubJobs[i].Args = make([]any, len(sub.Args))
-			copy(clone.MultiSchemaInfo.SubJobs[i].Args, sub.Args)
+			clone.MultiSchemaInfo.SubJobs[i].JobArgs = sub.JobArgs
 		}
 	}
 	return &clone
@@ -486,20 +474,20 @@ func (job *Job) GetWarnings() (map[errors.ErrorID]*terror.Error, map[errors.Erro
 func (job *Job) FillArgs(args JobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.Args = args.getArgsV1(job)
+		job.args = args.getArgsV1(job)
 		return
 	}
-	job.Args = []any{args}
+	job.args = []any{args}
 }
 
 // FillFinishedArgs fills args for finished job.
 func (job *Job) FillFinishedArgs(args FinishedJobArgs) {
 	intest.Assert(job.Version == JobVersion1 || job.Version == JobVersion2, "job version is invalid")
 	if job.Version == JobVersion1 {
-		job.Args = args.getFinishedArgsV1(job)
+		job.args = args.getFinishedArgsV1(job)
 		return
 	}
-	job.Args = []any{args}
+	job.args = []any{args}
 }
 
 func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
@@ -511,7 +499,7 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 	intest.Assert(jobVer == JobVersion2, "job version is not v2")
 	var arg any
 	if len(args) > 0 {
-		intest.Assert(len(args) == 1, "Job.Args should have only one element")
+		intest.Assert(len(args) == 1, "args should have only one element")
 		arg = args[0]
 	}
 
@@ -524,7 +512,7 @@ func marshalArgs(jobVer JobVersion, args []any) (json.RawMessage, error) {
 func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	var err error
 	if updateRawArgs {
-		job.RawArgs, err = marshalArgs(job.Version, job.Args)
+		job.RawArgs, err = marshalArgs(job.Version, job.args)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -532,11 +520,11 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 		if job.MultiSchemaInfo != nil {
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				// Only update the args of executing sub-jobs.
-				if sub.Args == nil {
+				if sub.args == nil {
 					continue
 				}
 
-				sub.RawArgs, err = marshalArgs(job.Version, sub.Args)
+				sub.RawArgs, err = marshalArgs(job.Version, sub.args)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -552,18 +540,17 @@ func (job *Job) Encode(updateRawArgs bool) ([]byte, error) {
 	return b, errors.Trace(err)
 }
 
-// Decode decodes job from the json buffer, we must use DecodeArgs later to
+// Decode decodes job from the json buffer, we must use decodeArgs later to
 // decode special args for this job.
 func (job *Job) Decode(b []byte) error {
 	err := json.Unmarshal(b, job)
 	return errors.Trace(err)
 }
 
-// DecodeArgs decodes serialized job arguments from job.RawArgs into the given
+// decodeArgs decodes serialized job arguments from job.RawArgs into the given
 // variables, and also save the result in job.Args. It's for JobVersion1.
-// TODO make it un-exported after we finish the migration to JobVersion2.
-func (job *Job) DecodeArgs(args ...any) error {
-	intest.Assert(job.Version == JobVersion1, "Job.DecodeArgs is only used for JobVersion1")
+func (job *Job) decodeArgs(args ...any) error {
+	intest.Assert(job.Version == JobVersion1, "Job.decodeArgs is only used for JobVersion1")
 	var rawArgs []json.RawMessage
 	if err := json.Unmarshal(job.RawArgs, &rawArgs); err != nil {
 		return errors.Trace(err)
@@ -582,29 +569,15 @@ func (job *Job) DecodeArgs(args ...any) error {
 	// TODO(lance6716): don't assign to job.Args here, because the types of argument
 	// `args` are always pointer type. But sometimes in the `job` literals we don't
 	// use pointer
-	job.Args = args[:sz]
+	job.args = args[:sz]
 	return nil
-}
-
-// DecodeDropIndexFinishedArgs decodes the drop index job's args when it's finished.
-func (job *Job) DecodeDropIndexFinishedArgs() (
-	indexName any, ifExists []bool, indexIDs []int64, partitionIDs []int64, hasVectors []bool, err error) {
-	ifExists = make([]bool, 1)
-	indexIDs = make([]int64, 1)
-	hasVectors = make([]bool, 1)
-	if err := job.DecodeArgs(&indexName, &ifExists[0], &indexIDs[0], &partitionIDs, &hasVectors[0]); err != nil {
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexIDs, &partitionIDs, &hasVectors); err != nil {
-			return nil, []bool{false}, []int64{-1}, nil, []bool{false}, errors.Trace(err)
-		}
-	}
-	return
 }
 
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
 	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %s",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -613,99 +586,6 @@ func (job *Job) String() string {
 		ret += fmt.Sprintf(", Multi-Schema Change:true, Revertible:%v", job.MultiSchemaInfo.Revertible)
 	}
 	return ret
-}
-
-func (job *Job) hasDependentSchema(other *Job) (bool, error) {
-	if other.Type == ActionDropSchema || other.Type == ActionCreateSchema {
-		if other.SchemaID == job.SchemaID {
-			return true, nil
-		}
-		if job.Type == ActionRenameTable {
-			args, err := GetRenameTableArgs(job)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-
-			if other.SchemaID == args.OldSchemaID {
-				return true, nil
-			}
-		}
-		if job.Type == ActionExchangeTablePartition {
-			args, err := GetExchangeTablePartitionArgs(job)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if other.SchemaID == args.PTSchemaID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-func (job *Job) hasDependentTableForExchangePartition(other *Job) (bool, error) {
-	if job.Type == ActionExchangeTablePartition {
-		// TODO this code seems buggy, we haven't encode Args into RawArgs yet, so cannot decode.
-		// but it's very old code for previous job queue, will be removed later anyway.
-		args, err := GetExchangeTablePartitionArgs(job)
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if args.PTTableID == other.TableID || args.PartitionID == other.TableID {
-			return true, nil
-		}
-
-		if other.Type == ActionExchangeTablePartition {
-			otherArgs, err := GetExchangeTablePartitionArgs(other)
-			if err != nil {
-				return false, errors.Trace(err)
-			}
-			if job.TableID == other.TableID || job.TableID == otherArgs.PTTableID || job.TableID == otherArgs.PartitionID {
-				return true, nil
-			}
-			if args.PTTableID == other.TableID || args.PTTableID == otherArgs.PTTableID || args.PTTableID == otherArgs.PartitionID {
-				return true, nil
-			}
-			if args.PartitionID == other.TableID || args.PartitionID == otherArgs.PTTableID || args.PartitionID == otherArgs.PartitionID {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
-// IsDependentOn returns whether the job depends on "other".
-// How to check the job depends on "other"?
-// 1. The two jobs handle the same database when one of the two jobs is an ActionDropSchema or ActionCreateSchema type.
-// 2. Or the two jobs handle the same table.
-// 3. Or other job is flashback cluster.
-func (job *Job) IsDependentOn(other *Job) (bool, error) {
-	if other.Type == ActionFlashbackCluster {
-		return true, nil
-	}
-
-	isDependent, err := job.hasDependentSchema(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentSchema(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-
-	// TODO: If a job is ActionRenameTable, we need to check table name.
-	if other.TableID == job.TableID {
-		return true, nil
-	}
-	isDependent, err = job.hasDependentTableForExchangePartition(other)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	isDependent, err = other.hasDependentTableForExchangePartition(job)
-	if err != nil || isDependent {
-		return isDependent, errors.Trace(err)
-	}
-	return false, nil
 }
 
 // IsFinished returns whether job is finished or not.
@@ -758,6 +638,14 @@ func (job *Job) IsPausable() bool {
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
 }
 
+// IsAlterable checks whether the job type can be altered.
+func (job *Job) IsAlterable() bool {
+	// Currently, only non-distributed add index reorg task can be altered
+	return job.Type == ActionAddIndex && !job.ReorgMeta.IsDistReorg ||
+		job.Type == ActionModifyColumn ||
+		job.Type == ActionReorganizePartition
+}
+
 // IsResumable checks whether the job can be rollback.
 func (job *Job) IsResumable() bool {
 	return job.IsPaused()
@@ -808,6 +696,7 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
+		// TODO(joechenrh): remove CtxVars here
 		if len(job.CtxVars) > 0 {
 			needReorg, ok := job.CtxVars[0].(bool)
 			return ok && needReorg
@@ -844,8 +733,10 @@ func (job *Job) IsRollbackable() bool {
 	case ActionAddTablePartition:
 		return job.SchemaState == StateNone || job.SchemaState == StateReplicaOnly
 	case ActionDropColumn, ActionDropSchema, ActionDropTable, ActionDropSequence,
-		ActionDropForeignKey, ActionDropTablePartition, ActionTruncateTablePartition:
+		ActionDropForeignKey, ActionDropTablePartition:
 		return job.SchemaState == StatePublic
+	case ActionTruncateTablePartition:
+		return job.SchemaState == StatePublic || job.SchemaState == StateWriteOnly
 	case ActionRebaseAutoID, ActionShardRowID,
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
@@ -857,6 +748,12 @@ func (job *Job) IsRollbackable() bool {
 	case ActionFlashbackCluster:
 		if job.SchemaState == StateWriteReorganization ||
 			job.SchemaState == StateWriteOnly {
+			return false
+		}
+	case ActionReorganizePartition, ActionRemovePartitioning, ActionAlterTablePartitioning:
+		if job.SchemaState == StatePublic {
+			// We will double write until this state, here we will do DeleteOnly on indexes,
+			// so no-longer rollbackable.
 			return false
 		}
 	}
@@ -878,11 +775,17 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	}
 }
 
+// ClearDecodedArgs clears the decoded args.
+func (job *Job) ClearDecodedArgs() {
+	job.args = nil
+}
+
 // SubJob is a representation of one DDL schema change. A Job may contain zero
 // (when multi-schema change is not applicable) or more SubJobs.
 type SubJob struct {
-	Type        ActionType      `json:"type"`
-	Args        []any           `json:"-"`
+	Type        ActionType `json:"type"`
+	JobArgs     JobArgs    `json:"-"`
+	args        []any
 	RawArgs     json.RawMessage `json:"raw_args"`
 	SchemaState SchemaState     `json:"schema_state"`
 	SnapshotVer uint64          `json:"snapshot_ver"`
@@ -894,7 +797,6 @@ type SubJob struct {
 	CtxVars     []any           `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
-	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -918,6 +820,7 @@ func (sub *SubJob) IsFinished() bool {
 // ToProxyJob converts a sub-job to a proxy job.
 func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	return Job{
+		Version:         parentJob.Version,
 		ID:              parentJob.ID,
 		Type:            sub.Type,
 		SchemaID:        parentJob.SchemaID,
@@ -930,7 +833,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		RowCount:        sub.RowCount,
 		Mu:              sync.Mutex{},
 		CtxVars:         sub.CtxVars,
-		Args:            sub.Args,
+		args:            sub.args,
 		RawArgs:         sub.RawArgs,
 		SchemaState:     sub.SchemaState,
 		SnapshotVer:     sub.SnapshotVer,
@@ -939,7 +842,6 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		DependencyID:    parentJob.DependencyID,
 		Query:           parentJob.Query,
 		BinlogInfo:      parentJob.BinlogInfo,
-		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
 		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
@@ -957,13 +859,32 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.SchemaState = proxyJob.SchemaState
 	sub.SnapshotVer = proxyJob.SnapshotVer
 	sub.RealStartTS = proxyJob.RealStartTS
-	sub.Args = proxyJob.Args
+	sub.args = proxyJob.args
 	sub.State = proxyJob.State
 	sub.Warning = proxyJob.Warning
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
-	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
-	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
+	if proxyJob.ReorgMeta != nil {
+		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	}
+}
+
+// FillArgs fills args.
+func (sub *SubJob) FillArgs(jobVer JobVersion) {
+	fakeJob := Job{
+		Version: jobVer,
+		Type:    sub.Type,
+	}
+	fakeJob.FillArgs(sub.JobArgs)
+	sub.args = fakeJob.args
+}
+
+// Clone returns a copy of the sub-job.
+// Note: private args fields are not copied.
+func (sub *SubJob) Clone() *SubJob {
+	clonedSubJob := *sub
+	clonedSubJob.args = nil
+	return &clonedSubJob
 }
 
 // MultiSchemaInfo keeps some information for multi schema change.
@@ -1270,6 +1191,21 @@ type TraceInfo struct {
 	ConnectionID uint64 `json:"connection_id"`
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
+}
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
 }
 
 func init() {

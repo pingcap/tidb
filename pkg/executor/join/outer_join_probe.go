@@ -59,17 +59,40 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 	return probe
 }
 
-func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
-	err = j.baseJoinProbe.SetChunkForProbe(chunk)
-	if err != nil {
-		return err
-	}
+func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 	if !j.isOuterSideBuild {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
 		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
+
+		for _, spilledIdx := range j.spilledIdx {
+			// This may be hack.
+			// When one row is spilled to disk, we see this row
+			// can't be joined in this round though it may be
+			// joined successfully in future rounds.
+			j.isNotMatchedRows[spilledIdx] = false
+		}
 	}
+}
+
+func (j *outerJoinProbe) SetChunkForProbe(chunk *chunk.Chunk) (err error) {
+	err = j.baseJoinProbe.SetChunkForProbe(chunk)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
+	return nil
+}
+
+func (j *outerJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
+	err := j.baseJoinProbe.SetRestoredChunkForProbe(chk)
+	if err != nil {
+		return err
+	}
+
+	j.prepareIsNotMatchedRows()
 	return nil
 }
 
@@ -88,19 +111,7 @@ func (j *outerJoinProbe) InitForScanRowTable() {
 	if !j.isOuterSideBuild {
 		panic("should not reach here")
 	}
-	totalRowCount := j.ctx.hashTableContext.hashTable.totalRowCount()
-	concurrency := j.ctx.Concurrency
-	workID := uint64(j.workID)
-	avgRowPerWorker := totalRowCount / uint64(concurrency)
-	startIndex := workID * avgRowPerWorker
-	endIndex := (workID + 1) * avgRowPerWorker
-	if workID == uint64(concurrency-1) {
-		endIndex = totalRowCount
-	}
-	if endIndex > totalRowCount {
-		endIndex = totalRowCount
-	}
-	j.rowIter = j.ctx.hashTableContext.hashTable.createRowIter(startIndex, endIndex)
+	j.rowIter = commonInitForScanRowTable(&j.baseJoinProbe)
 }
 
 func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKiller *sqlkiller.SQLKiller) *hashjoinWorkerResult {
@@ -142,7 +153,7 @@ func (j *outerJoinProbe) ScanRowTable(joinResult *hashjoinWorkerResult, sqlKille
 }
 
 func (j *outerJoinProbe) buildResultForMatchedRowsAfterOtherCondition(chk, joinedChk *chunk.Chunk) {
-	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.currentChunk.NumCols(), 0
+	probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk := j.ctx.hashTableMeta.totalColumnNumber, 0
 	if j.rightAsBuildSide {
 		probeColOffsetInJoinedChunk, buildColOffsetInJoinedChunk = 0, j.currentChunk.NumCols()
 	}
@@ -262,6 +273,7 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 			// it could be
 			// 1. no match when lookup the hash table
 			// 2. filter by probeFilter
+			// 3. spilled to disk
 			j.finishLookupCurrentProbeRow()
 			j.currentProbeRow++
 		}
@@ -291,13 +303,6 @@ func (j *outerJoinProbe) probeForInnerSideBuild(chk, joinedChk *chunk.Chunk, rem
 		j.buildResultForNotMatchedRows(joinedChk, startProbeRow)
 	}
 	return
-}
-
-func (j *outerJoinProbe) ClearProbeState() {
-	if j.isOuterSideBuild {
-		j.rowIter = nil
-	}
-	j.baseJoinProbe.ClearProbeState()
 }
 
 func (j *outerJoinProbe) probeForOuterSideBuild(chk, joinedChk *chunk.Chunk, remainCap int, sqlKiller *sqlkiller.SQLKiller) (err error) {
@@ -373,4 +378,9 @@ func (j *outerJoinProbe) Probe(joinResult *hashjoinWorkerResult, sqlKiller *sqlk
 		return false, joinResult
 	}
 	return true, joinResult
+}
+
+func (j *outerJoinProbe) ResetProbe() {
+	j.rowIter = nil
+	j.baseJoinProbe.ResetProbe()
 }

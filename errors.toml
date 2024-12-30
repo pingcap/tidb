@@ -56,6 +56,11 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationVersionNotSupported"]
+error = '''
+the migration version isn't supported
+'''
+
 ["BR:Common:ErrUndefinedDbOrTable"]
 error = '''
 undefined restore databases or tables
@@ -521,6 +526,11 @@ error = '''
 check local storage resource error
 '''
 
+["Lightning:PreCheck:ErrCheckPDTiDBSameCluster"]
+error = '''
+check PD and TiDB in the same cluster error
+'''
+
 ["Lightning:PreCheck:ErrCheckTableEmpty"]
 error = '''
 check table empty error
@@ -899,6 +909,11 @@ error = '''
 ["ddl:1350"]
 error = '''
 View's SELECT contains a '%s' clause
+'''
+
+["ddl:1351"]
+error = '''
+View's SELECT contains a variable or parameter
 '''
 
 ["ddl:1353"]
@@ -2018,7 +2033,7 @@ Division by 0
 
 ["expression:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["expression:1582"]
@@ -2164,6 +2179,11 @@ entry too large, the max entry size is %d, the size of data is %d
 ["kv:8026"]
 error = '''
 not implemented
+'''
+
+["kv:8178"]
+error = '''
+key is too large, the size of given key is %d
 '''
 
 ["kv:9007"]
@@ -2916,6 +2936,11 @@ error = '''
 Access denied for user '%-.48s'@'%-.255s' (using password: %s)
 '''
 
+["server:1053"]
+error = '''
+Server shutdown in progress
+'''
+
 ["server:1148"]
 error = '''
 The used command is not allowed with this MySQL version
@@ -3288,7 +3313,7 @@ Too big scale %d specified for column '%-.192s'. Maximum is %d.
 
 ["types:1426"]
 error = '''
-Too big precision %d specified for column '%-.192s'. Maximum is %d.
+Too-big precision %d specified for '%-.192s'. Maximum is %d.
 '''
 
 ["types:1427"]

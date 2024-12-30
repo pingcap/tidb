@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -64,10 +65,11 @@ type statsAnalyze struct {
 func NewStatsAnalyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 ) statstypes.StatsAnalyze {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	r := refresher.NewRefresher(statsHandle, sysProcTracker)
+	r := refresher.NewRefresher(statsHandle, sysProcTracker, ddlNotifier)
 	return &statsAnalyze{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
@@ -134,6 +136,16 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	}, statsutil.FlagWrapTxn)
+}
+
+// OnBecomeOwner is used to handle the event when the current TiDB instance becomes the stats owner.
+func (sa *statsAnalyze) OnBecomeOwner() {
+	sa.refresher.OnBecomeOwner()
+}
+
+// OnRetireOwner is used to handle the event when the current TiDB instance retires from being the stats owner.
+func (sa *statsAnalyze) OnRetireOwner() {
+	sa.refresher.OnRetireOwner()
 }
 
 // SelectAnalyzeJobsOnCurrentInstanceSQL is the SQL to select the analyze jobs whose
@@ -282,10 +294,6 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	if err := statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		analyzed = sa.handleAutoAnalyze(sctx)
-		// During the test, we need to wait for the auto analyze job to be finished.
-		if intest.InTest {
-			sa.refresher.WaitAutoAnalyzeFinishedForTest()
-		}
 		return nil
 	}); err != nil {
 		statslogutil.StatsLogger().Error("Failed to handle auto analyze", zap.Error(err))
@@ -309,6 +317,11 @@ func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalID
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
+// GetPriorityQueueSnapshot returns the stats priority queue snapshot.
+func (sa *statsAnalyze) GetPriorityQueueSnapshot() (statstypes.PriorityQueueSnapshot, error) {
+	return sa.refresher.GetPriorityQueueSnapshot()
+}
+
 func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	defer func() {
 		if r := recover(); r != nil {
@@ -320,12 +333,17 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 		}
 	}()
 	if variable.EnableAutoAnalyzePriorityQueue.Load() {
-		err := sa.refresher.RebuildTableAnalysisJobQueue()
-		if err != nil {
-			statslogutil.StatsLogger().Error("rebuild table analysis job queue failed", zap.Error(err))
-			return false
+		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
+		if intest.InTest {
+			sa.refresher.ProcessDMLChangesForTest()
+			sa.refresher.RequeueMustRetryJobsForTest()
 		}
-		return sa.refresher.AnalyzeHighestPriorityTables()
+		analyzed := sa.refresher.AnalyzeHighestPriorityTables(sctx)
+		// During the test, we need to wait for the auto analyze job to be finished.
+		if intest.InTest {
+			sa.refresher.WaitAutoAnalyzeFinishedForTest()
+		}
+		return analyzed
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
@@ -402,7 +420,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	})
 	// Query locked tables once to minimize overhead.
 	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
-	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	lockedTables, err := lockstats.QueryLockedTables(statsutil.StatsCtx, sctx)
 	if err != nil {
 		statslogutil.StatsLogger().Error(
 			"check table lock failed",
@@ -553,6 +571,10 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
+			// Vector index doesn't need stats yet.
+			if idx.VectorInfo != nil {
+				continue
+			}
 			sqlWithIdx := sql + " index %n"
 			paramsWithIdx := append(params, idx.Name.O)
 			escaped, err := sqlescape.EscapeSQL(sqlWithIdx, paramsWithIdx...)
@@ -688,6 +710,10 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	// Check if any index of the table needs to analyze.
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
+			continue
+		}
+		// Vector index doesn't need stats yet.
+		if idx.VectorInfo != nil {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

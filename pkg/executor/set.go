@@ -222,10 +222,9 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		if name == variable.TiDBTxnReadTS {
-			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx().GetSessionVars().StmtCtx, e.Ctx().GetStore(), newSnapshotTS)
-		} else {
-			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
+		isStaleRead := name == variable.TiDBTxnReadTS
+		err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
+		if name != variable.TiDBTxnReadTS {
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
@@ -245,7 +244,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Clients are often noisy in setting session variables such as
-	// autocommit, timezone, query cache
+	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }

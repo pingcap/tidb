@@ -134,6 +134,13 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
+  "defers": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "deepequalerrors": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
@@ -307,7 +314,7 @@
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
       "cmd/mirror": "ignore cmd/mirror code",
-      "tools/check/xprog.go": "ignore tools/check code",
+      "tools/check/xprog/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
       "tests/integrationtest/main.go": "ignore tests/integrationtest code",
@@ -337,6 +344,18 @@
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
+    }
+  },
+  "intrange": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      ".*mock.go$": "ignore generated code",
+      "/cgo/": "no need to vet cgo code"
+    },
+    "only_files": {
+      "pkg/util/": "util code"
     }
   },
   "inspect": {
@@ -505,6 +524,7 @@
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
       "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",
+      "pkg/planner/core/operator/logicalop/hash64_equals_generated.go": "ignore hash64_equals_generated code",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",

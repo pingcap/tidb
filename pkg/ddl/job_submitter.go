@@ -15,9 +15,12 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -41,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikv "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -100,22 +104,16 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 		err   error
 		newWs []*JobWrapper
 	)
-	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
-	toTable := !variable.DDLForce2Queue.Load()
 	fastCreate := variable.EnableFastCreateTable.Load()
-	if toTable {
-		if fastCreate {
-			newWs, err = mergeCreateTableJobs(jobWs)
-			if err != nil {
-				logutil.DDLLogger().Warn("failed to merge create table jobs", zap.Error(err))
-			} else {
-				jobWs = newWs
-			}
+	if fastCreate {
+		newWs, err = mergeCreateTableJobs(jobWs)
+		if err != nil {
+			logutil.DDLLogger().Warn("failed to merge create table jobs", zap.Error(err))
+		} else {
+			jobWs = newWs
 		}
-		err = s.addBatchDDLJobs2Table(jobWs)
-	} else {
-		err = s.addBatchDDLJobs2Queue(jobWs)
 	}
+	err = s.addBatchDDLJobs2Table(jobWs)
 	var jobs string
 	for _, jobW := range jobWs {
 		if err == nil {
@@ -135,7 +133,6 @@ func (s *JobSubmitter) addBatchDDLJobs(jobWs []*JobWrapper) {
 	logutil.DDLLogger().Info("add DDL jobs",
 		zap.Int("batch count", len(jobWs)),
 		zap.String("jobs", jobs),
-		zap.Bool("table", toTable),
 		zap.Bool("fast_create", fastCreate))
 }
 
@@ -298,12 +295,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		}
 		startTS = txn.StartTS()
 
-		if variable.DDLForce2Queue.Load() {
-			if err := s.checkFlashbackJobInQueue(t); err != nil {
-				return err
-			}
-		}
-
 		return nil
 	})
 	if err != nil {
@@ -312,11 +303,8 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 
 	for _, jobW := range jobWs {
 		job := jobW.Job
-		if job.Version == 0 {
-			// if not set, fix it to version 1
-			// TODO replace this with assert after we add code v2 for all jobs.
-			job.Version = model.JobVersion1
-		}
+		intest.Assert(job.Version != 0, "Job version should not be zero")
+
 		job.StartTS = startTS
 		job.BDRRole = bdrRole
 
@@ -324,11 +312,11 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
+					if DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, subJob.JobArgs) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
+			} else if DeniedByBDR(ast.BDRRole(bdrRole), job.Type, jobW.JobArgs) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
@@ -336,7 +324,7 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		setJobStateToQueueing(job)
 
 		if s.serverStateSyncer.IsUpgradingState() && !hasSysDB(job) {
-			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+			if err = pauseRunningJob(job, model.AdminCommandBySystem); err != nil {
 				logutil.DDLUpgradingLogger().Warn("pause user DDL by system failed", zap.Stringer("job", job), zap.Error(err))
 				jobW.cacheErr = err
 				continue
@@ -351,71 +339,6 @@ func (s *JobSubmitter) addBatchDDLJobs2Table(jobWs []*JobWrapper) error {
 		return errors.Trace(err)
 	}
 
-	return nil
-}
-
-func (s *JobSubmitter) addBatchDDLJobs2Queue(jobWs []*JobWrapper) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	return kv.RunInNewTxn(ctx, s.store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-
-		for _, jobW := range jobWs {
-			if jobW.Version == 0 {
-				// if not set, fix it to version 1
-				// TODO replace this with assert after we add code v2 for all jobs.
-				jobW.Version = model.JobVersion1
-			}
-		}
-
-		count := getRequiredGIDCount(jobWs)
-		ids, err := t.GenGlobalIDs(count)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		assignGIDsForJobs(jobWs, ids)
-
-		if err := s.checkFlashbackJobInQueue(t); err != nil {
-			return errors.Trace(err)
-		}
-
-		for _, jobW := range jobWs {
-			// TODO remove this check when all job type pass args in this way.
-			if jobW.JobArgs != nil {
-				jobW.FillArgs(jobW.JobArgs)
-			}
-			job := jobW.Job
-			job.StartTS = txn.StartTS()
-			setJobStateToQueueing(job)
-			if err = buildJobDependence(t, job); err != nil {
-				return errors.Trace(err)
-			}
-			jobListKey := meta.DefaultJobListKey
-			if job.MayNeedReorg() {
-				jobListKey = meta.AddIndexJobListKey
-			}
-			if err = t.EnQueueDDLJob(job, jobListKey); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
-			}
-		})
-		return nil
-	})
-}
-
-func (*JobSubmitter) checkFlashbackJobInQueue(t *meta.Mutator) error {
-	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, job := range jobs {
-		if job.Type == model.ActionFlashbackCluster {
-			return errors.Errorf("Can't add ddl job, have flashback cluster job")
-		}
-	}
 	return nil
 }
 
@@ -677,24 +600,91 @@ func lockGlobalIDKey(ctx context.Context, ddlSe *sess.Session, txn kv.Transactio
 	return forUpdateTs, err
 }
 
-// TODO this failpoint is only checking how job scheduler handle
-// corrupted job args, we should test it there by UT, not here.
-func injectModifyJobArgFailPoint(jobWs []*JobWrapper) {
-	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+func insertDDLJobs2Table(ctx context.Context, se *sess.Session, jobWs ...*JobWrapper) error {
+	failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
 		if val.(bool) {
-			for _, jobW := range jobWs {
-				job := jobW.Job
-				// Corrupt the DDL job argument.
-				if job.Type == model.ActionMultiSchemaChange {
-					if len(job.MultiSchemaInfo.SubJobs) > 0 && len(job.MultiSchemaInfo.SubJobs[0].Args) > 0 {
-						job.MultiSchemaInfo.SubJobs[0].Args[0] = 1
-					}
-				} else if len(job.Args) > 0 {
-					job.Args[0] = 1
-				}
-			}
+			failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
 	})
+	if len(jobWs) == 0 {
+		return nil
+	}
+	var sql bytes.Buffer
+	sql.WriteString("insert into mysql.tidb_ddl_job(job_id, reorg, schema_ids, table_ids, job_meta, type, processing) values")
+	for i, jobW := range jobWs {
+		jobW.FillArgsWithSubJobs()
+		b, err := jobW.Encode(true)
+		if err != nil {
+			return err
+		}
+		if i != 0 {
+			sql.WriteString(",")
+		}
+		fmt.Fprintf(&sql, "(%d, %t, %s, %s, %s, %d, %t)", jobW.ID, jobW.MayNeedReorg(),
+			strconv.Quote(job2SchemaIDs(jobW)), strconv.Quote(job2TableIDs(jobW)),
+			ddlutil.WrapKey2String(b), jobW.Type, jobW.Started())
+	}
+	se.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := se.Execute(ctx, sql.String(), "insert_job")
+	logutil.DDLLogger().Debug("add job to mysql.tidb_ddl_job table", zap.String("sql", sql.String()))
+	return errors.Trace(err)
+}
+
+func makeStringForIDs(ids []int64) string {
+	set := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+
+	s := make([]string, 0, len(set))
+	for id := range set {
+		s = append(s, strconv.FormatInt(id, 10))
+	}
+	slices.Sort(s)
+	return strings.Join(s, ",")
+}
+
+func job2SchemaIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos)*2)
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.OldSchemaID, info.NewSchemaID)
+		}
+		return makeStringForIDs(ids)
+	case model.ActionRenameTable:
+		oldSchemaID := jobW.JobArgs.(*model.RenameTableArgs).OldSchemaID
+		ids := []int64{oldSchemaID, jobW.SchemaID}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.SchemaID, args.PTSchemaID})
+	default:
+		return strconv.FormatInt(jobW.SchemaID, 10)
+	}
+}
+
+func job2TableIDs(jobW *JobWrapper) string {
+	switch jobW.Type {
+	case model.ActionRenameTables:
+		var ids []int64
+		arg := jobW.JobArgs.(*model.RenameTablesArgs)
+		ids = make([]int64, 0, len(arg.RenameTableInfos))
+		for _, info := range arg.RenameTableInfos {
+			ids = append(ids, info.TableID)
+		}
+		return makeStringForIDs(ids)
+	case model.ActionExchangeTablePartition:
+		args := jobW.JobArgs.(*model.ExchangeTablePartitionArgs)
+		return makeStringForIDs([]int64{jobW.TableID, args.PTTableID})
+	case model.ActionTruncateTable:
+		newTableID := jobW.JobArgs.(*model.TruncateTableArgs).NewTableID
+		return strconv.FormatInt(jobW.TableID, 10) + "," + strconv.FormatInt(newTableID, 10)
+	default:
+		return strconv.FormatInt(jobW.TableID, 10)
+	}
 }
 
 func setJobStateToQueueing(job *model.Job) {
@@ -704,39 +694,6 @@ func setJobStateToQueueing(job *model.Job) {
 		}
 	}
 	job.State = model.JobStateQueueing
-}
-
-// buildJobDependence sets the curjob's dependency-ID.
-// The dependency-job's ID must less than the current job's ID, and we need the largest one in the list.
-func buildJobDependence(t *meta.Mutator, curJob *model.Job) error {
-	// Jobs in the same queue are ordered. If we want to find a job's dependency-job, we need to look for
-	// it from the other queue. So if the job is "ActionAddIndex" job, we need find its dependency-job from DefaultJobList.
-	jobListKey := meta.DefaultJobListKey
-	if !curJob.MayNeedReorg() {
-		jobListKey = meta.AddIndexJobListKey
-	}
-	jobs, err := t.GetAllDDLJobsInQueue(jobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, job := range jobs {
-		if curJob.ID < job.ID {
-			continue
-		}
-		isDependent, err := curJob.IsDependentOn(job)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if isDependent {
-			logutil.DDLLogger().Info("current DDL job depends on other job",
-				zap.Stringer("currentJob", curJob),
-				zap.Stringer("dependentJob", job))
-			curJob.DependencyID = job.ID
-			break
-		}
-	}
-	return nil
 }
 
 func (s *JobSubmitter) notifyNewJobSubmitted() {

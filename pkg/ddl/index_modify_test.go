@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -42,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -56,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
 
 const indexModifyLease = 600 * time.Millisecond
@@ -1066,26 +1063,6 @@ func TestAddIndexUniqueFailOnDuplicate(t *testing.T) {
 	ddl.ResultCounterForTest = nil
 }
 
-// withMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
-func withMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
-	return mockstore.WithMultipleOptions(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			tiflashIdx := 0
-			for tiflashIdx < nodes {
-				store2 := c.AllocID()
-				peer2 := c.AllocID()
-				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
-				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-				mockCluster.AddPeer(region1, store2, peer2)
-				tiflashIdx++
-			}
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-}
-
 func getJobsBySQL(se sessiontypes.Session, tbl, condition string) ([]*model.Job, error) {
 	rs, err := se.Execute(context.Background(), fmt.Sprintf("select job_meta from mysql.%s %s", tbl, condition))
 	if err != nil {
@@ -1128,6 +1105,10 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
+		tk.MustExec("insert into t values (1, '[1,2.1,3.3]');")
+		tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
+		tk.MustExec("create view v as select * from t;")
+		tk.MustQuery("select * from v;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 		tk.MustExec(`DROP TABLE t`)
 	}
 
@@ -1140,27 +1121,34 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	// test TiFlash store count is 2
 	mockTiflashStoreCnt := uint64(2)
-	store, dom = testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(int(mockTiflashStoreCnt)), mockstore.WithDDLChecker())
+	store, dom = testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(int(mockTiflashStoreCnt)), mockstore.WithDDLChecker())
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	checkCreateTableWithVectorIdx(1)
 
 	// test unsupported table types
 	tk.MustContainErrMsg("create temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW)",
-		"`vector index` is unsupported on temporary tables.")
+		"`set TiFlash replica` is unsupported on temporary tables.")
 	// global and local temporary table using different way to handle, so we have two test cases.
 	tk.MustContainErrMsg("create global temporary table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) on commit delete rows;",
-		"`vector index` is unsupported on temporary tables.")
+		"`set TiFlash replica` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
 		"Unsupported add vector index: unsupported partition table")
+	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
+	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
+	tk.MustContainErrMsg("create table information_schema.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
+		"Unsupported `set TiFlash replica` settings for system table and memory table")
+
 	// a vector index with invisible
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
 		"Unsupported set vector index invisible")
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, pt;")
@@ -1345,7 +1333,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 }
 
 func TestAddVectorIndexRollback(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, withMockTiFlash(2))
+	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
@@ -1412,7 +1400,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 			times++
 		}
 	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", onJobUpdatedExportedFunc)
 
 	tk.MustGetErrMsg(addIdxSQL, "[ddl:8214]Cancelled DDL job")
 	require.NoError(t, checkErr)
@@ -1420,7 +1408,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case3: test get error message from tiflash
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
 	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)
@@ -1433,4 +1421,30 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
 
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+}
+
+func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk2.MustExec("set @@global.tidb_enable_dist_task=0")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	// Test issue 57414.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
+	})
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col1, col2)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
+	tk.MustExec("admin check table t")
 }

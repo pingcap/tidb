@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -75,13 +74,13 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t1")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t2")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t3")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t4")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t5")
-	coretestsdk.SetTiFlashReplica(t, dom, "test", "t6")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "t4")
+	testkit.SetTiFlashReplica(t, dom, "test", "t5")
+	testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	runJoinReorderTestData(t, tk, "TestJoinOrderHint4TiFlash")

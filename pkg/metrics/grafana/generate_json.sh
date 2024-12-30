@@ -14,7 +14,12 @@
 # limitations under the License.
 
 go install github.com/google/go-jsonnet/cmd/jsonnet@latest
-git clone https://github.com/grafana/grafonnet-lib.git
+
+# ref https://github.com/grafana/grafonnet-lib/issues/338, use the forked 
+# repo which implements the addOverride and addTransformation funtion for 
+# new table.
+# TODO: update to https://github.com/grafana/grafonnet
+git clone https://github.com/nolouch/grafonnet-lib.git
 
 export JSONNET_PATH=grafonnet-lib
 jsonnet tidb_summary.jsonnet > tidb_summary.json

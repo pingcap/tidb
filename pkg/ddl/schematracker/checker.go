@@ -502,8 +502,8 @@ func (*Checker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.Pol
 }
 
 // Start implements the DDL interface.
-func (d *Checker) Start(ctxPool *pools.ResourcePool) error {
-	return d.realDDL.Start(ctxPool)
+func (d *Checker) Start(startMode ddl.StartMode, ctxPool *pools.ResourcePool) error {
+	return d.realDDL.Start(startMode, ctxPool)
 }
 
 // Stats implements the DDL interface.

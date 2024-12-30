@@ -55,7 +55,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("analyze table s all columns")
 	// Test IndexNestedLoopHashJoin keepOrder.
 	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
-		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
+		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, left side:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─TableReader(Build) 100.00 root  data:TableFullScan",
 		"│ └─TableFullScan 100.00 cop[tikv] table:t keep order:true",
 		"└─TableReader(Probe) 100.00 root  data:TableRangeScan",
@@ -91,7 +91,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
 	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
-		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, left side:TableReader, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
@@ -102,7 +102,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
 	tk.MustQuery("desc format = 'brief' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows(
 		"StreamAgg 1.00 root  funcs:count(1)->Column#11",
-		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
+		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, left side:TableReader, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
 		"  ├─TableReader(Build) 9.00 root  data:Selection",
 		"  │ └─Selection 9.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"  │   └─TableFullScan 9.00 cop[tikv] table:l1 keep order:false",
@@ -235,7 +235,7 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	tk.MustExec("insert into s values (1,2),(2,1),(11,11)")
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t) */ * from t left join s on s.a > t.a").Sort().Check(testkit.Rows("1 2 11 11", "1 2 2 1", "11 11 <nil> <nil>"))
 	tk.MustQuery("explain format = 'brief' select /*+ HASH_JOIN_BUILD(t) */ * from t left join s on s.a > t.a").Check(testkit.Rows(
-		"HashJoin 99900000.00 root  CARTESIAN left outer join, other cond:gt(test.s.a, test.t.a)",
+		"HashJoin 99900000.00 root  CARTESIAN left outer join, left side:TableReader, other cond:gt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 		"└─TableReader(Probe) 9990.00 root  data:Selection",
@@ -248,7 +248,7 @@ func TestOuterTableBuildHashTableIsuse13933(t *testing.T) {
 	tk.MustExec("Insert into t values (11,2),(1,2),(5,2)")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on s.b=t.b and s.a < t.a;").Sort().Check(testkit.Rows("1 2 <nil> <nil>", "11 2 1 2", "5 2 1 2"))
 	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on s.b=t.b and s.a < t.a;").Check(testkit.Rows(
-		"IndexHashJoin 12475.01 root  left outer join, inner:IndexLookUp, outer key:test.t.b, inner key:test.s.b, equal cond:eq(test.t.b, test.s.b), other cond:lt(test.s.a, test.t.a)",
+		"IndexHashJoin 12475.01 root  left outer join, inner:IndexLookUp, left side:TableReader, outer key:test.t.b, inner key:test.s.b, equal cond:eq(test.t.b, test.s.b), other cond:lt(test.s.a, test.t.a)",
 		"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"│ └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 		"└─IndexLookUp(Probe) 12475.01 root  ",
@@ -677,5 +677,42 @@ func TestIssue56214(t *testing.T) {
 	for _, hashJoinV2 := range join.HashJoinV2Strings {
 		tk.MustExec(hashJoinV2)
 		tk.MustQuery("select value, (select t1.id from t1 join t2 on t1.id = t2.id and t1.value < t2.value - t3.value + 3) d from t3 order by value").Check(testkit.Rows("10 1", "20 <nil>"))
+	}
+}
+
+func TestIssue56825(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("drop table if exists t2;")
+	tk.MustExec("create table t1(id int, col1 int)")
+	tk.MustExec("create table t2(id int, col1 int, col2 int, col3 int, col4 int, col5 int)")
+	tk.MustExec("insert into t1 values(1,2),(2,3)")
+	tk.MustExec("insert into t2 values(1,2,3,4,5,6),(3,4,5,6,7,8),(4,5,6,7,8,9)")
+	tk.MustExec("analyze table t1")
+	tk.MustExec("analyze table t2")
+	// t1 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "2 3 <nil> <nil> <nil> <nil> <nil> <nil>"))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
+	}
+	tk.MustExec("insert into t1 values(10,20),(11,21),(12,22),(13,23),(14,24),(15,25)")
+	tk.MustExec("analyze table t1")
+	// t2 as build side
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
+		tk.MustQuery("select * from t1 left join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t1.id").Check(testkit.Rows(
+			"1 2 1 2 3 4 5 6",
+			"2 3 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"10 20 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"11 21 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"12 22 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"13 23 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"14 24 <nil> <nil> <nil> <nil> <nil> <nil>",
+			"15 25 <nil> <nil> <nil> <nil> <nil> <nil>",
+		))
+		tk.MustQuery("select * from t1 right join t2 on t1.id = t2.id and t1.col1 <= t2.col1 order by t2.id").Check(testkit.Rows("1 2 1 2 3 4 5 6", "<nil> <nil> 3 4 5 6 7 8", "<nil> <nil> 4 5 6 7 8 9"))
 	}
 }

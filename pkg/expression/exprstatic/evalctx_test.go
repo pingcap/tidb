@@ -62,10 +62,6 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 	require.Equal(t, variable.DefDivPrecisionIncrement, ctx.GetDivPrecisionIncrement())
 	require.Empty(t, ctx.AllParamValues())
 	require.Equal(t, variable.NewUserVars(), ctx.GetUserVarsReader())
-	require.Nil(t, ctx.requestVerificationFn)
-	require.Nil(t, ctx.requestDynamicVerificationFn)
-	require.True(t, ctx.RequestVerification("test", "t1", "", mysql.CreatePriv))
-	require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
 	require.True(t, ctx.GetOptionalPropSet().IsEmpty())
 	p, ok := ctx.GetOptionalPropProvider(exprctx.OptPropAdvisoryLock)
 	require.Nil(t, p)
@@ -82,13 +78,11 @@ func checkDefaultStaticEvalCtx(t *testing.T, ctx *EvalContext) {
 }
 
 type evalCtxOptionsTestState struct {
-	now           time.Time
-	loc           *time.Location
-	warnHandler   *contextutil.StaticWarnHandler
-	userVars      *variable.UserVars
-	ddlOwner      bool
-	privCheckArgs []any
-	privRet       bool
+	now         time.Time
+	loc         *time.Location
+	warnHandler *contextutil.StaticWarnHandler
+	userVars    *variable.UserVars
+	ddlOwner    bool
 }
 
 func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTestState) {
@@ -116,6 +110,7 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTes
 		WithTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck),
 		WithErrLevelMap(errctx.LevelMap{
 			errctx.ErrGroupBadNull:       errctx.LevelError,
+			errctx.ErrGroupNoDefault:     errctx.LevelError,
 			errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 		}),
 		WithLocation(loc),
@@ -127,16 +122,6 @@ func getEvalCtxOptionsForTest(t *testing.T) ([]EvalCtxOption, *evalCtxOptionsTes
 		WithDefaultWeekFormatMode("3"),
 		WithDivPrecisionIncrement(5),
 		WithUserVarsReader(s.userVars),
-		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
-			require.Nil(t, s.privCheckArgs)
-			s.privCheckArgs = []any{db, table, column, priv}
-			return s.privRet
-		}),
-		WithDynamicPrivCheck(func(privName string, grantable bool) bool {
-			require.Nil(t, s.privCheckArgs)
-			s.privCheckArgs = []any{privName, grantable}
-			return s.privRet
-		}),
 		WithOptionalProperty(provider1, provider2),
 	}, s
 }
@@ -150,6 +135,7 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 	)
 	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{
 		errctx.ErrGroupBadNull:       errctx.LevelError,
+		errctx.ErrGroupNoDefault:     errctx.LevelError,
 		errctx.ErrGroupDividedByZero: errctx.LevelWarn,
 	}, ctx), ctx.ErrCtx())
 	require.Same(t, s.loc, ctx.Location())
@@ -162,19 +148,6 @@ func checkOptionsStaticEvalCtx(t *testing.T, ctx *EvalContext, s *evalCtxOptions
 	require.Equal(t, "3", ctx.GetDefaultWeekFormatMode())
 	require.Equal(t, 5, ctx.GetDivPrecisionIncrement())
 	require.Same(t, s.userVars, ctx.GetUserVarsReader())
-
-	s.privCheckArgs, s.privRet = nil, false
-	require.False(t, ctx.RequestVerification("db", "table", "column", mysql.CreatePriv))
-	require.Equal(t, []any{"db", "table", "column", mysql.CreatePriv}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, true
-	require.True(t, ctx.RequestVerification("db2", "table2", "column2", mysql.UpdatePriv))
-	require.Equal(t, []any{"db2", "table2", "column2", mysql.UpdatePriv}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, false
-	require.False(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-	require.Equal(t, []any{"RESTRICTED_USER_ADMIN", true}, s.privCheckArgs)
-	s.privCheckArgs, s.privRet = nil, true
-	require.True(t, ctx.RequestDynamicVerification("RESTRICTED_TABLES_ADMIN", false))
-	require.Equal(t, []any{"RESTRICTED_TABLES_ADMIN", false}, s.privCheckArgs)
 
 	var optSet exprctx.OptionalEvalPropKeySet
 	optSet = optSet.Add(exprctx.OptPropCurrentUser).Add(exprctx.OptPropDDLOwnerInfo)
@@ -493,12 +466,6 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		WithMaxAllowedPacket(12345),
 		WithDefaultWeekFormatMode("3"),
 		WithDivPrecisionIncrement(5),
-		WithPrivCheck(func(db, table, column string, priv mysql.PrivilegeType) bool {
-			return true
-		}),
-		WithDynamicPrivCheck(func(privName string, grantable bool) bool {
-			return true
-		}),
 		WithParamList(paramList),
 		WithUserVarsReader(userVars),
 		WithOptionalProperty(provider),
@@ -517,10 +484,7 @@ func TestMakeEvalContextStatic(t *testing.T) {
 	}
 	deeptest.AssertRecursivelyNotEqual(t, obj, NewEvalContext(),
 		deeptest.WithIgnorePath(ignorePath),
-		deeptest.WithPointerComparePath([]string{
-			"$.evalCtxState.requestVerificationFn",
-			"$.evalCtxState.requestDynamicVerificationFn",
-		}))
+	)
 
 	staticObj := MakeEvalContextStatic(obj)
 
@@ -529,8 +493,6 @@ func TestMakeEvalContextStatic(t *testing.T) {
 		deeptest.WithPointerComparePath([]string{
 			"$.evalCtxState.warnHandler",
 			"$.evalCtxState.paramList*.b",
-			"$.evalCtxState.requestVerificationFn",
-			"$.evalCtxState.requestDynamicVerificationFn",
 		}),
 	)
 
@@ -634,8 +596,6 @@ func TestEvalCtxLoadSystemVars(t *testing.T) {
 		"$.typeCtx.warnHandler",
 		"$.errCtx",
 		"$.currentDB",
-		"$.requestVerificationFn",
-		"$.requestDynamicVerificationFn",
 		"$.paramList",
 		"$.userVars",
 		"$.props",

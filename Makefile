@@ -231,9 +231,9 @@ enterprise-docker: init-submodule enterprise-prepare
 enterprise-server-build: TIDB_EDITION=Enterprise
 enterprise-server-build:
 ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o bin/tidb-server cmd/tidb-server/main.go
 else
-	CGO_ENABLED=1 $(GOBUILD) -tags enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) -tags=codes,enterprise $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG) $(EXTENSION_FLAG)' -o '$(TARGET)' cmd/tidb-server/main.go
 endif
 
 .PHONY: enterprise-server
@@ -245,9 +245,9 @@ enterprise-server:
 .PHONY: server_check
 server_check:
 ifeq ($(TARGET), "")
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o bin/tidb-server ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o bin/tidb-server ./cmd/tidb-server
 else
-	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' -o '$(TARGET)' ./cmd/tidb-server
+	$(GOBUILD) -cover $(RACE_FLAG) -ldflags '$(CHECK_LDFLAGS)' --tags deadlock,enableassert -o '$(TARGET)' ./cmd/tidb-server
 endif
 
 .PHONY: linux
@@ -302,9 +302,9 @@ tools/bin/ut: tools/check/ut.go
 	$(GO) build -o ../bin/ut ut.go
 
 .PHONY: tools/bin/xprog
-tools/bin/xprog: tools/check/xprog.go
-	cd tools/check; \
-	$(GO) build -o ../bin/xprog xprog.go
+tools/bin/xprog: tools/check/xprog/xprog.go
+	cd tools/check/xprog; \
+	$(GO) build -o ../../bin/xprog xprog.go
 
 .PHONY: tools/bin/revive
 tools/bin/revive:
@@ -387,7 +387,7 @@ lightning_web:
 
 .PHONY: build_br
 build_br:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(BR_BIN) ./br/cmd/br
 
 .PHONY: build_lightning_for_web
 build_lightning_for_web:
@@ -395,7 +395,7 @@ build_lightning_for_web:
 
 .PHONY: build_lightning
 build_lightning:
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
+	CGO_ENABLED=1 $(GOBUILD) -tags codes $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o $(LIGHTNING_BIN) ./lightning/cmd/tidb-lightning
 
 .PHONY: build_lightning-ctl
 build_lightning-ctl:
@@ -436,7 +436,8 @@ build_for_br_integration_test:
 	$(GOBUILD) $(RACE_FLAG) -o bin/gc br/tests/br_z_gc_safepoint/*.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/fake-oauth tools/fake-oauth/main.go && \
 	$(GOBUILD) $(RACE_FLAG) -o bin/rawkv br/tests/br_rawkv/*.go && \
-	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go \
+	$(GOBUILD) $(RACE_FLAG) -o bin/txnkv br/tests/br_txn/*.go && \
+	$(GOBUILD) $(RACE_FLAG) -o bin/utils br/tests/utils.go \
 	) || (make failpoint-disable && exit 1)
 	@make failpoint-disable
 
@@ -488,7 +489,7 @@ mock_lightning: mockgen
 
 .PHONY: gen_mock
 gen_mock: mockgen
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,Pool,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/scheduler_mock.go
 	tools/bin/mockgen -destination pkg/disttask/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension
 	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute StepExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
@@ -529,7 +530,7 @@ br_bins:
 
 .PHONY: data_parsers
 data_parsers: tools/bin/vfsgendev pkg/lightning/mydump/parser_generated.go lightning_web
-	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOPATH)/src" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
+	PATH="$(GOPATH)/bin":"$(PATH)":"$(TOOLS)" protoc -I. -I"$(GOMODCACHE)" pkg/lightning/checkpoints/checkpointspb/file_checkpoints.proto --gogofaster_out=.
 	tools/bin/vfsgendev -source='"github.com/pingcap/tidb/lightning/pkg/web".Res' && mv res_vfsdata.go lightning/pkg/web/
 
 .PHONY: build_dumpling
@@ -645,12 +646,12 @@ bazel_build:
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=$(NOGO_FLAG)
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=codes --//build:with_nogo_flag=$(NOGO_FLAG)
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=codes,enterprise
 	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
 
 .PHONY: bazel_fail_build
@@ -677,121 +678,90 @@ bazel_golangcilinter:
 
 .PHONY: bazel_brietest
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/brietest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_pessimistictest
 bazel_pessimistictest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/pessimistictest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_sessiontest
 bazel_sessiontest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/sessiontest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_statisticstest
 bazel_statisticstest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/statisticstest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_txntest
 bazel_txntest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/txntest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_addindextest
 bazel_addindextest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_addindextest1
 bazel_addindextest1: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest1/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_addindextest2
 bazel_addindextest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest2/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_addindextest3
 bazel_addindextest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest3/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_addindextest4
 bazel_addindextest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/addindextest4/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest
 bazel_importintotest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest2
 bazel_importintotest2: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest2/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest3
 bazel_importintotest3: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest3/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_importintotest4
 bazel_importintotest4: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/importintotest4/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_pipelineddmltest
 bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/pipelineddmltest/...
-	./build/jenkins_collect_coverage.sh
 
 # on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
 .PHONY: bazel_flashbacktest
 bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
-	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
-	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 		-- //tests/realtikvtest/flashbacktest/...
-	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_lint
 bazel_lint: bazel_prepare
@@ -815,3 +785,7 @@ bazel_mirror:
 .PHONY: bazel_sync
 bazel_sync:
 	bazel $(BAZEL_GLOBAL_CONFIG) sync $(BAZEL_SYNC_CONFIG)
+
+.PHONY: bazel_mirror_upload
+bazel_mirror_upload:
+	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload

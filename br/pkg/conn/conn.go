@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -115,7 +116,7 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 
 			return errors.Trace(err)
 		},
-		utils.NewPDReqBackoffer(),
+		utils.NewAggressivePDBackoffStrategy(),
 	)
 
 	return stores, errors.Trace(errRetry)
@@ -184,7 +185,7 @@ func NewMgr(
 			return nil, errors.Errorf("unknown command type, comman code is %d", versionCheckerType)
 		}
 		if versionErr != nil {
-			return nil, errors.Annotate(err, "running BR in incompatible version of cluster, "+
+			return nil, errors.Annotate(versionErr, "running BR in incompatible version of cluster, "+
 				"if you believe it's OK, use --check-requirements=false to skip.")
 		}
 	}
@@ -194,6 +195,9 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 
+	if config.GetGlobalConfig().Store != config.StoreTypeTiKV {
+		config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	}
 	// Disable GC because TiDB enables GC already.
 	path := fmt.Sprintf(
 		"tikv://%s?disableGC=true&keyspaceName=%s",
@@ -292,6 +296,7 @@ func (mgr *Mgr) Close() {
 		if mgr.dom != nil {
 			mgr.dom.Close()
 		}
+		ddl.CloseOwnerManager()
 		tikv.StoreShuttingDown(1)
 		_ = mgr.storage.Close()
 	}
@@ -415,7 +420,7 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 				return err
 			}
 			return nil
-		}, utils.NewPDReqBackoffer())
+		}, utils.NewAggressivePDBackoffStrategy())
 		if err != nil {
 			// if one store failed, break and return error
 			return err

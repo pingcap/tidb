@@ -68,9 +68,6 @@ type Record struct {
 	Repeats int
 }
 
-// recordMap is used to save records which will be inserted into `mysql.tidb_runaway_queries` by function `flushRunawayRecords`.
-var recordMap map[recordKey]*Record
-
 // recordKey represents the composite key for record key in `tidb_runaway_queries`.
 type recordKey struct {
 	ResourceGroupName string

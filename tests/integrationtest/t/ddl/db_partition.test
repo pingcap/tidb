@@ -2242,3 +2242,28 @@ select * from t;
 --sorted_result
 select *,_tidb_rowid from t;
 drop table t, t1;
+
+# TestCreateAndAlterIntervalPartitionWithPerpareStmt
+drop table if exists aaa;
+prepare stmt from "\ncreate table aaa(id bigint primary key) partition by range (id) interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+
+prepare stmt2 from "\nalter table aaa last partition less than (600)";
+execute stmt2;
+show create table aaa;
+
+prepare stmt3 from "\nalter table aaa first partition less than (300)";
+execute stmt3;
+show create table aaa;
+
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id)\n interval (100) first partition less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+
+drop table if exists aaa;
+prepare stmt from "create table aaa(id bigint primary key) partition by range (id) interval (100) first partition\n less than (100) last partition less than (500)";
+execute stmt;
+show create table aaa;
+

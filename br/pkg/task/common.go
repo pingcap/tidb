@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
@@ -65,7 +64,7 @@ const (
 	flagRateLimit           = "ratelimit"
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
-	flagChecksum            = "checksum"
+	FlagChecksum            = "checksum"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -115,9 +114,7 @@ const (
 )
 
 const (
-	// Once TableInfoVersion updated. BR need to check compatibility with
-	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
-	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
+	cipherKeyNonHexErrorMsg = "cipher key must be a valid hexadecimal string"
 )
 
 // FullBackupType type when doing full backup or restore
@@ -300,7 +297,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
-	flags.Bool(flagChecksum, true, "Run checksum at end of task")
+	flags.Bool(FlagChecksum, true, "Run checksum at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -362,7 +359,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
 func HiddenFlagsForStream(flags *pflag.FlagSet) {
-	_ = flags.MarkHidden(flagChecksum)
+	_ = flags.MarkHidden(FlagChecksum)
 	_ = flags.MarkHidden(flagLoadStats)
 	_ = flags.MarkHidden(flagChecksumConcurrency)
 	_ = flags.MarkHidden(flagRateLimit)
@@ -464,34 +461,52 @@ func GetCipherKeyContent(cipherKey, cipherKeyFile string) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// if cipher-key is valid, convert the hexadecimal string to bytes
+	var hexString string
+
+	// Check if cipher-key is provided directly
 	if len(cipherKey) > 0 {
-		return hex.DecodeString(cipherKey)
+		hexString = cipherKey
+	} else {
+		// Read content from cipher-file
+		content, err := os.ReadFile(cipherKeyFile)
+		if err != nil {
+			return nil, errors.Annotate(err, "failed to read cipher file")
+		}
+		hexString = string(bytes.TrimSuffix(content, []byte("\n")))
 	}
 
-	// convert the content(as hexadecimal string) from cipher-file to bytes
-	content, err := os.ReadFile(cipherKeyFile)
+	// Attempt to decode the hex string
+	decodedKey, err := hex.DecodeString(hexString)
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to read cipher file")
+		return nil, errors.Annotate(berrors.ErrInvalidArgument, cipherKeyNonHexErrorMsg)
 	}
 
-	content = bytes.TrimSuffix(content, []byte("\n"))
-	return hex.DecodeString(string(content))
+	return decodedKey, nil
 }
 
-func checkCipherKeyMatch(cipher *backuppb.CipherInfo) bool {
+func checkCipherKeyMatch(cipher *backuppb.CipherInfo) error {
 	switch cipher.CipherType {
 	case encryptionpb.EncryptionMethod_PLAINTEXT:
-		return true
+		return nil
 	case encryptionpb.EncryptionMethod_AES128_CTR:
-		return len(cipher.CipherKey) == crypterAES128KeyLen
+		if len(cipher.CipherKey) != crypterAES128KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-128 key length mismatch: expected %d, got %d",
+				crypterAES128KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES192_CTR:
-		return len(cipher.CipherKey) == crypterAES192KeyLen
+		if len(cipher.CipherKey) != crypterAES192KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-192 key length mismatch: expected %d, got %d",
+				crypterAES192KeyLen, len(cipher.CipherKey))
+		}
 	case encryptionpb.EncryptionMethod_AES256_CTR:
-		return len(cipher.CipherKey) == crypterAES256KeyLen
+		if len(cipher.CipherKey) != crypterAES256KeyLen {
+			return errors.Annotatef(berrors.ErrInvalidArgument, "AES-256 key length mismatch: expected %d, got %d",
+				crypterAES256KeyLen, len(cipher.CipherKey))
+		}
 	default:
-		return false
+		return errors.Errorf("Unknown encryption method: %v", cipher.CipherType)
 	}
+	return nil
 }
 
 func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
@@ -524,8 +539,9 @@ func (cfg *Config) parseCipherInfo(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return errors.Annotate(berrors.ErrInvalidArgument, "crypter method and key length not match")
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -561,8 +577,9 @@ func (cfg *Config) parseLogBackupCipherInfo(flags *pflag.FlagSet) (bool, error) 
 		return false, errors.Trace(err)
 	}
 
-	if !checkCipherKeyMatch(&cfg.CipherInfo) {
-		return false, errors.Annotate(berrors.ErrInvalidArgument, "log backup encryption method and key length not match")
+	err = checkCipherKeyMatch(&cfg.CipherInfo)
+	if err != nil {
+		return false, errors.Trace(err)
 	}
 
 	return true, nil
@@ -592,7 +609,7 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
-	if cfg.Checksum, err = flags.GetBool(flagChecksum); err != nil {
+	if cfg.Checksum, err = flags.GetBool(FlagChecksum); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
@@ -760,6 +777,11 @@ func (cfg *Config) parseAndValidateMasterKeyInfo(hasPlaintextKey bool, flags *pf
 	return nil
 }
 
+// OverrideDefaultForBackup override common config for backup tasks
+func (cfg *Config) OverrideDefaultForBackup() {
+	cfg.Checksum = false
+}
+
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
 	g glue.Glue, pds []string,
@@ -873,7 +895,8 @@ func ReadBackupMeta(
 // flagToZapField checks whether this flag can be logged,
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
-	if f.Name == flagStorage {
+	switch f.Name {
+	case flagStorage, FlagStreamFullBackupStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")
@@ -881,8 +904,14 @@ func flagToZapField(f *pflag.Flag) zap.Field {
 		// hide all query here.
 		hiddenQuery.RawQuery = ""
 		return zap.Stringer(f.Name, hiddenQuery)
+	case flagFullBackupCipherKey, flagLogBackupCipherKey, "azblob.encryption-key":
+		return zap.String(f.Name, "<redacted>")
+	case flagMasterKeyConfig:
+		// TODO: we don't really need to hide the entirety of --master-key, consider parsing the URL here.
+		return zap.String(f.Name, "<redacted>")
+	default:
+		return zap.Stringer(f.Name, f.Value)
 	}
-	return zap.Stringer(f.Name, f.Value)
 }
 
 // LogArguments prints origin command arguments.

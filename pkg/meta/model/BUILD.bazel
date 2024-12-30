@@ -26,9 +26,12 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/parser/types",
+        "//pkg/planner/cascades/base",
         "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_pd_client//http",
+        "@org_uber_go_atomic//:atomic",
     ],
 )
 
@@ -50,6 +53,7 @@ go_test(
     deps = [
         "//pkg/parser/ast",
         "//pkg/parser/charset",
+        "//pkg/parser/duration",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

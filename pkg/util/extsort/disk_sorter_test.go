@@ -402,7 +402,7 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 		wg.Add(1)
 		go func(fileNum int) {
 			defer wg.Done()
-			for j := 0; j < 10000; j++ {
+			for range 10000 {
 				_, err := pool.get(fileNum)
 				require.NoError(t, err)
 				require.NoError(t, pool.unref(fileNum))

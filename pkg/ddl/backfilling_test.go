@@ -16,9 +16,11 @@ package ddl
 
 import (
 	"bytes"
+	"context"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -180,26 +181,6 @@ func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx
 				require.Equal(t, ctx.Location().String(), tm.Location().String())
 				require.InDelta(t, tm1.Unix(), tm.Unix(), 2)
 				require.NoError(t, err)
-			},
-		},
-		{
-			field: "requestVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestVerification("any", "any", "any", mysql.CreatePriv))
-				require.True(t, ctx.RequestVerification("any", "any", "any", mysql.CreatePriv))
-			},
-		},
-		{
-			field: "requestDynamicVerificationFn",
-			check: func(ctx *exprstatic.EvalContext) {
-				// RequestDynamicVerification should allow all privileges
-				// that is the same with input session context (GetPrivilegeManager returns nil).
-				require.Nil(t, privilege.GetPrivilegeManager(sctx))
-				require.True(t, sctx.GetExprCtx().GetEvalCtx().RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
-				require.True(t, ctx.RequestDynamicVerification("RESTRICTED_USER_ADMIN", true))
 			},
 		},
 	}
@@ -505,4 +486,35 @@ func TestValidateAndFillRanges(t *testing.T) {
 	}
 	err = validateAndFillRanges(ranges, []byte("b"), []byte("f"))
 	require.Error(t, err)
+}
+
+func TestTuneTableScanWorkerBatchSize(t *testing.T) {
+	reorgMeta := &model.DDLReorgMeta{}
+	reorgMeta.Concurrency.Store(4)
+	reorgMeta.BatchSize.Store(32)
+	copCtx := &copr.CopContextSingleIndex{
+		CopContextBase: &copr.CopContextBase{
+			FieldTypes: []*types.FieldType{},
+		},
+	}
+	opCtx, cancel := NewDistTaskOperatorCtx(context.Background(), 1, 1)
+	w := tableScanWorker{
+		copCtx:        copCtx,
+		ctx:           opCtx,
+		srcChkPool:    createChunkPool(copCtx, reorgMeta),
+		hintBatchSize: 32,
+		reorgMeta:     reorgMeta,
+	}
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 32, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	reorgMeta.SetBatchSize(64)
+	for i := 0; i < 10; i++ {
+		chk := w.getChunk()
+		require.Equal(t, 64, chk.Capacity())
+		w.srcChkPool.Put(chk)
+	}
+	cancel()
 }

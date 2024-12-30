@@ -78,12 +78,16 @@ type DistSQLContext struct {
 	LoadBasedReplicaReadThreshold time.Duration
 	RunawayChecker                resourcegroup.RunawayChecker
 	TiKVClientReadTimeout         uint64
+	MaxExecutionTime              uint64
 
 	ReplicaClosestReadThreshold int64
 	ConnectionID                uint64
 	SessionAlias                string
 
 	ExecDetails *execdetails.SyncExecDetails
+
+	// Only one cop-reader can use lite worker. Using lite-worker in multiple readers will affect the concurrent execution of readers.
+	TryCopLiteWorker uint32
 }
 
 // AppendWarning appends the warning to the warning handler.

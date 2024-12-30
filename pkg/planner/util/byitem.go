@@ -20,6 +20,7 @@ import (
 
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -27,6 +28,24 @@ import (
 type ByItems struct {
 	Expr expression.Expression
 	Desc bool
+}
+
+// Hash64 implements the base.Hasher interface.
+func (by *ByItems) Hash64(h base.Hasher) {
+	by.Expr.Hash64(h)
+	h.HashBool(by.Desc)
+}
+
+// Equals implements the base.Equaler interface.
+func (by *ByItems) Equals(other any) bool {
+	if other == nil {
+		return false
+	}
+	otherBy, ok := other.(*ByItems)
+	if !ok {
+		return false
+	}
+	return by.Desc == otherBy.Desc && by.Expr.Equals(otherBy.Expr)
 }
 
 // StringWithCtx implements expression.StringerWithCtx interface.

@@ -32,7 +32,7 @@ import (
 
 // LogicalShow represents a show plan.
 type LogicalShow struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 	ShowContents
 
 	Extractor base.ShowPredicateExtractor
@@ -109,7 +109,7 @@ func (p *LogicalShow) FindBestTask(prop *property.PhysicalProperty, planCounter 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalShow) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

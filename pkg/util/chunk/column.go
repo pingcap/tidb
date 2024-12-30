@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"fmt"
+	"math"
 	"math/bits"
 	"math/rand"
 	"reflect"
@@ -256,12 +257,12 @@ func (c *Column) AppendCellNTimes(src *Column, pos, times int) {
 	if c.isFixed() {
 		elemLen := len(src.elemBuf)
 		offset := pos * elemLen
-		for i := 0; i < times; i++ {
+		for range times {
 			c.data = append(c.data, src.data[offset:offset+elemLen]...)
 		}
 	} else {
 		start, end := src.offsets[pos], src.offsets[pos+1]
-		for i := 0; i < times; i++ {
+		for range times {
 			c.data = append(c.data, src.data[start:end]...)
 			c.offsets = append(c.offsets, int64(len(c.data)))
 		}
@@ -278,7 +279,7 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 	if notNull {
 		b = 0xff
 	}
-	for i := 0; i < numNewBytes; i++ {
+	for range numNewBytes {
 		c.nullBitmap = append(c.nullBitmap, b)
 	}
 	if !notNull {
@@ -298,12 +299,12 @@ func (c *Column) appendMultiSameNullBitmap(notNull bool, num int) {
 func (c *Column) AppendNNulls(n int) {
 	c.appendMultiSameNullBitmap(false, n)
 	if c.isFixed() {
-		for i := 0; i < n; i++ {
+		for range n {
 			c.data = append(c.data, c.elemBuf...)
 		}
 	} else {
 		currentLength := c.offsets[c.length]
-		for i := 0; i < n; i++ {
+		for range n {
 			c.offsets = append(c.offsets, currentLength)
 		}
 	}
@@ -383,6 +384,7 @@ func (c *Column) AppendEnum(enum types.Enum) {
 const (
 	sizeInt64      = int(unsafe.Sizeof(int64(0)))
 	sizeUint64     = int(unsafe.Sizeof(uint64(0)))
+	sizeUint32     = int(unsafe.Sizeof(uint32(0)))
 	sizeFloat32    = int(unsafe.Sizeof(float32(0)))
 	sizeFloat64    = int(unsafe.Sizeof(float64(0)))
 	sizeMyDecimal  = int(unsafe.Sizeof(types.MyDecimal{}))
@@ -867,7 +869,26 @@ func (c *Column) MergeNulls(cols ...*Column) {
 // we can test if data in column are deeply copied.
 func (c *Column) DestroyDataForTest() {
 	dataByteNum := len(c.data)
-	for i := 0; i < dataByteNum; i++ {
+	for i := range dataByteNum {
 		c.data[i] = byte(rand.Intn(256))
 	}
+}
+
+// ContainsVeryLargeElement checks if the column contains element whose length is greater than math.MaxUint32.
+func (c *Column) ContainsVeryLargeElement() bool {
+	if c.length == 0 {
+		return false
+	}
+	if c.isFixed() {
+		return false
+	}
+	if c.offsets[c.length] <= math.MaxUint32 {
+		return false
+	}
+	for i := range c.length {
+		if c.offsets[i+1]-c.offsets[i] > math.MaxUint32 {
+			return true
+		}
+	}
+	return false
 }

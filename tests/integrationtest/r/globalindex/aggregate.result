@@ -47,3 +47,25 @@ HashAgg	8000.00	root	NULL	group by:globalindex__aggregate.p.c, funcs:avg(Column#
 select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 avg(id)	max(id)	min(id)
 1.5000	2	1
+alter table p add unique index idx1(c, id) global;
+explain format='brief' select count(*), max(id), min(id) from p use index(idx1);
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(Column#10)->Column#4, funcs:max(Column#11)->Column#5, funcs:min(Column#12)->Column#6
+└─IndexReader	1.00	root	partition:all	index:HashAgg
+  └─HashAgg	1.00	cop[tikv]		funcs:count(1)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
+    └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx1(c, id)	keep order:false, stats:pseudo
+select count(*), max(id), min(id) from p use index(idx1);
+count(*)	max(id)	min(id)
+7	8	1
+explain format='brief' select avg(id), max(id), min(id) from p use index(idx1) group by c;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:Column#26, funcs:avg(Column#23)->Column#4, funcs:max(Column#24)->Column#5, funcs:min(Column#25)->Column#6
+└─Projection	10000.00	root		cast(globalindex__aggregate.p.id, decimal(10,0) BINARY)->Column#23, globalindex__aggregate.p.id->Column#24, globalindex__aggregate.p.id->Column#25, globalindex__aggregate.p.c->Column#26
+  └─IndexReader	10000.00	root	partition:all	index:IndexFullScan
+    └─IndexFullScan	10000.00	cop[tikv]	table:p, index:idx1(c, id)	keep order:false, stats:pseudo
+select avg(id), max(id), min(id) from p use index(idx1) group by c;
+avg(id)	max(id)	min(id)
+1.5000	2	1
+3.5000	4	3
+5.0000	5	5
+7.5000	8	7

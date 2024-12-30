@@ -3,7 +3,6 @@
 package task
 
 import (
-	"encoding/hex"
 	"fmt"
 	"testing"
 
@@ -33,18 +32,74 @@ func (f fakeValue) Type() string {
 }
 
 func TestUrlNoQuery(t *testing.T) {
-	flag := &pflag.Flag{
-		Name:  flagStorage,
-		Value: fakeValue("s3://some/what?secret=a123456789&key=987654321"),
+	testCases := []struct {
+		inputName     string
+		expectedName  string
+		inputValue    string
+		expectedValue string
+	}{
+		{
+			inputName:     flagSendCreds,
+			expectedName:  "send-credentials-to-tikv",
+			inputValue:    "true",
+			expectedValue: "true",
+		},
+		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    "s3://some/what?secret=a123456789&key=987654321",
+			expectedValue: "s3://some/what",
+		},
+		{
+			inputName:     FlagStreamFullBackupStorage,
+			expectedName:  "full-backup-storage",
+			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/prefix/",
+		},
+		{
+			inputName:     flagFullBackupCipherKey,
+			expectedName:  "crypter.key",
+			inputValue:    "537570657253656372657456616C7565",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     flagLogBackupCipherKey,
+			expectedName:  "log.crypter.key",
+			inputValue:    "537570657253656372657456616C7565",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "azblob.encryption-key",
+			expectedName:  "azblob.encryption-key",
+			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     flagMasterKeyConfig,
+			expectedName:  "master-key",
+			inputValue:    "local:///path/abcd,aws-kms:///abcd?AWS_ACCESS_KEY_ID=SECRET1&AWS_SECRET_ACCESS_KEY=SECRET2&REGION=us-east-1,azure-kms:///abcd/v1?AZURE_TENANT_ID=tenant-id&AZURE_CLIENT_ID=client-id&AZURE_CLIENT_SECRET=client-secret&AZURE_VAULT_NAME=vault-name",
+			expectedValue: "<redacted>",
+			// expectedValue: "local:///path/abcd,aws-kms:///abcd,azure-kms:///abcd/v1"
+		},
 	}
-	field := flagToZapField(flag)
-	require.Equal(t, flagStorage, field.Key)
-	require.Equal(t, "s3://some/what", field.Interface.(fmt.Stringer).String())
+
+	for _, tc := range testCases {
+		flag := pflag.Flag{
+			Name:  tc.inputName,
+			Value: fakeValue(tc.inputValue),
+		}
+		field := flagToZapField(&flag)
+		require.Equal(t, tc.expectedName, field.Key, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+		if stringer, ok := field.Interface.(fmt.Stringer); ok {
+			field.String = stringer.String()
+		}
+		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+	}
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
-	restoreConfig := enableTiDBConfig()
+	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
@@ -70,57 +125,89 @@ func TestStripingPDURL(t *testing.T) {
 
 func TestCheckCipherKeyMatch(t *testing.T) {
 	cases := []struct {
-		CipherType encryptionpb.EncryptionMethod
-		CipherKey  string
-		ok         bool
+		name       string
+		cipherInfo *backup.CipherInfo
+		expectErr  bool
+		errMsg     string
 	}{
 		{
-			CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
-			ok:         true,
+			name: "PLAINTEXT",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_PLAINTEXT,
+			},
+			expectErr: false,
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_UNKNOWN,
-			ok:         false,
+			name: "UNKNOWN",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_UNKNOWN,
+			},
+			expectErr: true,
+			errMsg:    "Unknown encryption method: UNKNOWN",
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
-			CipherKey:  "0123456789abcdef0123456789abcdef",
-			ok:         true,
+			name: "AES128_CTR valid",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+				CipherKey:  make([]byte, crypterAES128KeyLen),
+			},
+			expectErr: false,
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
-			CipherKey:  "0123456789abcdef0123456789abcd",
-			ok:         false,
+			name: "AES128_CTR invalid length",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES128_CTR,
+				CipherKey:  make([]byte, crypterAES128KeyLen-1),
+			},
+			expectErr: true,
+			errMsg:    fmt.Sprintf("AES-128 key length mismatch: expected %d, got %d", crypterAES128KeyLen, crypterAES128KeyLen-1),
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
-			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdef",
-			ok:         true,
+			name: "AES192_CTR valid",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
+				CipherKey:  make([]byte, crypterAES192KeyLen),
+			},
+			expectErr: false,
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
-			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdefff",
-			ok:         false,
+			name: "AES192_CTR invalid length",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES192_CTR,
+				CipherKey:  make([]byte, crypterAES192KeyLen+1),
+			},
+			expectErr: true,
+			errMsg:    fmt.Sprintf("AES-192 key length mismatch: expected %d, got %d", crypterAES192KeyLen, crypterAES192KeyLen+1),
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
-			CipherKey:  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-			ok:         true,
+			name: "AES256_CTR valid",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+				CipherKey:  make([]byte, crypterAES256KeyLen),
+			},
+			expectErr: false,
 		},
 		{
-			CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
-			CipherKey:  "",
-			ok:         false,
+			name: "AES256_CTR invalid length",
+			cipherInfo: &backup.CipherInfo{
+				CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+				CipherKey:  make([]byte, 0),
+			},
+			expectErr: true,
+			errMsg:    fmt.Sprintf("AES-256 key length mismatch: expected %d, got %d", crypterAES256KeyLen, 0),
 		},
 	}
 
 	for _, c := range cases {
-		cipherKey, err := hex.DecodeString(c.CipherKey)
-		require.NoError(t, err)
-		require.Equal(t, c.ok, checkCipherKeyMatch(&backup.CipherInfo{
-			CipherType: c.CipherType,
-			CipherKey:  cipherKey,
-		}))
+		t.Run(c.name, func(t *testing.T) {
+			err := checkCipherKeyMatch(c.cipherInfo)
+			if c.expectErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), c.errMsg)
+			} else {
+				require.NoError(t, err)
+			}
+		})
 	}
 }
 
@@ -162,6 +249,13 @@ func TestCheckCipherKey(t *testing.T) {
 	}
 }
 
+func TestGetCipherKey(t *testing.T) {
+	nonHexKey := "this is not a hex string"
+	_, err := GetCipherKeyContent(nonHexKey, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), cipherKeyNonHexErrorMsg)
+}
+
 func must[T any](t T, err error) T {
 	if err != nil {
 		panic(err)
@@ -191,8 +285,10 @@ func expectedDefaultConfig() Config {
 }
 
 func expectedDefaultBackupConfig() BackupConfig {
+	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Checksum = false
 	return BackupConfig{
-		Config: expectedDefaultConfig(),
+		Config: defaultConfig,
 		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
@@ -232,13 +328,16 @@ func TestDefault(t *testing.T) {
 }
 
 func TestDefaultBackup(t *testing.T) {
-	def := DefaultBackupConfig()
+	commonConfig := DefaultConfig()
+	commonConfig.OverrideDefaultForBackup()
+	def := DefaultBackupConfig(commonConfig)
 	defaultConfig := expectedDefaultBackupConfig()
 	require.Equal(t, defaultConfig, def)
 }
 
 func TestDefaultRestore(t *testing.T) {
-	def := DefaultRestoreConfig()
+	commonConfig := DefaultConfig()
+	def := DefaultRestoreConfig(commonConfig)
 	defaultConfig := expectedDefaultRestoreConfig()
 	require.Equal(t, defaultConfig, def)
 }

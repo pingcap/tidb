@@ -30,11 +30,11 @@ import (
 
 // LogicalLimit represents offset and limit plan.
 type LogicalLimit struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
 	PreferLimitToCop bool
 	IsPartial        bool
 }
@@ -129,7 +129,7 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalLimit) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

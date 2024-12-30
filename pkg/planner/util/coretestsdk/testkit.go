@@ -15,51 +15,8 @@
 package coretestsdk
 
 import (
-	"context"
-	"fmt"
 	"strings"
-	"testing"
-
-	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
 )
-
-// SetTiFlashReplica is to set TiFlash replica
-func SetTiFlashReplica(t *testing.T, dom *domain.Domain, dbName, tableName string) {
-	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tableName))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
-	}
-}
-
-// WithMockTiFlash sets the mockStore to have N TiFlash stores (naming as tiflash0, tiflash1, ...).
-func WithMockTiFlash(nodes int) mockstore.MockTiKVStoreOption {
-	return mockstore.WithMultipleOptions(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockCluster := c.(*unistore.Cluster)
-			_, _, region1 := mockstore.BootstrapWithSingleStore(c)
-			tiflashIdx := 0
-			for tiflashIdx < nodes {
-				store2 := c.AllocID()
-				peer2 := c.AllocID()
-				addr2 := fmt.Sprintf("tiflash%d", tiflashIdx)
-				mockCluster.AddStore(store2, addr2, &metapb.StoreLabel{Key: "engine", Value: "tiflash"})
-				mockCluster.AddPeer(region1, store2, peer2)
-				tiflashIdx++
-			}
-		}),
-		mockstore.WithStoreType(mockstore.EmbedUnistore),
-	)
-}
 
 // GetFieldValue is to get field value.
 func GetFieldValue(prefix, row string) string {

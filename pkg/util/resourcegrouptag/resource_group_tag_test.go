@@ -187,7 +187,7 @@ func TestGetFirstKeyFromRequest(t *testing.T) {
 func genRandHex(length int) []byte {
 	const chars = "0123456789abcdef"
 	res := make([]byte, length)
-	for i := 0; i < length; i++ {
+	for i := range length {
 		res[i] = chars[rand.Intn(len(chars))]
 	}
 	return res

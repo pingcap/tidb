@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/grafana/pyroscope-go"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -80,6 +81,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	repository "github.com/pingcap/tidb/pkg/util/workloadrepo"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/push"
 	"github.com/tikv/client-go/v2/tikv"
@@ -198,7 +200,7 @@ func initFlagSet() *flag.FlagSet {
 	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
 
 	// Base
-	store = fset.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
+	store = fset.String(nmStore, string(config.StoreTypeUniStore), fmt.Sprintf("registered store name, %v", config.StoreTypeList()))
 	storePath = fset.String(nmStorePath, "/tmp/tidb", "tidb storage path")
 	host = fset.String(nmHost, "0.0.0.0", "tidb server host")
 	advertiseAddress = fset.String(nmAdvertiseAddress, "", "tidb server advertise IP")
@@ -317,15 +319,16 @@ func main() {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom := createStoreAndDomain(keyspaceName)
+	storage, dom := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)
 
 	exited := make(chan struct{})
 	signal.SetupSignalHandler(func() {
 		svr.Close()
+		resourcemanager.InstanceResourceManager.Stop()
 		cleanup(svr, storage, dom)
 		cpuprofile.StopCPUProfiler()
-		resourcemanager.InstanceResourceManager.Stop()
 		executor.Stop()
 		close(exited)
 	})
@@ -389,15 +392,15 @@ func setCPUAffinity() {
 }
 
 func registerStores() {
-	err := kvstore.Register("tikv", driver.TiKVDriver{})
+	err := kvstore.Register(config.StoreTypeTiKV, driver.TiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("mocktikv", mockstore.MockTiKVDriver{})
+	err = kvstore.Register(config.StoreTypeMockTiKV, mockstore.MockTiKVDriver{})
 	terror.MustNil(err)
-	err = kvstore.Register("unistore", mockstore.EmbedUnistoreDriver{})
+	err = kvstore.Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{})
 	terror.MustNil(err)
 }
 
-func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	cfg := config.GetGlobalConfig()
 	var fullPath string
 	if keyspaceName == "" {
@@ -411,6 +414,8 @@ func createStoreAndDomain(keyspaceName string) (kv.Storage, *domain.Domain) {
 	copr.GlobalMPPFailedStoreProber.Run()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Run()
 	// Bootstrap a session to load information schema.
+	err = ddl.StartOwnerManager(context.Background(), storage)
+	terror.MustNil(err)
 	dom, err := session.BootstrapSession(storage)
 	terror.MustNil(err)
 	return storage, dom
@@ -511,7 +516,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 		cfg.Cors = *cors
 	}
 	if actualFlags[nmStore] {
-		cfg.Store = *store
+		cfg.Store = config.StoreType(*store)
 	}
 	if actualFlags[nmStorePath] {
 		cfg.Path = *storePath
@@ -859,7 +864,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 	svr, err := server.NewServer(cfg, driver)
 	// Both domain and storage have started, so we have to clean them before exiting.
 	if err != nil {
-		closeDomainAndStorage(storage, dom)
+		closeDDLOwnerMgrDomainAndStorage(storage, dom)
 		log.Fatal("failed to create the server", zap.Error(err), zap.Stack("stack"))
 	}
 	svr.SetDomain(dom)
@@ -871,6 +876,7 @@ func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
 }
 
 func setupMetrics() {
+	enablePyroscope()
 	cfg := config.GetGlobalConfig()
 	// Enable the mutex profile, 1/10 of mutex blocking event sampling.
 	runtime.SetMutexProfileFraction(10)
@@ -893,9 +899,10 @@ func setupTracing() {
 	opentracing.SetGlobalTracer(tracer)
 }
 
-func closeDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
+func closeDDLOwnerMgrDomainAndStorage(storage kv.Storage, dom *domain.Domain) {
 	tikv.StoreShuttingDown(1)
 	dom.Close()
+	ddl.CloseOwnerManager()
 	copr.GlobalMPPFailedStoreProber.Stop()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Stop()
 	err := storage.Close()
@@ -918,7 +925,8 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	// See https://github.com/pingcap/tidb/issues/40038 for details.
 	svr.KillSysProcesses()
 	plugin.Shutdown(context.Background())
-	closeDomainAndStorage(storage, dom)
+	repository.StopRepository()
+	closeDDLOwnerMgrDomainAndStorage(storage, dom)
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
@@ -956,5 +964,29 @@ func closeStmtSummary() {
 	instanceCfg := config.GetGlobalConfig().Instance
 	if instanceCfg.StmtSummaryEnablePersistent {
 		stmtsummaryv2.Close()
+	}
+}
+
+func enablePyroscope() {
+	if os.Getenv("PYROSCOPE_SERVER_ADDRESS") != "" {
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(5)
+		_, err := pyroscope.Start(pyroscope.Config{
+			ApplicationName:   "tidb",
+			ServerAddress:     os.Getenv("PYROSCOPE_SERVER_ADDRESS"),
+			Logger:            pyroscope.StandardLogger,
+			AuthToken:         os.Getenv("PYROSCOPE_AUTH_TOKEN"),
+			TenantID:          os.Getenv("PYROSCOPE_TENANT_ID"),
+			BasicAuthUser:     os.Getenv("PYROSCOPE_BASIC_AUTH_USER"),
+			BasicAuthPassword: os.Getenv("PYROSCOPE_BASIC_AUTH_PASSWORD"),
+			ProfileTypes: []pyroscope.ProfileType{
+				pyroscope.ProfileCPU,
+				pyroscope.ProfileAllocSpace,
+			},
+			UploadRate: 30 * time.Second,
+		})
+		if err != nil {
+			log.Fatal("fail to start pyroscope", zap.Error(err))
+		}
 	}
 }

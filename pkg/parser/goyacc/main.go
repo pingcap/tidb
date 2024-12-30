@@ -361,7 +361,7 @@ func main1(in string) (err error) {
 			if k == 'r' {
 				arg = -arg
 			}
-			minArg, maxArg = mathutil.Min(minArg, arg), mathutil.Max(maxArg, arg)
+			minArg, maxArg = min(minArg, arg), max(maxArg, arg)
 		}
 	}
 	su := make(symsUsed, 0, len(msu))
@@ -389,7 +389,7 @@ type %[1]sXError struct {
 	for sym := range msu {
 		nm := sym.Name
 		if nm == "$default" || nm == "$end" || sym.IsTerminal && nm[0] != '\'' && sym.Value > 0 {
-			maxTokName = mathutil.Max(maxTokName, len(nm))
+			maxTokName = max(maxTokName, len(nm))
 			a = append(a, nm)
 		}
 		nsyms[nm] = sym
@@ -476,7 +476,7 @@ type %[1]sXError struct {
 				panic("internal error 001")
 			}
 
-			maxv = mathutil.Max(maxv, xsym)
+			maxv = max(maxv, xsym)
 			kind, arg := act.Kind()
 			switch kind {
 			case 'a':

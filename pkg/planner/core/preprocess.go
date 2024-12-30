@@ -132,6 +132,8 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
+		varsMutable:        make(map[string]struct{}),
+		varsReadonly:       make(map[string]struct{}),
 		resolveCtx:         node.GetResolveContext(),
 	}
 	for _, optFn := range preprocessOpt {
@@ -144,6 +146,10 @@ func Preprocess(ctx context.Context, sctx sessionctx.Context, node *resolve.Node
 	node.Node.Accept(&v)
 	// InfoSchema must be non-nil after preprocessing
 	v.ensureInfoSchema()
+	sctx.GetPlanCtx().SetReadonlyUserVarMap(v.varsReadonly)
+	if len(v.varsReadonly) > 0 {
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache("read-only variables are used")
+	}
 	return errors.Trace(v.err)
 }
 
@@ -180,7 +186,7 @@ var _ = PreprocessorReturn{}.initedLastSnapshotTS
 type PreprocessorReturn struct {
 	initedLastSnapshotTS bool
 	IsStaleness          bool
-	SnapshotTSEvaluator  func(sessionctx.Context) (uint64, error)
+	SnapshotTSEvaluator  func(context.Context, sessionctx.Context) (uint64, error)
 	// LastSnapshotTS is the last evaluated snapshotTS if any
 	// otherwise it defaults to zero
 	LastSnapshotTS uint64
@@ -235,6 +241,9 @@ type preprocessor struct {
 	preprocessWith   *preprocessWith
 
 	staleReadProcessor staleread.Processor
+
+	varsMutable  map[string]struct{}
+	varsReadonly map[string]struct{}
 
 	// values that may be returned
 	*PreprocessorReturn
@@ -419,6 +428,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.AnalyzeTableStmt:
 		p.flag |= inAnalyze
+	case *ast.VariableExpr:
+		if node.Value != nil {
+			p.varsMutable[node.Name] = struct{}{}
+			delete(p.varsReadonly, node.Name)
+		} else if p.stmtTp == TypeSelect {
+			// Only check the variable in select statement.
+			_, ok := p.varsMutable[node.Name]
+			if !ok {
+				p.varsReadonly[node.Name] = struct{}{}
+			}
+		}
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -571,7 +591,9 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			TableInfo: tableInfo,
 		})
 	}
-
+	aliasChecker := &aliasChecker{}
+	originNode.Accept(aliasChecker)
+	hintedNode.Accept(aliasChecker)
 	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
 	hintedSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()), false)
 	if originSQL != hintedSQL {
@@ -1839,14 +1861,39 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (table.Table, error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
+	skipLock := false
+	shouldLockMDL := false
+	var lockedID int64
+
+	defer func() {
+		// if the table is not in public state, avoid running any queries on it. This verification is actually
+		// not related to the MDL, but it's a good place to put it.
+		//
+		// This function may return a new table, so we need to check the return value in the `defer` block.
+		if err == nil {
+			if retTbl.Meta().State != model.StatePublic {
+				err = infoschema.ErrTableNotExists.FastGenByArgs(dbName.L, retTbl.Meta().Name.L)
+				retTbl = nil
+			}
+		}
+
+		if shouldLockMDL && err == nil && !skipLock {
+			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		}
+
+		if lockedID != 0 && err != nil {
+			// because `err != nil`, the `retTbl` is `nil` and the `tbl` can also be `nil` here. We use the `lockedID` instead.
+			sctx.GetSessionVars().GetRelatedTableForMDL().Delete(lockedID)
+		}
+	}()
+
 	if !sctx.GetSessionVars().TxnCtx.EnableMDL {
 		return tbl, nil
 	}
 	if is.SchemaMetaVersion() == 0 {
 		return tbl, nil
 	}
-	skipLock := false
 	if sctx.GetSessionVars().SnapshotInfoschema != nil {
 		return tbl, nil
 	}
@@ -1863,12 +1910,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	var err error
-	defer func() {
-		if err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[tbl.Meta().ID] = struct{}{}
-		}
-	}()
+	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {
@@ -1883,19 +1925,18 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		// In this case, this TiDB wrongly gets the mdl lock.
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tableInfo.ID, int64(0))
+			lockedID = tableInfo.ID
 		}
 		dom := domain.GetDomain(sctx)
 		domainSchema := dom.InfoSchema()
 		domainSchemaVer := domainSchema.SchemaMetaVersion()
 		tbl, err = domainSchema.TableByName(ctx, dbName, tableInfo.Name)
 		if err != nil {
-			if !skipLock {
-				sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
-			}
 			return nil, err
 		}
 		if !skipLock {
 			sctx.GetSessionVars().GetRelatedTableForMDL().Store(tbl.Meta().ID, domainSchemaVer)
+			lockedID = tbl.Meta().ID
 		}
 		// Check the table change, if adding new public index or modify a column, we need to handle them.
 		if tbl.Meta().Revision != tableInfo.Revision && !sctx.GetSessionVars().IsPessimisticReadConsistency() {
@@ -1938,9 +1979,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 					logutil.BgLogger().Info("public column changed",
 						zap.String("column", col.Name.L), zap.String("old_col", col.Name.L),
 						zap.Int64("new id", col.ID), zap.Int64("old id", col.ID))
-					if !skipLock {
-						sctx.GetSessionVars().GetRelatedTableForMDL().Delete(tableInfo.ID)
-					}
 					return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", col.Name)
 				}
 			}
@@ -1974,4 +2012,60 @@ func (p *preprocessor) skipLockMDL() bool {
 	// because it's a batch process and will do both DML and DDL.
 	// skip lock mdl for ANALYZE statement.
 	return p.flag&inImportInto > 0 || p.flag&inAnalyze > 0
+}
+
+// aliasChecker is used to check the alias of the table in delete statement.
+//
+//	for example: delete tt1 from t1 tt1,(select max(id) id from t2)tt2 where tt1.id<=tt2.id
+//	  `delete tt1` will be transformed to `delete current_database.t1` by default.
+//	   because `tt1` cannot be used as alias in delete statement.
+//	   so we have to set `tt1` as alias by aliasChecker.
+type aliasChecker struct{}
+
+func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
+		// 1. check the tableRefs of deleteStmt to find the alias
+		var aliases []*pmodel.CIStr
+		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
+			tableRefs := deleteStmt.TableRefs.TableRefs
+			if val := getTableRefsAlias(tableRefs.Left); val != nil {
+				aliases = append(aliases, val)
+			}
+			if val := getTableRefsAlias(tableRefs.Right); val != nil {
+				aliases = append(aliases, val)
+			}
+		}
+		// 2. check the Tables to tag the alias
+		if deleteStmt.Tables != nil && deleteStmt.Tables.Tables != nil {
+			for _, table := range deleteStmt.Tables.Tables {
+				if table.Schema.String() != "" {
+					continue
+				}
+				for _, alias := range aliases {
+					if table.Name.L == alias.L {
+						table.IsAlias = true
+						break
+					}
+				}
+			}
+		}
+		return in, true
+	}
+	return in, false
+}
+
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
+	switch v := tableRefs.(type) {
+	case *ast.Join:
+		if v.Left != nil {
+			return getTableRefsAlias(v.Left)
+		}
+	case *ast.TableSource:
+		return &v.AsName
+	}
+	return nil
+}
+
+func (*aliasChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }

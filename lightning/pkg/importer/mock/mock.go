@@ -225,17 +225,25 @@ func (t *TargetInfo) FetchRemoteDBModels(_ context.Context) ([]*model.DBInfo, er
 
 // FetchRemoteTableModels fetches the table structures from the remote target.
 // It implements the TargetInfoGetter interface.
-func (t *TargetInfo) FetchRemoteTableModels(_ context.Context, schemaName string) ([]*model.TableInfo, error) {
-	resultInfos := []*model.TableInfo{}
+func (t *TargetInfo) FetchRemoteTableModels(
+	_ context.Context,
+	schemaName string,
+	tableNames []string,
+) (map[string]*model.TableInfo, error) {
 	tblMap, ok := t.dbTblInfoMap[schemaName]
 	if !ok {
 		dbNotExistErr := dbterror.ClassSchema.NewStd(errno.ErrBadDB).FastGenByArgs(schemaName)
 		return nil, errors.Errorf("get xxxxxx http status code != 200, message %s", dbNotExistErr.Error())
 	}
-	for _, tblInfo := range tblMap {
-		resultInfos = append(resultInfos, tblInfo.TableModel)
+	ret := make(map[string]*model.TableInfo, len(tableNames))
+	for _, tableName := range tableNames {
+		tblInfo, ok := tblMap[tableName]
+		if !ok {
+			continue
+		}
+		ret[tableName] = tblInfo.TableModel
 	}
-	return resultInfos, nil
+	return ret, nil
 }
 
 // GetTargetSysVariablesForImport gets some important systam variables for importing on the target.

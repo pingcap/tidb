@@ -45,7 +45,7 @@ func TestRecordKey(t *testing.T) {
 	assert.NotEqual(t, hash1, hash3, "Hashes should not be equal for different keys")
 
 	// Test MapKey method
-	recordMap = make(map[recordKey]*Record)
+	recordMap := make(map[recordKey]*Record)
 	record1 := &Record{
 		ResourceGroupName: "group1",
 		SQLDigest:         "digest1",

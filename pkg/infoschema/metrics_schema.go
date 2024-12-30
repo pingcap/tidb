@@ -41,19 +41,27 @@ const (
 func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
-	tableID := dbID + 1
 	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
 	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
-		tableInfo.ID = tableID
 		tableInfo.Comment = def.Comment
 		tableInfo.DBID = dbID
-		tableID++
 		metricTables = append(metricTables, tableInfo)
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
 		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
+
+	// assign table IDs, sort by table name first to make the id stable across different TiDB instances.
+	slices.SortFunc(metricTables, func(a, b *model.TableInfo) int {
+		return strings.Compare(a.Name.L, b.Name.L)
+	})
+	tableID := dbID + 1
+	for _, tableInfo := range metricTables {
+		tableInfo.ID = tableID
+		tableID++
+	}
+
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
 		Name:    pmodel.NewCIStr(util.MetricSchemaName.O),

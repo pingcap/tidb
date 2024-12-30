@@ -17,6 +17,7 @@ package handle
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	pkgutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -115,6 +117,7 @@ func NewHandle(
 	is infoschema.InfoSchema,
 	pool pkgutil.SessionPool,
 	tracker sysproctrack.Tracker,
+	ddlNotifier *notifier.DDLNotifier,
 	autoAnalyzeProcIDGetter func() uint64,
 	releaseAutoAnalyzeProcID func(uint64),
 ) (*Handle, error) {
@@ -137,13 +140,21 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
 		handle,
 	)
+	if ddlNotifier != nil {
+		// In test environments, we use a channel-based approach to handle DDL events.
+		// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+		// In production, DDL events are handled by the notifier system instead.
+		if !intest.InTest {
+			ddlNotifier.RegisterHandler(notifier.StatsMetaHandlerID, handle.DDL.HandleDDLEvent)
+		}
+	}
 	return handle, nil
 }
 
@@ -182,7 +193,9 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 			tbl = statistics.PseudoTable(tblInfo, false, true)
 			tbl.PhysicalID = pid
 			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+				h.UpdateStatsCache(types.CacheUpdate{
+					Updated: []*statistics.Table{tbl},
+				})
 			}
 			return tbl
 		}
@@ -193,12 +206,6 @@ func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPs
 
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
-	for len(h.DDLEventCh()) > 0 {
-		e := <-h.DDLEventCh()
-		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
-		}
-	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}

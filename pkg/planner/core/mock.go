@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build !codes
+
 package core
 
 import (
@@ -273,6 +275,7 @@ func MockSignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -343,6 +346,7 @@ func MockUnsignedTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("t2"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -372,6 +376,7 @@ func MockNoPKTable() *model.TableInfo {
 		Columns:    []*model.ColumnInfo{col0, col1},
 		Name:       pmodel.NewCIStr("t3"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }
@@ -403,6 +408,7 @@ func MockView() *model.TableInfo {
 		Name:    pmodel.NewCIStr("v"),
 		Columns: []*model.ColumnInfo{col0, col1, col2},
 		View:    view,
+		State:   model.StatePublic,
 	}
 	return table
 }
@@ -423,7 +429,7 @@ func MockContext() *mock.Context {
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	domain.BindDomain(ctx, do)
+	ctx.BindDomain(do)
 	return ctx
 }
 
@@ -720,6 +726,7 @@ func MockStateNoneColumnTable() *model.TableInfo {
 		Indices:    indices,
 		Name:       pmodel.NewCIStr("T_StateNoneColumn"),
 		PKIsHandle: true,
+		State:      model.StatePublic,
 	}
 	return table
 }

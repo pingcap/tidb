@@ -10,7 +10,6 @@ go_test(
     flaky = True,
     shard_count = 4,
     deps = [
-        "//pkg/planner/util/coretestsdk",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@org_uber_go_goleak//:goleak",

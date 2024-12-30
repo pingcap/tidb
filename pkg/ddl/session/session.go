@@ -72,7 +72,7 @@ func (s *Session) Reset() {
 }
 
 // Execute executes a query.
-func (s *Session) Execute(ctx context.Context, query string, label string) ([]chunk.Row, error) {
+func (s *Session) Execute(ctx context.Context, query string, label string, args ...any) ([]chunk.Row, error) {
 	startTime := time.Now()
 	var err error
 	defer func() {
@@ -82,7 +82,7 @@ func (s *Session) Execute(ctx context.Context, query string, label string) ([]ch
 	if ctx.Value(kv.RequestSourceKey) == nil {
 		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	}
-	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query)
+	rs, err := s.Context.GetSQLExecutor().ExecuteInternal(ctx, query, args...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -1245,7 +1245,7 @@ func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server
 
 	originalTxnTotalSizeLimit := kv.TxnTotalSizeLimit.Load()
 	// If the MemBuffer can't be committed once in each batch, it will return an error like "transaction is too large".
-	kv.TxnTotalSizeLimit.Store(10240)
+	kv.TxnTotalSizeLimit.Store(12000)
 	defer func() { kv.TxnTotalSizeLimit.Store(originalTxnTotalSizeLimit) }()
 
 	// support ClientLocalFiles capability
@@ -3071,11 +3071,11 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", cbFunc1)
-		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", cbFunc1)
-		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc1)
+		defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	}
 	MustExec(ctx, t, conn, dropColumnSQL)
 	require.NoError(t, checkErr)

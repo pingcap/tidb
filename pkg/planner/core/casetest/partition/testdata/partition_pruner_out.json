@@ -215,6 +215,30 @@
           "└─Selection 250.00 cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t10 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a is null",
+        "Result": [
+          "TableReader 10.00 root partition:all data:Selection",
+          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t11.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a is null and b = 2",
+        "Result": [
+          "TableReader 0.01 root partition:p0 data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.b, 2), isnull(test_partition.t11.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a = 1 and b = 2",
+        "Result": [
+          "TableReader 0.01 root partition:p0 data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.a, 1), eq(test_partition.t11.b, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
@@ -470,12 +494,12 @@
         "Plan": [
           "Projection 0.00 root  test_partition.t1.id, test_partition.t1.a, test_partition.t1.b, test_partition.t2.id, test_partition.t2.a, test_partition.t2.b",
           "└─HashJoin 0.00 root  CARTESIAN inner join",
-          "  ├─TableReader(Build) 0.00 root partition:p1 data:Selection",
-          "  │ └─Selection 0.00 cop[tikv]  eq(test_partition.t2.b, 7), eq(test_partition.t2.id, 7), in(test_partition.t2.a, 6, 7, 8)",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 0.01 root partition:p0 data:Selection",
-          "    └─Selection 0.01 cop[tikv]  eq(test_partition.t1.id, 7), or(eq(test_partition.t1.a, 1), and(eq(test_partition.t1.a, 3), in(test_partition.t1.b, 3, 5)))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "  ├─TableReader(Build) 0.01 root partition:p0 data:Selection",
+          "  │ └─Selection 0.01 cop[tikv]  eq(test_partition.t1.id, 7), or(eq(test_partition.t1.a, 1), and(eq(test_partition.t1.a, 3), in(test_partition.t1.b, 3, 5)))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) 0.00 root partition:p1 data:Selection",
+          "    └─Selection 0.00 cop[tikv]  eq(test_partition.t2.b, 7), eq(test_partition.t2.id, 7), in(test_partition.t2.a, 6, 7, 8)",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
           "HashJoin 0.03 root  CARTESIAN inner join",
@@ -688,7 +712,7 @@
         ],
         "Plan": [
           "TableReader 10.00 root partition:p0 data:Selection",
-          "└─Selection 10.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 0)",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 1)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
@@ -713,9 +737,8 @@
         ],
         "Plan": [
           "Sort 10000.00 root  test_partition.t1.id, test_partition.t1.a",
-          "└─TableReader 10000.00 root partition:all data:Selection",
-          "  └─Selection 10000.00 cop[tikv]  or(eq(test_partition.t1.a, 1), 1)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─TableReader 10000.00 root partition:all data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
           "Sort 10000.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
@@ -1673,7 +1696,7 @@
         ],
         "Plan": [
           "TableReader 3323.33 root partition:p0 data:Selection",
-          "└─Selection 3323.33 cop[tikv]  or(le(test_partition.t1.a, 3), 0)",
+          "└─Selection 3323.33 cop[tikv]  le(test_partition.t1.a, 3)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
@@ -1698,9 +1721,8 @@
         ],
         "Plan": [
           "Sort 10000.00 root  test_partition.t1.id, test_partition.t1.a",
-          "└─TableReader 10000.00 root partition:all data:Selection",
-          "  └─Selection 10000.00 cop[tikv]  or(eq(test_partition.t1.a, 3), 1)",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "└─TableReader 10000.00 root partition:all data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
           "Sort 10000.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
@@ -1871,12 +1893,12 @@
         "Result": null,
         "Plan": [
           "TableReader 10.00 root partition:dual data:Selection",
-          "└─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 100), or(le(test_partition.t1.b, 200), 1)",
+          "└─Selection 10.00 cop[tikv]  eq(test_partition.t1.a, 100)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "IndexReader 100.00 root partition:dual index:IndexRangeScan",
-          "└─IndexRangeScan 100.00 cop[tikv] table:t1, index:a(a, b, id) range:[100 NULL,100 +inf], keep order:false, stats:pseudo"
+          "IndexReader 10.00 root partition:dual index:IndexRangeScan",
+          "└─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a, b, id) range:[100,100], keep order:false, stats:pseudo"
         ]
       },
       {

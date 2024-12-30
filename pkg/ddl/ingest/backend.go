@@ -229,15 +229,16 @@ func (bc *litBackendCtx) Flush(ctx context.Context, mode FlushMode) (flushed, im
 		newTS, err = mgr.refreshTSAndUpdateCP()
 		if err == nil {
 			for _, ei := range bc.engines {
-				ei.openedEngine.SetTS(newTS)
+				err = bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
+				if err != nil {
+					return false, false, err
+				}
 			}
 		}
 	}
 
 	return true, true, err
 }
-
-const distributedLockLease = 10 // Seconds
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
 	logger := log.FromContext(bc.ctx).With(

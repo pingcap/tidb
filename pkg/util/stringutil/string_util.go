@@ -260,7 +260,7 @@ func matchRune(a, b rune) bool {
 func CompileLike2Regexp(str string) string {
 	patChars, patTypes := CompilePattern(str, '\\')
 	var result []rune
-	for i := 0; i < len(patChars); i++ {
+	for i := range patChars {
 		switch patTypes[i] {
 		case PatMatch:
 			result = append(result, patChars[i])
@@ -496,7 +496,7 @@ func IsLowerASCII(c byte) bool {
 // LowerOneString lowers the ascii characters in a string
 func LowerOneString(str []byte) {
 	strLen := len(str)
-	for i := 0; i < strLen; i++ {
+	for i := range strLen {
 		if IsUpperASCII(str[i]) {
 			str[i] = toLowerIfAlphaASCII(str[i])
 		}

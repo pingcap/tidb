@@ -889,3 +889,17 @@ SELECT b FROM update_with_diff_type;
 b
 {"a": "测试"}
 set SQL_MODE=default;
+drop table if exists parent, child;
+create table parent (id int primary key, ref int, key(ref));
+create table child (id int primary key, ref int, foreign key (ref) references parent(ref));
+insert into parent values (1, 1), (2, 2);
+insert into child values (1, 1);
+update child set ref = 2 where id = 1;
+update child set ref = 3 where id = 1;
+Error 1452 (23000): Cannot add or update a child row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+update ignore child set ref = 3 where id = 1;
+Level	Code	Message
+Warning	1452	Cannot add or update a child row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+update parent set ref = 3 where id = 2;
+Error 1451 (23000): Cannot delete or update a parent row: a foreign key constraint fails (`executor__update`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`ref`) REFERENCES `parent` (`ref`))
+update ignore parent set ref = 3 where id = 2;

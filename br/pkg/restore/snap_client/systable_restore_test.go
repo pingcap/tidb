@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -35,7 +35,7 @@ import (
 func TestCheckSysTableCompatibility(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, utiltest.DefaultTestKeepaliveCfg)
+	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -116,5 +116,5 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(216), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(241), session.CurrentBootstrapVersion)
 }

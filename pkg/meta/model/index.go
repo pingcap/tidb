@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
@@ -37,15 +38,15 @@ const (
 	DistanceMetricInnerProduct DistanceMetric = "INNER_PRODUCT"
 )
 
-// FnNameToDistanceMetric maps a distance function name to the distance metric.
+// IndexableFnNameToDistanceMetric maps a distance function name to the distance metric.
 // Only indexable distance functions should be listed here!
-var FnNameToDistanceMetric = map[string]DistanceMetric{
+var IndexableFnNameToDistanceMetric = map[string]DistanceMetric{
 	ast.VecCosineDistance: DistanceMetricCosine,
 	ast.VecL2Distance:     DistanceMetricL2,
 }
 
-// DistanceMetricToFnName maps a distance metric to the distance function name.
-var DistanceMetricToFnName = map[DistanceMetric]string{
+// IndexableDistanceMetricToFnName maps a distance metric to the distance function name.
+var IndexableDistanceMetricToFnName = map[DistanceMetric]string{
 	DistanceMetricCosine: ast.VecCosineDistance,
 	DistanceMetricL2:     ast.VecL2Distance,
 }
@@ -53,7 +54,7 @@ var DistanceMetricToFnName = map[DistanceMetric]string{
 // VectorIndexInfo is the information of vector index of a column.
 type VectorIndexInfo struct {
 	// Dimension is the dimension of the vector.
-	Dimension uint64 `json:"dimension"` // Set to 0 when initially parsed from comment. Will be assigned to flen later.
+	Dimension uint64 `json:"dimension"`
 	// DistanceMetric is the distance metric used by the index.
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
@@ -76,6 +77,27 @@ type IndexInfo struct {
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+}
+
+// Hash64 implement HashEquals interface.
+func (index *IndexInfo) Hash64(h base.Hasher) {
+	h.HashInt64(index.ID)
+}
+
+// Equals implements HashEquals interface.
+func (index *IndexInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*IndexInfo)(nil)
+	index2, ok := other.(*IndexInfo)
+	if !ok {
+		return false
+	}
+	if index == nil {
+		return index2 == nil
+	}
+	if index2 == nil {
+		return false
+	}
+	return index.ID == index2.ID
 }
 
 // Clone clones IndexInfo.

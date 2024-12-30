@@ -201,7 +201,7 @@ func TestLargeColumn(t *testing.T) {
 	for _, rowTable := range rowTables {
 		for _, seg := range rowTable.segments {
 			require.True(t, len(seg.rawData) < maxRowTableSegmentByteSize*2)
-			require.True(t, len(seg.hashValues) < maxRowTableSegmentSize)
+			require.True(t, len(seg.hashValues) < int(maxRowTableSegmentSize))
 		}
 	}
 }

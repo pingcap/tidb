@@ -22,10 +22,12 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position
@@ -194,6 +196,27 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+}
+
+// Hash64 implement HashEquals interface.
+func (t *TableInfo) Hash64(h base.Hasher) {
+	h.HashInt64(t.ID)
+}
+
+// Equals implements HashEquals interface.
+func (t *TableInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*TableInfo)(nil)
+	t2, ok := other.(*TableInfo)
+	if !ok {
+		return false
+	}
+	if t == nil {
+		return t2 == nil
+	}
+	if t2 == nil {
+		return false
+	}
+	return t.ID == t2.ID
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -744,14 +767,19 @@ type PartitionInfo struct {
 	// like if there is a global index or going between non-partitioned
 	// and partitioned table, to make the data dropping / range delete
 	// optimized.
-	NewTableID int64 `json:"new_table_id"`
+	NewTableID int64 `json:"new_table_id,omitempty"`
 	// Set during ALTER TABLE ... PARTITION BY ...
 	// First as the new partition scheme, then in StateDeleteReorg as the old
-	DDLType    model.PartitionType `json:"ddl_type"`
-	DDLExpr    string              `json:"ddl_expr"`
-	DDLColumns []model.CIStr       `json:"ddl_columns"`
+	DDLType    model.PartitionType `json:"ddl_type,omitempty"`
+	DDLExpr    string              `json:"ddl_expr,omitempty"`
+	DDLColumns []model.CIStr       `json:"ddl_columns,omitempty"`
 	// For ActionAlterTablePartitioning, UPDATE INDEXES
-	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes"`
+	DDLUpdateIndexes []UpdateIndexInfo `json:"ddl_update_indexes,omitempty"`
+	// Simplified way to handle Global Index changes, instead of calculating
+	// it every time, keep track of the changes here.
+	// if index.ID exists in map, then it has changed, true for new copy,
+	// false for old copy (to be removed).
+	DDLChangedIndex map[int64]bool `json:"ddl_changed_index,omitempty"`
 }
 
 // Clone clones itself.
@@ -838,16 +866,6 @@ func (pi *PartitionInfo) GCPartitionStates() {
 	pi.States = newStates
 }
 
-// HasTruncatingPartitionID checks whether the pid is truncating.
-func (pi *PartitionInfo) HasTruncatingPartitionID(pid int64) bool {
-	for i := range pi.NewPartitionIDs {
-		if pi.NewPartitionIDs[i] == pid {
-			return true
-		}
-	}
-	return false
-}
-
 // ClearReorgIntermediateInfo remove intermediate information used during reorganize partition.
 func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLAction = ActionNone
@@ -856,6 +874,7 @@ func (pi *PartitionInfo) ClearReorgIntermediateInfo() {
 	pi.DDLExpr = ""
 	pi.DDLColumns = nil
 	pi.NewTableID = 0
+	pi.DDLChangedIndex = nil
 }
 
 // FindPartitionDefinitionByName finds PartitionDefinition by name.
@@ -1007,6 +1026,66 @@ func (pi *PartitionInfo) SetOriginalPartitionIDs() {
 	pi.OriginalPartitionIDsOrder = ids
 }
 
+// IDsInDDLToIgnore returns a list of IDs that the current
+// session should not see (may be duplicate errors on insert/update though)
+// For example during truncate or drop partition.
+func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
+	// TODO:
+	// Drop partition:
+	// TODO: Make similar changes as in Truncate Partition:
+	// Add a state blocking read and write in the partitions to be dropped,
+	// to avoid situations like https://github.com/pingcap/tidb/issues/55888
+	// Add partition:
+	// TODO: Add tests!
+	// Exchange Partition:
+	// Currently blocked for GlobalIndex
+	// Reorganize Partition:
+	// Nothing, since it will create a new copy of the global index.
+	// This is due to the global index needs to have two partitions for the same index key
+	// TODO: Should we extend the GlobalIndex to have multiple partitions?
+	// Maybe from PK/_tidb_rowid + Partition ID
+	// to PK/_tidb_rowid + Partition ID + Valid from Schema Version,
+	// with support for two entries?
+	// Then we could avoid having two copies of the same Global Index
+	// just for handling a single SchemaState.
+	// If so, could we then replace this?
+	switch pi.DDLAction {
+	case ActionTruncateTablePartition:
+		switch pi.DDLState {
+		case StateWriteOnly:
+			return pi.NewPartitionIDs
+		case StateDeleteOnly, StateDeleteReorganization:
+			if len(pi.DroppingDefinitions) == 0 {
+				return nil
+			}
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, definition := range pi.DroppingDefinitions {
+				ids = append(ids, definition.ID)
+			}
+			return ids
+		}
+	case ActionDropTablePartition:
+		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.DroppingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+	case ActionAddTablePartition:
+		// TODO: Add tests for ADD PARTITION multi-domain with Global Index!
+		if len(pi.AddingDefinitions) > 0 {
+			ids := make([]int64, 0, len(pi.DroppingDefinitions))
+			for _, def := range pi.AddingDefinitions {
+				ids = append(ids, def.ID)
+			}
+			return ids
+		}
+		// Not supporting Global Indexes: case ActionExchangeTablePartition
+	}
+	return nil
+}
+
 // PartitionState is the state of the partition.
 type PartitionState struct {
 	ID    int64       `json:"id"`
@@ -1023,7 +1102,7 @@ type PartitionDefinition struct {
 	Comment            string         `json:"comment,omitempty"`
 }
 
-// Clone clones ConstraintInfo.
+// Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = make([]string, len(ci.LessThan))
@@ -1242,8 +1321,12 @@ func (s WindowRepeatType) String() string {
 	}
 }
 
-// DefaultJobInterval sets the default interval between TTL jobs
-const DefaultJobInterval = time.Hour
+// DefaultTTLJobInterval is the default interval of TTL jobs.
+const DefaultTTLJobInterval = "24h"
+
+// OldDefaultTTLJobInterval is the default interval of TTL jobs in v8.5 and the previous versions.
+// It is used by some codes to keep compatible with the previous versions.
+const OldDefaultTTLJobInterval = "1h"
 
 // TTLInfo records the TTL config
 type TTLInfo struct {
@@ -1269,8 +1352,15 @@ func (t *TTLInfo) Clone() *TTLInfo {
 // Didn't set TTL_JOB_INTERVAL during upgrade and bootstrap because setting default value here is much simpler
 // and could avoid bugs blocking users from upgrading or bootstrapping the cluster.
 func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
 	if len(t.JobInterval) == 0 {
-		return DefaultJobInterval, nil
+		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
+		// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
+		// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
+		return duration.ParseDuration(OldDefaultTTLJobInterval)
 	}
 
 	return duration.ParseDuration(t.JobInterval)

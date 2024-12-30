@@ -55,6 +55,33 @@ func TestStmtSummaryIndexAdvisor(t *testing.T) {
 			"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\""))
 }
 
+func TestStmtSummaryIndexAdvisorNullSchema(t *testing.T) {
+	setupStmtSummary()
+	defer closeStmtSummary()
+	store := testkit.CreateMockStore(t)
+	tk := newTestKitWithRoot(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+
+	tk.MustQueryToErr(`recommend index run`) // no query
+
+	tk = testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery(`select a from test.t where a=1`) // schema_name in statement_summary is NULL
+
+	rs := tk.MustQuery(`recommend index run`).Sort().Rows()
+	require.Equal(t, rs[0][2], "idx_a")
+
+	tk.MustQuery(`select b from test.t where b=1`)
+	rs = tk.MustQuery(`recommend index run`).Sort().Rows()
+	require.Equal(t, rs[0][2], "idx_a")
+	require.Equal(t, rs[1][2], "idx_b")
+
+	tk.MustQuery(`select index_columns, index_details->'$.Reason' from mysql.index_advisor_results`).Check(
+		testkit.Rows("a \"Column [a] appear in Equal or Range Predicate clause(s) in query: select `a` from `test` . `t` where `a` = ?\"",
+			"b \"Column [b] appear in Equal or Range Predicate clause(s) in query: select `b` from `test` . `t` where `b` = ?\""))
+}
+
 func TestStmtSummaryTable(t *testing.T) {
 	setupStmtSummary()
 	defer closeStmtSummary()
@@ -285,59 +312,6 @@ func TestStmtSummaryTablePrivilege(t *testing.T) {
 	require.Equal(t, 2, len(result.Rows()))
 	result = tk1.MustQuery("select *	from information_schema.statements_summary_history	where digest_text like 'select * from `t`%'")
 	require.Equal(t, 2, len(result.Rows()))
-}
-
-func TestCapturePrivilege(t *testing.T) {
-	setupStmtSummary()
-	defer closeStmtSummary()
-
-	store := testkit.CreateMockStore(t)
-	tk := newTestKitWithRoot(t, store)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), key k(a))")
-	defer tk.MustExec("drop table if exists t")
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(a int, b varchar(10), key k(a))")
-	defer tk.MustExec("drop table if exists t1")
-
-	// Clear all statements.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-
-	// Create a new user to test statements summary table privilege
-	tk.MustExec("drop user if exists 'test_user'@'localhost'")
-	tk.MustExec("create user 'test_user'@'localhost'")
-	defer tk.MustExec("drop user if exists 'test_user'@'localhost'")
-	tk.MustExec("grant select on test.t1 to 'test_user'@'localhost'")
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("select * from t where a=1")
-	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-
-	tk1 := newTestKit(t, store)
-	tk1.Session().Auth(&auth.UserIdentity{
-		Username:     "test_user",
-		Hostname:     "localhost",
-		AuthUsername: "test_user",
-		AuthHostname: "localhost",
-	}, nil, nil, nil)
-
-	rows = tk1.MustQuery("show global bindings").Rows()
-	// Ordinary users can not see others' records
-	require.Len(t, rows, 0)
-	tk1.MustExec("select * from t1 where b=1")
-	tk1.MustExec("select * from t1 where b=1")
-	tk1.MustExec("admin capture bindings")
-	rows = tk1.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-
-	tk.MustExec("grant all on *.* to 'test_user'@'localhost'")
-	tk1.MustExec("admin capture bindings")
-	rows = tk1.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 2)
 }
 
 func TestStmtSummaryErrorCount(t *testing.T) {
@@ -657,7 +631,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		"select * from `t1` where `t1` . `a` > ( select ? from `t2` where `t2` . `b` < ? ) 3 3 query has uncorrelated sub-queries is un-cacheable",
 		"select database ( ) from `t1` 2 2 query has 'database' is un-cacheable"))
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		tk.MustExec(`execute st3`)
 		tk.MustExec(`execute st4`)
 	}
@@ -669,7 +643,7 @@ func TestPlanCacheUnqualified(t *testing.T) {
 		"select database ( ) from `t1` 102 102 query has 'database' is un-cacheable"))
 
 	tk.MustExec(`set @x2=123`)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk.MustExec(`execute st1 using @x1`)
 		tk.MustExec(`execute st1 using @x2`)
 	}

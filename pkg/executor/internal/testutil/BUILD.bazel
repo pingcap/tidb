@@ -24,7 +24,6 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/memory",
-        "//pkg/util/mock",
         "//pkg/util/serialization",
         "//pkg/util/stringutil",
     ],

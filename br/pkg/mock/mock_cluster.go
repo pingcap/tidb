@@ -92,7 +92,7 @@ func (mock *Cluster) Start() error {
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = "tikv"
+	cfg.Store = config.StoreTypeTiKV
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())

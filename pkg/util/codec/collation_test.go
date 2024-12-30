@@ -56,7 +56,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	buf2, err = HashGroupKey(time.Local, n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
 			require.Equal(t, buf2[i][j], buf1[i][j])
@@ -71,7 +71,7 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	buf2, err = HashGroupKey(time.Local, n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, len(buf2[i]), len(buf1[i]))
 		for j := range buf1 {
 			require.Equal(t, buf2[i][j], buf1[i][j])
@@ -88,7 +88,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	buf := make([]byte, 1)
 
 	tp.SetCollate("binary")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
 		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
@@ -99,7 +99,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	}
 
 	tp.SetCollate("utf8_general_ci")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
 		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
@@ -110,7 +110,7 @@ func TestHashChunkRowCollation(t *testing.T) {
 	}
 
 	tp.SetCollate("utf8_unicode_ci")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
 		require.NoError(t, HashChunkRow(typeCtx, h1, chk1.GetRow(i), tps, cols, buf))
@@ -134,7 +134,7 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NotEqual(t, h2s[i].Sum64(), h1s[i].Sum64())
 		h1s[i].Reset()
 		h2s[i].Reset()
@@ -143,14 +143,14 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	tp.SetCollate("utf8_general_ci")
 	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 
 	tp.SetCollate("utf8_unicode_ci")
 	require.NoError(t, HashChunkColumns(typeCtx, h1s, chk1, tp, 0, buf, hasNull))
 	require.NoError(t, HashChunkColumns(typeCtx, h2s, chk2, tp, 0, buf, hasNull))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 }

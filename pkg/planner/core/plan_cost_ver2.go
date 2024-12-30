@@ -103,25 +103,13 @@ func (p *PhysicalProjection) GetPlanCostVer2(taskType property.TaskType, option 
 	return p.PlanCostVer2, nil
 }
 
-// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
-// plan-cost = rows * log2(row-size) * scan-factor
-// log2(row-size) is from experiments.
-func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
-	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
-		return p.PlanCostVer2, nil
-	}
-
-	rows := getCardinality(p, option.CostFlag)
-	rowSize := math.Max(getAvgRowSize(p.StatsInfo(), p.schema.Columns), 2.0) // consider all index columns
-	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
-
-	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
-	p.PlanCostInit = true
-	return p.PlanCostVer2, nil
-}
-
 const (
-	// MinRowSize provides a minimum to avoid underestimation
+	// MinNumRows provides a minimum to avoid underestimation. As selectivity estimation approaches
+	// zero, all plan choices result in a low cost - making it difficult to differentiate plan choices.
+	// A low value of 1.0 here is used for most (non probe acceses) to reduce this risk.
+	MinNumRows = 1.0
+	// MinRowSize provides a minimum column length to ensure that any adjustment or calculation
+	// in costing does not go below this value. 2.0 is used as a reasonable lowest column length.
 	MinRowSize = 2.0
 	// TiFlashStartupRowPenalty applies a startup penalty for TiFlash scan to encourage TiKV usage for small scans
 	TiFlashStartupRowPenalty = 10000
@@ -132,12 +120,27 @@ const (
 // GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
 // plan-cost = rows * log2(row-size) * scan-factor
 // log2(row-size) is from experiments.
-func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
 	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
 		return p.PlanCostVer2, nil
 	}
 
 	rows := getCardinality(p, option.CostFlag)
+	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns) // consider all index columns
+	scanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
+
+	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
+	p.PlanCostInit = true
+	return p.PlanCostVer2, nil
+}
+
+// GetPlanCostVer2 returns the plan-cost of this sub-plan, which is:
+// plan-cost = rows * log2(row-size) * scan-factor
+// log2(row-size) is from experiments.
+func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *optimizetrace.PlanCostOption) (costusage.CostVer2, error) {
+	if p.PlanCostInit && !hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) {
+		return p.PlanCostVer2, nil
+	}
 
 	var columns []*expression.Column
 	if p.StoreType == kv.TiKV { // Assume all columns for TiKV
@@ -145,9 +148,13 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	} else { // TiFlash
 		columns = p.schema.Columns
 	}
+	rows := getCardinality(p, option.CostFlag)
 	rowSize := getAvgRowSize(p.StatsInfo(), columns)
-	// Ensure rowSize has a reasonable minimum value to avoid underestimation
-	rowSize = math.Max(rowSize, MinRowSize)
+	// Ensure rows and rowSize have a reasonable minimum value to avoid underestimation
+	if !p.isChildOfIndexLookUp {
+		rows = max(MinNumRows, rows)
+		rowSize = max(rowSize, MinRowSize)
+	}
 
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
@@ -155,30 +162,25 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else {
-		// Apply cost penalty for full scans that carry high risk of underestimation
-		sessionVars := p.SCtx().GetSessionVars()
-		allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
-		tblColHists := p.tblColHists
-
-		// preferRangeScan check here is same as in skylinePruning
-		preferRangeScanCondition := allowPreferRangeScan && (tblColHists.Pseudo || tblColHists.RealtimeCount < 1)
-		// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
-		hasHighModifyCount := tblColHists.ModifyCount > tblColHists.RealtimeCount
-		// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
-		hasLowEstimate := rows > 1 && int64(rows) < tblColHists.RealtimeCount && int64(rows) <= tblColHists.ModifyCount
-		var unsignedIntHandle bool
-		if p.Table.PKIsHandle {
-			if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-				unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			}
-		}
-		hasFullRangeScan := !p.isChildOfIndexLookUp && ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-
-		shouldApplyPenalty := hasFullRangeScan && (preferRangeScanCondition || hasHighModifyCount || hasLowEstimate)
-		if shouldApplyPenalty {
-			newRowCount := math.Min(MaxPenaltyRowCount, math.Max(float64(tblColHists.ModifyCount), float64(tblColHists.RealtimeCount)))
+	} else if !p.isChildOfIndexLookUp {
+		newRowCount := getTableScanPenalty(p, rows)
+		if newRowCount > 0 {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
+		}
+	}
+
+	if p.AnnIndexExtra != nil {
+		if p.AnnIndexExtra.PushDownQueryInfo == nil {
+			p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
+				return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
+			})
+		} else {
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, rows*defaultVer2Factors.ANNIndexStart.Value, func() string {
+				return fmt.Sprintf("ann-index-start(%v*%v)", rows, defaultVer2Factors.ANNIndexStart)
+			}))
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(p.AnnIndexExtra.PushDownQueryInfo.TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
+				return fmt.Sprintf("ann-index-topk(%v*%v)", p.AnnIndexExtra.PushDownQueryInfo.TopK, defaultVer2Factors.ANNIndexScanRow)
+			}))
 		}
 	}
 
@@ -220,7 +222,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 
 	rows := getCardinality(p.tablePlan, option.CostFlag)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.schema.Columns)
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.schema.Columns))
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().DistSQLScanConcurrency())
 	childType := property.CopSingleReadTaskType
@@ -380,8 +382,8 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 		return p.PlanCostVer2, nil
 	}
 
-	rows := math.Max(getCardinality(p.Children()[0], option.CostFlag), 1)
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
@@ -428,14 +430,14 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 		return p.PlanCostVer2, nil
 	}
 
-	rows := getCardinality(p.Children()[0], option.CostFlag)
+	rows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
 	n := max(1, float64(p.Count+p.Offset))
 	if n > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
 		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
 		n = min(n, rows)
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	rowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
@@ -484,9 +486,9 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 		return p.PlanCostVer2, nil
 	}
 
-	inputRows := getCardinality(p.Children()[0], option.CostFlag)
-	outputRows := getCardinality(p, option.CostFlag)
-	outputRowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
+	inputRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	outputRows := max(MinNumRows, getCardinality(p, option.CostFlag))
+	outputRowSize := max(MinRowSize, getAvgRowSize(p.StatsInfo(), p.Schema().Columns))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	concurrency := float64(p.SCtx().GetSessionVars().HashAggFinalConcurrency())
@@ -516,8 +518,8 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 		return p.PlanCostVer2, nil
 	}
 
-	leftRows := getCardinality(p.Children()[0], option.CostFlag)
-	rightRows := getCardinality(p.Children()[1], option.CostFlag)
+	leftRows := max(MinNumRows, getCardinality(p.Children()[0], option.CostFlag))
+	rightRows := max(MinNumRows, getCardinality(p.Children()[1], option.CostFlag))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 
 	filterCost := costusage.SumCostVer2(filterCostVer2(option, leftRows, p.LeftConditions, cpuFactor),
@@ -555,9 +557,9 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 		build, probe = probe, build
 		buildFilters, probeFilters = probeFilters, buildFilters
 	}
-	buildRows := getCardinality(build, option.CostFlag)
+	buildRows := max(MinNumRows, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
-	buildRowSize := getAvgRowSize(build.StatsInfo(), build.Schema().Columns)
+	buildRowSize := max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
 	tidbConcurrency := float64(p.Concurrency)
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -911,23 +913,85 @@ func doubleReadCostVer2(option *optimizetrace.PlanCostOption, numTasks float64, 
 		func() string { return fmt.Sprintf("doubleRead(tasks(%v)*%v)", numTasks, requestFactor) })
 }
 
+func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64) {
+	// Apply cost penalty for full scans that carry high risk of underestimation. Exclude those
+	// that are the child of an index scan or child is TableRangeScan
+	if len(p.rangeInfo) > 0 {
+		return float64(0)
+	}
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+	if !hasFullRangeScan {
+		return float64(0)
+	}
+
+	sessionVars := p.SCtx().GetSessionVars()
+	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
+	tblColHists := p.tblColHists
+	originalRows := int64(tblColHists.GetAnalyzeRowCount())
+
+	// hasUnreliableStats is a check for pseudo or zero stats
+	hasUnreliableStats := tblColHists.Pseudo || originalRows < 1
+	// hasHighModifyCount tracks the high risk of a tablescan where auto-analyze had not yet updated the table row count
+	hasHighModifyCount := tblColHists.ModifyCount > originalRows
+	// hasLowEstimate is a check to capture a unique customer case where modifyCount is used for tablescan estimate (but it not adequately understood why)
+	hasLowEstimate := rows > 1 && tblColHists.ModifyCount < originalRows && int64(rows) <= tblColHists.ModifyCount
+	// preferRangeScan check here is same as in skylinePruning
+	preferRangeScanCondition := allowPreferRangeScan && (hasUnreliableStats || hasHighModifyCount || hasLowEstimate)
+
+	// differentiate a FullTableScan from a partition level scan - so we shouldn't penalize these
+	hasPartitionScan := false
+	if p.PlanPartInfo != nil {
+		if len(p.PlanPartInfo.PruningConds) > 0 {
+			hasPartitionScan = true
+		}
+	}
+
+	// GetIndexForce assumes that the USE/FORCE index is to force a range scan, and thus the
+	// penalty is applied to a full table scan (not range scan). This may also penalize a
+	// full table scan where USE/FORCE was applied to the primary key.
+	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
+	shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
+	if shouldApplyPenalty {
+		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
+		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
+		// both, and it also applies to any full table scan in the query. Use "max" to get the minimum
+		// number of rows to add as a penalty to the table scan.
+		minRows := max(MaxPenaltyRowCount, rows)
+		if hasPartitionScan {
+			return minRows
+		}
+		// If it isn't a partitioned table - choose the max that includes ModifyCount
+		return max(minRows, float64(tblColHists.ModifyCount))
+	}
+	return float64(0)
+}
+
 // In Cost Ver2, we hide cost factors from users and deprecate SQL variables like `tidb_opt_scan_factor`.
 type costVer2Factors struct {
-	TiDBTemp      costusage.CostVer2Factor // operations on TiDB temporary table
-	TiKVScan      costusage.CostVer2Factor // per byte
-	TiKVDescScan  costusage.CostVer2Factor // per byte
-	TiFlashScan   costusage.CostVer2Factor // per byte
-	TiDBCPU       costusage.CostVer2Factor // per column or expression
-	TiKVCPU       costusage.CostVer2Factor // per column or expression
-	TiFlashCPU    costusage.CostVer2Factor // per column or expression
-	TiDB2KVNet    costusage.CostVer2Factor // per byte
-	TiDB2FlashNet costusage.CostVer2Factor // per byte
-	TiFlashMPPNet costusage.CostVer2Factor // per byte
-	TiDBMem       costusage.CostVer2Factor // per byte
-	TiKVMem       costusage.CostVer2Factor // per byte
-	TiFlashMem    costusage.CostVer2Factor // per byte
-	TiDBDisk      costusage.CostVer2Factor // per byte
-	TiDBRequest   costusage.CostVer2Factor // per net request
+	TiDBTemp        costusage.CostVer2Factor // operations on TiDB temporary table
+	TiKVScan        costusage.CostVer2Factor // per byte
+	TiKVDescScan    costusage.CostVer2Factor // per byte
+	TiFlashScan     costusage.CostVer2Factor // per byte
+	TiDBCPU         costusage.CostVer2Factor // per column or expression
+	TiKVCPU         costusage.CostVer2Factor // per column or expression
+	TiFlashCPU      costusage.CostVer2Factor // per column or expression
+	TiDB2KVNet      costusage.CostVer2Factor // per byte
+	TiDB2FlashNet   costusage.CostVer2Factor // per byte
+	TiFlashMPPNet   costusage.CostVer2Factor // per byte
+	TiDBMem         costusage.CostVer2Factor // per byte
+	TiKVMem         costusage.CostVer2Factor // per byte
+	TiFlashMem      costusage.CostVer2Factor // per byte
+	TiDBDisk        costusage.CostVer2Factor // per byte
+	TiDBRequest     costusage.CostVer2Factor // per net request
+	ANNIndexStart   costusage.CostVer2Factor // ANN index's warmup cost, related to row num.
+	ANNIndexScanRow costusage.CostVer2Factor // ANN index's scan cost, by row.
+	ANNIndexNoTopK  costusage.CostVer2Factor // special factor for ANN index without top-k: max uint64
 }
 
 func (c costVer2Factors) tolist() (l []costusage.CostVer2Factor) {
@@ -936,21 +1000,24 @@ func (c costVer2Factors) tolist() (l []costusage.CostVer2Factor) {
 }
 
 var defaultVer2Factors = costVer2Factors{
-	TiDBTemp:      costusage.CostVer2Factor{Name: "tidb_temp_table_factor", Value: 0.00},
-	TiKVScan:      costusage.CostVer2Factor{Name: "tikv_scan_factor", Value: 40.70},
-	TiKVDescScan:  costusage.CostVer2Factor{Name: "tikv_desc_scan_factor", Value: 61.05},
-	TiFlashScan:   costusage.CostVer2Factor{Name: "tiflash_scan_factor", Value: 11.60},
-	TiDBCPU:       costusage.CostVer2Factor{Name: "tidb_cpu_factor", Value: 49.90},
-	TiKVCPU:       costusage.CostVer2Factor{Name: "tikv_cpu_factor", Value: 49.90},
-	TiFlashCPU:    costusage.CostVer2Factor{Name: "tiflash_cpu_factor", Value: 2.40},
-	TiDB2KVNet:    costusage.CostVer2Factor{Name: "tidb_kv_net_factor", Value: 3.96},
-	TiDB2FlashNet: costusage.CostVer2Factor{Name: "tidb_flash_net_factor", Value: 2.20},
-	TiFlashMPPNet: costusage.CostVer2Factor{Name: "tiflash_mpp_net_factor", Value: 1.00},
-	TiDBMem:       costusage.CostVer2Factor{Name: "tidb_mem_factor", Value: 0.20},
-	TiKVMem:       costusage.CostVer2Factor{Name: "tikv_mem_factor", Value: 0.20},
-	TiFlashMem:    costusage.CostVer2Factor{Name: "tiflash_mem_factor", Value: 0.05},
-	TiDBDisk:      costusage.CostVer2Factor{Name: "tidb_disk_factor", Value: 200.00},
-	TiDBRequest:   costusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
+	TiDBTemp:        costusage.CostVer2Factor{Name: "tidb_temp_table_factor", Value: 0.00},
+	TiKVScan:        costusage.CostVer2Factor{Name: "tikv_scan_factor", Value: 40.70},
+	TiKVDescScan:    costusage.CostVer2Factor{Name: "tikv_desc_scan_factor", Value: 61.05},
+	TiFlashScan:     costusage.CostVer2Factor{Name: "tiflash_scan_factor", Value: 11.60},
+	TiDBCPU:         costusage.CostVer2Factor{Name: "tidb_cpu_factor", Value: 49.90},
+	TiKVCPU:         costusage.CostVer2Factor{Name: "tikv_cpu_factor", Value: 49.90},
+	TiFlashCPU:      costusage.CostVer2Factor{Name: "tiflash_cpu_factor", Value: 2.40},
+	TiDB2KVNet:      costusage.CostVer2Factor{Name: "tidb_kv_net_factor", Value: 3.96},
+	TiDB2FlashNet:   costusage.CostVer2Factor{Name: "tidb_flash_net_factor", Value: 2.20},
+	TiFlashMPPNet:   costusage.CostVer2Factor{Name: "tiflash_mpp_net_factor", Value: 1.00},
+	TiDBMem:         costusage.CostVer2Factor{Name: "tidb_mem_factor", Value: 0.20},
+	TiKVMem:         costusage.CostVer2Factor{Name: "tikv_mem_factor", Value: 0.20},
+	TiFlashMem:      costusage.CostVer2Factor{Name: "tiflash_mem_factor", Value: 0.05},
+	TiDBDisk:        costusage.CostVer2Factor{Name: "tidb_disk_factor", Value: 200.00},
+	TiDBRequest:     costusage.CostVer2Factor{Name: "tidb_request_factor", Value: 6000000.00},
+	ANNIndexStart:   costusage.CostVer2Factor{Name: "ann_index_start_factor", Value: 0.000144},
+	ANNIndexScanRow: costusage.CostVer2Factor{Name: "ann_index_scan_factor", Value: 1.65},
+	ANNIndexNoTopK:  costusage.CostVer2Factor{Name: "ann_index_no_topk_factor", Value: math.MaxUint64},
 }
 
 func getTaskCPUFactorVer2(_ base.PhysicalPlan, taskType property.TaskType) costusage.CostVer2Factor {

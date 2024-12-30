@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -113,16 +112,12 @@ func getStoreGlobalMinSafeTS(s kv.Storage) time.Time {
 
 // ValidateFlashbackTS validates that flashBackTS in range [gcSafePoint, currentTS).
 func ValidateFlashbackTS(ctx context.Context, sctx sessionctx.Context, flashBackTS uint64) error {
-	currentTS, err := sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
-	// If we fail to calculate currentTS from local time, fallback to get a timestamp from PD.
+	currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
 	if err != nil {
-		metrics.ValidateReadTSFromPDCount.Inc()
-		currentVer, err := sctx.GetStore().CurrentVersion(oracle.GlobalTxnScope)
-		if err != nil {
-			return errors.Errorf("fail to validate flashback timestamp: %v", err)
-		}
-		currentTS = currentVer.Ver
+		return errors.Errorf("fail to validate flashback timestamp: %v", err)
 	}
+	currentTS := currentVer.Ver
+
 	oracleFlashbackTS := oracle.GetTimeFromTS(flashBackTS)
 	if oracleFlashbackTS.After(oracle.GetTimeFromTS(currentTS)) {
 		return errors.Errorf("cannot set flashback timestamp to future time")
@@ -712,7 +707,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	switch job.SchemaState {
 	// Stage 1, check and set FlashbackClusterJobID, and update job args.
 	case model.StateNone:
-		if err = savePDSchedule(w.ctx, args); err != nil {
+		if err = savePDSchedule(w.workCtx, args); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
@@ -746,17 +741,17 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 		return ver, nil
 	// Stage 2, check flashbackTS, close GC and PD schedule, get flashback key ranges.
 	case model.StateDeleteOnly:
-		if err = checkAndSetFlashbackClusterInfo(w.ctx, sess, jobCtx.store, jobCtx.metaMut, job, args.FlashbackTS); err != nil {
+		if err = checkAndSetFlashbackClusterInfo(w.workCtx, sess, jobCtx.store, jobCtx.metaMut, job, args.FlashbackTS); err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
 		// We should get startTS here to avoid lost startTS when TiDB crashed during send prepare flashback RPC.
-		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		args.StartTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			job.State = model.JobStateCancelled
 			return ver, errors.Trace(err)
 		}
-		keyRanges, err := getFlashbackKeyRanges(w.ctx, sess, args.FlashbackTS)
+		keyRanges, err := getFlashbackKeyRanges(w.workCtx, sess, args.FlashbackTS)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -779,10 +774,10 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 			return updateSchemaVersion(jobCtx, job)
 		}
 		// Split region by keyRanges, make sure no unrelated key ranges be locked.
-		splitRegionsByKeyRanges(w.ctx, jobCtx.store, args.FlashbackKeyRanges)
+		splitRegionsByKeyRanges(w.workCtx, jobCtx.store, args.FlashbackKeyRanges)
 		totalRegions.Store(0)
 		for _, r := range args.FlashbackKeyRanges {
-			if err = flashbackToVersion(w.ctx, jobCtx.store,
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					stats, err := SendPrepareFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), args.FlashbackTS, args.StartTS, r)
 					totalRegions.Add(uint64(stats.CompletedRegions))
@@ -795,7 +790,7 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 		args.LockedRegionCnt = totalRegions.Load()
 
 		// We should get commitTS here to avoid lost commitTS when TiDB crashed during send flashback RPC.
-		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.ctx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+		args.CommitTS, err = jobCtx.store.GetOracle().GetTimestamp(w.workCtx, &oracle.Option{TxnScope: oracle.GlobalTxnScope})
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -806,14 +801,17 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 	case model.StateWriteReorganization:
 		// TODO: Support flashback in unistore.
 		if inFlashbackTest {
-			asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job)
+			err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, noSubJob, w.sess)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 			job.State = model.JobStateDone
 			job.SchemaState = model.StatePublic
 			return ver, nil
 		}
 
 		for _, r := range args.FlashbackKeyRanges {
-			if err = flashbackToVersion(w.ctx, jobCtx.store,
+			if err = flashbackToVersion(w.workCtx, jobCtx.store,
 				func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, jobCtx.store.(tikv.Storage), args.FlashbackTS, args.StartTS, args.CommitTS, r)
@@ -828,8 +826,11 @@ func (w *worker) onFlashbackCluster(jobCtx *jobContext, job *model.Job) (ver int
 				return ver, errors.Trace(err)
 			}
 		}
+		err = asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 
-		asyncNotifyEvent(jobCtx, notifier.NewFlashbackClusterEvent(), job)
 		job.State = model.JobStateDone
 		job.SchemaState = model.StatePublic
 		return updateSchemaVersion(jobCtx, job)
@@ -854,7 +855,7 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 	}
 	defer w.sessPool.Put(sess)
 
-	err = kv.RunInNewTxn(w.ctx, w.store, true, func(context.Context, kv.Transaction) error {
+	err = kv.RunInNewTxn(w.workCtx, w.store, true, func(context.Context, kv.Transaction) error {
 		if err = recoverPDSchedule(w.ctx, args.PDScheduleValue); err != nil {
 			return errors.Trace(err)
 		}
@@ -865,18 +866,18 @@ func finishFlashbackCluster(w *worker, job *model.Job) error {
 			}
 		}
 
-		if err = setGlobalSysVarFromBool(w.ctx, sess, variable.TiDBSuperReadOnly, args.SuperReadOnly); err != nil {
+		if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBSuperReadOnly, args.SuperReadOnly); err != nil {
 			return errors.Trace(err)
 		}
 
 		if job.IsCancelled() {
 			// only restore `tidb_ttl_job_enable` when flashback failed
-			if err = setGlobalSysVarFromBool(w.ctx, sess, variable.TiDBTTLJobEnable, args.EnableTTLJob); err != nil {
+			if err = setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBTTLJobEnable, args.EnableTTLJob); err != nil {
 				return errors.Trace(err)
 			}
 		}
 
-		if err := setGlobalSysVarFromBool(w.ctx, sess, variable.TiDBEnableAutoAnalyze, args.EnableAutoAnalyze); err != nil {
+		if err := setGlobalSysVarFromBool(w.workCtx, sess, variable.TiDBEnableAutoAnalyze, args.EnableAutoAnalyze); err != nil {
 			return errors.Trace(err)
 		}
 

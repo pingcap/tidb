@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -289,7 +289,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err := m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName, tblName2}, tableNames)
-	tables, err := m.ListTables(1)
+	tables, err := m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo, tbInfo2}, tables)
 	{
@@ -327,7 +327,7 @@ func TestMeta(t *testing.T) {
 	tableNames, err = m.ListSimpleTables(1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableNameInfo{tblName}, tableNames)
-	tables, err = m.ListTables(1)
+	tables, err = m.ListTables(context.Background(), 1)
 	require.NoError(t, err)
 	require.Equal(t, []*model.TableInfo{tbInfo}, tables)
 	{
@@ -661,6 +661,7 @@ func TestCreateMySQLDatabase(t *testing.T) {
 func TestIsTableInfoMustLoad(t *testing.T) {
 	tableInfo := &model.TableInfo{
 		TTLInfo: &model.TTLInfo{IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitDay), JobInterval: "1h"},
+		State:   model.StatePublic,
 	}
 	b, err := json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -668,6 +669,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1},
+		State:          model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -675,6 +677,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		PlacementPolicyRef: &model.PolicyRefInfo{ID: 1},
+		State:              model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -682,13 +685,15 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		Partition: &model.PartitionInfo{Expr: "a"},
+		State:     model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		Lock: &model.TableLockInfo{State: model.TableLockStatePreLock},
+		Lock:  &model.TableLockInfo{State: model.TableLockStatePreLock},
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -696,6 +701,7 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		ForeignKeys: []*model.FKInfo{{ID: 1}},
+		State:       model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -703,13 +709,22 @@ func TestIsTableInfoMustLoad(t *testing.T) {
 
 	tableInfo = &model.TableInfo{
 		TempTableType: model.TempTableGlobal,
+		State:         model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
 	require.True(t, meta.IsTableInfoMustLoad(b))
 
 	tableInfo = &model.TableInfo{
-		ID: 123,
+		ID:    123,
+		State: model.StatePublic,
+	}
+	b, err = json.Marshal(tableInfo)
+	require.NoError(t, err)
+	require.False(t, meta.IsTableInfoMustLoad(b))
+
+	tableInfo = &model.TableInfo{
+		State: model.StatePublic,
 	}
 	b, err = json.Marshal(tableInfo)
 	require.NoError(t, err)
@@ -977,27 +992,27 @@ func TestInfoSchemaV2SpecialAttributeCorrectnessAfterBootstrap(t *testing.T) {
 	defer dom.Close()
 
 	// verify partition info correctness
-	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PartitionAttribute)
+	tblInfoRes := dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PartitionAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Partition, tblInfoRes[0].TableInfos[0].Partition)
 	// foreign key info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.ForeignKeysAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.ForeignKeysAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.ForeignKeys, tblInfoRes[0].TableInfos[0].ForeignKeys)
 	// tiflash replica info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TiFlashReplica, tblInfoRes[0].TableInfos[0].TiFlashReplica)
 	// lock info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TableLockAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TableLockAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.Lock, tblInfoRes[0].TableInfos[0].Lock)
 	// placement policy
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.PlacementPolicyAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.PlacementPolicyAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.PlacementPolicyRef, tblInfoRes[0].TableInfos[0].PlacementPolicyRef)
 	// ttl info
-	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschema.TTLAttribute)
+	tblInfoRes = dom.InfoSchema().ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
 	require.Equal(t, len(tblInfoRes[0].TableInfos), 1)
 	require.Equal(t, tblInfo.TTLInfo, tblInfoRes[0].TableInfos[0].TTLInfo)
 }

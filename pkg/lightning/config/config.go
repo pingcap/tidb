@@ -105,7 +105,7 @@ const (
 )
 
 var (
-	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs"}
+	supportedStorageTypes = []string{"file", "local", "s3", "noop", "gcs", "gs", "azure", "azblob"}
 
 	defaultFilter = []string{
 		"*.*",

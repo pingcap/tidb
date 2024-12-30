@@ -849,12 +849,12 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 		return nil, err
 	}
 	// Find the identity of the user based on username and peer host.
-	identity, err := cc.ctx.MatchIdentity(cc.user, host)
+	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
 	if err != nil {
 		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
 	}
 	// Get the plugin for the identity.
-	userplugin, err := cc.ctx.AuthPluginForUser(identity)
+	userplugin, err := cc.ctx.AuthPluginForUser(ctx, identity)
 	if err != nil {
 		logutil.Logger(ctx).Warn("Failed to get authentication method for user",
 			zap.String("user", cc.user), zap.String("host", host))
@@ -1390,7 +1390,10 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		return cc.writeStats(ctx)
 	// ComProcessInfo, ComConnect, ComProcessKill, ComDebug
 	case mysql.ComPing:
-		return cc.writeOK(ctx)
+		if cc.server.health.Load() {
+			return cc.writeOK(ctx)
+		}
+		return servererr.ErrServerShutdown
 	case mysql.ComChangeUser:
 		return cc.handleChangeUser(ctx, data)
 	// ComBinlogDump, ComTableDump, ComConnectOut, ComRegisterSlave
@@ -2547,7 +2550,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 		return err
 	}
 	cc.SetCtx(tidbCtx)
-	if !cc.ctx.AuthWithoutVerification(user) {
+	if !cc.ctx.AuthWithoutVerification(ctx, user) {
 		return errors.New("Could not reset connection")
 	}
 	if cc.dbname != "" { // Restore the current DB

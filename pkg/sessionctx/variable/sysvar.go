@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -782,6 +783,23 @@ var defaultSysVars = []*SysVar{
 		SetDDLReorgBatchSize(int32(tidbOptPositiveInt32(val, DefTiDBDDLReorgBatchSize)))
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLReorgMaxWriteSpeed, Value: strconv.Itoa(DefTiDBDDLReorgMaxWriteSpeed), Type: TypeStr,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			i64, err := units.RAMInBytes(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if i64 < 0 || i64 > units.PiB {
+				// Here we limit the max value to 1 PiB instead of math.MaxInt64, since:
+				// 1. it is large enough
+				// 2. units.RAMInBytes would first cast the size to a float, and may lose precision when the size is too large
+				return fmt.Errorf("invalid value for '%d', it should be within [%d, %d]", i64, 0, units.PiB)
+			}
+			DDLReorgMaxWriteSpeed.Store(i64)
+			return nil
+		}, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+			return strconv.FormatInt(DDLReorgMaxWriteSpeed.Load(), 10), nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBDDLErrorCountLimit, Value: strconv.Itoa(DefTiDBDDLErrorCountLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt64, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		SetDDLErrorCountLimit(TidbOptInt64(val, DefTiDBDDLErrorCountLimit))
 		return nil
@@ -800,10 +818,11 @@ var defaultSysVars = []*SysVar{
 			return vars.ScatterRegion, nil
 		},
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
-			if normalizedValue != ScatterOff && normalizedValue != ScatterTable && normalizedValue != ScatterGlobal {
-				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", normalizedValue, ScatterOff, ScatterTable, ScatterGlobal)
+			lowerVal := strings.ToLower(normalizedValue)
+			if lowerVal != ScatterOff && lowerVal != ScatterTable && lowerVal != ScatterGlobal {
+				return "", fmt.Errorf("invalid value for '%s', it should be either '%s', '%s' or '%s'", lowerVal, ScatterOff, ScatterTable, ScatterGlobal)
 			}
-			return normalizedValue, nil
+			return lowerVal, nil
 		},
 	},
 	{Scope: ScopeGlobal, Name: TiDBEnableStmtSummary, Value: BoolToOnOff(DefTiDBEnableStmtSummary), Type: TypeBool, AllowEmpty: true,
@@ -891,7 +910,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: strconv.Itoa(DefTiDBGOGCMaxValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			maxValue := TidbOptInt64(val, DefTiDBGOGCMaxValue)
 			gctuner.SetMaxGCPercent(uint32(maxValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
@@ -908,7 +927,7 @@ var defaultSysVars = []*SysVar{
 			return origin, nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMinValue, Value: strconv.Itoa(DefTiDBGOGCMinValue),
-		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		Type: TypeInt, MinValue: 10, MaxValue: math.MaxInt32, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			minValue := TidbOptInt64(val, DefTiDBGOGCMinValue)
 			gctuner.SetMinGCPercent(uint32(minValue))
 			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
@@ -1400,6 +1419,9 @@ var defaultSysVars = []*SysVar{
 			v, str := parseByteSize(val)
 			if str == "" || v < 0 {
 				return errors.Errorf("invalid tidb_instance_plan_cache_max_mem_size value %s", val)
+			}
+			if v < MinTiDBInstancePlanCacheMemSize {
+				return errors.Errorf("tidb_instance_plan_cache_max_mem_size should be at least 100MiB")
 			}
 			InstancePlanCacheMaxMemSize.Store(int64(v))
 			return nil
@@ -2394,6 +2416,9 @@ var defaultSysVars = []*SysVar{
 		return s.PartitionPruneMode.Load(), nil
 	}, SetSession: func(s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
@@ -2402,6 +2427,9 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
+		if PartitionPruneMode(newMode) == Static {
+			s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("static prune mode is deprecated and will be removed in the future release."))
+		}
 		if PartitionPruneMode(newMode) == Dynamic {
 			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 		}
@@ -3426,7 +3454,7 @@ var defaultSysVars = []*SysVar{
 func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	switch varName {
 	case TiDBEnableAsyncCommit, TiDBEnable1PC:
-		if config.GetGlobalConfig().Store == "tikv" {
+		if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
 			varVal = On
 		}
 	case TiDBMemOOMAction:
@@ -3610,8 +3638,6 @@ const (
 	SuperReadOnly = "super_read_only"
 	// SQLNotes is the name for 'sql_notes' system variable.
 	SQLNotes = "sql_notes"
-	// QueryCacheType is the name for 'query_cache_type' system variable.
-	QueryCacheType = "query_cache_type"
 	// SlaveCompressedProtocol is the name for 'slave_compressed_protocol' system variable.
 	SlaveCompressedProtocol = "slave_compressed_protocol"
 	// BinlogRowQueryLogEvents is the name for 'binlog_rows_query_log_events' system variable.
@@ -3622,8 +3648,6 @@ const (
 	LogSlowAdminStatements = "log_slow_admin_statements"
 	// LogQueriesNotUsingIndexes is the name for 'log_queries_not_using_indexes' system variable.
 	LogQueriesNotUsingIndexes = "log_queries_not_using_indexes"
-	// QueryCacheWlockInvalidate is the name for 'query_cache_wlock_invalidate' system variable.
-	QueryCacheWlockInvalidate = "query_cache_wlock_invalidate"
 	// SQLAutoIsNull is the name for 'sql_auto_is_null' system variable.
 	SQLAutoIsNull = "sql_auto_is_null"
 	// RelayLogPurge is the name for 'relay_log_purge' system variable.
@@ -3682,8 +3706,6 @@ const (
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
 	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
-	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
-	InnodbSupportXA = "innodb_support_xa"
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
 	InnodbOptimizeFullTextOnly = "innodb_optimize_fulltext_only"
 	// InnodbStatusOutputLocks is the name for 'innodb_status_output_locks' system variable.
@@ -3712,8 +3734,6 @@ const (
 	InnodbStatusOutput = "innodb_status_output"
 	// NetBufferLength is the name for 'net_buffer_length' system variable.
 	NetBufferLength = "net_buffer_length"
-	// QueryCacheSize is the name of 'query_cache_size' system variable.
-	QueryCacheSize = "query_cache_size"
 	// TxReadOnly is the name of 'tx_read_only' system variable.
 	TxReadOnly = "tx_read_only"
 	// TransactionReadOnly is the name of 'transaction_read_only' system variable.

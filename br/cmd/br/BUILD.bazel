@@ -37,7 +37,6 @@ go_library(
         "//pkg/util",
         "//pkg/util/gctuner",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "//pkg/util/redact",

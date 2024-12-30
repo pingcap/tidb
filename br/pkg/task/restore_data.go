@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -127,7 +127,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			}
 			return nil
 		},
-		utils.NewPDReqBackofferExt(),
+		utils.NewConservativePDBackoffStrategy(),
 	)
 	restoreNumStores := len(allStores)
 	if restoreNumStores != numStores {
@@ -181,7 +181,7 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 
 	expectTiFlashStoreCount := uint64(0)
 	needTiFlash := false
-	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschema.TiFlashAttribute)
+	tableInfoRes := info.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
 	for _, s := range tableInfoRes {
 		for _, t := range s.TableInfos {
 			if t.TiFlashReplica != nil {
@@ -214,10 +214,7 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 			return errors.New("tiflash store count is less than expected")
 		}
 		return nil
-	}, &waitTiFlashBackoffer{
-		Attempts:    30,
-		BaseBackoff: 4 * time.Second,
-	})
+	}, utils.NewBackoffRetryAllErrorStrategy(30, 4*time.Second, 32*time.Second))
 	if err != nil {
 		return err
 	}
@@ -237,28 +234,4 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 		}
 		return nil
 	})
-}
-
-type waitTiFlashBackoffer struct {
-	Attempts    int
-	BaseBackoff time.Duration
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
-	bo := b.BaseBackoff
-	b.Attempts--
-	if b.Attempts == 0 {
-		return 0
-	}
-	b.BaseBackoff *= 2
-	if b.BaseBackoff > 32*time.Second {
-		b.BaseBackoff = 32 * time.Second
-	}
-	return bo
-}
-
-// Attempt returns the remain attempt times
-func (b *waitTiFlashBackoffer) Attempt() int {
-	return b.Attempts
 }

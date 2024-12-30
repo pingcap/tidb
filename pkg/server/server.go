@@ -839,7 +839,8 @@ func (s *Server) getUserProcessList() map[uint64]*util.ProcessInfo {
 	return rs
 }
 
-// ShowTxnList shows all txn info for displaying in `TIDB_TRX`
+// ShowTxnList shows all txn info for displaying in `TIDB_TRX`.
+// Internal sessions are not taken into consideration.
 func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
@@ -847,7 +848,7 @@ func (s *Server) ShowTxnList() []*txninfo.TxnInfo {
 	for _, client := range s.clients {
 		if client.ctx.Session != nil {
 			info := client.ctx.Session.TxnInfo()
-			if info != nil {
+			if info != nil && info.ProcessInfo != nil {
 				rs = append(rs, info)
 			}
 		}

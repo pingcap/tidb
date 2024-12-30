@@ -470,6 +470,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
 
+	tk.MustExec("set global tidb_gogc_tuner_min_value=300")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set global tidb_gogc_tuner_max_value=600")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set global tidb_gogc_tuner_max_value=600000000000000000")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gogc_tuner_max_value value: '600000000000000000'"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustExec("set @@global.tidb_dml_batch_size = 200")                    // now permitted due to TiDB #19809
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
@@ -1345,13 +1351,11 @@ func TestValidateSetVar(t *testing.T) {
 	err = tk.ExecToErr("set @@global.innodb_ft_enable_stopword=2")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongValueForVar), fmt.Sprintf("err %v", err))
 
-	tk.MustExec("set @@query_cache_type=0")
-	result = tk.MustQuery("select @@query_cache_type;")
-	result.Check(testkit.Rows("OFF"))
+	tk.MustContainErrMsg("set @@query_cache_type=0", "[variable:1193]Unknown system variable 'query_cache_type'")
+	tk.MustContainErrMsg("select @@query_cache_type;", "[variable:1193]Unknown system variable 'query_cache_type'")
 
-	tk.MustExec("set @@query_cache_type=2")
-	result = tk.MustQuery("select @@query_cache_type;")
-	result.Check(testkit.Rows("DEMAND"))
+	tk.MustContainErrMsg("set @@query_cache_type=2", "[variable:1193]Unknown system variable 'query_cache_type'")
+	tk.MustContainErrMsg("select @@query_cache_type;", "[variable:1193]Unknown system variable 'query_cache_type'")
 
 	tk.MustExec("set @@global.sync_binlog=-1")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect sync_binlog value: '-1'"))

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -176,14 +177,15 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil {
+	if e.indexUsageReporter != nil && e.stats != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
 		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
 		// percentage according to the row counts for the whole table.
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, kvReqTotal, rows)
 		}
 	}
 	e.inited = 0
@@ -235,6 +237,12 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var indexKeys []kv.Key
 	var err error
 	batchGetter := e.batchGetter
+	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		defer cancel()
+	}
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows

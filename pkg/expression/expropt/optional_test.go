@@ -267,6 +267,21 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 				isOwner = false
 				require.False(t, assertReaderFuncValue(t, ctx, r.IsDDLOwner))
 			}
+		case exprctx.OptPropPrivilegeChecker:
+			type mockPrivCheckerTp struct {
+				PrivilegeChecker
+			}
+			mockPrivChecker := &mockPrivCheckerTp{}
+			p = PrivilegeCheckerProvider(func() PrivilegeChecker { return mockPrivChecker })
+			r := PrivilegeCheckerPropReader{}
+			reader = r
+			verifyNoProvider = func(ctx exprctx.EvalContext) {
+				assertReaderFuncReturnErr(t, ctx, r.GetPrivilegeChecker)
+			}
+			verifyProvider = func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider) {
+				require.Same(t, mockPrivChecker, assertReaderFuncValue(t, ctx, r.GetPrivilegeChecker))
+				require.Same(t, mockPrivChecker, val.(PrivilegeCheckerProvider)())
+			}
 		default:
 			require.Fail(t, "unexpected optional property key")
 		}

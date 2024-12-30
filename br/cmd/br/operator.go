@@ -32,6 +32,9 @@ func newOperatorCommand() *cobra.Command {
 	cmd.AddCommand(newPrepareForSnapshotBackupCommand(
 		"prepare-for-snapshot-backup",
 		"pause gc, schedulers and importing until the program exits, for snapshot backup."))
+	cmd.AddCommand(newBase64ifyCommand())
+	cmd.AddCommand(newListMigrationsCommand())
+	cmd.AddCommand(newMigrateToCommand())
 	return cmd
 }
 
@@ -50,5 +53,59 @@ func newPrepareForSnapshotBackupCommand(use string, short string) *cobra.Command
 		},
 	}
 	operator.DefineFlagsForPrepareSnapBackup(cmd.Flags())
+	return cmd
+}
+
+func newBase64ifyCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "base64ify [-r] -s <storage>",
+		Short: "generate base64 for a storage. this may be passed to `tikv-ctl compact-log-backup`.",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.Base64ifyConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.Base64ify(ctx, cfg)
+		},
+	}
+	operator.DefineFlagsForBase64ifyConfig(cmd.Flags())
+	return cmd
+}
+
+func newListMigrationsCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list-migrations",
+		Short: "list all migrations",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.ListMigrationConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunListMigrations(ctx, cfg)
+		},
+	}
+	operator.DefineFlagsForListMigrationConfig(cmd.Flags())
+	return cmd
+}
+
+func newMigrateToCommand() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "migrate-to",
+		Short: "migrate to a specific version",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg := operator.MigrateToConfig{}
+			if err := cfg.ParseFromFlags(cmd.Flags()); err != nil {
+				return err
+			}
+			ctx := GetDefaultContext()
+			return operator.RunMigrateTo(ctx, cfg)
+		},
+	}
+	operator.DefineFlagsForMigrateToConfig(cmd.Flags())
 	return cmd
 }

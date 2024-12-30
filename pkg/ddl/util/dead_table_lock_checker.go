@@ -83,24 +83,19 @@ func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, is infos
 		return nil, err
 	}
 	deadLockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
-	for _, schema := range is.AllSchemas() {
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		default:
-		}
-		tblInfos, err := is.SchemaTableInfos(ctx, schema.Name)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		for _, tbl := range tblInfos {
+
+	tbls := is.ListTablesWithSpecialAttribute(func(t *model.TableInfo) bool {
+		return t.Lock != nil
+	})
+	for _, db := range tbls {
+		for _, tbl := range db.TableInfos {
 			if tbl.Lock == nil {
 				continue
 			}
 			for _, se := range tbl.Lock.Sessions {
 				if _, ok := aliveServers[se.ServerID]; !ok {
 					deadLockTables[se] = append(deadLockTables[se], model.TableLockTpInfo{
-						SchemaID: schema.ID,
+						SchemaID: tbl.DBID,
 						TableID:  tbl.ID,
 						Tp:       tbl.Lock.Tp,
 					})

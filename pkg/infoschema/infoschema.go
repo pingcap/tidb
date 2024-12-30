@@ -292,7 +292,14 @@ func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo
 	if tableInfo == nil {
 		return nil, false
 	}
-	return is.SchemaByID(tableInfo.DBID)
+	if tableInfo.DBID > 0 {
+		return is.SchemaByID(tableInfo.DBID)
+	}
+	tbl, ok := is.TableByID(stdctx.Background(), tableInfo.ID)
+	if !ok {
+		return nil, false
+	}
+	return is.SchemaByID(tbl.Meta().DBID)
 }
 
 func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok bool) {
@@ -364,15 +371,10 @@ func (is *infoSchema) SchemaSimpleTableInfos(ctx stdctx.Context, schema pmodel.C
 	return ret, nil
 }
 
-type tableInfoResult struct {
-	DBName     pmodel.CIStr
-	TableInfos []*model.TableInfo
-}
-
-func (is *infoSchema) ListTablesWithSpecialAttribute(filter specialAttributeFilter) []tableInfoResult {
-	ret := make([]tableInfoResult, 0, 10)
+func (is *infoSchema) ListTablesWithSpecialAttribute(filter context.SpecialAttributeFilter) []context.TableInfoResult {
+	ret := make([]context.TableInfoResult, 0, 10)
 	for _, dbName := range is.AllSchemaNames() {
-		res := tableInfoResult{DBName: dbName}
+		res := context.TableInfoResult{DBName: dbName}
 		tblInfos, err := is.SchemaTableInfos(stdctx.Background(), dbName)
 		terror.Log(err)
 		for _, tblInfo := range tblInfos {

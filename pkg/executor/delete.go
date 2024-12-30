@@ -50,6 +50,8 @@ type DeleteExec struct {
 	fkChecks map[int64][]*FKCheckExec
 	// fkCascades contains the foreign key cascade. the map is tableID -> []*FKCascadeExec
 	fkCascades map[int64][]*FKCascadeExec
+
+	ignoreErr bool
 }
 
 // Next implements the Executor Next interface.
@@ -100,6 +102,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		return errors.New("schema columns and fields mismatch")
 	}
 	memUsageOfChk := int64(0)
+
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
 		iter := chunk.NewIterator4Chunk(chk)
@@ -128,6 +131,18 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 				datumRow = append(datumRow, datum)
 			}
 
+			if e.ignoreErr {
+				ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[tbl.Meta().ID], datumRow)
+				if err != nil {
+					return err
+				}
+
+				// meets an error, skip this row.
+				if ignored {
+					datumRow = datumRow[:0]
+					continue
+				}
+			}
 			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
 			if err != nil {
 				return err
@@ -223,13 +238,26 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 			}
 		}
 	}
-	return e.removeRowsInTblRowMap(tblRowMap)
+	return e.removeRowsInTblRowMap(ctx, tblRowMap)
 }
 
-func (e *DeleteExec) removeRowsInTblRowMap(tblRowMap tableRowMapType) error {
+func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
 	for id, rowMap := range tblRowMap {
 		var err error
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
+			if e.ignoreErr {
+				var ignored bool
+				ignored, err = checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks[id], val.handleVal)
+				if err != nil {
+					return false
+				}
+
+				// meets an error, skip this row.
+				if ignored {
+					return true
+				}
+			}
+
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
 			return err == nil
 		})
@@ -251,7 +279,7 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 		return err
 	}
 	tid := t.Meta().ID
-	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid])
+	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid], e.ignoreErr)
 	if err != nil {
 		return err
 	}
@@ -259,12 +287,14 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	return nil
 }
 
-func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec) error {
+func onRemoveRowForFK(ctx sessionctx.Context, data []types.Datum, fkChecks []*FKCheckExec, fkCascades []*FKCascadeExec, ignore bool) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	for _, fkc := range fkChecks {
-		err := fkc.deleteRowNeedToCheck(sc, data)
-		if err != nil {
-			return err
+	if !ignore {
+		for _, fkc := range fkChecks {
+			err := fkc.deleteRowNeedToCheck(sc, data)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	for _, fkc := range fkCascades {

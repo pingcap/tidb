@@ -31,16 +31,27 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util/test"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	mockexec "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/mock/gomock"
 )
+
+// WrapAsSCtx wraps the MockRestrictedSQLExecutor into sessionctx.Context.
+func WrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
+	sctx := mockexec.NewContext()
+	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
+	return sctx
+}
 
 func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -52,7 +63,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
 	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
@@ -71,7 +82,7 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	// Lock the table.
@@ -87,6 +98,8 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), is))
 	// Try again, it should analyze the table.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
@@ -100,7 +113,7 @@ func TestAutoAnalyzeWithPredicateColumns(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1)")
 	tk.MustQuery("select * from t where a > 0").Check(testkit.Rows("1 1"))
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -149,7 +162,7 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1)")
 	h := dom.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
@@ -170,7 +183,9 @@ func disableAutoAnalyzeCase(t *testing.T, tk *testkit.TestKit, dom *domain.Domai
 	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
 	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
 	tk.MustExec("alter table t add index ia(a)")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
+	require.Eventually(t, func() bool {
+		return dom.StatsHandle().HandleAutoAnalyze()
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
@@ -186,7 +201,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := do.InfoSchema()
@@ -229,7 +244,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Add a new table after the analyze version set to 2.
 	tk.MustExec("create table tt(a int, index idx(a))")
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
@@ -492,7 +507,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
 		gomock.Any(),
@@ -500,13 +515,13 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]any{[]string{"1"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 		map[uint64]struct{}{
 			3: {},
 			4: {},
@@ -517,21 +532,21 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]any{[]string{"1", "3"}},
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
 	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 		map[uint64]struct{}{},
 	)
 	require.NoError(t, err)
@@ -574,20 +589,20 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	// Set up the mock function to return the row
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.SelectAnalyzeJobsSQL,
 		gomock.Any(),
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
-		statsutil.UseCurrentSessionOpt,
+		util.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]any{[]string{"2"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
-		mock.WrapAsSCtx(exec),
+		WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
 }
@@ -618,4 +633,48 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 			ttEnd,
 		),
 	)
+}
+
+const tiflashReplicaLease = 600 * time.Millisecond
+
+func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
+	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
+	tk.MustExec("analyze table t all columns")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tableInfo)
+	require.True(t, statsTbl.LastAnalyzeVersion > 0)
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("alter table t add index idx(a)")
+	// Normal Index can trigger auto analyze.
+	require.True(t, h.HandleAutoAnalyze())
+	tk.MustExec("alter table t set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+	// Vector Index can not trigger auto analyze.
+	require.False(t, h.HandleAutoAnalyze())
 }

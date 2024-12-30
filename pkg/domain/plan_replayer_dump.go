@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
@@ -110,20 +110,32 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 			r[tablePair] = struct{}{}
 		}
 		// if the table has a foreign key, we need to add the referenced table to the list
-		tblInfo, err := tne.is.TableByName(tne.ctx, model.NewCIStr(tablePair.DBName), model.NewCIStr(tablePair.TableName))
+		err := findFK(tne.is, tablePair.DBName, tablePair.TableName, r)
 		if err != nil {
 			return nil, err
 		}
-		for _, fk := range tblInfo.Meta().ForeignKeys {
-			key := tableNamePair{
-				DBName:    fk.RefSchema.L,
-				TableName: fk.RefTable.L,
-				IsView:    false,
-			}
-			r[key] = struct{}{}
-		}
 	}
 	return r, nil
+}
+
+func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
+	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	if err != nil {
+		return err
+	}
+	for _, fk := range tblInfo.Meta().ForeignKeys {
+		key := tableNamePair{
+			DBName:    fk.RefSchema.L,
+			TableName: fk.RefTable.L,
+			IsView:    false,
+		}
+		tableMap[key] = struct{}{}
+		err := findFK(is, key.DBName, key.TableName, tableMap)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
@@ -611,7 +623,7 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
+func dumpSessionBindRecords(records [][]*bindinfo.Binding, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
 		for _, hint := range bindData {

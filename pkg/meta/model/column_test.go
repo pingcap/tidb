@@ -100,4 +100,7 @@ func TestDefaultValue(t *testing.T) {
 			require.NotEqual(t, col.GetOriginDefaultValue(), newCol.GetOriginDefaultValue(), comment)
 		}
 	}
+	extraPhysTblIDCol := NewExtraPhysTblIDColInfo()
+	require.Equal(t, mysql.NotNullFlag, extraPhysTblIDCol.GetFlag())
+	require.Equal(t, mysql.TypeLonglong, extraPhysTblIDCol.GetType())
 }
