@@ -20,14 +20,22 @@ func (e *Explain) unityPlan() (string, error) {
 	basicStats, _ := rootStats.MergeStats()
 	up.TimeInMS = float64(basicStats.GetTime()) / 1e6
 	up.MemInByte = memTracker.MaxConsumed()
-	up.SubPlans = append(up.SubPlans, e.unitySubPlan())
+	up.SubPlans = e.unitySubPlan()
 	data, err := json.Marshal(up)
 	return string(data), err
 }
 
-func (e *Explain) unitySubPlan() *ExplainInfoForEncode {
+func (e *Explain) unitySubPlan() (subPlans []*ExplainInfoForEncode) {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
-	return e.explainOpRecursivelyInJSONFormat(flat.Main[0], flat.Main)
+	var iterSubPlanFunc func(op *FlatOperator)
+	iterSubPlanFunc = func(op *FlatOperator) {
+		subPlans = append(subPlans, e.explainOpRecursivelyInJSONFormat(op, flat.Main))
+		for _, childIdx := range op.ChildrenIdx {
+			iterSubPlanFunc(flat.Main[childIdx])
+		}
+	}
+	iterSubPlanFunc(flat.Main[0])
+	return
 }
 
 type UnityPlan struct {
