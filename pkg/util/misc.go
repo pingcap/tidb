@@ -698,12 +698,14 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 // GetTypeFlagsForInsert gets the type flags for insert statement.
 func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
 	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
 	return baseFlags.
 		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
 		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
 			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
-			sqlMode.HasAllowInvalidDatesMode())
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
 }
 
 // GetTypeFlagsForImportInto gets the type flags for import into statement which
