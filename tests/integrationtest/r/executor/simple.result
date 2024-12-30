@@ -260,7 +260,7 @@ ALTER USER CURRENT_USER IDENTIFIED BY 'zzz';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
 ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'" 
 drop table if exists t;
 do 1, @a:=1;
 select @a;

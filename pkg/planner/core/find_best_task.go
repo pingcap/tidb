@@ -945,7 +945,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
 			alternatives := oneORBranch
 			slices.SortStableFunc(matchIdxes, func(a, b int) int {
-				res := cmpAlternativesByRowCount(alternatives[a], alternatives[b])
+				res := cmpAlternatives(ds.SCtx().GetSessionVars())(alternatives[a], alternatives[b])
 				if res != 0 {
 					return res
 				}
@@ -972,6 +972,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		rhsLen := len(b.matchIdx)
 		return cmp.Compare(lhsLen, rhsLen)
 	})
+	useMVIndex := false
 	for _, matchIdxes := range allMatchIdxes {
 		// since matchIdxes are ordered by matchIdxes's length,
 		// we should use matchIdxes.pathIdx to locate where it comes from.
@@ -985,10 +986,20 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 				indexID = -1
 			} else {
 				indexID = alternatives[oneIdx][0].Index.ID
+				// For MV index, we just choose the first (best) one, and we don't need to check to avoid choosing the
+				// same index.
+				if alternatives[oneIdx][0].Index.MVIndex {
+					useMVIndex = true
+					determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+						util.SliceDeepClone(alternatives[oneIdx])...)
+					found = true
+					break
+				}
 			}
 			if _, ok := usedIndexMap[indexID]; !ok {
 				// try to avoid all index partial paths are all about a single index.
-				determinedIndexPartialPaths = append(determinedIndexPartialPaths, alternatives[oneIdx][0].Clone())
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths,
+					util.SliceDeepClone(alternatives[oneIdx])...)
 				usedIndexMap[indexID] = struct{}{}
 				found = true
 				break
@@ -998,16 +1009,17 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 			// just pick the same name index (just using the first one is ok), in case that there may be some other
 			// picked distinctive index path for other partial paths latter.
 			determinedIndexPartialPaths = append(determinedIndexPartialPaths,
-				alternatives[matchIdxes.matchIdx[0]][0].Clone())
-			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
+				util.SliceDeepClone(alternatives[matchIdxes.matchIdx[0]])...)
+			// uedIndexMap[oneORBranch[oneIdx].Index.ID] = struct{}{} must already be colored.
 		}
 	}
-	if len(usedIndexMap) == 1 {
+	if len(usedIndexMap) == 1 && !useMVIndex {
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, false
 	}
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
+		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
@@ -1015,26 +1027,11 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
-	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
-	for _, path := range determinedIndexPartialPaths {
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(path.TableFilters) > 0 {
-			if !expression.CanExprsPushDown(pushDownCtx, path.TableFilters, kv.TiKV) {
-				// if this table filters can't be pushed down, all of them should be kept in the table side, cleaning the lookup side here.
-				path.TableFilters = nil
-			}
+	for _, p := range determinedIndexPartialPaths {
+		if p.KeepIndexMergeORSourceFilter {
 			shouldKeepCurrentFilter = true
+			break
 		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(pushDownCtx, path.IndexFilters, kv.TiKV) {
-			shouldKeepCurrentFilter = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			path.IndexFilters = nil
-		}
-	}
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), []expression.Expression{path.IndexMergeORSourceFilter}) {
-		shouldKeepCurrentFilter = true
 	}
 	if shouldKeepCurrentFilter {
 		// add the cnf expression back as table filer.
@@ -1042,21 +1039,7 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 	}
 
 	// step3: after the index merge path is determined, compute the countAfterAccess as usual.
-	accessConds := make([]expression.Expression, 0, len(determinedIndexPartialPaths))
-	for _, p := range determinedIndexPartialPaths {
-		indexCondsForP := p.AccessConds[:]
-		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
-		if len(indexCondsForP) > 0 {
-			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
-		}
-	}
-	accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, []expression.Expression{accessDNF}, nil)
-	if err != nil {
-		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-		sel = cost.SelectionFactor
-	}
-	indexMergePath.CountAfterAccess = sel * ds.TableStats.RowCount
+	indexMergePath.CountAfterAccess = estimateCountAfterAccessForIndexMergeOR(ds, determinedIndexPartialPaths)
 	if noSortItem {
 		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
 		// countAfterAccess, here the returned matchProperty should be false.
