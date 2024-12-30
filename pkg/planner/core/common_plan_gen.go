@@ -19,7 +19,7 @@ func (e *Explain) unityPlan() (string, error) {
 	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)
 	basicStats, _ := rootStats.MergeStats()
 	up.TimeInMS = float64(basicStats.GetTime()) / 1e6
-	up.MemInByte = memTracker.BytesConsumed()
+	up.MemInByte = memTracker.MaxConsumed()
 	data, err := json.Marshal(up)
 	return string(data), err
 }
