@@ -445,11 +445,7 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 		// For every region in the partition, if it has some corresponding peers and
 		// no pending peers, that means the replication has completed.
 		for _, region := range regions {
-			regionState, err := pdCli.GetRegionByID(ctx, region.Meta.Id)
-			if err != nil {
-				return needWait, errors.Trace(err)
-			}
-			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
+			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, region.Meta.Peers)
 			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
 				tiflashPeerAtLeastOne = v.(bool)
 			})
