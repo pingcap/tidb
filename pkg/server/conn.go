@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -823,13 +822,12 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
-// checkUserVarintMismatch checks if the user has different prefix than the assigned keyspace.
+// checkUserVarintMismatch checks if the username follows the configured naming policy.
 func checkUserVarintMismatch(ctx context.Context, user string) error {
 	if username.GetUsernamePolicy().ValidateUsername(user) != nil &&
 		username.GetUsernamePolicy().ValidateUsernameFormat(user) {
 		logutil.Logger(ctx).Warn("username variants mismatch",
 			zap.String("user", user),
-			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
 		)
 		return servererr.ErrUsernameFormat
 	}
@@ -846,12 +844,11 @@ func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPa
 		logutil.Logger(ctx).Info("found user identity with variants",
 			zap.String("user", cc.user),
 			zap.String("host", host),
-			zap.String("assigned-keyspace", keyspace.GetKeyspaceNameBySettings()),
 		)
 		cc.user = variant
 		return identity, nil
 	}
-	// If the username's format is correct but does not match the assigned keyspace,
+	// If the username's format is correct but does not match the name policy,
 	// if so, return a special error to hint the user to retry.
 	if mismatchErr := checkUserVarintMismatch(ctx, cc.user); mismatchErr != nil {
 		return nil, mismatchErr
