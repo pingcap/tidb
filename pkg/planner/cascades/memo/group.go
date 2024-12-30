@@ -288,7 +288,7 @@ func (g *Group) Check() {
 		hashMap[ge.hash64] = struct{}{}
 		return true
 	})
-	g.hash2GroupExpr.Each(func(key *GroupExpression, val *list.Element) {
+	g.hash2GroupExpr.Each(func(key *GroupExpression, _ *list.Element) {
 		_, ok := hashMap[key.hash64]
 		intest.Assert(ok)
 	})
@@ -297,7 +297,7 @@ func (g *Group) Check() {
 		intest.Assert(ok)
 	}
 	// assert the parent GE ref.
-	g.hash2ParentGroupExpr.Each(func(key unsafe.Pointer, val *GroupExpression) {
+	g.hash2ParentGroupExpr.Each(func(_ unsafe.Pointer, val *GroupExpression) {
 		found := false
 		for _, childG := range val.Inputs {
 			if childG.GetGroupID() == g.GetGroupID() {

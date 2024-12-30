@@ -16,6 +16,7 @@ package memo
 
 import (
 	"container/list"
+	"unsafe"
 
 	"github.com/bits-and-blooms/bitset"
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -254,7 +255,7 @@ func (mm *Memo) mergeGroup(src, dst *Group) {
 	lazyCallPair := make([]*GroupPair, 0)
 	// step2: change src group's parent GE's child group id and reinsert them.
 	// for each src group's parent groupExpression, we need modify their input group.
-	src.hash2ParentGroupExpr.Each(func(key uintptr, val *GroupExpression) {
+	src.hash2ParentGroupExpr.Each(func(_ unsafe.Pointer, val *GroupExpression) {
 		if val.group.Equals(dst) {
 			// child GE in child group is equivalent with one in parent Group.
 			return
@@ -299,12 +300,12 @@ func (mm *Memo) mergeGroup(src, dst *Group) {
 	}
 }
 
-func (mm *Memo) replaceGEChild(ge *GroupExpression, old, new *Group) *GroupExpression {
+func (mm *Memo) replaceGEChild(ge *GroupExpression, older, newer *Group) *GroupExpression {
 	// maintain the old group's parentGEs
-	old.removeParentGEs(ge)
+	older.removeParentGEs(ge)
 	for i, childGroup := range ge.Inputs {
-		if childGroup.GetGroupID() == old.GetGroupID() {
-			ge.Inputs[i] = new
+		if childGroup.GetGroupID() == older.GetGroupID() {
+			ge.Inputs[i] = newer
 		}
 	}
 	// recompute the hash
@@ -312,6 +313,6 @@ func (mm *Memo) replaceGEChild(ge *GroupExpression, old, new *Group) *GroupExpre
 	ge.Hash64(hasher)
 	ge.hash64 = hasher.Sum64()
 	// maintain the new group's parentGEs
-	new.addParentGEs(ge)
+	newer.addParentGEs(ge)
 	return ge
 }
