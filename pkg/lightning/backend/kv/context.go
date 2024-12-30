@@ -176,7 +176,7 @@ func (ctx *litTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowI
 }
 
 // GetStatisticsSupport implements the `table.MutateContext` interface.
-func (*litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
+func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
 	intest.Assert(false, "implement the needed method if necessary")
 	return nil, true
 }
