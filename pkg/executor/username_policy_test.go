@@ -43,7 +43,7 @@ type prefixPolicy struct {
 }
 
 // NewPrefixPolicy creates a new policy that requires the username to have a specific prefix.
-func NewPrefixPolicy(userPrefix string) username.UsernamePolicy {
+func NewPrefixPolicy(userPrefix string) username.Policy {
 	return &prefixPolicy{userPrefix: userPrefix}
 }
 

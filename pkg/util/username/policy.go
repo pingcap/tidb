@@ -14,8 +14,8 @@
 
 package username
 
-// UsernamePolicy is the interface for username policy.
-type UsernamePolicy interface {
+// Policy is the interface for username policy.
+type Policy interface {
 	// ValidateUsername checks if the username is valid.
 	ValidateUsername(username string) error
 	// ValidateUsernameFormat checks if the username is in the correct format.
@@ -29,19 +29,19 @@ type UsernamePolicy interface {
 var globalUsernamePolicy = NewDefaultUsernamePolicy()
 
 // SetUsernamePolicy sets the global username policy.
-func SetUsernamePolicy(policy UsernamePolicy) {
+func SetUsernamePolicy(policy Policy) {
 	globalUsernamePolicy = policy
 }
 
 // GetUsernamePolicy returns the global username policy.
-func GetUsernamePolicy() UsernamePolicy {
+func GetUsernamePolicy() Policy {
 	return globalUsernamePolicy
 }
 
 type defaultUsernamePolicy struct{}
 
 // NewDefaultUsernamePolicy creates a new default username policy.
-func NewDefaultUsernamePolicy() UsernamePolicy {
+func NewDefaultUsernamePolicy() Policy {
 	return &defaultUsernamePolicy{}
 }
 
