@@ -751,7 +751,7 @@ func getProgressCountOfRanges(
 	mgr *conn.Mgr,
 	ranges []rtree.Range,
 ) (int, backup.ProgressUnit, error) {
-	if len(ranges) > 100 {
+	if len(ranges) > 1000 {
 		return len(ranges), backup.RangeUnit, nil
 	}
 	// The number of regions need to backup

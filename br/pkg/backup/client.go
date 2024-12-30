@@ -49,7 +49,7 @@ const (
 	// 10 minutes for every round.
 	MaxResolveLocksbackupOffSleepMs = 600000
 
-	IncompleteRangesUpdateInterval = time.Second * 10
+	IncompleteRangesUpdateInterval = time.Second * 15
 )
 
 // ClientMgr manages connections needed by backup.
@@ -279,8 +279,10 @@ mainLoop:
 				mainCancel()
 				return ctx.Err()
 			case <-incompleteRangesUpdateTicker.C:
+				startUpdate := time.Now()
 				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+				incompleteRangesUpdateTicker.Reset(max(5*time.Since(startUpdate), IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
