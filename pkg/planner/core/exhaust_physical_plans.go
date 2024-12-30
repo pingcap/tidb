@@ -442,10 +442,8 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, false))
-			} else if !forceRightToBuild {
-				joins = append(joins, getHashJoin(p, prop, 1, true))
-			} else {
-				joins = append(joins, getHashJoin(p, prop, 1, false))
+			}
+			if !forceRightToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, true))
 			}
 		} else {
