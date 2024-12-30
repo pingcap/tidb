@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -123,10 +123,6 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	defer w.sesspool.Put(_sessctx)
 	sess := _sessctx.(sessionctx.Context)
 
-	if rt.requireRealTiKV && intest.InTest {
-		return nil
-	}
-
 	if rt.insertStmt == "" {
 		if err := buildInsertQuery(ctx, sess, rt); err != nil {
 			return fmt.Errorf("could not generate insert statement for `%s`: %v", rt.destTable, err)
@@ -207,6 +203,8 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 		defer w.sesspool.Put(_sessctx)
 		sess := _sessctx.(sessionctx.Context)
 
+		_, isTiKV := sess.GetStore().(helper.Storage)
+
 		// this is for etcd watch
 		// other wise wch won't be collected after the exit of this function
 		ctx, cancel := context.WithCancel(_ctx)
@@ -255,6 +253,9 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 				for rtIdx := range w.workloadTables {
 					rt := &w.workloadTables[rtIdx]
 					if rt.tableType != snapshotTable {
+						continue
+					}
+					if rt.requireRealTiKV && !isTiKV {
 						continue
 					}
 					pcnt := cnt
