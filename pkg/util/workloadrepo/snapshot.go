@@ -123,7 +123,7 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	defer w.sesspool.Put(_sessctx)
 	sess := _sessctx.(sessionctx.Context)
 
-	if rt.test && intest.InTest {
+	if rt.requireRealTiKV && intest.InTest {
 		return nil
 	}
 

@@ -46,14 +46,14 @@ const (
 )
 
 type repositoryTable struct {
-	schema     string
-	table      string
-	tableType  int
-	destTable  string
-	where      string
-	createStmt string
-	insertStmt string
-	test       bool
+	schema          string
+	table           string
+	tableType       int
+	destTable       string
+	where           string
+	createStmt      string
+	insertStmt      string
+	requireRealTiKV bool
 }
 
 var (
