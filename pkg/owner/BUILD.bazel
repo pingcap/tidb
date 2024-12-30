@@ -37,7 +37,7 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 12,
     deps = [
         "//pkg/parser/terror",
         "//pkg/testkit/testfailpoint",

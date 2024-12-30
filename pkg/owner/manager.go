@@ -144,7 +144,7 @@ type ownerManager struct {
 }
 
 // NewOwnerManager creates a new Manager.
-func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) Manager {
+func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) *ownerManager {
 	return &ownerManager{
 		etcdCli:      etcdCli,
 		id:           id,
@@ -176,9 +176,9 @@ func (m *ownerManager) SetListener(listener Listener) {
 	m.listener = listener
 }
 
-func (m *ownerManager) ForceToBeOwner(context.Context) error {
+func (m *ownerManager) ForceToBeOwner(ctx context.Context) error {
 	m.logger.Info("force to be owner")
-	if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ManagerSessionTTL); err != nil {
+	if err := m.refreshSession(ctx, util2.NewSessionDefaultRetryCnt, ManagerSessionTTL); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -287,7 +287,7 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 	}
 	if m.etcdSes == nil {
 		m.logger.Info("start campaign owner")
-		if err := m.refreshSession(util2.NewSessionDefaultRetryCnt, ttl); err != nil {
+		if err := m.refreshSession(m.ctx, util2.NewSessionDefaultRetryCnt, ttl); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -364,13 +364,13 @@ func (m *ownerManager) campaignLoop(campaignContext context.Context) {
 		select {
 		case <-m.etcdSes.Done():
 			m.logger.Info("etcd session done, refresh it")
-			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+			if err2 := m.refreshSession(campaignContext, util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
 				m.logger.Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
 		case <-leaseNotFoundCh:
 			m.logger.Info("meet lease not found error, refresh session")
-			if err2 := m.refreshSession(util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
+			if err2 := m.refreshSession(campaignContext, util2.NewSessionRetryUnlimited, ManagerSessionTTL); err2 != nil {
 				m.logger.Info("break campaign loop, refresh session failed", zap.Error(err2))
 				return
 			}
@@ -434,7 +434,7 @@ func (m *ownerManager) closeSession() {
 	}
 }
 
-func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
+func (m *ownerManager) refreshSession(ctx context.Context, retryCnt, ttl int) error {
 	m.closeSession()
 	// Note: we must use manager's context to create session. If we use campaign
 	// context and the context is cancelled, the created session cannot be closed
@@ -443,7 +443,7 @@ func (m *ownerManager) refreshSession(retryCnt, ttl int) error {
 	// loop is refreshing the session, it might wait for a long time to return, it
 	// should be fine as long as network is ok, and acceptable to wait when not.
 	logPrefix := fmt.Sprintf("[%s] %s ownerManager %s", m.prompt, m.key, m.id)
-	sess, err2 := util2.NewSession(m.ctx, logPrefix, m.etcdCli, retryCnt, ttl)
+	sess, err2 := util2.NewSession(ctx, logPrefix, m.etcdCli, retryCnt, ttl)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}

@@ -68,6 +68,13 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			}
 		})
 
+		failpoint.Inject("waitCancelCtx", func(val failpoint.Value) {
+			if val.(bool) {
+				<-ctx.Done()
+				ctx = context.Background()
+			}
+		})
+
 		startTime := time.Now()
 		etcdSession, err = concurrency.NewSession(etcdCli,
 			concurrency.WithTTL(ttl), concurrency.WithContext(ctx))

@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"google.golang.org/grpc"
 )
 
@@ -109,4 +110,27 @@ func TestFailNewSession(t *testing.T) {
 		isContextDone := terror.ErrorEqual(grpc.ErrClientConnClosing, err) || terror.ErrorEqual(context.Canceled, err)
 		require.Truef(t, isContextDone, "err %v", err)
 	}()
+}
+
+func TestOwnerManagerClose(t *testing.T) {
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.Client(0)
+	ownerMgr := NewOwnerManager(context.Background(), client, "ddl", "1", "/owner/key")
+	err := ownerMgr.CampaignOwner()
+	require.NoError(t, err)
+	time.Sleep(100 * time.Millisecond)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/waitCancelCtx", `return(true)`))
+	defer func() {
+		// require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/waitCancelCtx"))
+		failpoint.Disable("github.com/pingcap/tidb/pkg/util/waitCancelCtx")
+	}()
+	// Close etcd session causes campaign loop to refreshSession()
+	// When the grpc is not available, the campaign should not hang.
+	ownerMgr.etcdSes.Close()
+
+	// This should not hang.
+	ownerMgr.Close()
 }
