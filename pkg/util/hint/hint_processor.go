@@ -276,15 +276,15 @@ func BindHint(stmt ast.StmtNode, hintsSet *HintsSet) ast.StmtNode {
 }
 
 // ParseHintsSet parses a SQL string, then collects and normalizes the HintsSet.
-func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, ast.StmtNode, []error, error) {
+func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*HintsSet, []error, error) {
 	stmtNodes, warns, err := p.ParseSQL(sql,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	if len(stmtNodes) != 1 {
-		return nil, nil, nil, fmt.Errorf("bind_sql must be a single statement: %s", sql)
+		return nil, nil, fmt.Errorf("bind_sql must be a single statement: %s", sql)
 	}
 	hs := CollectHint(stmtNodes[0])
 	processor := NewQBHintHandler(nil)
@@ -310,11 +310,11 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			offset := processor.GetHintOffset(tblHint.QBName, curOffset)
 			if offset < 0 || !processor.checkTableQBName(tblHint.Tables) {
 				hintStr := RestoreTableOptimizerHint(tblHint)
-				return nil, nil, nil, fmt.Errorf("Unknown query block name in hint %s", hintStr)
+				return nil, nil, fmt.Errorf("Unknown query block name in hint %s", hintStr)
 			}
 			tblHint.QBName, err = GenerateQBName(topNodeType, offset)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, err
 			}
 			for i, tbl := range tblHint.Tables {
 				if tbl.DBName.String() == "" {
@@ -325,7 +325,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		}
 		hs.tableHints[i] = newHints
 	}
-	return hs, stmtNodes[0], extractHintWarns(warns), nil
+	return hs, extractHintWarns(warns), nil
 }
 
 func extractHintWarns(warns []error) []error {

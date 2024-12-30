@@ -819,7 +819,7 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (base.Pla
 
 func checkHintedSQL(sql, charset, collation, db string) error {
 	p := parser.New()
-	hintsSet, _, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
+	hintsSet, warns, err := hint.ParseHintsSet(p, sql, charset, collation, db)
 	if err != nil {
 		return err
 	}
@@ -918,7 +918,7 @@ func constructSQLBindOPFromPlanDigest(
 		return nil, errors.NewNoStackErrorf("binding failed: %v. Plan Digest: %v", err, planDigest)
 	}
 	complete, reason := hint.CheckBindingFromHistoryComplete(originNode, bindableStmt.PlanHint)
-	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, true, bindableStmt.Schema)
+	bindSQL := bindinfo.GenerateBindingSQL(originNode, bindableStmt.PlanHint, bindableStmt.Schema)
 	var hintNode ast.StmtNode
 	hintNode, err = parser4binding.ParseOneStmt(bindSQL, bindableStmt.Charset, bindableStmt.Collation)
 	if err != nil {

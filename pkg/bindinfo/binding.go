@@ -281,23 +281,18 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isCrossDBBinding(bindingStmt)
-	if isFuzzy {
+	isCrossDB := isCrossDBBinding(bindingStmt)
+	if isCrossDB {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
-	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
+	hintsSet, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
 	if err != nil {
 		return err
 	}
-	if sctx != nil && !isFuzzy {
-		paramChecker := &paramMarkerChecker{}
-		stmt.Accept(paramChecker)
-		if !paramChecker.hasParamMarker {
-			_, err = getHintsForSQL(sctx, binding.BindSQL)
-			if err != nil {
-				return err
-			}
+	if sctx != nil && !isCrossDB {
+		if err := verifyBindingSQL(sctx, binding.BindSQL); err != nil {
+			return err
 		}
 	}
 	hintsStr, err := hintsSet.Restore()
