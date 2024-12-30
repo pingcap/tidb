@@ -330,7 +330,7 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 				return a == b
 			},
 			func(t unsafe.Pointer) uint64 {
-				return uint64(uintptr(t))
+				return uint64(*t)
 			},
 		),
 	}
