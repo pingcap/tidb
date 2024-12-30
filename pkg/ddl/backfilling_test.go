@@ -311,9 +311,6 @@ func TestReorgTableMutateContext(t *testing.T) {
 		require.Equal(t, alloc1, alloc2)
 		require.True(t, alloc2.Exhausted())
 
-		statistics, ok := ctx.GetStatisticsSupport()
-		require.False(t, ok)
-		require.Nil(t, statistics)
 		cached, ok := ctx.GetCachedTableSupport()
 		require.False(t, ok)
 		require.Nil(t, cached)

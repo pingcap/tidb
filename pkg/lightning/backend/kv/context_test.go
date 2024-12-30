@@ -247,11 +247,6 @@ func TestLitTableMutateContext(t *testing.T) {
 		require.False(t, ok)
 		_, ok = tblCtx.GetTemporaryTableSupport()
 		require.False(t, ok)
-		stats, ok := tblCtx.GetStatisticsSupport()
-		require.True(t, ok)
-		// test for `UpdatePhysicalTableDelta` and `GetColumnSize`
-		stats.UpdatePhysicalTableDelta(123, 5, 2)
-		stats.UpdatePhysicalTableDelta(123, 8, 2)
 	}
 
 	// test for default
