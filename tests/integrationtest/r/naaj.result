@@ -404,9 +404,9 @@ HashJoin_9	10000.00	root		anti left outer semi join, left side:TableReader_11, e
   └─TableFullScan_10	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 explain select * from naaj_A where (a+1,b*2) not in (select a, b=1 from naaj_B where naaj_A.a = naaj_B.a);
 id	estRows	task	access object	operator info
-HashJoin_9	8000.00	root		anti semi join, left side:TableReader_11, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a)], other cond:eq(mul(naaj.naaj_a.b, 2), eq(naaj.naaj_b.b, 1)), eq(plus(naaj.naaj_a.a, 1), naaj.naaj_b.a)
-├─TableReader_13(Build)	10000.00	root		data:TableFullScan_12
-│ └─TableFullScan_12	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
-└─TableReader_11(Probe)	10000.00	root		data:TableFullScan_10
-  └─TableFullScan_10	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
+HashJoin_9	8000.00	root		anti semi join, left side:TableReader_12, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a)], other cond:eq(mul(naaj.naaj_a.b, 2), eq(naaj.naaj_b.b, 1)), eq(plus(naaj.naaj_a.a, 1), naaj.naaj_b.a)
+├─TableReader_14(Build)	10000.00	root		data:TableFullScan_13
+│ └─TableFullScan_13	10000.00	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
+└─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
+  └─TableFullScan_11	10000.00	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 set @@session.tidb_enable_null_aware_anti_join=0;
