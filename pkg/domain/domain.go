@@ -2080,7 +2080,11 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
-	return do.bindHandle.Load().(bindinfo.GlobalBindingHandle)
+	v := do.bindHandle.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(bindinfo.GlobalBindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
