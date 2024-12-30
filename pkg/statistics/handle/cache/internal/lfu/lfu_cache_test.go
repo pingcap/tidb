@@ -258,14 +258,8 @@ func TestLFUReject(t *testing.T) {
 	require.Len(t, lfu.Values(), 2)
 	v, ok := lfu.Get(2)
 	require.True(t, ok)
-	v.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
-		require.Equal(t, statistics.AllEvicted, c.GetEvictedStatus())
-		return false
-	})
-	v.ForEachIndexImmutable(func(_ int64, i *statistics.Index) bool {
-		require.Equal(t, statistics.AllEvicted, i.GetEvictedStatus())
-		return false
-	})
+	require.Equal(t, 0, v.ColNum())
+	require.Equal(t, 0, v.IdxNum())
 }
 
 func TestMemoryControl(t *testing.T) {
