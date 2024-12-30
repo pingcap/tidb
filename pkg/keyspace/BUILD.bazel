@@ -2,10 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "keyspace",
-    srcs = [
-        "keyspace.go",
-        "username_policy.go",
-    ],
+    srcs = ["keyspace.go"],
     importpath = "github.com/pingcap/tidb/pkg/keyspace",
     visibility = ["//visibility:public"],
     deps = [
