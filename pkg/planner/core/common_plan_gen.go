@@ -30,6 +30,9 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
 	var iterSubPlanFunc func(op *FlatOperator)
 	iterSubPlanFunc = func(op *FlatOperator) {
+		if !op.IsRoot {
+			return
+		}
 		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
 		planNode := &UnityPlanNode{
 			ExplainInfoForEncode: explainNode,
