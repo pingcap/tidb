@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"runtime/debug"
 )
 
 /*
@@ -14,11 +15,13 @@ explain analyze format='unity_plan' select * from t;
 	}
 */
 func (e *Explain) unityPlan() (string, error) {
+	debug.PrintStack()
 	up := new(unityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
-	runtimeStats, _ := e.RuntimeStatsColl.GetRootStats(e.TargetPlan.ID()).MergeStats()
-	up.TimeInMS = float64(runtimeStats.GetTime())
-
+	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)
+	basicStats, _ := rootStats.MergeStats()
+	up.TimeInMS = float64(basicStats.GetTime())
+	up.MemInByte = memTracker.BytesConsumed()
 	data, err := json.Marshal(up)
 	return string(data), err
 }
@@ -26,6 +29,7 @@ func (e *Explain) unityPlan() (string, error) {
 type unityPlan struct {
 	PlanDigest string
 	TimeInMS   float64
+	MemInByte  int64
 }
 
 func planDigest(p base.Plan) string {
