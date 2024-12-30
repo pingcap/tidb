@@ -19,7 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
@@ -27,37 +29,52 @@ import (
 
 func TestTheSessionIsoation(t *testing.T) {
 	req := require.New(t)
-	store := testkit.CreateMockStore(t)
+	store, dom := session.CreateStoreAndBootstrap(t)
 	ctx := context.Background()
 
-	g := Glue{}
-	session, err := g.CreateSession(store)
+	// we want to test glue start domain explicitly, so close it first.
+	dom.Close()
+	g := New()
+	glueSe, err := g.CreateSession(store)
 	req.NoError(err)
+	t.Cleanup(func() {
+		existDom, _ := session.GetDomain(nil)
+		if existDom != nil {
+			existDom.Close()
+		}
+	})
 
-	req.NoError(session.ExecuteInternal(ctx, "use test;"))
+	require.NoError(t, glueSe.CreateDatabase(ctx, &model.DBInfo{
+		Name: pmodel.NewCIStr("test_db"),
+	}))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test_db")
+	tk.MustExec("create table t(id int)")
+
+	req.NoError(glueSe.ExecuteInternal(ctx, "use test;"))
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_1"),
+		Name: pmodel.NewCIStr("tables_1"),
 		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_2"),
+		Name: pmodel.NewCIStr("tables_2"),
 		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: model.NewCIStr("threereplication"),
+			Name: pmodel.NewCIStr("threereplication"),
 		},
 		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_3"),
+		Name: pmodel.NewCIStr("tables_3"),
 		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: model.NewCIStr("fivereplication"),
+			Name: pmodel.NewCIStr("fivereplication"),
 		},
 		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	polices := []*model.PolicyInfo{
@@ -65,22 +82,22 @@ func TestTheSessionIsoation(t *testing.T) {
 			PlacementSettings: &model.PlacementSettings{
 				Followers: 4,
 			},
-			Name: model.NewCIStr("fivereplication"),
+			Name: pmodel.NewCIStr("fivereplication"),
 		},
 		{
 			PlacementSettings: &model.PlacementSettings{
 				Followers: 2,
 			},
-			Name: model.NewCIStr("threereplication"),
+			Name: pmodel.NewCIStr("threereplication"),
 		},
 	}
 	for _, pinfo := range polices {
-		before := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
-		req.NoError(session.CreatePlacementPolicy(ctx, pinfo))
-		after := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		before := glueSe.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
+		req.NoError(glueSe.CreatePlacementPolicy(ctx, pinfo))
+		after := glueSe.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
 		req.Greater(after, before)
 	}
-	req.NoError(session.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
+	req.NoError(glueSe.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
 		"test": infos,
 	}))
 }

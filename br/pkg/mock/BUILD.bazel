@@ -19,7 +19,7 @@ go_library(
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
         "//pkg/lightning/verification",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/server",
         "//pkg/session",
         "//pkg/store/mockstore",

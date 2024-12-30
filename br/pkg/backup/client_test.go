@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -75,6 +75,7 @@ func (m *mockBackupBackupSender) SendAsync(
 	round uint64,
 	storeID uint64,
 	request backuppb.BackupRequest,
+	concurrency uint,
 	cli backuppb.BackupClient,
 	respCh chan *backup.ResponseAndStore,
 	StateNotifier chan backup.BackupRetryPolicy,
@@ -186,6 +187,65 @@ func TestGetTS(t *testing.T) {
 	ts, err = s.backupClient.GetTS(s.ctx, time.Minute, backupts)
 	require.NoError(t, err)
 	require.Equal(t, backupts, ts)
+}
+
+func TestGetHistoryDDLJobs(t *testing.T) {
+	s := createBackupSuite(t)
+
+	tk := testkit.NewTestKit(t, s.cluster.Storage)
+	lastTS1, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("CREATE DATABASE IF NOT EXISTS test_db;")
+	tk.MustExec("CREATE TABLE IF NOT EXISTS test_db.test_table (c1 INT);")
+	lastTS2, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("RENAME TABLE test_db.test_table to test_db.test_table1;")
+	tk.MustExec("DROP TABLE test_db.test_table1;")
+	tk.MustExec("DROP DATABASE test_db;")
+	tk.MustExec("CREATE DATABASE test_db;")
+	tk.MustExec("USE test_db;")
+	tk.MustExec("CREATE TABLE test_table1 (c2 CHAR(255));")
+	tk.MustExec("RENAME TABLE test_table1 to test_table;")
+	tk.MustExec("RENAME TABLE test_table to test_table2;")
+	tk.MustExec("RENAME TABLE test_table2 to test_table;")
+	lastTS3, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+	tk.MustExec("TRUNCATE TABLE test_table;")
+	ts, err := s.cluster.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoErrorf(t, err, "Error get last ts: %s", err)
+
+	checkFn := func(lastTS uint64, ts uint64, jobsCount int) {
+		cipher := backuppb.CipherInfo{CipherType: encryptionpb.EncryptionMethod_PLAINTEXT}
+		metaWriter := metautil.NewMetaWriter(s.storage, metautil.MetaFileSize, false, "", &cipher)
+		ctx := context.Background()
+		metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
+		s.mockGlue.SetSession(tk.Session())
+		err = backup.WriteBackupDDLJobs(metaWriter, s.mockGlue, s.cluster.Storage, lastTS, ts, false)
+		require.NoErrorf(t, err, "Error get ddl jobs: %s", err)
+		err = metaWriter.FinishWriteMetas(ctx, metautil.AppendDDL)
+		require.NoError(t, err, "Flush failed", err)
+		err = metaWriter.FlushBackupMeta(ctx)
+		require.NoError(t, err, "Finally flush backup meta failed", err)
+
+		metaBytes, err := s.storage.ReadFile(ctx, metautil.MetaFile)
+		require.NoError(t, err)
+		mockMeta := &backuppb.BackupMeta{}
+		err = proto.Unmarshal(metaBytes, mockMeta)
+		require.NoError(t, err)
+		// check the schema version
+		metaReader := metautil.NewMetaReader(mockMeta, s.storage, &cipher)
+		allDDLJobsBytes, err := metaReader.ReadDDLs(ctx)
+		require.NoError(t, err)
+		var allDDLJobs []*model.Job
+		err = json.Unmarshal(allDDLJobsBytes, &allDDLJobs)
+		require.NoError(t, err)
+		require.Len(t, allDDLJobs, jobsCount)
+	}
+
+	checkFn(lastTS1, ts, 11)
+	checkFn(lastTS2, ts, 9)
+	checkFn(lastTS1, lastTS2, 2)
+	checkFn(lastTS3, ts, 1)
 }
 
 func TestSkipUnsupportedDDLJob(t *testing.T) {
@@ -451,6 +511,8 @@ func TestMainBackupLoop(t *testing.T) {
 		GetBackupClientCallBack: mockGetBackupClientCallBack,
 	}
 
+	// an offline store still can be backed up.
+	s.mockCluster.StopStore(1)
 	connectedStore = make(map[uint64]int)
 	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
@@ -493,7 +555,7 @@ func TestMainBackupLoop(t *testing.T) {
 	// cancel the backup in another goroutine
 	ctx, cancel := context.WithCancel(backgroundCtx)
 	go func() {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		cancel()
 	}()
 	connectedStore = make(map[uint64]int)
@@ -523,7 +585,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID := uint64(1)
 	dropStoreID := uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 	dropBackupResponses := mockBackupResponses[dropStoreID]
 	lock.Lock()
 	mockBackupResponses[dropStoreID] = nil
@@ -582,7 +644,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 	remainStoreID = uint64(1)
 	dropStoreID = uint64(2)
-	s.mockCluster.StopStore(dropStoreID)
+	s.mockCluster.MarkTombstone(dropStoreID)
 
 	mainLoop = &backup.MainBackupLoop{
 		BackupSender: &mockBackupBackupSender{
@@ -747,4 +809,66 @@ func TestObserveStoreChangesAsync(t *testing.T) {
 	}, time.Second, 100*time.Millisecond)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/backup/backup-store-change-tick"))
+}
+
+func TestSplitBackupReqRanges(t *testing.T) {
+	req := backuppb.BackupRequest{
+		SubRanges: []*kvrpcpb.KeyRange{},
+	}
+
+	// case #1 empty ranges
+	res := backup.SplitBackupReqRanges(req, 1)
+	require.Len(t, res, 1)
+	// case #2 empty ranges and limit is 0
+	res = backup.SplitBackupReqRanges(req, 0)
+	require.Len(t, res, 1)
+
+	genSubRanges := func(req *backuppb.BackupRequest, count int) {
+		for i := 0; i < count; i++ {
+			req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
+				StartKey: []byte{byte(i)},
+				EndKey:   []byte{byte(i + 1)},
+			})
+		}
+	}
+
+	genSubRanges(&req, 10)
+	// case #3: 10 subranges and split into 10 parts
+	res = backup.SplitBackupReqRanges(req, 10)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #3.1: 10 subranges and split into 11 parts(has no difference with 10 parts)
+	res = backup.SplitBackupReqRanges(req, 11)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #3.2: 10 subranges and split into 9 parts(has no difference with 10 parts)
+	res = backup.SplitBackupReqRanges(req, 9)
+	require.Len(t, res, 10)
+	for i := 0; i < 10; i++ {
+		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
+		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
+	}
+
+	// case #4: 10 subranges and split into 3 parts, each part has 3 subranges
+	// but actually it will generate 4 parts due to not divisible.
+	res = backup.SplitBackupReqRanges(req, 3)
+	require.Len(t, res, 4)
+	for i := 0; i < 3; i++ {
+		require.Len(t, res[i].SubRanges, 3)
+		for j := 0; j < 3; j++ {
+			require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j].StartKey)
+			require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j].EndKey)
+		}
+	}
+	require.Len(t, res[3].SubRanges, 1)
+	require.Equal(t, res[3].SubRanges[0].StartKey, req.SubRanges[9].StartKey)
+	require.Equal(t, res[3].SubRanges[0].EndKey, req.SubRanges[9].EndKey)
 }

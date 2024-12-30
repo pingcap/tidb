@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "cascadesctx",
+    srcs = ["cascades_ctx.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/planner/cascades/base",
+        "//pkg/planner/cascades/memo",
+    ],
+)

@@ -89,11 +89,23 @@ func (ctx *Context) AppendWarning(err error) {
 	}
 }
 
+// AppendNote appends the error to warning with level 'Note'. If the inner `warnHandler` is nil, do nothing.
+func (ctx *Context) AppendNote(err error) {
+	intest.Assert(ctx.warnHandler != nil)
+	if w := ctx.warnHandler; w != nil {
+		// warnHandler should always not be nil, check fn != nil here to just make code safe.
+		w.AppendNote(err)
+	}
+}
+
 // HandleError handles the error according to the contextutil. See the comment of `HandleErrorWithAlias` for detailed logic.
 //
 // It also allows using `errors.ErrorGroup`, in this case, it'll handle each error in order, and return the first error
 // it founds.
 func (ctx *Context) HandleError(err error) error {
+	if err == nil {
+		return nil
+	}
 	// The function of handling `errors.ErrorGroup` is placed in `HandleError` but not in `HandleErrorWithAlias`, because
 	// it's hard to give a proper error and warn alias for an error group.
 	if errs, ok := err.(errors.ErrorGroup); ok {
@@ -184,6 +196,8 @@ const (
 	ErrGroupDupKey
 	// ErrGroupBadNull is the group of bad null errors
 	ErrGroupBadNull
+	// ErrGroupNoDefault is the group of no default value errors
+	ErrGroupNoDefault
 	// ErrGroupDividedByZero is the group of divided by zero errors
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
@@ -211,6 +225,8 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+		},
+		ErrGroupNoDefault: {
 			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {

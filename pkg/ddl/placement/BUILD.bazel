@@ -13,7 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/placement",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/tablecodec",
         "//pkg/util/codec",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -40,6 +40,7 @@ go_test(
     deps = [
         "//pkg/kv",
         "//pkg/meta",
+        "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/store/mockstore",
         "//pkg/tablecodec",

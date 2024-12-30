@@ -613,6 +613,11 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
 	require.NoError(t, err)
+
+	// Set healthy. This is used by graceful shutdown
+	// and is used in the response for ComPing and the
+	// /status HTTP endpoint
+	server.health.Store(true)
 	defer server.Close()
 
 	cc := &clientConn{
@@ -784,22 +789,72 @@ func TestShutDown(t *testing.T) {
 	cc = &clientConn{server: srv}
 	cc.SetCtx(tc)
 
-	// test in txn
-	srv.clients[dom.NextConnID()] = cc
-	cc.getCtx().GetSessionVars().SetInTxn(true)
+	waitMap := [][]bool{
+		// Reading, Not Reading
+		{false, true}, // Not InTxn
+		{true, true},  // InTxn
+	}
+	for idx, waitMap := range waitMap {
+		inTxn := idx > 0
+		for idx, shouldWait := range waitMap {
+			reading := idx == 0
+			if inTxn {
+				cc.getCtx().GetSessionVars().SetInTxn(true)
+			} else {
+				cc.getCtx().GetSessionVars().SetInTxn(false)
+			}
+			if reading {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
+			} else {
+				cc.CompareAndSwapStatus(cc.getStatus(), connStatusDispatching)
+			}
 
-	waitTime := 100 * time.Millisecond
-	begin := time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Greater(t, time.Since(begin), waitTime)
+			srv.clients[dom.NextConnID()] = cc
 
-	// test not in txn
-	srv.clients[dom.NextConnID()] = cc
+			waitTime := 100 * time.Millisecond
+			begin := time.Now()
+			srv.DrainClients(waitTime, waitTime)
+
+			if shouldWait {
+				require.Greater(t, time.Since(begin), waitTime)
+			} else {
+				require.Less(t, time.Since(begin), waitTime)
+			}
+		}
+	}
+}
+
+func TestCommitWaitGroup(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	tc := &TiDBContext{Session: se}
+
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	srv, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+	srv.SetDomain(dom)
+
+	cc := &clientConn{server: srv}
+	cc.SetCtx(tc)
+	cc.CompareAndSwapStatus(cc.getStatus(), connStatusReading)
 	cc.getCtx().GetSessionVars().SetInTxn(false)
+	srv.clients[dom.NextConnID()] = cc
 
-	begin = time.Now()
-	srv.DrainClients(waitTime, waitTime)
-	require.Less(t, time.Since(begin), waitTime)
+	wg := cc.getCtx().GetCommitWaitGroup()
+	wg.Add(1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		wg.Done()
+	}()
+	begin := time.Now()
+	srv.DrainClients(time.Second, time.Second)
+	require.Greater(t, time.Since(begin), 100*time.Millisecond)
+	require.Less(t, time.Since(begin), time.Second)
 }
 
 type snapshotCache interface {
@@ -967,8 +1022,6 @@ func TestPrefetchPartitionTable(t *testing.T) {
 	query := "delete from prefetch where a = 2;" +
 		"delete from prefetch where a = 3;" +
 		"delete from prefetch where a in (4,5);"
-	// TODO: refactor the build code and extract the partition pruning one,
-	// so it can be called in prefetchPointPlanKeys
 	err := cc.handleQuery(ctx, query)
 	require.NoError(t, err)
 	txn, err := tk.Session().Txn(false)
@@ -1011,7 +1064,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
-	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	dml := "insert into t values"
@@ -2124,4 +2177,53 @@ func TestConnAddMetrics(t *testing.T) {
 	// ok
 	cc.addMetrics(mysql.ComStmtExecute, time.Now(), nil)
 	re.Equal(promtestutils.ToFloat64(counter.WithLabelValues("StmtExecute", "OK", "test_rg2")), 1.0)
+}
+
+func TestIssue54335(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	// There is no underlying netCon, use failpoint to avoid panic
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/FakeClientConn", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/FakeClientConn"))
+	}()
+	tk := testkit.NewTestKit(t, store)
+
+	connID := uint64(1)
+	tk.Session().SetConnectionID(connID)
+	tc := &TiDBContext{
+		Session: tk.Session(),
+		stmts:   make(map[int]*TiDBStatement),
+	}
+	cc := &clientConn{
+		connectionID: connID,
+		server: &Server{
+			capability: defaultCapability,
+		},
+		alloc:      arena.NewAllocator(32 * 1024),
+		chunkAlloc: chunk.NewAllocator(),
+	}
+	cc.SetCtx(tc)
+	srv := &Server{
+		clients: map[uint64]*clientConn{
+			connID: cc,
+		},
+		dom: dom,
+	}
+	handle := dom.ExpensiveQueryHandle().SetSessionManager(srv)
+	go handle.Run()
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE testTable2 (id bigint,  age int)")
+	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
+	tk.MustExec(str)
+	for i := 0; i < 14; i++ {
+		tk.MustExec("insert into testTable2 select * from testTable2")
+	}
+
+	times := 100
+	for ; times > 0; times-- {
+		// Test with -race
+		_ = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(1)*/  * FROM testTable2;")
+	}
 }

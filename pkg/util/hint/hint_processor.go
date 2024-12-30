@@ -91,7 +91,18 @@ func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler hintWarnHandler) [
 	case *ast.InsertStmt:
 		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, warnHandler)
-		return x.TableHints
+		result := make([]*ast.TableOptimizerHint, 0, len(x.TableHints))
+		result = append(result, x.TableHints...)
+		if x.Select != nil {
+			// support statement-level hint in sub-select: "insert into t select /* ... */ ..."
+			// TODO: support this for Update and Delete as well
+			for _, h := range ExtractTableHintsFromStmtNode(x.Select, warnHandler) {
+				if isStmtHint(h) {
+					result = append(result, h)
+				}
+			}
+		}
+		return result
 	case *ast.SetOprStmt:
 		var result []*ast.TableOptimizerHint
 		if x.SelectList == nil {

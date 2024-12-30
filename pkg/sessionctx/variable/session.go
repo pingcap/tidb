@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
 	"net"
@@ -34,41 +35,43 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ptypes "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/maps"
 )
 
 var (
@@ -202,11 +205,6 @@ type TxnCtxNoNeedToRestore struct {
 	StartTS     uint64
 	StaleReadTs uint64
 
-	// ShardStep indicates the max size of continuous rowid shard in one transaction.
-	ShardStep    int
-	shardRemain  int
-	currentShard int64
-
 	// unchangedKeys is used to store the unchanged keys that needs to lock for pessimistic transaction.
 	unchangedKeys map[string]struct{}
 
@@ -268,24 +266,62 @@ type SavepointRecord struct {
 	TxnCtxSavepoint TxnCtxNeedToRestore
 }
 
-// GetCurrentShard returns the shard for the next `count` IDs.
-func (s *SessionVars) GetCurrentShard(count int) int64 {
-	tc := s.TxnCtx
-	if s.shardRand == nil {
-		s.shardRand = rand.New(rand.NewSource(int64(tc.StartTS))) // #nosec G404
-	}
-	if tc.shardRemain <= 0 {
-		tc.updateShard(s.shardRand)
-		tc.shardRemain = tc.ShardStep
-	}
-	tc.shardRemain -= count
-	return tc.currentShard
+// RowIDShardGenerator is used to generate shard for row id.
+type RowIDShardGenerator struct {
+	// shardRand is used for generated rand shard
+	shardRand *rand.Rand
+	// shardStep indicates the max size of continuous rowid shard in one transaction.
+	shardStep    int
+	shardRemain  int
+	currentShard int64
 }
 
-func (tc *TransactionContext) updateShard(shardRand *rand.Rand) {
+// NewRowIDShardGenerator creates a new RowIDShardGenerator.
+func NewRowIDShardGenerator(shardRand *rand.Rand, step int) *RowIDShardGenerator {
+	intest.AssertNotNil(shardRand)
+	return &RowIDShardGenerator{
+		shardRand: shardRand,
+		shardStep: step,
+	}
+}
+
+// SetShardStep sets the step of shard
+func (s *RowIDShardGenerator) SetShardStep(step int) {
+	s.shardStep = step
+	s.shardRemain = 0
+}
+
+// GetShardStep returns the shard step
+func (s *RowIDShardGenerator) GetShardStep() int {
+	return s.shardStep
+}
+
+// GetCurrentShard returns the shard for the next `count` IDs.
+func (s *RowIDShardGenerator) GetCurrentShard(count int) int64 {
+	if s.shardRemain <= 0 {
+		s.updateShard(s.shardRand)
+		s.shardRemain = s.GetShardStep()
+	}
+	s.shardRemain -= count
+	return s.currentShard
+}
+
+func (s *RowIDShardGenerator) updateShard(shardRand *rand.Rand) {
 	var buf [8]byte
 	binary.LittleEndian.PutUint64(buf[:], shardRand.Uint64())
-	tc.currentShard = int64(murmur3.Sum32(buf[:]))
+	s.currentShard = int64(murmur3.Sum32(buf[:]))
+}
+
+// GetRowIDShardGenerator shard row id generator
+func (s *SessionVars) GetRowIDShardGenerator() *RowIDShardGenerator {
+	if s.shardGenerator != nil {
+		return s.shardGenerator
+	}
+
+	intest.Assert(s.TxnCtx.StartTS > 0)
+	r := rand.New(rand.NewSource(int64(s.TxnCtx.StartTS))) // #nosec G404
+	s.shardGenerator = NewRowIDShardGenerator(r, int(s.ShardAllocateStep))
+	return s.shardGenerator
 }
 
 // AddUnchangedKeyForLock adds an unchanged key for pessimistic lock.
@@ -305,36 +341,38 @@ func (tc *TransactionContext) CollectUnchangedKeysForLock(buf []kv.Key) []kv.Key
 	return buf
 }
 
-// UpdateDeltaForTable updates the delta info for some table.
-func (tc *TransactionContext) UpdateDeltaForTable(physicalTableID int64, delta int64, count int64, colSize map[int64]int64) {
-	tc.tdmLock.Lock()
-	defer tc.tdmLock.Unlock()
-	if tc.TableDeltaMap == nil {
-		tc.TableDeltaMap = make(map[int64]TableDelta)
-	}
-	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && colSize != nil {
-		item.ColSize = make(map[int64]int64, len(colSize))
-	}
-	item.Delta += delta
-	item.Count += count
-	item.TableID = physicalTableID
-	for key, val := range colSize {
-		item.ColSize[key] += val
-	}
-	tc.TableDeltaMap[physicalTableID] = item
-}
-
 // ColSize is a data struct to store the delta information for a table.
 type ColSize struct {
 	ColID int64
 	Size  int64
 }
 
-// UpdateDeltaForTableFromColSlice is the same as UpdateDeltaForTable, but it accepts a slice of column size.
-func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
+// DeltaCols is used to update the delta size for cols.
+type DeltaCols interface {
+	// UpdateColSizeMap is used to update delta map for cols.
+	UpdateColSizeMap(m map[int64]int64) map[int64]int64
+}
+
+// DeltaColsMap implements DeltaCols
+type DeltaColsMap map[int64]int64
+
+// UpdateColSizeMap implements DeltaCols
+func (cols DeltaColsMap) UpdateColSizeMap(m map[int64]int64) map[int64]int64 {
+	if m == nil && len(cols) > 0 {
+		m = make(map[int64]int64, len(cols))
+	}
+	for colID, size := range cols {
+		m[colID] += size
+	}
+	return m
+}
+
+// UpdateDeltaForTable updates the delta info for some table.
+// The `cols` argument is used to update the delta size for cols.
+// If `cols` is nil, it means that the delta size for cols is not changed.
+func (tc *TransactionContext) UpdateDeltaForTable(
 	physicalTableID int64, delta int64,
-	count int64, colSizes []ColSize,
+	count int64, cols DeltaCols,
 ) {
 	tc.tdmLock.Lock()
 	defer tc.tdmLock.Unlock()
@@ -342,14 +380,11 @@ func (tc *TransactionContext) UpdateDeltaForTableFromColSlice(
 		tc.TableDeltaMap = make(map[int64]TableDelta)
 	}
 	item := tc.TableDeltaMap[physicalTableID]
-	if item.ColSize == nil && len(colSizes) > 0 {
-		item.ColSize = make(map[int64]int64, len(colSizes))
-	}
 	item.Delta += delta
 	item.Count += count
 	item.TableID = physicalTableID
-	for _, s := range colSizes {
-		item.ColSize[s.ColID] += s.Size
+	if cols != nil {
+		item.ColSize = cols.UpdateColSizeMap(item.ColSize)
 	}
 	tc.TableDeltaMap[physicalTableID] = item
 }
@@ -428,16 +463,10 @@ func (tc *TransactionContext) GetCurrentSavepoint() TxnCtxNeedToRestore {
 	for k, v := range tc.TableDeltaMap {
 		tableDeltaMap[k] = v.Clone()
 	}
-	pessimisticLockCache := make(map[string][]byte, len(tc.pessimisticLockCache))
-	maps.Copy(pessimisticLockCache, tc.pessimisticLockCache)
-	CurrentStmtPessimisticLockCache := make(map[string][]byte, len(tc.CurrentStmtPessimisticLockCache))
-	maps.Copy(CurrentStmtPessimisticLockCache, tc.CurrentStmtPessimisticLockCache)
-	cachedTables := make(map[int64]any, len(tc.CachedTables))
-	maps.Copy(cachedTables, tc.CachedTables)
 	return TxnCtxNeedToRestore{
 		TableDeltaMap:        tableDeltaMap,
-		pessimisticLockCache: pessimisticLockCache,
-		CachedTables:         cachedTables,
+		pessimisticLockCache: maps.Clone(tc.pessimisticLockCache),
+		CachedTables:         maps.Clone(tc.CachedTables),
 		InsertTTLRowsCount:   tc.InsertTTLRowsCount,
 	}
 }
@@ -659,33 +688,87 @@ func validateReadConsistencyLevel(val string) error {
 	}
 }
 
+// UserVarsReader is used to read user defined variables.
+type UserVarsReader interface {
+	// GetUserVarVal get user defined variables' value
+	GetUserVarVal(name string) (types.Datum, bool)
+	// GetUserVarType get user defined variables' type
+	GetUserVarType(name string) (*types.FieldType, bool)
+	// Clone clones the user vars
+	Clone() UserVarsReader
+}
+
+// UserVars should implement UserVarsReader interface.
+var _ UserVarsReader = &UserVars{}
+
+// UserVars is used to provide user variable operations.
+type UserVars struct {
+	// lock is for user defined variables. values and types is read/write protected.
+	lock sync.RWMutex
+	// values stores the Datum for user variables
+	values map[string]types.Datum
+	// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
+	types map[string]*types.FieldType
+}
+
+// NewUserVars creates a new user UserVars object
+func NewUserVars() *UserVars {
+	return &UserVars{
+		values: make(map[string]types.Datum),
+		types:  make(map[string]*types.FieldType),
+	}
+}
+
+// Clone clones the user vars
+func (s *UserVars) Clone() UserVarsReader {
+	cloned := NewUserVars()
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	for name, userVar := range s.values {
+		cloned.values[name] = *userVar.Clone()
+	}
+	for name, userVarType := range s.types {
+		cloned.types[name] = userVarType.Clone()
+	}
+	return cloned
+}
+
 // SetUserVarVal set user defined variables' value
-func (s *SessionVars) SetUserVarVal(name string, dt types.Datum) {
-	s.userVars.lock.Lock()
-	defer s.userVars.lock.Unlock()
-	s.userVars.values[name] = dt
+func (s *UserVars) SetUserVarVal(name string, dt types.Datum) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.values[name] = dt
+}
+
+// UnsetUserVar unset an user defined variable by name.
+func (s *UserVars) UnsetUserVar(varName string) {
+	varName = strings.ToLower(varName)
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	delete(s.values, varName)
+	delete(s.types, varName)
 }
 
 // GetUserVarVal get user defined variables' value
-func (s *SessionVars) GetUserVarVal(name string) (types.Datum, bool) {
-	s.userVars.lock.RLock()
-	defer s.userVars.lock.RUnlock()
-	dt, ok := s.userVars.values[name]
+func (s *UserVars) GetUserVarVal(name string) (types.Datum, bool) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	dt, ok := s.values[name]
 	return dt, ok
 }
 
 // SetUserVarType set user defined variables' type
-func (s *SessionVars) SetUserVarType(name string, ft *types.FieldType) {
-	s.userVars.lock.Lock()
-	defer s.userVars.lock.Unlock()
-	s.userVars.types[name] = ft
+func (s *UserVars) SetUserVarType(name string, ft *types.FieldType) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.types[name] = ft
 }
 
 // GetUserVarType get user defined variables' type
-func (s *SessionVars) GetUserVarType(name string) (*types.FieldType, bool) {
-	s.userVars.lock.RLock()
-	defer s.userVars.lock.RUnlock()
-	ft, ok := s.userVars.types[name]
+func (s *UserVars) GetUserVarType(name string) (*types.FieldType, bool) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	ft, ok := s.types[name]
 	return ft, ok
 }
 
@@ -699,6 +782,9 @@ type SessionVarsProvider interface {
 	GetSessionVars() *SessionVars
 }
 
+// SessionVars should implement `SessionVarsProvider`
+var _ SessionVarsProvider = &SessionVars{}
+
 // SessionVars is to handle user-defined or global variables in the current session.
 type SessionVars struct {
 	Concurrency
@@ -709,14 +795,7 @@ type SessionVars struct {
 	DMLBatchSize        int
 	RetryLimit          int64
 	DisableTxnAutoRetry bool
-	userVars            struct {
-		// lock is for user defined variables. values and types is read/write protected.
-		lock sync.RWMutex
-		// values stores the Datum for user variables
-		values map[string]types.Datum
-		// types stores the FieldType for user variables, it cannot be inferred from values when values have not been set yet.
-		types map[string]*types.FieldType
-	}
+	*UserVars
 	// systems variables, don't modify it directly, use GetSystemVar/SetSystemVar method.
 	systems map[string]string
 	// SysWarningCount is the system variable "warning_count", because it is on the hot path, so we extract it from the systems
@@ -733,6 +812,9 @@ type SessionVars struct {
 	// Parameter values for plan cache.
 	PlanCacheParams   *PlanCacheParamList
 	LastUpdateTime4PC types.Time
+
+	// The Cached Plan for this execution, it should be *plannercore.PlanCacheValue.
+	PlanCacheValue any
 
 	// ActiveRoles stores active roles for current user
 	ActiveRoles []*auth.RoleIdentity
@@ -758,6 +840,12 @@ type SessionVars struct {
 	// status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
 	status atomic.Uint32
 
+	// ShardRowIDBits is the number of shard bits for user table row ID.
+	ShardRowIDBits uint64
+
+	// PreSplitRegions is the number of regions that should be pre-split for the table.
+	PreSplitRegions uint64
+
 	// ClientCapability is client's capability.
 	ClientCapability uint32
 
@@ -766,6 +854,9 @@ type SessionVars struct {
 
 	// ConnectionID is the connection id of the current session.
 	ConnectionID uint64
+
+	// SQLCPUUsages records tidb/tikv cpu usages for current sql
+	SQLCPUUsages ppcpuusage.SQLCPUUsages
 
 	// PlanID is the unique id of logical and physical plan.
 	PlanID atomic.Int32
@@ -807,9 +898,6 @@ type SessionVars struct {
 	// SnapshotInfoschema is used with SnapshotTS, when the schema version at snapshotTS less than current schema
 	// version, we load an old version schema for query.
 	SnapshotInfoschema any
-
-	// BinlogClient is used to write binlog.
-	BinlogClient *pumpcli.PumpsClient
 
 	// GlobalVarsAccessor is used to set and get global variables.
 	GlobalVarsAccessor GlobalVarAccessor
@@ -1022,12 +1110,6 @@ type SessionVars struct {
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
-	// EnableTablePartition enables table partition feature.
-	EnableTablePartition string
-
-	// EnableListTablePartition enables list table partition feature.
-	EnableListTablePartition bool
-
 	// EnableCascadesPlanner enables the cascades planner.
 	EnableCascadesPlanner bool
 
@@ -1090,8 +1172,9 @@ type SessionVars struct {
 	// TxnMode indicates should be pessimistic or optimistic.
 	TxnMode string
 
-	// LowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
-	LowResolutionTSO bool
+	// lowResolutionTSO is used for reading data with low resolution TSO which is updated once every two seconds.
+	// Do not use it directly, use the `UseLowResolutionTSO` method below.
+	lowResolutionTSO bool
 
 	// MaxExecutionTime is the timeout for select statement, in milliseconds.
 	// If the value is 0, timeouts are not enabled.
@@ -1117,7 +1200,7 @@ type SessionVars struct {
 	// NoopFuncsMode allows OFF/ON/WARN values as 0/1/2.
 	NoopFuncsMode int
 
-	// StartTime is the start time of the last query.
+	// StartTime is the start time of the last query. It's set after the query is parsed and before the query is compiled.
 	StartTime time.Time
 
 	// DurationParse is the duration of parsing SQL string to AST of the last query.
@@ -1136,7 +1219,7 @@ type SessionVars struct {
 	DurationWaitTS time.Duration
 
 	// PrevStmt is used to store the previous executed statement in the current session.
-	PrevStmt fmt.Stringer
+	PrevStmt *LazyStmtText
 
 	// prevStmtDigest is used to store the digest of the previous statement in the current session.
 	prevStmtDigest string
@@ -1227,12 +1310,6 @@ type SessionVars struct {
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
 
-	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
-	EnableGlobalIndex bool
-
-	// PresumeKeyNotExists indicates lazy existence checking is enabled.
-	PresumeKeyNotExists bool
-
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
@@ -1274,6 +1351,9 @@ type SessionVars struct {
 
 	// DisableHashJoin indicates whether to disable hash join.
 	DisableHashJoin bool
+
+	// UseHashJoinV2 indicates whether to use hash join v2.
+	UseHashJoinV2 bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
@@ -1511,11 +1591,12 @@ type SessionVars struct {
 	// StoreBatchSize indicates the batch size limit of store batch, set this field to 0 to disable store batch.
 	StoreBatchSize int
 
-	// shardRand is used by TxnCtx, for the GetCurrentShard() method.
-	shardRand *rand.Rand
+	// shardGenerator indicates to generate shard for row id.
+	shardGenerator *RowIDShardGenerator
 
 	// Resource group name
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
+	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1618,6 +1699,27 @@ type SessionVars struct {
 
 	// GroupConcatMaxLen represents the maximum length of the result of GROUP_CONCAT.
 	GroupConcatMaxLen uint64
+
+	// TiFlashPreAggMode indicates the policy of pre aggregation.
+	TiFlashPreAggMode string
+
+	// EnableLazyCursorFetch defines whether to enable the lazy cursor fetch.
+	EnableLazyCursorFetch bool
+
+	// SharedLockPromotion indicates whether the `select for lock` statements would be executed as the
+	// `select for update` statements which do acquire pessimsitic locks.
+	SharedLockPromotion bool
+
+	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
+	ScatterRegion string
+
+	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
+	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+}
+
+// GetSessionVars implements the `SessionVarsProvider` interface.
+func (s *SessionVars) GetSessionVars() *SessionVars {
+	return s
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1829,6 +1931,16 @@ func (s *SessionVars) AllocNewPlanID() int {
 	return int(s.PlanID.Add(1))
 }
 
+// GetTotalCostDuration returns the total cost duration of the last statement in the current session.
+func (s *SessionVars) GetTotalCostDuration() time.Duration {
+	return time.Since(s.StartTime) + s.DurationParse
+}
+
+// GetExecuteDuration returns the execute duration of the last statement in the current session.
+func (s *SessionVars) GetExecuteDuration() time.Duration {
+	return time.Since(s.StartTime) - s.DurationCompile
+}
+
 const (
 	// PlacementModeStrict indicates all placement operations should be checked strictly in ddl
 	PlacementModeStrict string = "STRICT"
@@ -1926,6 +2038,48 @@ func (p *PlanCacheParamList) AllParamValues() []types.Datum {
 	return p.paramValues
 }
 
+// LazyStmtText represents the sql text of a stmt that used in log. It's lazily evaluated to reduce the mem allocs.
+type LazyStmtText struct {
+	text   *string
+	SQL    string
+	Redact string
+	Params PlanCacheParamList
+	Format func(string) string
+}
+
+// SetText sets the text directly.
+func (s *LazyStmtText) SetText(text string) {
+	s.text = &text
+}
+
+// Update resets the lazy text and leads to re-eval for next `s.String()`. It copies params so it's safe to use
+// `SessionVars.PlanCacheParams` directly without worrying about the params get reset later.
+func (s *LazyStmtText) Update(redact string, sql string, params *PlanCacheParamList) {
+	s.text = nil
+	s.SQL = sql
+	s.Redact = redact
+	s.Params.Reset()
+	if params != nil {
+		s.Params.forNonPrepCache = params.forNonPrepCache
+		s.Params.paramValues = append(s.Params.paramValues, params.paramValues...)
+	}
+}
+
+// String implements fmt.Stringer.
+func (s *LazyStmtText) String() string {
+	if s == nil {
+		return ""
+	}
+	if s.text == nil {
+		text := redact.String(s.Redact, s.SQL+s.Params.String())
+		if s.Format != nil {
+			text = s.Format(text)
+		}
+		s.text = &text
+	}
+	return *s.text
+}
+
 // ConnectionInfo presents the connection information, which is mainly used by audit logs.
 type ConnectionInfo struct {
 	ConnectionID      uint64
@@ -1970,14 +2124,7 @@ func (connInfo *ConnectionInfo) IsSecureTransport() bool {
 // NewSessionVars creates a session vars object.
 func NewSessionVars(hctx HookContext) *SessionVars {
 	vars := &SessionVars{
-		userVars: struct {
-			lock   sync.RWMutex
-			values map[string]types.Datum
-			types  map[string]*types.FieldType
-		}{
-			values: make(map[string]types.Datum),
-			types:  make(map[string]*types.FieldType),
-		},
+		UserVars:                      NewUserVars(),
 		systems:                       make(map[string]string),
 		PreparedStmts:                 make(map[uint32]any),
 		PreparedStmtNameToID:          make(map[string]uint32),
@@ -2075,6 +2222,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 		GroupConcatMaxLen:             DefGroupConcatMaxLen,
+		EnableRedactLog:               DefTiDBRedactLog,
+		EnableWindowFunction:          DefEnableWindowFunction,
 	}
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
@@ -2293,18 +2442,10 @@ func (s *SessionVars) SetStringUserVar(name string, strVal string, collation str
 	}
 }
 
-// UnsetUserVar unset an user defined variable by name.
-func (s *SessionVars) UnsetUserVar(varName string) {
-	varName = strings.ToLower(varName)
-	s.userVars.lock.Lock()
-	defer s.userVars.lock.Unlock()
-	delete(s.userVars.values, varName)
-	delete(s.userVars.types, varName)
-}
-
 // SetLastInsertID saves the last insert id to the session context.
 // TODO: we may store the result for last_insert_id sys var later.
 func (s *SessionVars) SetLastInsertID(insertID uint64) {
+	s.StmtCtx.LastInsertIDSet = true
 	s.StmtCtx.LastInsertID = insertID
 }
 
@@ -2666,14 +2807,11 @@ func (s *SessionVars) GetDivPrecisionIncrement() int {
 	return s.DivPrecisionIncrement
 }
 
-// LazyCheckKeyNotExists returns if we can lazy check key not exists.
-func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
-}
-
 // GetTemporaryTable returns a TempTable by tableInfo.
 func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.TempTable {
 	if tblInfo.TempTableType != model.TempTableNone {
+		s.TxnCtxMu.Lock()
+		defer s.TxnCtxMu.Unlock()
 		if s.TxnCtx.TemporaryTables == nil {
 			s.TxnCtx.TemporaryTables = make(map[int64]tableutil.TempTable)
 		}
@@ -2692,16 +2830,16 @@ func (s *SessionVars) GetTemporaryTable(tblInfo *model.TableInfo) tableutil.Temp
 // EncodeSessionStates saves session states into SessionStates.
 func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sessionstates.SessionStates) (err error) {
 	// Encode user-defined variables.
-	s.userVars.lock.RLock()
-	sessionStates.UserVars = make(map[string]*types.Datum, len(s.userVars.values))
-	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.userVars.types))
-	for name, userVar := range s.userVars.values {
+	s.UserVars.lock.RLock()
+	sessionStates.UserVars = make(map[string]*types.Datum, len(s.UserVars.values))
+	sessionStates.UserVarTypes = make(map[string]*ptypes.FieldType, len(s.UserVars.types))
+	for name, userVar := range s.UserVars.values {
 		sessionStates.UserVars[name] = userVar.Clone()
 	}
-	for name, userVarType := range s.userVars.types {
+	for name, userVarType := range s.UserVars.types {
 		sessionStates.UserVarTypes[name] = userVarType.Clone()
 	}
-	s.userVars.lock.RUnlock()
+	s.UserVars.lock.RUnlock()
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
@@ -2754,7 +2892,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.ResourceGroupName = sessionStates.ResourceGroupName
+	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2763,6 +2901,15 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.StmtCtx.PrevLastInsertID = sessionStates.LastInsertID
 	s.StmtCtx.SetWarnings(sessionStates.Warnings)
 	return
+}
+
+// SetResourceGroupName changes the resource group name and inc/dec the metrics accordingly.
+func (s *SessionVars) SetResourceGroupName(groupName string) {
+	if s.ResourceGroupName != groupName {
+		metrics.ConnGauge.WithLabelValues(s.ResourceGroupName).Dec()
+		metrics.ConnGauge.WithLabelValues(groupName).Inc()
+	}
+	s.ResourceGroupName = groupName
 }
 
 // TableDelta stands for the changed count for one table or partition.
@@ -2776,12 +2923,10 @@ type TableDelta struct {
 
 // Clone returns a cloned TableDelta.
 func (td TableDelta) Clone() TableDelta {
-	colSize := make(map[int64]int64, len(td.ColSize))
-	maps.Copy(colSize, td.ColSize)
 	return TableDelta{
 		Delta:    td.Delta,
 		Count:    td.Count,
-		ColSize:  colSize,
+		ColSize:  maps.Clone(td.ColSize),
 		InitTime: td.InitTime,
 		TableID:  td.TableID,
 	}
@@ -3186,6 +3331,10 @@ const (
 	SlowLogWRU = "Request_unit_write"
 	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
 	SlowLogWaitRUDuration = "Time_queued_by_rc"
+	// SlowLogTidbCPUUsageDuration is the total tidb cpu usages.
+	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
+	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
+	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3245,6 +3394,7 @@ type SlowQueryLogItems struct {
 	RRU               float64
 	WRU               float64
 	WaitRUDuration    time.Duration
+	CPUUsages         ppcpuusage.CPUUsages
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3455,7 +3605,12 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.WaitRUDuration > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
 	}
-
+	if logItems.CPUUsages.TidbCPUTime > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogTidbCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TidbCPUTime.Seconds(), 'f', -1, 64))
+	}
+	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
+	}
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}
@@ -3628,8 +3783,9 @@ func (s *SessionVars) GetNegateStrMatchDefaultSelectivity() float64 {
 
 // GetRelatedTableForMDL gets the related table for metadata lock.
 func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
-	s.TxnCtx.tdmLock.Lock()
-	defer s.TxnCtx.tdmLock.Unlock()
+	mu := &s.TxnCtx.tdmLock
+	mu.Lock()
+	defer mu.Unlock()
 	if s.TxnCtx.relatedTableForMDL == nil {
 		s.TxnCtx.relatedTableForMDL = new(sync.Map)
 	}
@@ -3809,3 +3965,68 @@ const (
 func (s *SessionVars) GetOptObjective() string {
 	return s.OptObjective
 }
+
+// ForcePreAggStr means 1st hashagg will be pre aggregated.
+// AutoStr means TiFlash will decide which policy for 1st hashagg.
+// ForceStreamingStr means 1st hashagg will for pass through all blocks.
+const (
+	ForcePreAggStr    = "force_preagg"
+	AutoStr           = "auto"
+	ForceStreamingStr = "force_streaming"
+)
+
+// ValidTiFlashPreAggMode returns all valid modes.
+func ValidTiFlashPreAggMode() string {
+	return ForcePreAggStr + ", " + AutoStr + ", " + ForceStreamingStr
+}
+
+// ToTiPBTiFlashPreAggMode return the corresponding tipb value of preaggregation mode.
+func ToTiPBTiFlashPreAggMode(mode string) (tipb.TiFlashPreAggMode, bool) {
+	switch mode {
+	case ForcePreAggStr:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, true
+	case ForceStreamingStr:
+		return tipb.TiFlashPreAggMode_ForceStreaming, true
+	case AutoStr:
+		return tipb.TiFlashPreAggMode_Auto, true
+	default:
+		return tipb.TiFlashPreAggMode_ForcePreAgg, false
+	}
+}
+
+// UseLowResolutionTSO indicates whether low resolution tso could be used for execution.
+// After `tidb_low_resolution_tso` supports the global scope, this variable is expected to only affect
+// user sessions and not impact internal background sessions and tasks.
+// Currently, one of the problems is that the determination of whether a session is an internal task
+// session within TiDB is quite inconsistent and chaotic, posing risks. Some internal sessions rely on
+// upper-level users correctly using `ExecuteInternal` or `ExecuteRestrictedSQL` for assurance.
+// Additionally, the BR code also contains some session-related encapsulation and usage.
+//
+// TODO: There needs to be a more comprehensive and unified entry point to ensure that all internal
+// sessions and global user sessions/variables are isolated and do not affect each other.
+func (s *SessionVars) UseLowResolutionTSO() bool {
+	return !s.InRestrictedSQL && s.lowResolutionTSO && s.ConnectionID > 0
+}
+
+// PessimisticLockEligible indicates whether pessimistic lock should not be ignored for the current
+// statement execution. There are cases the `for update` clause should not take effect, like autocommit
+// statements with “pessimistic-auto-commit disabled.
+func (s *SessionVars) PessimisticLockEligible() bool {
+	if s.StmtCtx.ForShareLockEnabledByNoop {
+		return false
+	}
+	if !s.IsAutocommit() || s.InTxn() || (config.GetGlobalConfig().
+		PessimisticTxn.PessimisticAutoCommit.Load() && !s.BulkDMLEnabled) {
+		return true
+	}
+	return false
+}
+
+const (
+	// ScatterOff means default, will not scatter region
+	ScatterOff string = ""
+	// ScatterTable means scatter region at table level
+	ScatterTable string = "table"
+	// ScatterGlobal means scatter region at global level
+	ScatterGlobal string = "global"
+)

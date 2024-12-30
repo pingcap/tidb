@@ -55,7 +55,7 @@
         "SQL": "select * from t1 where t1.b > 1 and  t1.a in (select sum(t2.b) from t2 where t2.a=t1.a and t2.b is not null)",
         "Plan": [
           " Projection                 root test.t1.a, test.t1.b, test.t1.c",
-          " └─Apply                    root semi join, equal:eq(?, ?)",
+          " └─Apply                    root semi join, left side:Projection, equal:eq(?, ?)",
           "   ├─Projection             root cast(test.t1.a, decimal(10,0) BINARY), test.t1.a, test.t1.b, test.t1.c",
           "   │ └─TableReader          root ",
           "   │   └─Selection          cop  gt(test.t1.b, ?)",
@@ -151,9 +151,10 @@
       {
         "SQL": "insert into t1 select * from t2 where t2.a>0 and t2.b!=0",
         "Plan": [
-          " TableReader        root ",
-          " └─Selection        cop  ne(test.t2.b, ?)",
-          "   └─TableRangeScan cop  table:t2, range:[?,?], keep order:false"
+          " IndexLookUp        root ",
+          " ├─Selection        cop  gt(test.t2.a, ?)",
+          " │ └─IndexRangeScan cop  table:t2, index:b(b), range:[?,?], keep order:false",
+          " └─TableRowIDScan   cop  table:t2, keep order:false"
         ]
       },
       {
@@ -173,17 +174,18 @@
       {
         "SQL": "delete from t1",
         "Plan": [
-          " TableReader     root ",
-          " └─TableFullScan cop  table:t1, range:[?,?], keep order:false"
+          " IndexReader     root index:IndexFullScan",
+          " └─IndexFullScan cop  table:t1, index:b(b), range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "delete from t1 where a>0 and b=1 and c!=2",
         "Plan": [
-          " IndexLookUp        root ",
-          " ├─IndexRangeScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
-          " └─Selection        cop  ne(test.t1.c, ?)",
-          "   └─TableRowIDScan cop  table:t1, keep order:false"
+          " Projection           root test.t1.a, test.t1.b",
+          " └─IndexLookUp        root ",
+          "   ├─IndexRangeScan   cop  table:t1, index:b(b), range:[?,?], keep order:false",
+          "   └─Selection        cop  ne(test.t1.c, ?)",
+          "     └─TableRowIDScan cop  table:t1, keep order:false"
         ]
       },
       {
@@ -294,9 +296,9 @@
       {
         "SQL": "select * from test where age=5;",
         "Plan": [
-          " IndexLookUp      root ",
-          " ├─IndexRangeScan cop  table:test, index:idx_age(age), range:[?,?], keep order:false",
-          " └─TableRowIDScan cop  table:test, keep order:false"
+          " TableReader       root ",
+          " └─Selection       cop  eq(test.test.age, ?)",
+          "   └─TableFullScan cop  table:test, range:[?,?], keep order:false"
         ]
       }
     ]
@@ -443,8 +445,8 @@
         "Plan": [
           " TableReader         root         ",
           " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.b, ?), keep order:false"
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/docker/go-units"
@@ -49,7 +50,7 @@ import (
 // importStepExecutor is a executor for import step.
 // StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
-	execute.StepExecFrameworkInfo
+	taskexecutor.BaseStepExecutor
 
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -72,7 +73,7 @@ func getTableImporter(
 	taskMeta *TaskMeta,
 	store tidbkv.Storage,
 ) (*importer.TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -161,13 +162,14 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, subtask.Concurrency)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
 		return err
 	}
 
+	panicked := atomic.Bool{}
 outer:
 	for _, chunk := range subtaskMeta.Chunks {
 		// TODO: current workpool impl doesn't drain the input channel, it will
@@ -177,6 +179,7 @@ outer:
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
+			panicked:   &panicked,
 		}:
 		case <-op.Done():
 			break outer
@@ -184,14 +187,20 @@ outer:
 	}
 	source.Finish()
 
-	return pipeline.Close()
+	if err = pipeline.Close(); err != nil {
+		return err
+	}
+	if panicked.Load() {
+		return errors.Errorf("panic occurred during import, please check log")
+	}
+	return s.onFinished(ctx, subtask)
 }
 
 func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -269,7 +278,7 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 }
 
 type mergeSortStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -339,7 +348,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
-		subtask.Concurrency,
+		int(m.GetResource().CPU.Capacity()),
 		false)
 	logger.Info(
 		"merge sort finished",
@@ -348,10 +357,13 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
 		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
 	)
-	return err
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(subtask)
 }
 
-func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -367,7 +379,7 @@ func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Sub
 }
 
 type writeAndIngestStepExecutor struct {
-	execute.StepExecFrameworkInfo
+	taskexecutor.BaseStepExecutor
 
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -403,33 +415,42 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	localBackend.WorkerConcurrency = subtask.Concurrency * 2
+	localBackend.WorkerConcurrency = int(e.GetResource().CPU.Capacity()) * 2
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.DataFiles,
-			StatFiles:       sm.StatFiles,
-			StartKey:        sm.StartKey,
-			EndKey:          sm.EndKey,
-			SplitKeys:       sm.RangeSplitKeys,
-			RegionSplitSize: sm.RangeSplitSize,
-			TotalFileSize:   int64(sm.TotalKVSize),
-			TotalKVCount:    0,
-			CheckHotspot:    false,
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			StartKey:      sm.StartKey,
+			EndKey:        sm.EndKey,
+			JobKeys:       jobKeys,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+			CheckHotspot:  false,
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return e.onFinished(ctx, subtask)
 }
 
 func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -462,7 +483,7 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 }
 
 type postProcessStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	taskID   int64
 	store    tidbkv.Storage
 	taskMeta *TaskMeta
@@ -506,15 +527,14 @@ type importExecutor struct {
 // NewImportExecutor creates a new import task executor.
 func NewImportExecutor(
 	ctx context.Context,
-	id string,
 	task *proto.Task,
-	taskTable taskexecutor.TaskTable,
+	param taskexecutor.Param,
 	store tidbkv.Storage,
 ) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, task, param),
 		store:            store,
 	}
 	s.BaseTaskExecutor.Extension = s

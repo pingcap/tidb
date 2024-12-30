@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -31,11 +32,11 @@ var MaxPropagateColsCnt = 100
 
 // nolint:structcheck
 type basePropConstSolver struct {
-	colMapper map[int64]int       // colMapper maps column to its index
-	eqList    []*Constant         // if eqList[i] != nil, it means col_i = eqList[i]
-	unionSet  *disjointset.IntSet // unionSet stores the relations like col_i = col_j
-	columns   []*Column           // columns stores all columns appearing in the conditions
-	ctx       BuildContext
+	colMapper map[int64]int             // colMapper maps column to its index
+	eqList    []*Constant               // if eqList[i] != nil, it means col_i = eqList[i]
+	unionSet  *disjointset.SimpleIntSet // unionSet stores the relations like col_i = col_j
+	columns   []*Column                 // columns stores all columns appearing in the conditions
+	ctx       exprctx.ExprContext
 }
 
 func (s *basePropConstSolver) getColID(col *Column) int {
@@ -65,6 +66,29 @@ func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (boo
 	}
 	s.eqList[id] = con
 	return true, false
+}
+
+// ValidCompareConstantPredicate checks if the predicate is an expression like [column '>'|'>='|'<'|'<='|'=' constant].
+// return param1: return true, if the predicate is a compare constant predicate.
+// return param2: return the column side of predicate.
+func ValidCompareConstantPredicate(ctx EvalContext, candidatePredicate Expression) bool {
+	scalarFunction, ok := candidatePredicate.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	if scalarFunction.FuncName.L != ast.GT && scalarFunction.FuncName.L != ast.GE &&
+		scalarFunction.FuncName.L != ast.LT && scalarFunction.FuncName.L != ast.LE &&
+		scalarFunction.FuncName.L != ast.EQ {
+		return false
+	}
+	column, _ := ValidCompareConstantPredicateHelper(ctx, scalarFunction, true)
+	if column == nil {
+		column, _ = ValidCompareConstantPredicateHelper(ctx, scalarFunction, false)
+	}
+	if column == nil {
+		return false
+	}
+	return true
 }
 
 // ValidCompareConstantPredicateHelper checks if the predicate is a compare constant predicate, like "Column xxx Constant"
@@ -357,8 +381,8 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
 // This is a constant propagation logic for expression list such as ['a=1', 'a=b']
-func PropagateConstant(ctx BuildContext, conditions []Expression) []Expression {
-	return newPropConstSolver().PropagateConstant(ctx, conditions)
+func PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
+	return newPropConstSolver().PropagateConstant(exprctx.WithConstantPropagateCheck(ctx), conditions)
 }
 
 type propOuterJoinConstSolver struct {
@@ -662,7 +686,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 }
 
 // propagateConstantDNF find DNF item from CNF, and propagate constant inside DNF.
-func propagateConstantDNF(ctx BuildContext, conds []Expression) []Expression {
+func propagateConstantDNF(ctx exprctx.ExprContext, conds []Expression) []Expression {
 	for i, cond := range conds {
 		if dnf, ok := cond.(*ScalarFunction); ok && dnf.FuncName.L == ast.LogicOr {
 			dnfItems := SplitDNFItems(cond)
@@ -681,7 +705,7 @@ func propagateConstantDNF(ctx BuildContext, conds []Expression) []Expression {
 // Second step is to extract `outerCol = innerCol` from join conditions, and derive new join
 // conditions based on this column equal condition and `outerCol` related
 // expressions in join conditions and filter conditions;
-func PropConstOverOuterJoin(ctx BuildContext, joinConds, filterConds []Expression,
+func PropConstOverOuterJoin(ctx exprctx.ExprContext, joinConds, filterConds []Expression,
 	outerSchema, innerSchema *Schema, nullSensitive bool) ([]Expression, []Expression) {
 	solver := &propOuterJoinConstSolver{
 		outerSchema:   outerSchema,
@@ -695,7 +719,7 @@ func PropConstOverOuterJoin(ctx BuildContext, joinConds, filterConds []Expressio
 
 // PropagateConstantSolver is a constant propagate solver.
 type PropagateConstantSolver interface {
-	PropagateConstant(ctx BuildContext, conditions []Expression) []Expression
+	PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression
 }
 
 // newPropConstSolver returns a PropagateConstantSolver.
@@ -706,7 +730,7 @@ func newPropConstSolver() PropagateConstantSolver {
 }
 
 // PropagateConstant propagate constant values of deterministic predicates in a condition.
-func (s *propConstSolver) PropagateConstant(ctx BuildContext, conditions []Expression) []Expression {
+func (s *propConstSolver) PropagateConstant(ctx exprctx.ExprContext, conditions []Expression) []Expression {
 	s.ctx = ctx
 	return s.solve(conditions)
 }

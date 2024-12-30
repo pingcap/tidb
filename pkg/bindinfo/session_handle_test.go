@@ -18,12 +18,11 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/bindinfo/internal"
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/server"
@@ -69,12 +68,11 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 }
 
 func TestSessionBinding(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	for _, testSQL := range testSQLs {
-		internal.UtilCleanBindingEnv(tk, dom)
+		utilCleanBindingEnv(tk)
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("drop table if exists t1")
@@ -94,8 +92,8 @@ func TestSessionBinding(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoError(t, err)
 
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		binding, matched := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
+		binding, matched := handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.True(t, matched)
 		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
@@ -131,101 +129,10 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		_, matched = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
+		_, matched = handle.MatchSessionBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
 	}
-}
-
-func TestBaselineDBLowerCase(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	stmtsummary.StmtSummaryByDigestMap.Clear()
-	tk.MustExec("drop database if exists SPM")
-	tk.MustExec("create database SPM")
-	tk.MustExec("use SPM")
-	tk.MustExec("create table t(a int, b int)")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("update t set a = a + 1")
-	tk.MustExec("update t set a = a + 1")
-	tk.MustExec("admin capture bindings")
-	rows := tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "update `spm` . `t` set `a` = `a` + ?", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustExec("drop global binding for update t set a = a + 1")
-	rows = tk.MustQuery("show global bindings").Rows()
-	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
-	require.Len(t, rows, 0)
-
-	tk.MustExec("create global binding for select * from t using select * from t")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustExec("drop global binding for select * from t")
-	rows = tk.MustQuery("show global bindings").Rows()
-	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
-	require.Len(t, rows, 0)
-
-	tk.MustExec("create session binding for select * from t using select * from t")
-	rows = tk.MustQuery("show session bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustExec("drop session binding for select * from t")
-	rows = tk.MustQuery("show session bindings").Rows()
-	// DROP SESSION BINGING should remove the binding even if we are in SPM database.
-	require.Len(t, rows, 0)
-
-	internal.UtilCleanBindingEnv(tk, dom)
-
-	// Simulate existing bindings with upper case default_db.
-	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `spm` . `t`")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
-		"select * from `spm` . `t` SPM",
-	))
-	tk.MustExec("admin reload bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustExec("drop global binding for select * from t")
-	rows = tk.MustQuery("show global bindings").Rows()
-	// DROP GLOBAL BINGING should remove the binding even if we are in SPM database.
-	require.Len(t, rows, 0)
-
-	internal.UtilCleanBindingEnv(tk, dom)
-	// Simulate existing bindings with upper case default_db.
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
-	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
-		"select * from `spm` . `t` SPM",
-	))
-	tk.MustExec("admin reload bindings")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustExec("create global binding for select * from t using select * from t")
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
-	// default_db should have lower case.
-	require.Equal(t, "spm", rows[0][2])
-	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
-		"select * from `spm` . `t` SPM deleted",
-		"select * from `spm` . `t` spm enabled",
-	))
 }
 
 func TestShowGlobalBindings(t *testing.T) {
@@ -336,14 +243,10 @@ func TestIssue19836(t *testing.T) {
 	tk.MustExec("set @a=1;")
 	tk.MustExec("set @b=2;")
 	tk.MustExec("EXECUTE stmt USING @a, @b;")
-	explainResult := testkit.Rows(
-		"Limit_8 2.00 0 root  time:0s, loops:0 offset:1, count:2 N/A N/A",
-		"└─TableReader_13 3.00 0 root  time:0s, loops:0 data:Limit_12 N/A N/A",
-		"  └─Limit_12 3.00 0 cop[tikv]   offset:0, count:3 N/A N/A",
-		"    └─Selection_11 3.00 0 cop[tikv]   eq(test.t.a, 40) N/A N/A",
-		"      └─TableFullScan_10 3000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A",
-	)
-	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)).Check(explainResult)
+	result := tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)).String()
+	// Don't check the whole output here, since the explain for connection output contains execution time, which is not fixed
+	// after we including open/close time in it.
+	require.True(t, strings.Contains(result, "TableFullScan"))
 }
 
 func TestDropSingleBindings(t *testing.T) {
@@ -395,9 +298,13 @@ func TestIssue53834(t *testing.T) {
 	defer func() {
 		tk.MustExec(fmt.Sprintf(`set global tidb_mem_oom_action='%v'`, oomAction))
 	}()
+
 	tk.MustExec(`set global tidb_mem_oom_action='cancel'`)
+	err := tk.ExecToErr(`replace into t select /*+ memory_quota(1 mb) */ * from t`)
+	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
+
 	tk.MustExec(`create binding using replace into t select /*+ memory_quota(1 mb) */ * from t`)
-	err := tk.ExecToErr(`replace into t select * from t`)
+	err = tk.ExecToErr(`replace into t select * from t`)
 	require.ErrorContains(t, err, "cancelled due to exceeding the allowed memory limit")
 }
 

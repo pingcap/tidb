@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 // SortCase is the sort case
@@ -48,8 +47,7 @@ func (tc SortCase) String() string {
 }
 
 // DefaultSortTestCase returns default sort test case
-func DefaultSortTestCase() *SortCase {
-	ctx := mock.NewContext()
+func DefaultSortTestCase(ctx sessionctx.Context) *SortCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
@@ -58,8 +56,7 @@ func DefaultSortTestCase() *SortCase {
 }
 
 // SortTestCaseWithMemoryLimit returns sort test case
-func SortTestCaseWithMemoryLimit(bytesLimit int64) *SortCase {
-	ctx := mock.NewContext()
+func SortTestCaseWithMemoryLimit(ctx sessionctx.Context, bytesLimit int64) *SortCase {
 	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
 	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(-1, bytesLimit)

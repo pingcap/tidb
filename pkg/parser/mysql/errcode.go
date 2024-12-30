@@ -898,12 +898,14 @@ const (
 	ErrInvalidJSONText                                       = 3140
 	ErrInvalidJSONTextInParam                                = 3141
 	ErrInvalidJSONPath                                       = 3143
+	ErrInvalidJSONCharset                                    = 3144
 	ErrInvalidTypeForJSON                                    = 3146
 	ErrInvalidJSONPathWildcard                               = 3149
 	ErrInvalidJSONContainsPathType                           = 3150
 	ErrJSONUsedAsKey                                         = 3152
 	ErrJSONVacuousPath                                       = 3153
 	ErrJSONBadOneOrAllArg                                    = 3154
+	ErrJSONDocumentTooDeep                                   = 3157
 	ErrJSONDocumentNULLKey                                   = 3158
 	ErrBadUser                                               = 3162
 	ErrUserAlreadyExists                                     = 3163

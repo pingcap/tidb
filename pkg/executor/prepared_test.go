@@ -15,14 +15,16 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -820,9 +822,9 @@ func TestIssue29101(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
 		`StreamAgg_9 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
 		`└─IndexJoin_14 0.03 root  inner join, inner:IndexLookUp_13, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
-		`  ├─IndexLookUp_28(Build) 0.03 root  `,
-		`  │ ├─IndexRangeScan_26(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
-		`  │ └─TableRowIDScan_27(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
+		`  ├─IndexLookUp_25(Build) 0.03 root  `,
+		`  │ ├─IndexRangeScan_23(Build) 0.03 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
+		`  │ └─TableRowIDScan_24(Probe) 0.03 cop[tikv] table:order_line keep order:false, stats:pseudo`,
 		`  └─IndexLookUp_13(Probe) 0.03 root  `,
 		`    ├─IndexRangeScan_10(Build) 0.03 cop[tikv] table:stock, index:PRIMARY(s_w_id, s_i_id) range: decided by [eq(test.stock.s_i_id, test.order_line.ol_i_id) eq(test.stock.s_w_id, 391)], keep order:false, stats:pseudo`,
 		`    └─Selection_12(Probe) 0.03 cop[tikv]  lt(test.stock.s_quantity, 18)`,
@@ -1038,16 +1040,11 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
-	db, exists := is.SchemaByName(model.NewCIStr("test"))
-	require.True(t, exists)
-	for _, tbl := range is.SchemaTables(db.Name) {
-		tblInfo := tbl.Meta()
-		if tblInfo.Name.L == "t" {
-			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
-				Count:     1,
-				Available: true,
-			}
-		}
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
 	}
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tikv'")
@@ -1117,4 +1114,82 @@ func TestMaxPreparedStmtCount(t *testing.T) {
 	tk.MustExec("prepare stmt2 from 'select ? as num from dual'")
 	err := tk.ExecToErr("prepare stmt3 from 'select ? as num from dual'")
 	require.True(t, terror.ErrorEqual(err, variable.ErrMaxPreparedStmtCountReached))
+}
+
+func TestPrepareWorkWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, key(a))")
+	tk.MustExec("prepare stmt from 'insert into t2 values (0)'")
+	tk.MustExec("execute stmt")
+
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+	tk.MustExec("execute stmt")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+
+	// Then we create a foreign key constraint.
+	tk.MustExec("alter table t2 add constraint fk foreign key (a) references t1(a)")
+	tk.MustContainErrMsg("execute stmt", "Cannot add or update a child row: a foreign key constraint fails")
+	// As schema version increased, the plan cache should be invalidated.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestPrepareProtocolWorkWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int, key(a))")
+	tk.MustExec("create table t2(a int, key(a))")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("insert into t2 values (0)")
+	require.NoError(t, err)
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Nil(t, err)
+
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Nil(t, err)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustQuery("select * from t2").Check(testkit.Rows("0"))
+	tk.MustExec("delete from t2")
+
+	// Then we create a foreign key constraint.
+	tk.MustExec("alter table t2 add constraint fk foreign key (a) references t1(a)")
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, nil)
+	require.Contains(t, err.Error(), "Cannot add or update a child row: a foreign key constraint fails")
+	// As schema version increased, the plan cache should be invalidated.
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
+func TestExecuteWithWrongType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t3 (c1 int, c2 decimal(32, 30))")
+
+	tk.MustExec(`prepare p1 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p1 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p1 using @i0, @i1`)
+
+	tk.MustExec(`prepare p2 from "update t3 set c1 = 2 where c2 in (?, ?)"`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 'aa'`)
+	tk.MustExecToErr(`execute p2 using @i0, @i1`)
+	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
+	tk.MustExec(`execute p2 using @i0, @i1`)
 }

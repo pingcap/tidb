@@ -15,29 +15,35 @@
 package join
 
 import (
+	"runtime"
 	"testing"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/util"
 )
 
 func BenchmarkHashTableBuild(b *testing.B) {
 	b.StopTimer()
-	rowTable, err := createRowTable(3000000)
+	rowTable, tagBits, err := createRowTable(3000000)
 	if err != nil {
 		b.Fatal(err)
 	}
+	tagHelper := &tagPtrHelper{}
+	tagHelper.init(tagBits)
 	subTable := newSubTable(rowTable)
 	segmentCount := len(rowTable.segments)
 	b.StartTimer()
-	subTable.build(0, segmentCount)
+	subTable.build(0, segmentCount, tagHelper)
 }
 
 func BenchmarkHashTableConcurrentBuild(b *testing.B) {
 	b.StopTimer()
-	rowTable, err := createRowTable(3000000)
+	rowTable, tagBits, err := createRowTable(3000000)
 	if err != nil {
 		b.Fatal(err)
 	}
+	tagHelper := &tagPtrHelper{}
+	tagHelper.init(tagBits)
 	subTable := newSubTable(rowTable)
 	segmentCount := len(rowTable.segments)
 	buildThreads := 3
@@ -50,8 +56,38 @@ func BenchmarkHashTableConcurrentBuild(b *testing.B) {
 			segmentEnd = segmentCount
 		}
 		wg.Run(func() {
-			subTable.build(segmentStart, segmentEnd)
+			subTable.build(segmentStart, segmentEnd, tagHelper)
 		})
 	}
 	wg.Wait()
+}
+
+func BenchmarkTestUnsafePointer(b *testing.B) {
+	size := int(1e3)
+	a := make([]byte, size*8)
+	p := make([]unsafe.Pointer, size)
+	b.StopTimer()
+	for i := 0; i < size; i++ {
+		p[i] = unsafe.Pointer(&a[i*8])
+	}
+	for i := 0; i < size; i++ {
+		*(*int64)(p[i]) = int64(i)
+	}
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(p)
+}
+
+func BenchmarkTestUseUintptrAsUnsafePointer(b *testing.B) {
+	size := int(1e3)
+	a := make([]byte, size*8)
+	p := make([]uintptr, size)
+	b.StopTimer()
+	for i := 0; i < size; i++ {
+		*(*unsafe.Pointer)(unsafe.Pointer(&p[i])) = unsafe.Pointer(&a[i*8])
+	}
+	for i := 0; i < size; i++ {
+		*(*int64)((unsafe.Pointer)(&p[i])) = int64(i)
+	}
+	runtime.KeepAlive(a)
+	runtime.KeepAlive(p)
 }

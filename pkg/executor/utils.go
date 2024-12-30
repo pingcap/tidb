@@ -16,6 +16,11 @@ package executor
 
 import (
 	"strings"
+	"sync"
+	"sync/atomic"
+
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 var (
@@ -96,4 +101,90 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 		b.retrieved = true
 	}
 	return nil
+}
+
+// encodePassword encodes the password for the user. It invokes the auth plugin if it is available.
+func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, bool) {
+	if u.AuthOpt == nil {
+		return "", true
+	}
+	// If the extension auth plugin is available, use it to encode the password.
+	if authPlugin != nil {
+		if u.AuthOpt.ByAuthString {
+			return authPlugin.GenerateAuthString(u.AuthOpt.AuthString)
+		}
+		// If we receive a hash string, validate it first.
+		if authPlugin.ValidateAuthString(u.AuthOpt.HashString) {
+			return u.AuthOpt.HashString, true
+		}
+		return "", false
+	}
+	return u.EncodedPassword()
+}
+
+var taskPool = sync.Pool{
+	New: func() any { return &workerTask{} },
+}
+
+type workerTask struct {
+	f    func()
+	next *workerTask
+}
+
+type workerPool struct {
+	lock sync.Mutex
+	head *workerTask
+	tail *workerTask
+
+	tasks   atomic.Int32
+	workers atomic.Int32
+
+	// TolerablePendingTasks is the number of tasks that can be tolerated in the queue, that is, the pool won't spawn a
+	// new goroutine if the number of tasks is less than this number.
+	TolerablePendingTasks int32
+	// MaxWorkers is the maximum number of workers that the pool can spawn.
+	MaxWorkers int32
+}
+
+func (p *workerPool) submit(f func()) {
+	task := taskPool.Get().(*workerTask)
+	task.f, task.next = f, nil
+	p.lock.Lock()
+	if p.head == nil {
+		p.head = task
+	} else {
+		p.tail.next = task
+	}
+	p.tail = task
+	p.lock.Unlock()
+	tasks := p.tasks.Add(1)
+
+	if workers := p.workers.Load(); workers == 0 || (workers < p.MaxWorkers && tasks > p.TolerablePendingTasks) {
+		p.workers.Add(1)
+		go p.run()
+	}
+}
+
+func (p *workerPool) run() {
+	for {
+		var task *workerTask
+
+		p.lock.Lock()
+		if p.head != nil {
+			task, p.head = p.head, p.head.next
+			if p.head == nil {
+				p.tail = nil
+			}
+		}
+		p.lock.Unlock()
+
+		if task == nil {
+			p.workers.Add(-1)
+			return
+		}
+		p.tasks.Add(-1)
+
+		task.f()
+		taskPool.Put(task)
+	}
 }

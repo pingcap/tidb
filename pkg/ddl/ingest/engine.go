@@ -16,7 +16,6 @@ package ingest
 
 import (
 	"context"
-	"strconv"
 	"sync"
 
 	"github.com/google/uuid"
@@ -24,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -33,8 +31,7 @@ import (
 // Engine is the interface for the engine that can be used to write key-value pairs.
 type Engine interface {
 	Flush() error
-	ImportAndClean() error
-	Clean()
+	Close(cleanup bool)
 	CreateWriter(id int, writerCfg *backend.LocalWriterConfig) (Writer, error)
 }
 
@@ -54,15 +51,12 @@ type engineInfo struct {
 	indexID      int64
 	unique       bool
 	openedEngine *backend.OpenedEngine
-	// closedEngine is set only when all data is finished written and all writers are
-	// closed.
-	closedEngine *backend.ClosedEngine
-	uuid         uuid.UUID
-	cfg          *backend.EngineConfig
-	litCfg       *config.Config
-	writerCache  generic.SyncMap[int, backend.EngineWriter]
-	memRoot      MemRoot
-	flushLock    *sync.RWMutex
+
+	uuid        uuid.UUID
+	cfg         *backend.EngineConfig
+	writerCache generic.SyncMap[int, backend.EngineWriter]
+	memRoot     MemRoot
+	flushLock   *sync.RWMutex
 }
 
 // newEngineInfo create a new engineInfo struct.
@@ -71,7 +65,6 @@ func newEngineInfo(
 	jobID, indexID int64,
 	unique bool,
 	cfg *backend.EngineConfig,
-	litCfg *config.Config,
 	en *backend.OpenedEngine,
 	uuid uuid.UUID,
 	memRoot MemRoot,
@@ -82,7 +75,6 @@ func newEngineInfo(
 		indexID:      indexID,
 		unique:       unique,
 		cfg:          cfg,
-		litCfg:       litCfg,
 		openedEngine: en,
 		uuid:         uuid,
 		writerCache:  generic.NewSyncMap[int, backend.EngineWriter](4),
@@ -107,11 +99,17 @@ func (ei *engineInfo) Flush() error {
 	return nil
 }
 
-// Clean closes the engine and removes the local intermediate files.
-func (ei *engineInfo) Clean() {
+// Close closes the engine and `cleanup` controls whether removes the local intermediate files.
+func (ei *engineInfo) Close(cleanup bool) {
 	if ei.openedEngine == nil {
 		return
 	}
+	err := ei.closeWriters()
+	if err != nil {
+		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
+			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
+	}
+
 	indexEngine := ei.openedEngine
 	closedEngine, err := indexEngine.Close(ei.ctx)
 	if err != nil {
@@ -120,64 +118,14 @@ func (ei *engineInfo) Clean() {
 		return
 	}
 	ei.openedEngine = nil
-	err = ei.closeWriters()
-	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
-			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-	}
-	// Here the local intermediate files will be removed.
-	err = closedEngine.Cleanup(ei.ctx)
-	if err != nil {
-		logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
-			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-	}
-}
-
-// ImportAndClean imports the engine data to TiKV and cleans up the local intermediate files.
-func (ei *engineInfo) ImportAndClean() error {
-	if ei.openedEngine != nil {
-		logutil.Logger(ei.ctx).Info(LitInfoCloseEngine, zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-		closeEngine, err1 := ei.openedEngine.Close(ei.ctx)
-		if err1 != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err1),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err1
-		}
-		err := ei.closeWriters()
+	if cleanup {
+		// local intermediate files will be removed.
+		err = closedEngine.Cleanup(ei.ctx)
 		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseWriterErr, zap.Error(err),
+			logutil.Logger(ei.ctx).Error(LitErrCleanEngineErr, zap.Error(err),
 				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
 		}
-		ei.openedEngine = nil
-		ei.closedEngine = closeEngine
 	}
-	if ei.closedEngine != nil {
-		// Ingest data to TiKV.
-		logutil.Logger(ei.ctx).Info(LitInfoStartImport, zap.Int64("job ID", ei.jobID),
-			zap.Int64("index ID", ei.indexID),
-			zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
-		err := ei.closedEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-		if err != nil {
-			logLevel := zap.ErrorLevel
-			if common.ErrFoundDuplicateKeys.Equal(err) {
-				logLevel = zap.WarnLevel
-			}
-			logutil.Logger(ei.ctx).Log(logLevel, LitErrIngestDataErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
-		}
-
-		// Clean up the engine local workspace.
-		err = ei.closedEngine.Cleanup(ei.ctx)
-		if err != nil {
-			logutil.Logger(ei.ctx).Error(LitErrCloseEngineErr, zap.Error(err),
-				zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
-			return err
-		}
-		ei.closedEngine = nil
-	}
-	return nil
 }
 
 // writerContext is used to keep a lightning local writer for each backfill worker.
@@ -230,7 +178,7 @@ func (ei *engineInfo) newWriterContext(workerID int, writerCfg *backend.LocalWri
 		}
 		// Cache the local writer.
 		ei.writerCache.Store(workerID, lWrite)
-		ei.memRoot.Consume(writerCfg.Local.MemCacheSize)
+		ei.memRoot.ConsumeWithTag(encodeBackendTag(ei.jobID), writerCfg.Local.MemCacheSize)
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
@@ -250,7 +198,6 @@ func (ei *engineInfo) closeWriters() error {
 					firstErr = err
 				}
 			}
-			ei.memRoot.Release(int64(ei.litCfg.TikvImporter.LocalWriterMemCacheSize))
 		}
 		ei.writerCache.Delete(wid)
 		ei.memRoot.Release(structSizeWriterCtx)

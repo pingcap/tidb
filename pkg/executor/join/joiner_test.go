@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,12 +38,12 @@ func defaultCtx() sessionctx.Context {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
 	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
 	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
+	ctx.BindDomain(domain.NewMockDomain())
 	return ctx
 }
 
 func TestRequiredRows(t *testing.T) {
-	joinTypes := []core.JoinType{core.InnerJoin, core.LeftOuterJoin, core.RightOuterJoin}
+	joinTypes := []logicalop.JoinType{logicalop.InnerJoin, logicalop.LeftOuterJoin, logicalop.RightOuterJoin}
 	lTypes := [][]byte{
 		{mysql.TypeLong},
 		{mysql.TypeFloat},

@@ -15,12 +15,14 @@
 package casetest
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -238,7 +240,7 @@ func TestNormalizedPlanForDiffStore(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (a int, b int, c int, primary key(a))")
 	tk.MustExec("insert into t1 values(1,1,1), (2,2,2), (3,3,3)")
-	tbl, err := dom.InfoSchema().TableByName(model.CIStr{O: "test", L: "test"}, model.CIStr{O: "t1", L: "t1"})
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.CIStr{O: "test", L: "test"}, pmodel.CIStr{O: "t1", L: "t1"})
 	require.NoError(t, err)
 	// Set the hacked TiFlash replica for explain tests.
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
@@ -330,6 +332,32 @@ func TestHandleEQAll(t *testing.T) {
 	tk.MustQuery("select c1 from t2 where (c1 = all (select /*+ use_INDEX(t2, i1) */ c1 from t2))").Check(testkit.Rows("7", "7"))
 	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ IGNORE_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
 	tk.MustQuery("select c2 from t2 where (c2 = all (select /*+ use_INDEX(t2, i1) */ c2 from t2))").Check(testkit.Rows())
+}
+
+func TestOuterJoinElimination(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t1 (a int, b int, c int)`)
+	tk.MustExec(`create table t2 (a int, b int, c int)`)
+	tk.MustExec(`create table t2_k (a int, b int, c int, key(a))`)
+	tk.MustExec(`create table t2_uk (a int, b int, c int, unique key(a))`)
+	tk.MustExec(`create table t2_nnuk (a int not null, b int, c int, unique key(a))`)
+	tk.MustExec(`create table t2_pk (a int, b int, c int, primary key(a))`)
+
+	// only when t2.a has unique attribute, we can eliminate the outer join.
+	// nullable unique index is not allowed to trigger the outer join elinimation.
+	tk.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a", "Join")
+	tk.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a", "Join")
+	tk.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a", "Join")
+	tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a", "Join")
+	tk.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a", "Join")
+
+	tk.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a group by t1.a", "Join")
+	tk.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a group by t1.a", "Join")
+	tk.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
+	tk.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a group by t1.a", "Join")
+	tk.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a group by t1.a", "Join")
 }
 
 func TestCTEErrNotSupportedYet(t *testing.T) {

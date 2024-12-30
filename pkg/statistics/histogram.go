@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/context"
+	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -67,7 +67,7 @@ type Histogram struct {
 	// For some types like `Int`, we do not build it because we can get them directly from `Bounds`.
 	Scalars   []scalar
 	ID        int64 // Column ID.
-	NDV       int64 // Number of distinct values.
+	NDV       int64 // Number of distinct values. Note that It contains the NDV of the TopN which is excluded from histogram.
 	NullCount int64 // Number of null values.
 	// LastUpdateVersion is the version that this histogram updated last time.
 	LastUpdateVersion uint64
@@ -87,9 +87,14 @@ const EmptyHistogramSize = int64(unsafe.Sizeof(Histogram{}))
 
 // Bucket store the bucket count and repeat.
 type Bucket struct {
-	Count  int64
+	// Count is the number of items till this bucket.
+	Count int64
+	// Repeat is the number of times the upper-bound value of the bucket appears in the data.
+	// For example, in the range [x, y], Repeat indicates how many times y appears.
+	// It is used to estimate the row count of values equal to the upper bound of the bucket, similar to TopN.
 	Repeat int64
-	NDV    int64
+	// NDV is the number of distinct values in the bucket.
+	NDV int64
 }
 
 // EmptyBucketSize is the size of empty bucket, 3*8=24 now.
@@ -417,37 +422,6 @@ func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
 	hg.Bounds = c
 }
 
-// AddIdxVals adds the given values to the histogram.
-func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
-	totalAddCnt := int64(0)
-	slices.SortFunc(idxValCntPairs, func(i, j TopNMeta) int {
-		return bytes.Compare(i.Encoded, j.Encoded)
-	})
-	for bktIdx, pairIdx := 0, 0; bktIdx < hg.Len(); bktIdx++ {
-		for pairIdx < len(idxValCntPairs) {
-			// If the current val smaller than current bucket's lower bound, skip it.
-			cmpResult := bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult > 0 {
-				continue
-			}
-			// If the current val bigger than current bucket's upper bound, break.
-			cmpResult = bytes.Compare(hg.Bounds.Column(0).GetBytes(bktIdx*2+1), idxValCntPairs[pairIdx].Encoded)
-			if cmpResult < 0 {
-				break
-			}
-			totalAddCnt += int64(idxValCntPairs[pairIdx].Count)
-			hg.Buckets[bktIdx].NDV++
-			if cmpResult == 0 {
-				hg.Buckets[bktIdx].Repeat = int64(idxValCntPairs[pairIdx].Count)
-				pairIdx++
-				break
-			}
-			pairIdx++
-		}
-		hg.Buckets[bktIdx].Count += totalAddCnt
-	}
-}
-
 // ToString gets the string representation for the histogram.
 func (hg *Histogram) ToString(idxCols int) string {
 	strs := make([]string, 0, hg.Len()+1)
@@ -465,7 +439,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 // EqualRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) EqualRowCount(sctx context.PlanContext, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
+func (hg *Histogram) EqualRowCount(sctx planctx.PlanContext, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -515,7 +489,7 @@ func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
 // locateBucket(val2): false, 2, false, false
 // locateBucket(val3): false, 2, true, false
 // locateBucket(val4): true, 3, false, false
-func (hg *Histogram) LocateBucket(sctx context.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+func (hg *Histogram) LocateBucket(sctx planctx.PlanContext, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		defer func() {
 			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
@@ -548,7 +522,7 @@ func (hg *Histogram) LocateBucket(sctx context.PlanContext, value types.Datum) (
 
 // LessRowCountWithBktIdx estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCountWithBktIdx(sctx context.PlanContext, value types.Datum) (result float64, bucketIdx int) {
+func (hg *Histogram) LessRowCountWithBktIdx(sctx planctx.PlanContext, value types.Datum) (result float64, bucketIdx int) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -583,14 +557,14 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx context.PlanContext, value type
 
 // LessRowCount estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) LessRowCount(sctx context.PlanContext, value types.Datum) float64 {
+func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) float64 {
 	result, _ := hg.LessRowCountWithBktIdx(sctx, value)
 	return result
 }
 
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) BetweenRowCount(sctx context.PlanContext, a, b types.Datum) float64 {
+func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) float64 {
 	lessCountA := hg.LessRowCount(sctx, a)
 	lessCountB := hg.LessRowCount(sctx, b)
 	rangeEst := lessCountB - lessCountA
@@ -798,14 +772,21 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	for i := 0; i < hg.Len(); i++ {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
-			LowerBound: hg.GetLower(i).GetBytes(),
-			UpperBound: hg.GetUpper(i).GetBytes(),
+			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
+			UpperBound: DeepSlice(hg.GetUpper(i).GetBytes()),
 			Repeats:    hg.Buckets[i].Repeat,
 			Ndv:        &hg.Buckets[i].NDV,
 		}
 		protoHg.Buckets = append(protoHg.Buckets, bkt)
 	}
 	return protoHg
+}
+
+// DeepSlice sallowly clones a slice.
+func DeepSlice[T any](s []T) []T {
+	r := make([]T, len(s))
+	copy(r, s)
+	return r
 }
 
 // HistogramFromProto converts Histogram from its protobuf representation.
@@ -938,9 +919,9 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 // leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 // You can find more details at https://github.com/pingcap/tidb/pull/47966#issuecomment-1778866876
 func (hg *Histogram) OutOfRangeRowCount(
-	sctx context.PlanContext,
+	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -949,6 +930,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
+			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
@@ -956,6 +938,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
+		return 0
+	}
+
+	// If there are no modifications to the table, return 0 - since all of this logic is
+	// redundant if we get to the end and return the min - which includes zero,
+	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
+	// may miss the lowest/highest values - and we are out of range without any modifications.
+	if modifyCount == 0 {
 		return 0
 	}
 
@@ -999,12 +989,28 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if l >= r {
 		return 0
 	}
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
+
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
+	histInvalid := false
 	if histWidth <= 0 {
-		return 0
+		if !allowUseModifyCount {
+			return 0
+		}
+		histInvalid = true
+	}
+	if math.IsInf(histWidth, 1) {
+		if !allowUseModifyCount {
+			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+			return 0
+		}
+		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1027,32 +1033,35 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
-	// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-	if actualL < histL && actualR > boundL {
-		// make sure boundL <= actualL < actualR <= histL
-		if actualL < boundL {
-			actualL = boundL
+	// Only attempt to calculate the ranges if the histogram is valid
+	if !histInvalid {
+		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
+		if actualL < histL && actualR > boundL {
+			// make sure boundL <= actualL < actualR <= histL
+			if actualL < boundL {
+				actualL = boundL
+			}
+			if actualR > histL {
+				actualR = histL
+			}
+			// Calculate the percentage of "the shaded area" on the left side.
+			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > histL {
-			actualR = histL
-		}
-		// Calculate the percentage of "the shaded area" on the left side.
-		leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-	}
 
-	actualL = l
-	actualR = r
-	// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-	if actualL < boundR && actualR > histR {
-		// make sure histR <= actualL < actualR <= boundR
-		if actualL < histR {
-			actualL = histR
+		actualL = l
+		actualR = r
+		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
+		if actualL < boundR && actualR > histR {
+			// make sure histR <= actualL < actualR <= boundR
+			if actualL < histR {
+				actualL = histR
+			}
+			if actualR > boundR {
+				actualR = boundR
+			}
+			// Calculate the percentage of "the shaded area" on the right side.
+			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > boundR {
-			actualR = boundR
-		}
-		// Calculate the percentage of "the shaded area" on the right side.
-		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
@@ -1064,8 +1073,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		upperBound = hg.NotNullCount() / float64(histNDV)
 	}
 
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
@@ -1073,13 +1080,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
+	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	if addedRows > 1 {
+		// Conservatively - use the larger of the left or right percent - since we are working with
+		// changes to the table since last Analyze - any out of range estimate is unreliable.
+		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
+		// and we will set rowCount to min of upperbound and added rows
+		totalPercent = min(0.5, max(leftPercent, rightPercent))
+		rowCount += totalPercent * addedRows
+		if rowCount < upperBound {
+			rowCount = min(upperBound, addedRows)
+		}
 	}
 
 	// Use modifyCount as a final bound

@@ -115,7 +115,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
-	for i := uint(0); i < maxRetryCnt; i++ {
+	for i := uint(0); i < MaxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
@@ -177,8 +177,8 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 }
 
 var (
-	// maxRetryCnt represents maximum retry times in RunInNewTxn.
-	maxRetryCnt uint = 100
+	// MaxRetryCnt represents maximum retry times.
+	MaxRetryCnt uint = 100
 	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
 	retryBackOffBase = 1
 	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
@@ -212,10 +212,8 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
-		panic("unexpected no source type context, if you see this error, " +
-			"the `RequestSourceTypeKey` is missing in your context")
-	}
+	intest.Assert(true, "unexpected no source type context, if you see this error, "+
+		"the `RequestSourceTypeKey` is missing in your context")
 	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
 		"the `RequestSourceTypeKey` is missing in the context")
 }

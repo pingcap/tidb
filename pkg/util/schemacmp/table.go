@@ -19,8 +19,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -114,7 +115,7 @@ func encodeImplicitPrimaryKeyToLattice(ci *model.ColumnInfo) Tuple {
 		EqualitySingleton(indexColumnSlice{indexColumn{colName: ci.Name.L, length: types.UnspecifiedLength}}),
 		Bool(false),
 		Bool(false),
-		Singleton(model.IndexTypeBtree),
+		Singleton(pmodel.IndexTypeBtree),
 	}
 }
 
@@ -132,7 +133,7 @@ func restoreIndexInfoFromUnwrapped(ctx *format.RestoreCtx, index []any, keyName 
 		ctx.WriteName(keyName)
 	}
 
-	if tp := index[indexInfoTupleIndexType].(model.IndexType); tp != model.IndexTypeBtree {
+	if tp := index[indexInfoTupleIndexType].(pmodel.IndexType); tp != pmodel.IndexTypeBtree {
 		ctx.WriteKeyWord(" USING ")
 		ctx.WriteKeyWord(tp.String())
 	}

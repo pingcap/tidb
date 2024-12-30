@@ -21,10 +21,12 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -71,8 +73,14 @@ func (w *mockScanWorker) checkPollResult(exist bool, err string) {
 		require.Same(w.t, curTask, r.task)
 		if err == "" {
 			require.NoError(w.t, r.err)
+			require.Equal(w.t, ReasonTaskFinished, r.reason)
 		} else {
 			require.EqualError(w.t, r.err, err)
+			if w.ctx.Err() != nil {
+				require.Equal(w.t, ReasonWorkerStop, r.reason)
+			} else {
+				require.Equal(w.t, ReasonError, r.reason)
+			}
 		}
 	}
 }
@@ -124,6 +132,14 @@ func (w *mockScanWorker) stopWithWait() {
 	require.NoError(w.t, w.WaitStopped(context.TODO(), 10*time.Second))
 }
 
+func (w *mockScanWorker) SetInfoSchema(is infoschema.InfoSchema) {
+	w.sessPoll.se.sessionInfoSchema = is
+}
+
+func (w *mockScanWorker) SetExecuteSQL(fn func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)) {
+	w.sessPoll.se.executeSQL = fn
+}
+
 func TestScanWorkerSchedule(t *testing.T) {
 	origLimit := variable.TTLScanBatchSize.Load()
 	variable.TTLScanBatchSize.Store(5)
@@ -131,6 +147,7 @@ func TestScanWorkerSchedule(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.setOneRowResult(tbl, 7)
 	defer w.stopWithWait()
 
@@ -180,6 +197,7 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
 	w.clearInfoSchema()
 	defer w.stopWithWait()
 
@@ -204,6 +222,43 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	w.checkWorkerStatus(workerStatusRunning, false, task)
 	w.checkPollResult(true, msg.result.err.Error())
 	w.checkWorkerStatus(workerStatusRunning, true, nil)
+}
+
+func TestScanResultWhenWorkerStop(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	w := NewMockScanWorker(t)
+	defer w.sessPoll.AssertNoSessionInUse()
+	executeCh := make(chan struct{})
+	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
+	w.sessPoll.se.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+		close(executeCh)
+		select {
+		case <-ctx.Done():
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "wait scan worker stop timeout")
+		}
+		return nil, nil
+	}
+
+	w.Start()
+	task := &ttlScanTask{
+		ctx:        context.Background(),
+		tbl:        tbl,
+		TTLTask:    &cache.TTLTask{},
+		statistics: &ttlStatistics{},
+	}
+	require.NoError(t, w.Schedule(task))
+	select {
+	case <-executeCh:
+	case <-time.After(time.Second):
+		require.FailNow(t, "wait executeSQL timeout")
+	}
+	w.stopWithWait()
+	w.checkWorkerStatus(workerStatusStopped, false, task)
+	msg := w.waitNotifyScanTaskEnd()
+	require.Equal(t, ReasonWorkerStop, msg.result.reason)
+	w.checkPollResult(true, msg.result.err.Error())
+	w.checkWorkerStatus(workerStatusStopped, false, nil)
 }
 
 type mockScanTask struct {
@@ -275,8 +330,10 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
 		require.NoError(t.t, r.err)
+		require.Equal(t.t, ReasonTaskFinished, r.reason)
 	} else {
 		require.EqualError(t.t, r.err, errString)
+		require.Equal(t.t, ReasonError, r.reason)
 	}
 
 	previousIdx := delTaskCnt
@@ -392,6 +449,7 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
+	defer task.sessPool.AssertNoSessionInUse()
 	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
@@ -413,6 +471,7 @@ func TestScanTaskDoScan(t *testing.T) {
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
+	defer pool.AssertNoSessionInUse()
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
 	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
@@ -428,7 +487,7 @@ func TestScanTaskCheck(t *testing.T) {
 	ch := make(chan *ttlDeleteTask, 1)
 	result := task.doScan(context.Background(), ch, pool)
 	require.Equal(t, task, result.task)
-	require.EqualError(t, result.err, "current expire time is after safe expire time. (161 > 160)")
+	require.ErrorContains(t, result.err, "current expire time is after safe expire time. (161 > 160,")
 	require.Equal(t, 0, len(ch))
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
@@ -445,4 +504,53 @@ func TestScanTaskCheck(t *testing.T) {
 	require.NoError(t, result.err)
 	require.Equal(t, 1, len(ch))
 	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
+}
+
+func TestScanTaskCancelStmt(t *testing.T) {
+	task := &ttlScanTask{
+		ctx: context.Background(),
+		tbl: newMockTTLTbl(t, "t1"),
+		TTLTask: &cache.TTLTask{
+			ExpireTime:     time.UnixMilli(0),
+			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
+		},
+		statistics: &ttlStatistics{},
+	}
+
+	testCancel := func(ctx context.Context, doCancel func()) {
+		mockPool := newMockSessionPool(t)
+		defer mockPool.AssertNoSessionInUse()
+		startExec := make(chan struct{})
+		mockPool.se.sessionInfoSchema = newMockInfoSchema(task.tbl.TableInfo)
+		mockPool.se.executeSQL = func(_ context.Context, _ string, _ ...any) ([]chunk.Row, error) {
+			close(startExec)
+			select {
+			case <-mockPool.se.killed:
+				return nil, errors.New("killed")
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("timeout")
+			}
+		}
+		wg := util.WaitGroupWrapper{}
+		wg.Run(func() {
+			select {
+			case <-startExec:
+			case <-time.After(10 * time.Second):
+				require.FailNow(t, "timeout")
+			}
+			doCancel()
+		})
+		r := task.doScan(ctx, nil, mockPool)
+		require.NotNil(t, r)
+		require.EqualError(t, r.err, "killed")
+		wg.Wait()
+	}
+
+	// test cancel with input context
+	ctx, cancel := context.WithCancel(context.Background())
+	testCancel(ctx, cancel)
+
+	// test cancel with task context
+	task.ctx, cancel = context.WithCancel(context.Background())
+	testCancel(context.Background(), cancel)
 }

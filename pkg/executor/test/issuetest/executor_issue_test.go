@@ -72,8 +72,10 @@ func TestIssue24210(t *testing.T) {
 func TestUnionIssue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	// Issue25506
+	// Issue56640
 	tk.MustExec("use test")
+	tk.MustQuery("(select cast('abcdefghijklmnopqrstuvwxyz' as char) as c1) union all (select 1 where false)").Check(testkit.Rows("abcdefghijklmnopqrstuvwxyz"))
+	// Issue25506
 	tk.MustExec("drop table if exists tbl_3, tbl_23")
 	tk.MustExec("create table tbl_3 (col_15 bit(20))")
 	tk.MustExec("insert into tbl_3 values (0xFFFF)")
@@ -90,6 +92,10 @@ func TestUnionIssue(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1 (id int);")
 	tk.MustExec("create table t2 (id int, c int);")
+	// Issue56587
+	tk.MustQuery("select quote(cast('abc' as char)) union all select '1'").Sort().Check(testkit.Rows("'abc'", "1"))
+	tk.MustQuery(`select elt(2, "1", cast('abc' as char)) union all select "12" where false`).Check(testkit.Rows("abc"))
+	tk.MustQuery(`select hex(cast('1' as char)) union all select '1'`).Sort().Check(testkit.Rows("1", "31"))
 
 	testCases := []struct {
 		sql    string
@@ -178,12 +184,8 @@ func TestIssue30289(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-	useHashJoinV2 := []bool{true, false}
-	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue30289 build return error")
 	}
@@ -197,12 +199,8 @@ func TestIssue51998(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
 	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable(fpName))
-	}()
-	useHashJoinV2 := []bool{true, false}
-	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
 		err := tk.QueryToErr("select /*+ hash_join(t1) */ * from t t1 join t t2 on t1.a=t2.a")
 		require.EqualError(t, err, "issue51998 build return error")
 	}
@@ -323,12 +321,14 @@ func TestIndexJoin31494(t *testing.T) {
 		insertStr += fmt.Sprintf(", (%d, %d)", i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t1")
 	tk.MustExec("create table t2(a int(11) default null, b int(11) default null, c int(11) default null)")
 	insertStr = "insert into t2 values(1, 1, 1)"
 	for i := 1; i < 32768; i++ {
 		insertStr += fmt.Sprintf(", (%d, %d, %d)", i, i, i)
 	}
 	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t2")
 	sm := &testkit.MockSessionManager{
 		PS: make([]*util.ProcessInfo, 0),
 	}
@@ -617,9 +617,8 @@ func TestIssue42662(t *testing.T) {
 	tk.MustExec("set global tidb_server_memory_limit='1600MB'")
 	tk.MustExec("set global tidb_server_memory_limit_sess_min_size=128*1024*1024")
 	tk.MustExec("set global tidb_mem_oom_action = 'cancel'")
-	useHashJoinV2 := []bool{true, false}
-	for _, hashJoinV2 := range useHashJoinV2 {
-		join.EnableHashJoinV2.Store(hashJoinV2)
+	for _, hashJoinV2 := range join.HashJoinV2Strings {
+		tk.MustExec(hashJoinV2)
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/issue42662_1", `return(true)`))
 		// tk.Session() should be marked as MemoryTop1Tracker but not killed.
 		tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
@@ -715,38 +714,61 @@ func TestIssue53221(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 }
 
-func TestIndexLookUpIssue53871(t *testing.T) {
+func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b))")
+	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b), index idx2(c))")
 	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
 	for i := 0; i < 9; i++ {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
-	tk.MustExec(`update t set b = rand() * 10000, c = id;`)
+	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
 	tk.MustQuery("select count(c) from t use index(idx);").Check(testkit.Rows("4096")) // full scan to resolve uncommitted lock.
-	tk.MustQuery("select count(c) from t ignore index(idx)").Check(testkit.Rows("4096"))
+	tk.MustQuery("select count(b) from t use index(idx2);").Check(testkit.Rows("4096"))
+	tk.MustQuery("select count(*) from t ignore index(idx, idx2)").Check(testkit.Rows("4096"))
 	tk.MustExec("analyze table t")
+	// Test Index Lookup Reader query.
 	rows := tk.MustQuery("explain analyze select * from t use index(idx) where b > 0;").Rows()
 	require.Len(t, rows, 3)
 	require.Regexp(t, ".*IndexLookUp.*table_task: {total_time: .*, num: 1, .*", fmt.Sprintf("%v", rows[0]))
 	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
 	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	// Test Index Merge Reader query.
+	rows = tk.MustQuery("explain analyze select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where b > 5000 or c > 5000;").Rows()
+	require.Len(t, rows, 4)
+	require.Regexp(t, ".*IndexMerge.*table_task:{num:2, .*", fmt.Sprintf("%v", rows[0]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[1]))
+	require.Regexp(t, ".*IndexRangeScan.*rpc_info.*Cop:{num_rpc:1, total_time:.*", fmt.Sprintf("%v", rows[2]))
+	require.Regexp(t, ".*TableRowIDScan.*rpc_info.*Cop:{num_rpc:2, total_time:.*", fmt.Sprintf("%v", rows[3]))
 }
 
 func TestCalculateBatchSize(t *testing.T) {
-	require.Equal(t, 1024, executor.CalculateBatchSize(true, 5000, 1024, 20000))
-	require.Equal(t, 1024, executor.CalculateBatchSize(true, 1024, 1024, 20000))
-	require.Equal(t, 1024, executor.CalculateBatchSize(true, 10, 1024, 20000))
-	require.Equal(t, 258, executor.CalculateBatchSize(true, 10, 1024, 258))
-	require.Equal(t, 1024, executor.CalculateBatchSize(true, 0, 1024, 20000))
-	require.Equal(t, 20000, executor.CalculateBatchSize(false, 50000, 1024, 20000))
-	require.Equal(t, 20000, executor.CalculateBatchSize(false, 18000, 1024, 20000))
-	require.Equal(t, 8192, executor.CalculateBatchSize(false, 5000, 1024, 20000))
-	require.Equal(t, 1024, executor.CalculateBatchSize(false, 1024, 1024, 20000))
-	require.Equal(t, 1024, executor.CalculateBatchSize(false, 10, 1024, 20000))
-	require.Equal(t, 258, executor.CalculateBatchSize(false, 10, 1024, 258))
-	require.Equal(t, 1024, executor.CalculateBatchSize(false, 0, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(50000, 1024, 20000))
+	require.Equal(t, 20000, executor.CalculateBatchSize(18000, 1024, 20000))
+	require.Equal(t, 8192, executor.CalculateBatchSize(5000, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(1024, 1024, 20000))
+	require.Equal(t, 1024, executor.CalculateBatchSize(10, 1024, 20000))
+	require.Equal(t, 258, executor.CalculateBatchSize(10, 1024, 258))
+	require.Equal(t, 1024, executor.CalculateBatchSize(0, 1024, 20000))
+}
+
+func TestIssue55881(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists aaa;")
+	tk.MustExec("drop table if exists bbb;")
+	tk.MustExec("create table aaa(id int, value int);")
+	tk.MustExec("create table bbb(id int, value int);")
+	tk.MustExec("insert into aaa values(1,2),(2,3)")
+	tk.MustExec("insert into bbb values(1,2),(2,3),(3,4)")
+	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
+	tk.MustExec("set tidb_executor_concurrency=1;")
+	// this is a random issue, so run it 100 times to increase the probability of the issue.
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
+			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id)) from bbb;")
+	}
 }

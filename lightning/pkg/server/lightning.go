@@ -27,6 +27,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/pprof"
@@ -355,8 +356,12 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 	if err := taskCfg.Adjust(taskCtx); err != nil {
 		return err
 	}
+	r, err := rand.Int(rand.Reader, big.NewInt(1<<63-1))
+	if err != nil {
+		return err
+	}
+	taskCfg.TaskID = r.Int64()
 
-	taskCfg.TaskID = time.Now().UnixNano()
 	failpoint.Inject("SetTaskID", func(val failpoint.Value) {
 		taskCfg.TaskID = int64(val.(int))
 	})
@@ -566,6 +571,16 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 		keyspaceName = taskCfg.TikvImporter.KeyspaceName
 		if keyspaceName == "" {
 			keyspaceName, err = getKeyspaceName(db)
+			if err != nil && common.IsAccessDeniedNeedConfigPrivilegeError(err) {
+				// if the cluster is not multitenant we don't really need to know about the keyspace.
+				// since the doc does not say we require CONFIG privilege,
+				// spelling out the Access Denied error just confuses the users.
+				// hide such allowed errors unless log level is DEBUG.
+				o.logger.Info("keyspace is unspecified and target user has no config privilege, assuming dedicated cluster")
+				if o.logger.Level() > zapcore.DebugLevel {
+					err = nil
+				}
+			}
 			if err != nil {
 				o.logger.Warn("unable to get keyspace name, lightning will use empty keyspace name", zap.Error(err))
 			}

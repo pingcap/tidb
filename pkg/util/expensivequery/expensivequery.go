@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -95,14 +96,21 @@ func (eqh *Handle) Run() {
 				if info.MaxExecutionTime > 0 && costTime > time.Duration(info.MaxExecutionTime)*time.Millisecond {
 					logutil.BgLogger().Warn("execution timeout, kill it", zap.Duration("costTime", costTime),
 						zap.Duration("maxExecutionTime", time.Duration(info.MaxExecutionTime)*time.Millisecond), zap.String("processInfo", info.String()))
-					sm.Kill(info.ID, true, true)
+					sm.Kill(info.ID, true, true, false)
 				}
-				if info.ID == sm.GetAutoAnalyzeProcID() {
+				if statsutil.GlobalAutoAnalyzeProcessList.Contains(info.ID) {
 					maxAutoAnalyzeTime := variable.MaxAutoAnalyzeTime.Load()
 					if maxAutoAnalyzeTime > 0 && costTime > time.Duration(maxAutoAnalyzeTime)*time.Second {
 						logutil.BgLogger().Warn("auto analyze timeout, kill it", zap.Duration("costTime", costTime),
 							zap.Duration("maxAutoAnalyzeTime", time.Duration(maxAutoAnalyzeTime)*time.Second), zap.String("processInfo", info.String()))
-						sm.Kill(info.ID, true, false)
+						sm.Kill(info.ID, true, false, false)
+					}
+				}
+				if info.RunawayChecker != nil {
+					if cause, kill := info.RunawayChecker.CheckRuleKillAction(); kill {
+						logutil.BgLogger().Warn("runaway query timeout", zap.Duration("costTime", costTime), zap.String("groupName", info.ResourceGroupName),
+							zap.String("exceedCause", cause), zap.String("processInfo", info.String()))
+						sm.Kill(info.ID, true, false, true)
 					}
 				}
 			}

@@ -19,7 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -538,7 +539,7 @@ func TestMergeBucketNDV(t *testing.T) {
 func TestIndexQueryBytes(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
+	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: pmodel.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
 	low, err1 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("0")))
 	require.NoError(t, err1)

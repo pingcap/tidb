@@ -1326,6 +1326,32 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 	require.Equal(t, enable, true)
 }
 
+func TestTiDBResourceControlStrictMode(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	resourceControlStrictMode := GetSysVar(TiDBResourceControlStrictMode)
+
+	// Default true
+	require.Equal(t, resourceControlStrictMode.Value, On)
+	require.Equal(t, EnableResourceControlStrictMode.Load(), true)
+
+	// Set to Off
+	err := mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, Off)
+	require.NoError(t, err)
+	val, err1 := mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, Off, val)
+
+	// Set to On again
+	err = mock.SetGlobalSysVar(context.Background(), TiDBResourceControlStrictMode, On)
+	require.NoError(t, err)
+	val, err1 = mock.GetGlobalSysVar(TiDBResourceControlStrictMode)
+	require.NoError(t, err1)
+	require.Equal(t, On, val)
+}
+
 func TestTiDBEnableRowLevelChecksum(t *testing.T) {
 	ctx := context.Background()
 	vars := NewSessionVars(nil)
@@ -1606,68 +1632,202 @@ func TestTiDBLowResTSOUpdateInterval(t *testing.T) {
 	require.Equal(t, "1000", val)
 }
 
-func TestSetEnableColumnTrackingAndPersistAnalyzeOptions(t *testing.T) {
+func TestTiDBSchemaCacheSize(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
+	var (
+		mb       uint64 = 1 << 20
+		err      error
+		val      string
+		maxValue uint64 = math.MaxInt64
+	)
+	// Test tidb_schema_cache_size
+	schemaCacheSize := GetSysVar(TiDBSchemaCacheSize)
+	// Check default value
+	require.Equal(t, schemaCacheSize.Value, strconv.Itoa(DefTiDBSchemaCacheSize))
 
-	// Test EnableColumnTracking
-	val, err := mock.GetGlobalSysVar(TiDBEnableColumnTracking)
+	// MinValue is 64 MB
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(63*mb, 10))
 	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, On, val)
-	// Reset back.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, Off)
-	require.NoError(t, err)
+	require.Equal(t, "64MB", val)
 
-	// Test PersistAnalyzeOptions
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
+	// MaxValue is 9223372036854775807
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue, 10))
 	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	// Reset back
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, On)
-	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
 
-	// Set EnableColumnTracking to true when PersistAnalyzeOptions is false
-	// Set to false first.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, Off)
+	// test MinValue-1
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(64*mb-1, 10))
 	require.NoError(t, err)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
-	require.Error(t, err, "enable column tracking requires to persist analyze options")
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
-	require.NoError(t, err)
-	require.Equal(t, Off, val)
+	require.Equal(t, "64MB", val)
 
-	// Set PersistAnalyzeOptions to false when EnableColumnTracking is true
-	// Set to true first.
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, On)
+	// test MaxValue+1
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(maxValue+1, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableColumnTracking, On)
+	require.Equal(t, strconv.FormatUint(maxValue, 10), val)
+
+	// Test Normal Value
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(1024*mb, 10))
 	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBEnableColumnTracking)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
 	require.NoError(t, err)
-	require.Equal(t, On, val)
-	err = mock.SetGlobalSysVar(context.Background(), TiDBPersistAnalyzeOptions, Off)
-	require.Error(t, err, "persist analyze options requires to enable column tracking")
-	val, err = mock.GetGlobalSysVar(TiDBPersistAnalyzeOptions)
+	require.Equal(t, strconv.FormatUint(1024*mb, 10), val)
+
+	// Test Close
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, strconv.FormatUint(0, 10))
 	require.NoError(t, err)
-	require.Equal(t, On, val)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, "0", val)
+
+	// Test byteSize format
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "1234567890123")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(1234567890123))
+	require.Equal(t, "1234567890123", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "10KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(64<<20))
+	require.Equal(t, "64MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "12345678KB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(12345678<<10))
+	require.Equal(t, "12345678KB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "700MB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(700<<20))
+	require.Equal(t, "700MB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "20GB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(20<<30))
+	require.Equal(t, "20GB", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "2TB")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBSchemaCacheSize)
+	require.NoError(t, err)
+	require.Equal(t, SchemaCacheSize.Load(), uint64(2<<40))
+	require.Equal(t, "2TB", val)
+
+	// Test error
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "123aaa123")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "700MBaa")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBSchemaCacheSize, "a700MB")
+	require.Error(t, err)
+}
+
+func TestEnableWindowFunction(t *testing.T) {
+	vars := NewSessionVars(nil)
+	require.Equal(t, vars.EnableWindowFunction, DefEnableWindowFunction)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "on"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "0"))
+	require.Equal(t, vars.EnableWindowFunction, false)
+	require.NoError(t, vars.SetSystemVar(TiDBEnableWindowFunction, "1"))
+	require.Equal(t, vars.EnableWindowFunction, true)
+}
+
+func TestTiDBHashJoinVersion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(TiDBHashJoinVersion)
+	// set error value
+	_, err := sv.Validation(vars, "invalid", "invalid", ScopeSession)
+	require.NotNil(t, err)
+	// set valid value
+	_, err = sv.Validation(vars, "legacy", "legacy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "optimized", "optimized", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Legacy", "Legacy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Optimized", "Optimized", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "LegaCy", "LegaCy", ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "OptimiZed", "OptimiZed", ScopeSession)
+	require.NoError(t, err)
+}
+
+func TestTiDBAutoAnalyzeConcurrencyValidation(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	tests := []struct {
+		name                string
+		autoAnalyze         bool
+		autoAnalyzePriority bool
+		input               string
+		expectError         bool
+	}{
+		{
+			name:                "Both enabled, valid input",
+			autoAnalyze:         true,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         false,
+		},
+		{
+			name:                "Auto analyze disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: true,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Auto analyze priority queue disabled",
+			autoAnalyze:         true,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+		{
+			name:                "Both disabled",
+			autoAnalyze:         false,
+			autoAnalyzePriority: false,
+			input:               "10",
+			expectError:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			RunAutoAnalyze.Store(tt.autoAnalyze)
+			EnableAutoAnalyzePriorityQueue.Store(tt.autoAnalyzePriority)
+
+			sysVar := GetSysVar(TiDBAutoAnalyzeConcurrency)
+			require.NotNil(t, sysVar)
+
+			_, err := sysVar.Validate(vars, tt.input, ScopeGlobal)
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
 }

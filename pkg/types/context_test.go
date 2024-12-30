@@ -120,6 +120,10 @@ func (w *warnStore) AppendWarning(warn error) {
 	w.warnings = append(w.warnings, warn)
 }
 
+func (w *warnStore) AppendNote(_ error) {
+	panic("not implemented")
+}
+
 func (w *warnStore) Reset() {
 	w.Lock()
 	defer w.Unlock()

@@ -217,7 +217,7 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
 	conditions := physicalSelection.Conditions
 	for i := len(conditions) - 1; i >= 0; i-- {
-		if expression.Contains(exprs, conditions[i]) {
+		if expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, conditions[i]) {
 			conditions = append(conditions[:i], conditions[i+1:]...)
 		}
 	}

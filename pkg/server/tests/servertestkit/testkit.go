@@ -19,7 +19,9 @@ import (
 	"database/sql"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -48,13 +50,37 @@ type TidbTestSuite struct {
 
 // CreateTidbTestSuite creates a test suite for tidb
 func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
+	cfg := newTestConfig()
+	return CreateTidbTestSuiteWithCfg(t, cfg)
+}
+
+// CreateTidbTestSuiteWithDDLLease creates a test suite with DDL lease for tidb.
+func CreateTidbTestSuiteWithDDLLease(t *testing.T, ddlLease string) *TidbTestSuite {
+	cfg := newTestConfig()
+	cfg.Lease = ddlLease
+	return CreateTidbTestSuiteWithCfg(t, cfg)
+}
+
+func newTestConfig() *config.Config {
 	cfg := util.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
 	cfg.Status.RecordDBLabel = true
 	cfg.Performance.TCPKeepAlive = true
-	return CreateTidbTestSuiteWithCfg(t, cfg)
+	return cfg
+}
+
+// parseDuration parses lease argument string.
+func parseDuration(lease string) (time.Duration, error) {
+	dur, err := time.ParseDuration(lease)
+	if err != nil {
+		dur, err = time.ParseDuration(lease + "s")
+	}
+	if err != nil || dur < 0 {
+		return 0, errors.Errorf("invalid lease duration: %s", lease)
+	}
+	return dur, nil
 }
 
 // CreateTidbTestSuiteWithCfg creates a test suite for tidb with config
@@ -66,6 +92,9 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	ts.Store, err = mockstore.NewMockStore()
 	session.DisableStats4Test()
 	require.NoError(t, err)
+	ddlLeaseDuration, err := parseDuration(cfg.Lease)
+	require.NoError(t, err)
+	session.SetSchemaLease(ddlLeaseDuration)
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
 	ts.Tidbdrv = srv.NewTiDBDriver(ts.Store)

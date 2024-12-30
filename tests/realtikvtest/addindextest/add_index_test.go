@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
 	"github.com/stretchr/testify/assert"
@@ -156,7 +156,7 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 }
 
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -167,14 +167,9 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-
 	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
 
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("delete from t where c = 0;")
@@ -182,9 +177,7 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 			_, err = tk1.Exec("insert INTO t VALUES (-18585,'duplicatevalue',1);")
 			assert.NoError(t, err)
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")

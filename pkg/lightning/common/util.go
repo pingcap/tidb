@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -36,7 +37,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -141,6 +142,11 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	db, err := ConnectMySQL(param.ToDriverConfig())
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// The actual number of alive connections is controlled by the region concurrency
+	// The setting is required to avoid frequent connection creation and close
+	if db != nil {
+		db.SetMaxIdleConns(runtime.GOMAXPROCS(0))
 	}
 	return db, nil
 }
@@ -695,4 +701,10 @@ func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
 		}
 	}
 	return false, rows.Err()
+}
+
+// IsAccessDeniedNeedConfigPrivilegeError checks if err is generated from a query to TiDB which failed due to missing CONFIG privilege.
+func IsAccessDeniedNeedConfigPrivilegeError(err error) bool {
+	e, ok := err.(*mysql.MySQLError)
+	return ok && e.Number == errno.ErrSpecificAccessDenied && strings.Contains(e.Message, "CONFIG")
 }

@@ -18,10 +18,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -44,10 +44,6 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	case *ast.ColumnNameExpr:
 		for _, col := range nr.tableInfo.Columns {
 			if col.Name.L == v.Name.Name.L {
-				v.Refer = &ast.ResultField{
-					Column: col,
-					Table:  nr.tableInfo,
-				}
 				return inNode, true
 			}
 		}

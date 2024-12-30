@@ -50,3 +50,9 @@ type failure[T any] struct {
 func (f failure[T]) TryNext(ctx context.Context) IterResult[T] {
 	return Throw[T](f)
 }
+
+type ofFunc[T any] func(ctx context.Context) IterResult[T]
+
+func (g ofFunc[T]) TryNext(ctx context.Context) IterResult[T] {
+	return g(ctx)
+}

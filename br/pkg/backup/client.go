@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -74,6 +75,8 @@ type MainBackupLoop struct {
 	// backup requests for all stores.
 	// the subRanges may changed every round.
 	BackupReq backuppb.BackupRequest
+	// the number of backup clients to send backup requests per store.
+	Concurrency uint
 	// record the whole backup progress in infinite loop.
 	GlobalProgressTree *rtree.ProgressRangeTree
 	ReplicaReadLabel   map[string]string
@@ -90,6 +93,7 @@ func (s *MainBackupSender) SendAsync(
 	round uint64,
 	storeID uint64,
 	request backuppb.BackupRequest,
+	concurrency uint,
 	cli backuppb.BackupClient,
 	respCh chan *ResponseAndStore,
 	StateNotifier chan BackupRetryPolicy,
@@ -99,7 +103,7 @@ func (s *MainBackupSender) SendAsync(
 			logutil.CL(ctx).Info("store backup goroutine exits", zap.Uint64("store", storeID))
 			close(respCh)
 		}()
-		err := startBackup(ctx, storeID, request, cli, respCh)
+		err := startBackup(ctx, storeID, request, cli, concurrency, respCh)
 		if err != nil {
 			// only 2 kinds of errors will occur here.
 			// 1. grpc connection error(already retry inside)
@@ -175,6 +179,8 @@ func (bc *Client) RunLoop(ctx context.Context, loop *MainBackupLoop) error {
 mainLoop:
 	for {
 		round += 1
+		// sleep 200ms. in case of tikv cluster abnormal state trigger too many backup rounds.
+		time.Sleep(200 * time.Millisecond)
 		logutil.CL(ctx).Info("This round of backup starts...", zap.Uint64("round", round))
 		// initialize the error context every round
 		errContext := utils.NewErrorContext("MainBackupLoop", 10)
@@ -249,7 +255,7 @@ mainLoop:
 			}
 			ch := make(chan *ResponseAndStore)
 			storeBackupResultChMap[storeID] = ch
-			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
+			loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 		}
 		// infinite loop to collect region backup response to global channel
 		loop.CollectStoreBackupsAsync(handleCtx, round, storeBackupResultChMap, globalBackupResultCh)
@@ -308,7 +314,7 @@ mainLoop:
 
 					storeBackupResultChMap[storeID] = ch
 					// start backup for this store
-					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, cli, ch, loop.StateNotifier)
+					loop.SendAsync(mainCtx, round, storeID, loop.BackupReq, loop.Concurrency, cli, ch, loop.StateNotifier)
 					// re-create context for new handler loop
 					handleCtx, handleCancel = context.WithCancel(mainCtx)
 					// handleCancel makes the former collect goroutine exits
@@ -719,7 +725,7 @@ func BuildBackupRangeAndInitSchema(
 	buildRange bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	var policies []*backuppb.PlacementPolicy
 	if isFullBackup {
@@ -803,9 +809,7 @@ func BuildBackupRangeAndInitSchema(
 		return nil, nil, nil, nil
 	}
 	return ranges, NewBackupSchemas(func(storage kv.Storage, fn func(*model.DBInfo, *model.TableInfo)) error {
-		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, func(dbInfo *model.DBInfo, tableInfo *model.TableInfo) {
-			fn(dbInfo, tableInfo)
-		})
+		return BuildBackupSchemas(storage, tableFilter, backupTS, isFullBackup, fn)
 	}, schemasNum), policies, nil
 }
 
@@ -817,7 +821,7 @@ func BuildBackupSchemas(
 	fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo),
 ) error {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
+	m := meta.NewReader(snapshot)
 
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -932,37 +936,6 @@ func BuildBackupSchemas(
 	return nil
 }
 
-// BuildFullSchema builds a full backup schemas for databases and tables.
-func BuildFullSchema(storage kv.Storage, backupTS uint64, fn func(dbInfo *model.DBInfo, tableInfo *model.TableInfo)) error {
-	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
-	m := meta.NewSnapshotMeta(snapshot)
-
-	dbs, err := m.ListDatabases()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, db := range dbs {
-		hasTable := false
-		err = m.IterTables(db.ID, func(table *model.TableInfo) error {
-			// add table
-			fn(db, table)
-			hasTable = true
-			return nil
-		})
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		// backup this empty db if this schema is empty.
-		if !hasTable {
-			fn(db, nil)
-		}
-	}
-
-	return nil
-}
-
 func skipUnsupportedDDLJob(job *model.Job) bool {
 	switch job.Type {
 	// TiDB V5.3.0 supports TableAttributes and TablePartitionAttributes.
@@ -984,9 +957,9 @@ func skipUnsupportedDDLJob(job *model.Job) bool {
 // WriteBackupDDLJobs sends the ddl jobs are done in (lastBackupTS, backupTS] to metaWriter.
 func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.Storage, lastBackupTS, backupTS uint64, needDomain bool) error {
 	snapshot := store.GetSnapshot(kv.NewVersion(backupTS))
-	snapMeta := meta.NewSnapshotMeta(snapshot)
+	snapMeta := meta.NewReader(snapshot)
 	lastSnapshot := store.GetSnapshot(kv.NewVersion(lastBackupTS))
-	lastSnapMeta := meta.NewSnapshotMeta(lastSnapshot)
+	lastSnapMeta := meta.NewReader(lastSnapshot)
 	lastSchemaVersion, err := lastSnapMeta.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
 		return errors.Trace(err)
@@ -1000,10 +973,39 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	newestMeta := meta.NewSnapshotMeta(store.GetSnapshot(kv.NewVersion(version.Ver)))
-	allJobs := make([]*model.Job, 0)
+
+	// determine whether the jobs need to be append into `allJobs`
+	appendJobsFn := func(jobs []*model.Job) ([]*model.Job, bool) {
+		appendJobs := make([]*model.Job, 0, len(jobs))
+		for _, job := range jobs {
+			if skipUnsupportedDDLJob(job) {
+				continue
+			}
+			if job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion <= lastSchemaVersion {
+				// early exits to stop unnecessary scan
+				return appendJobs, true
+			}
+
+			if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
+				(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
+				if job.BinlogInfo.DBInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
+				}
+				if job.BinlogInfo.TableInfo != nil {
+					// ignore all placement policy info during incremental backup for now.
+					job.BinlogInfo.TableInfo.ClearPlacement()
+				}
+				appendJobs = append(appendJobs, job)
+			}
+		}
+		return appendJobs, false
+	}
+
+	newestMeta := meta.NewReader(store.GetSnapshot(kv.NewVersion(version.Ver)))
+	var allJobs []*model.Job
 	err = g.UseOneShotSession(store, !needDomain, func(se glue.Session) error {
-		allJobs, err = ddl.GetAllDDLJobs(se.GetSessionCtx())
+		allJobs, err = ddl.GetAllDDLJobs(context.Background(), se.GetSessionCtx())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1014,41 +1016,49 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 		return errors.Trace(err)
 	}
 
-	historyJobs, err := ddl.GetAllHistoryDDLJobs(newestMeta)
+	// filter out the jobs
+	allJobs, _ = appendJobsFn(allJobs)
+
+	historyJobsIter, err := ddl.GetLastHistoryDDLJobsIterator(newestMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	log.Debug("get history jobs", zap.Int("jobs", len(historyJobs)))
-	allJobs = append(allJobs, historyJobs...)
 
-	count := 0
-	for _, job := range allJobs {
-		if skipUnsupportedDDLJob(job) {
-			continue
+	count := len(allJobs)
+
+	cacheJobs := make([]*model.Job, 0, ddl.DefNumHistoryJobs)
+	for {
+		cacheJobs, err = historyJobsIter.GetLastJobs(ddl.DefNumHistoryJobs, cacheJobs)
+		if err != nil {
+			return errors.Trace(err)
 		}
-
-		if (job.State == model.JobStateDone || job.State == model.JobStateSynced) &&
-			(job.BinlogInfo != nil && job.BinlogInfo.SchemaVersion > lastSchemaVersion && job.BinlogInfo.SchemaVersion <= backupSchemaVersion) {
-			if job.BinlogInfo.DBInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.DBInfo.PlacementPolicyRef = nil
-			}
-			if job.BinlogInfo.TableInfo != nil {
-				// ignore all placement policy info during incremental backup for now.
-				job.BinlogInfo.TableInfo.ClearPlacement()
-			}
-			jobBytes, err := json.Marshal(job)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = metaWriter.Send(jobBytes, metautil.AppendDDL)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			count++
+		if len(cacheJobs) == 0 {
+			// no more jobs
+			break
+		}
+		jobs, finished := appendJobsFn(cacheJobs)
+		count += len(jobs)
+		allJobs = append(allJobs, jobs...)
+		if finished {
+			// no more jobs between [LastTS, ts]
+			break
 		}
 	}
-	log.Debug("get completed jobs", zap.Int("jobs", count))
+	log.Debug("get complete jobs", zap.Int("jobs", count))
+	// sort by job id with ascend order
+	sort.Slice(allJobs, func(i, j int) bool {
+		return allJobs[i].ID < allJobs[j].ID
+	})
+	for _, job := range allJobs {
+		jobBytes, err := json.Marshal(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = metaWriter.Send(jobBytes, metautil.AppendDDL)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -1098,6 +1108,7 @@ func (bc *Client) BackupRanges(
 	mainBackupLoop := &MainBackupLoop{
 		BackupSender:       &MainBackupSender{},
 		BackupReq:          request,
+		Concurrency:        concurrency,
 		GlobalProgressTree: &globalProgressTree,
 		ReplicaReadLabel:   replicaReadLabel,
 		StateNotifier:      stateNotifier,
@@ -1191,9 +1202,9 @@ func (bc *Client) OnBackupResponse(
 				return txnlock.NewLock(lockErr), nil
 			}
 		}
-		res := errContext.HandleIgnorableError(errPb, storeID)
+		res := utils.HandleBackupError(errPb, storeID, errContext)
 		switch res.Strategy {
-		case utils.GiveUpStrategy:
+		case utils.StrategyGiveUp:
 			errMsg := res.Reason
 			if len(errMsg) <= 0 {
 				errMsg = errPb.Msg

@@ -1084,6 +1084,8 @@ const (
 	ErrBRJobNotFound                       = 8174
 	ErrMemoryExceedForQuery                = 8175
 	ErrMemoryExceedForInstance             = 8176
+	ErrDeleteNotFoundColumn                = 8177
+	ErrKeyTooLarge                         = 8178
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1140,6 +1142,10 @@ const (
 	ErrPausedDDLJob       = 8262
 	ErrBDRRestrictedDDL   = 8263
 
+	ErrGlobalIndexNotExplicitlySet = 8264
+
+	ErrWarnGlobalIndexNeedManuallyAnalyze = 8265
+
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248
 	ErrResourceGroupNotExists                 = 8249
@@ -1149,6 +1155,7 @@ const (
 	ErrResourceGroupQueryRunawayInterrupted   = 8253
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
+	ErrResourceGroupInvalidForRole            = 8257
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001
@@ -1164,5 +1171,6 @@ const (
 	ErrTiKVMaxTimestampNotSynced = 9011
 	ErrTiFlashServerTimeout      = 9012
 	ErrTiFlashServerBusy         = 9013
-	ErrUsernameFormat            = 9014
+	ErrTiFlashBackfillIndex      = 9014
+	ErrUsernameFormat            = 9015
 )

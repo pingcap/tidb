@@ -16,21 +16,24 @@ package usage
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
@@ -38,7 +41,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 
 	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 	batchInsertSize = 10
@@ -68,7 +71,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
@@ -127,8 +130,13 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 // For a partitioned table, we will update its global-stats as well.
 func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVersion := uint64(0)
+	isLocked := false
 	defer func() {
-		if err == nil && statsVersion != 0 {
+		// Only record the historical stats meta when the table is not locked because all stats meta are stored in the locked table.
+		if err == nil && statsVersion != 0 && !isLocked {
+			failpoint.Inject("panic-when-record-historical-stats-meta", func() {
+				panic("panic when record historical stats meta")
+			})
 			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
 		}
 	}()
@@ -169,7 +177,8 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 				isPartitionLocked = true
 			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
+			isLocked = tableOrPartitionLocked
+			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
 			}
@@ -187,7 +196,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
 				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = storage.UpdateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+				if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 					return err
 				}
 				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -199,7 +208,8 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
-			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
+			isLocked = isTableLocked
+			if err = storage.UpdateStatsMeta(utilstats.StatsCtx, sctx, statsVersion, delta,
 				physicalTableID, isTableLocked); err != nil {
 				return err
 			}
@@ -214,9 +224,6 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
-	if !variable.EnableColumnTracking.Load() {
-		return nil
-	}
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
@@ -313,10 +320,10 @@ func (s *SessionStatsItem) ClearForTest() {
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsItem) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
+func (s *SessionStatsItem) UpdateColStatsUsage(colItems iter.Seq[model.TableItemID], updateTime time.Time) {
 	s.Lock()
 	defer s.Unlock()
-	s.statsUsage.Merge(colMap)
+	s.statsUsage.MergeRawData(colItems, updateTime)
 }
 
 // SessionStatsList is a list of SessionStatsItem, which is used to collect stats usage and table delta information from sessions.
@@ -520,6 +527,19 @@ func (m *StatsUsage) Merge(other map[model.TableItemID]time.Time) {
 	for id, t := range other {
 		if mt, ok := m.usage[id]; !ok || mt.Before(t) {
 			m.usage[id] = t
+		}
+	}
+}
+
+// MergeRawData merges the new data passed by iterator.
+func (m *StatsUsage) MergeRawData(raw iter.Seq[model.TableItemID], updateTime time.Time) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	for item := range raw {
+		// TODO: Remove this assertion once it has been confirmed to operate correctly over a period of time.
+		intest.Assert(!item.IsIndex, "predicate column should only be table column")
+		if mt, ok := m.usage[item]; !ok || mt.Before(updateTime) {
+			m.usage[item] = updateTime
 		}
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -33,6 +34,8 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -98,6 +101,7 @@ type fakeCluster struct {
 	idAlloced uint64
 	stores    map[uint64]*fakeStore
 	regions   []*region
+	maxTs     uint64
 	testCtx   *testing.T
 
 	onGetClient               func(uint64) error
@@ -266,7 +270,7 @@ func (f *fakeCluster) BlockGCUntil(ctx context.Context, at uint64) (uint64, erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.serviceGCSafePoint > at {
-		return f.serviceGCSafePoint, nil
+		return f.serviceGCSafePoint, errors.Errorf("minimal safe point %d is greater than the target %d", f.serviceGCSafePoint, at)
 	}
 	f.serviceGCSafePoint = at
 	return at, nil
@@ -525,9 +529,10 @@ func (f *fakeCluster) advanceClusterTimeBy(duration time.Duration) uint64 {
 
 func createFakeCluster(t *testing.T, n int, simEnabled bool) *fakeCluster {
 	c := &fakeCluster{
-		stores:  map[uint64]*fakeStore{},
-		regions: []*region{},
-		testCtx: t,
+		stores:             map[uint64]*fakeStore{},
+		regions:            []*region{},
+		testCtx:            t,
+		serviceGCSafePoint: 0,
 	}
 	stores := make([]*fakeStore, 0, n)
 	for i := 0; i < n; i++ {
@@ -665,7 +670,8 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}
@@ -683,7 +689,12 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	defer t.mu.Unlock()
 
 	if checkpoint < t.checkpoint {
-		t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		log.Error("checkpoint rolling back",
+			zap.Uint64("from", t.checkpoint),
+			zap.Uint64("to", checkpoint),
+			zap.Stack("stack"))
+		// t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		return errors.New("checkpoint rolling back")
 	}
 	t.checkpoint = checkpoint
 	return nil
@@ -743,6 +754,8 @@ func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	log.Info("advance checkpoint", zap.Duration("duration", duration), zap.Uint64("from", t.checkpoint))
+
 	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
 }
 
@@ -762,7 +775,8 @@ func (t *testEnv) putTask() {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}
@@ -770,17 +784,31 @@ func (t *testEnv) putTask() {
 }
 
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.maxTs != maxVersion {
+		return nil, nil, errors.Errorf("unexpect max version in scan lock, expected %d, actual %d", t.maxTs, maxVersion)
+	}
 	for _, r := range t.regions {
 		if len(r.locks) != 0 {
-			return r.locks, &tikv.KeyLocation{
+			locks := make([]*txnlock.Lock, 0, len(r.locks))
+			for _, l := range r.locks {
+				// skip the lock larger than maxVersion
+				if l.TxnID < maxVersion {
+					locks = append(locks, l)
+				}
+			}
+			return locks, &tikv.KeyLocation{
 				Region: tikv.NewRegionVerID(r.id, 0, 0),
 			}, nil
 		}
 	}
-	return nil, nil, nil
+	return nil, &tikv.KeyLocation{}, nil
 }
 
 func (t *testEnv) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	for _, r := range t.regions {
 		if loc != nil && loc.Region.GetID() == r.id {
 			// reset locks
@@ -788,7 +816,7 @@ func (t *testEnv) ResolveLocksInOneRegion(bo *tikv.Backoffer, locks []*txnlock.L
 			return t.resolveLocks(locks, loc)
 		}
 	}
-	return nil, nil
+	return loc, nil
 }
 
 func (t *testEnv) Identifier() string {
@@ -829,12 +857,12 @@ type mockPDClient struct {
 	fakeRegions []*region
 }
 
-func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	sort.Slice(p.fakeRegions, func(i, j int) bool {
 		return bytes.Compare(p.fakeRegions[i].rng.StartKey, p.fakeRegions[j].rng.StartKey) < 0
 	})
 
-	result := make([]*pd.Region, 0, len(p.fakeRegions))
+	result := make([]*router.Region, 0, len(p.fakeRegions))
 	for _, region := range p.fakeRegions {
 		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := newMockRegion(region.id, region.rng.StartKey, region.rng.EndKey)
@@ -853,18 +881,28 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
+func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
+	// only used for GetRegionCache once in resolve lock
+	return []*metapb.Store{
+		{
+			Id:      1,
+			Address: "127.0.0.1",
+		},
+	}, nil
+}
+
 func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,

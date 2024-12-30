@@ -12,6 +12,7 @@ go_library(
         "gc_worker.go",
         "globalsort.go",
         "import.go",
+        "infoschema.go",
         "log_backup.go",
         "meta.go",
         "metrics.go",

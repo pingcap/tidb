@@ -17,9 +17,8 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -28,26 +27,23 @@ import (
 
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
-	sctx      sessionctx.Context
 	errCh     chan<- error
 	killer    *sqlkiller.SQLKiller
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
-	sctx sessionctx.Context,
 	errCh chan<- error,
 	killer *sqlkiller.SQLKiller) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
-		sctx:      sctx,
 		errCh:     errCh,
 		killer:    killer,
 	}
 	return worker
 }
 
-func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
+func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -56,17 +52,18 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 	}()
 	for results := range worker.resultsCh {
 		if err := worker.killer.HandleSignal(); err != nil {
+			finishJobWithLog(statsHandle, results.Job, err)
+			results.DestroyAndPutToPool()
 			worker.errCh <- err
 			return
 		}
-		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()
 		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
-			finishJobWithLog(worker.sctx, results.Job, err)
+			finishJobWithLog(statsHandle, results.Job, err)
 			worker.errCh <- err
 		} else {
-			finishJobWithLog(worker.sctx, results.Job, nil)
+			finishJobWithLog(statsHandle, results.Job, nil)
 		}
 		results.DestroyAndPutToPool()
 		if err != nil {

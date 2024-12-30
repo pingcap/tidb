@@ -6,6 +6,7 @@ go_library(
         "doc.go",
         "misc_base.go",
         "plan_base.go",
+        "rule_base.go",
         "task_base.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/base",
@@ -13,8 +14,9 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/planner/context",
+        "//pkg/planner/cascades/base",
         "//pkg/planner/funcdep",
+        "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",

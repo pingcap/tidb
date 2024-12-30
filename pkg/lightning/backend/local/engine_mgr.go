@@ -69,6 +69,8 @@ type engineManager struct {
 	logger         log.Logger
 }
 
+var inMemTest = false
+
 func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.Logger) (_ *engineManager, err error) {
 	var duplicateDB *pebble.DB
 	defer func() {
@@ -94,12 +96,17 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		alloc.RefCnt = new(atomic.Int64)
 		LastAlloc = alloc
 	}
+	var opts = make([]membuf.Option, 0, 1)
+	if !inMemTest {
+		// otherwise, we use the default allocator that can be tracked by golang runtime.
+		opts = append(opts, membuf.WithAllocator(alloc))
+	}
 	return &engineManager{
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
 		externalEngine: map[uuid.UUID]common.Engine{},
-		bufferPool:     membuf.NewPool(membuf.WithAllocator(alloc)),
+		bufferPool:     membuf.NewPool(opts...),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
 		logger:         logger,
@@ -312,8 +319,8 @@ func (em *engineManager) closeEngine(
 			externalCfg.StatFiles,
 			externalCfg.StartKey,
 			externalCfg.EndKey,
+			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			externalCfg.RegionSplitSize,
 			em.keyAdapter,
 			em.DupeDetectEnabled,
 			em.duplicateDB,

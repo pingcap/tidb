@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -74,4 +75,19 @@ func TestRunMain(*testing.T) {
 	}()
 
 	<-waitCh
+}
+
+func TestCalculateMemoryLimit(t *testing.T) {
+	// f(0 Byte) = 0 Byte
+	require.Equal(t, uint64(0), calculateMemoryLimit(0))
+	// f(100 KB) = 87.5 KB
+	require.Equal(t, uint64(89600), calculateMemoryLimit(100*1024))
+	// f(100 MB) = 87.5 MB
+	require.Equal(t, uint64(91763188), calculateMemoryLimit(100*1024*1024))
+	// f(3.99 GB) = 3.74 GB
+	require.Equal(t, uint64(4026531839), calculateMemoryLimit(4*1024*1024*1024-1))
+	// f(4 GB) = 3.5 GB
+	require.Equal(t, uint64(3758096384), calculateMemoryLimit(4*1024*1024*1024))
+	// f(32 GB) = 31.5 GB
+	require.Equal(t, uint64(33822867456), calculateMemoryLimit(32*1024*1024*1024))
 }

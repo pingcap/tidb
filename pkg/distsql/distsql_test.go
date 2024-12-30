@@ -105,7 +105,7 @@ func TestSelectWithRuntimeStats(t *testing.T) {
 
 func TestSelectResultRuntimeStats(t *testing.T) {
 	stmtStats := execdetails.NewRuntimeStatsColl(nil)
-	basic := stmtStats.GetBasicRuntimeStats(1)
+	basic := stmtStats.GetBasicRuntimeStats(1, true)
 	basic.Record(time.Second, 20)
 	s1 := &selectResultRuntimeStats{
 		backoffSleep:       map[string]time.Duration{"RegionMiss": time.Millisecond},
@@ -119,22 +119,19 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	s1.procKeys.Add(100)
 	s1.procKeys.Add(200)
 
-	s2 := *s1
-	stmtStats.RegisterStats(1, s1)
-	stmtStats.RegisterStats(1, &s2)
+	s2 := s1.Clone()
+	stmtStats.RegisterStats(1, s1.Clone())
+	stmtStats.RegisterStats(1, s2)
 	stats := stmtStats.GetRootStats(1)
-	expect := "time:1s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
+	expect := "time:1s, open:0s, close:0s, loops:1, cop_task: {num: 4, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 2s, tot_wait: 2s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, backoff{RegionMiss: 2ms}"
 	require.Equal(t, expect, stats.String())
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
-	s1.reqStat.RPCStats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
-		Count:   1,
-		Consume: int64(time.Second),
-	}
+	s1.reqStat.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Second)
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
-	stmtStats.RegisterStats(2, s1)
+	stmtStats.RegisterStats(2, s1.Clone())
 	stats = stmtStats.GetRootStats(2)
 	expect = "cop_task: {num: 2, max: 1s, min: 1ms, avg: 500.5ms, p95: 1s, max_proc_keys: 200, p95_proc_keys: 200, tot_proc: 1s, tot_wait: 1s, copr_cache_hit_ratio: 0.00, max_distsql_concurrency: 15}, rpc_info:{Cop:{num_rpc:1, total_time:1s}, rpc_errors:{server_is_busy:2}}, backoff{RegionMiss: 1ms}"
 	require.Equal(t, expect, stats.String())

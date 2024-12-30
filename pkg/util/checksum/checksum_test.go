@@ -416,7 +416,7 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 func newTestBuff(str string, n int) *bytes.Buffer {
 	buf := bytes.NewBuffer(nil)
 	testData := str
-	for i := 0; i < n; i++ {
+	for range n {
 		buf.WriteString(testData)
 	}
 	return buf
