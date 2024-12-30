@@ -761,6 +761,11 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	return nil
 }
 
+func markRestoreSuccess(schedulersRemovable *bool) {
+	*schedulersRemovable = true
+	summary.SetSuccessStatus(true)
+}
+
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *RestoreConfig, checkInfo *PiTRTaskInfo) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -1038,7 +1043,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if len(dbs) == 0 && len(tables) == 0 {
 		log.Info("nothing to restore, all databases and tables are filtered out")
 		// even nothing to restore, we show a success message since there is no failure.
-		summary.SetSuccessStatus(true)
+		markRestoreSuccess(&schedulersRemovable)
 		return nil
 	}
 
@@ -1067,7 +1072,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
-		summary.SetSuccessStatus(true)
 		// don't return immediately, wait all pipeline done.
 	} else {
 		oldKeyspace, _, err := tikv.DecodeKey(files[0].GetStartKey(), backupMeta.ApiVersion)
@@ -1192,10 +1196,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return err
 	}
 
-	schedulersRemovable = true
-
-	// Set task summary to success status.
-	summary.SetSuccessStatus(true)
+	markRestoreSuccess(&schedulersRemovable)
 	return nil
 }
 
