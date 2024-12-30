@@ -899,6 +899,10 @@ func (e *Explain) prepareSchema() error {
 		fieldNames = []string{"binary plan"}
 	case format == types.ExplainFormatTiDBJSON:
 		fieldNames = []string{"TiDB_JSON"}
+	case format == types.ExplainFormatUnityPlanGen:
+		fieldNames = []string{"unity plan"}
+	case format == types.ExplainFormatUnityJoin:
+		fieldNames = []string{"unity join"}
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
@@ -1013,6 +1017,10 @@ func (e *Explain) RenderResult() error {
 			return err
 		}
 		e.Rows = append(e.Rows, []string{str})
+	case types.ExplainFormatUnityPlanGen:
+		panic("TODO")
+	case types.ExplainFormatUnityJoin:
+		panic("TODO")
 	default:
 		return errors.Errorf("explain format '%s' is not supported now", e.Format)
 	}
