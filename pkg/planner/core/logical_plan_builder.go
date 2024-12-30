@@ -5205,7 +5205,8 @@ type TblColPosInfo struct {
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
 
-	*table.ExtraPartialRowOption
+	// IndexesRowLayout store the row layout of indexes. We need it if column pruning happens.
+	IndexesRowLayout table.IndexesLayout
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -5349,10 +5350,10 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 		return TblColPosInfo{}, err
 	}
 	return TblColPosInfo{
-		TblID:                 tid,
-		Start:                 offset,
-		HandleCols:            handleCol,
-		ExtraPartialRowOption: &table.ExtraPartialRowOption{},
+		TblID:            tid,
+		Start:            offset,
+		HandleCols:       handleCol,
+		IndexesRowLayout: make(map[int64]table.IndexRowLayoutOption),
 	}, nil
 }
 
