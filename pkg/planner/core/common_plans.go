@@ -1027,7 +1027,11 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{str})
 	case types.ExplainFormatUnityPlan:
-		panic("TODO")
+		planJSON, err := e.unityPlan()
+		if err != nil {
+			return err
+		}
+		e.Rows = append(e.Rows, []string{planJSON})
 	case types.ExplainFormatUnityPlanGen:
 		panic("TODO")
 	case types.ExplainFormatUnityJoin:
