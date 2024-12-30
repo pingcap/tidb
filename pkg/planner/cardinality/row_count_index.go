@@ -39,6 +39,11 @@ import (
 
 // GetRowCountByIndexRanges estimates the row count by a slice of Range.
 func GetRowCountByIndexRanges(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (result float64, err error) {
+	defer func() {
+		if result == 0 {
+			panic("wft")
+		}
+	}()
 	var name string
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)

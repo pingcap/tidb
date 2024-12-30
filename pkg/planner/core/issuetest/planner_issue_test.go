@@ -177,3 +177,28 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
+
+func TestIssue58619(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';")
+	tk.MustExec("set @@session.tidb_enable_inl_join_inner_multi_pattern='ON';")
+	tk.MustExec("create table tbl_4 ( col_16 text ( 315 ) collate utf8_general_ci ,col_17 set ( 'Alice','Bob','Charlie','David' ) , unique key idx_5 ( col_16 ( 5 ) ,col_17 ) ) ;")
+	tk.MustExec("create table tbl_10 ( col_52 text ( 73 ) collate gbk_bin  not null ) ;")
+	tk.MustQuery("explain format = 'brief' select /*+ inl_join( tbl_4 , tbl_10 ) */ min( distinct  tbl_4.col_17 ) as r0 , elt(2, tbl_10.col_52 , tbl_10.col_52 ) as r1 from tbl_4 right join tbl_10 on tbl_4.col_16 = tbl_10.col_52 where not( tbl_4.col_17 != 'Bob' ) and tbl_4.col_16 between 'EmWPH5cZQK' and null  order by r0,r1 limit 32;").Check(testkit.Rows(
+		"Projection 1.00 root  Column#6, elt(2, test.tbl_10.col_52, test.tbl_10.col_52)->Column#7",
+		"└─Projection 1.00 root  Column#6, test.tbl_10.col_52",
+		"  └─TopN 1.00 root  Column#6, Column#12, offset:0, count:32",
+		"    └─Projection 1.00 root  Column#6, test.tbl_10.col_52, elt(2, test.tbl_10.col_52, test.tbl_10.col_52)->Column#12",
+		"      └─StreamAgg 1.00 root  funcs:min(distinct test.tbl_4.col_17)->Column#6, funcs:firstrow(test.tbl_10.col_52)->test.tbl_10.col_52",
+		"        └─IndexJoin 1.00 root  inner join, inner:Selection, outer key:test.tbl_10.col_52, inner key:test.tbl_4.col_16, equal cond:eq(test.tbl_10.col_52, test.tbl_4.col_16)",
+		"          ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"          │ └─TableFullScan 10000.00 cop[tikv] table:tbl_10 keep order:false, stats:pseudo",
+		`          └─Selection(Probe) 8000.00 root  not(ne(test.tbl_4.col_17, "Bob"))`,
+		`            └─IndexLookUp 1.00 root  `,
+		`              ├─Selection(Build) 10000.00 cop[tikv]  not(isnull(test.tbl_4.col_16))`,
+		`              │ └─IndexRangeScan 10009.01 cop[tikv] table:tbl_4, index:idx_5(col_16, col_17) range: decided by [eq(test.tbl_4.col_16, test.tbl_10.col_52)], keep order:false, stats:pseudo`,
+		`              └─Selection(Probe) 1.00 cop[tikv]  ge(test.tbl_4.col_16, "EmWPH5cZQK"), le(test.tbl_4.col_16, NULL)`,
+		`                └─TableRowIDScan 10000.00 cop[tikv] table:tbl_4 keep order:false, stats:pseudo`))
+}
