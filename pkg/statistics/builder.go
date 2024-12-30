@@ -568,7 +568,8 @@ const (
 	AnalyzeColumnsPredicate = "PREDICATE"
 )
 
-// IsPredicateColumn returns true if the column is a predicate column.
+// IsPredicateColumn returns true if the column is a predicate column. It also returns true if there is any
+// error, because we only want to return false if we can guarantee that the column is NOT a predicate column
 func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
 	// Check tidb_analyze_column_options global variable first
 	val, _ := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(TiDBAnalyzeColumnOptions)
@@ -580,7 +581,7 @@ func IsPredicateColumn(sctx sessionctx.Context, tableID, columnID int64) bool {
 		sql := "SELECT 1 FROM mysql.column_stats_usage WHERE table_id = %? AND column_id = %? AND last_used_at IS NOT NULL"
 		rows, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(context.Background(), sql, tableID, columnID)
 		if err != nil {
-			return false
+			return true
 		}
 		defer rows.Close()
 		chk := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, 1)
