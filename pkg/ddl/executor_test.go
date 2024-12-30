@@ -353,6 +353,10 @@ func TestResolveCharsetCollation(t *testing.T) {
 		{"utf8mb4", "utf8mb4_unicode_ci", false, []ast.CharsetOpt{
 			{Chs: "", Col: ""},
 		}, "utf8mb4_unicode_ci"},
+		{"utf8mb4", "utf8mb4_general_ci", false, []ast.CharsetOpt{
+			{Chs: "utf8mb4", Col: ""},
+			{Chs: "utf8mb4", Col: "utf8mb4_bin"},
+		}, "utf8mb4_general_ci"},
 
 		// Error cases
 		{"", "", true, []ast.CharsetOpt{
@@ -372,8 +376,8 @@ func TestResolveCharsetCollation(t *testing.T) {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
-			require.Equal(t, tc.chs, chs, tc.opts)
-			require.Equal(t, tc.coll, coll, tc.opts)
+			require.Equal(t, tc.chs, chs, tc)
+			require.Equal(t, tc.coll, coll, tc)
 		}
 	}
 }

@@ -876,9 +876,6 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 
 	// Handle explicit collation and charset for the object
 	if len(charsetOpts) > 0 {
-		if charsetOpts[0].Col != "" {
-			coll = charsetOpts[0].Col
-		}
 		if charsetOpts[0].Chs != "" {
 			_, err := charset.GetCharsetInfo(charsetOpts[0].Chs)
 			if err != nil {
@@ -887,7 +884,8 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 			chs = charsetOpts[0].Chs
 		}
 
-		if coll != "" {
+		if charsetOpts[0].Col != "" {
+			coll = charsetOpts[0].Col
 			collation, err := collate.GetCollationByName(coll)
 			if err != nil {
 				return "", "", errors.Trace(err)
@@ -898,6 +896,8 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 			} else if collation.CharsetName != chs {
 				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
 			}
+		} else if chs == charset.CharsetUTF8MB4 {
+			coll = getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
 		}
 	}
 
