@@ -837,7 +837,7 @@ func checkUserVarintMismatch(ctx context.Context, user string) error {
 
 func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPassword string) (*auth.UserIdentity, error) {
 	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(cc.user) {
-		identity, err := cc.ctx.MatchIdentity(variant, host)
+		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
 		if err != nil {
 			continue
 		}
