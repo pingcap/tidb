@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -68,4 +69,14 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
+}
+
+// BuildAPIContext is used to build APIContext.
+func BuildAPIContext(keyspaceName string) (apiContext pd.APIContext) {
+	if len(keyspaceName) == 0 {
+		apiContext = pd.NewAPIContextV1()
+	} else {
+		apiContext = pd.NewAPIContextV2(keyspaceName)
+	}
+	return
 }

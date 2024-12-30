@@ -784,7 +784,7 @@ func (cfg *Config) OverrideDefaultForBackup() {
 
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
-	g glue.Glue, pds []string,
+	g glue.Glue, keyspaceName string, pds []string,
 	tlsConfig TLSConfig,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
@@ -812,7 +812,7 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		ctx, g, keyspaceName, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
 		checkRequirements, needDomain, versionCheckerType,
 	)
 }
@@ -989,7 +989,6 @@ func progressFileWriterRoutine(ctx context.Context, progress glue.Progress, tota
 		case <-ctx.Done():
 			return
 		case <-time.After(500 * time.Millisecond):
-			break
 		}
 		cur := progress.GetCurrent()
 		p := float64(cur) / float64(total)
