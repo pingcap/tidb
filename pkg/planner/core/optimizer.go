@@ -329,7 +329,9 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
@@ -342,7 +344,9 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 		return nil, nil, 0, err
 	}
 	finalPlan := postOptimize(ctx, sctx, physical)
-
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
