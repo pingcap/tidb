@@ -53,6 +53,7 @@ type repositoryTable struct {
 	where      string
 	createStmt string
 	insertStmt string
+	test       bool
 }
 
 var (
@@ -78,24 +79,25 @@ var workloadTables = []repositoryTable{
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
 			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
 		"",
+		false,
 	},
-	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "TIDB_STATEMENTS_STATS", snapshotTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", "", true},
 
-	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_TRX", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "TIDB_TRX", samplingTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", "", false},
 
-	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
-	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
+	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", "", false},
+	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", "", true},
+	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", "",true},
+	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", "", true},
 }
 
 type sessionPool interface {

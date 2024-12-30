@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -121,6 +122,10 @@ func (w *worker) snapshotTable(ctx context.Context, snapID uint64, rt *repositor
 	_sessctx := w.getSessionWithRetry()
 	defer w.sesspool.Put(_sessctx)
 	sess := _sessctx.(sessionctx.Context)
+
+	if rt.test && intest.InTest {
+		return nil
+	}
 
 	if rt.insertStmt == "" {
 		if err := buildInsertQuery(ctx, sess, rt); err != nil {
