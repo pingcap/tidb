@@ -144,6 +144,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
 			e.cancelRunStepWith(nil)
+			failpoint.InjectCall("afterCancelRunningSubtask")
 			return
 		}
 
@@ -307,7 +308,9 @@ func (e *BaseTaskExecutor) Run() {
 		// reset it when we get a subtask
 		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
 
-		if e.stepExec != nil && e.stepExec.GetStep() != subtask.Step {
+		if e.stepExec != nil &&
+			(e.stepExec.GetStep() != subtask.Step ||
+				e.stepCtx.Err() != nil) { // Previous step ctx is done, cleanup and use a new one.
 			e.cleanStepExecutor()
 		}
 		if e.stepExec == nil {
