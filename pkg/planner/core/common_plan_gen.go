@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
 /*
@@ -25,11 +26,16 @@ func (e *Explain) unityPlan() (string, error) {
 	return string(data), err
 }
 
-func (e *Explain) unitySubPlan() (subPlans []*ExplainInfoForEncode) {
+func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 	flat := FlattenPhysicalPlan(e.TargetPlan, true)
 	var iterSubPlanFunc func(op *FlatOperator)
 	iterSubPlanFunc = func(op *FlatOperator) {
-		subPlans = append(subPlans, e.explainOpRecursivelyInJSONFormat(op, flat.Main))
+		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
+		planNode := &UnityPlanNode{
+			ExplainInfoForEncode: explainNode,
+			Hints:                planHints(op.Origin),
+		}
+		subPlans = append(subPlans, planNode)
 		for _, childIdx := range op.ChildrenIdx {
 			iterSubPlanFunc(flat.Main[childIdx])
 		}
@@ -38,11 +44,22 @@ func (e *Explain) unitySubPlan() (subPlans []*ExplainInfoForEncode) {
 	return
 }
 
+type UnityPlanNode struct {
+	*ExplainInfoForEncode
+	Hints string `json:"hints"`
+}
+
 type UnityPlan struct {
-	PlanDigest string                  `json:"planDigest"`
-	TimeInMS   float64                 `json:"TimeInMS"`
-	MemInByte  int64                   `json:"memInByte"`
-	SubPlans   []*ExplainInfoForEncode `json:"subPlans"`
+	PlanDigest string           `json:"planDigest"`
+	TimeInMS   float64          `json:"TimeInMS"`
+	MemInByte  int64            `json:"memInByte"`
+	SubPlans   []*UnityPlanNode `json:"subPlans"`
+}
+
+func planHints(p base.Plan) string {
+	flat := FlattenPhysicalPlan(p, true)
+	hints := GenHintsFromFlatPlan(flat)
+	return hint.RestoreOptimizerHints(hints)
 }
 
 func planDigest(p base.Plan) string {
