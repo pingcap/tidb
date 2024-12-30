@@ -27,6 +27,7 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/slice",
         "//pkg/util/sqlescape",
