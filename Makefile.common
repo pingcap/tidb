@@ -34,7 +34,7 @@ ifeq ("${ENABLE_FIPS}", "1")
 	BUILD_FLAG = -tags codes,boringcrypto
 	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
 endif
-GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
+GOBUILD         := $(GOEXPERIMENT) $(GO) build -pgo=default.pgo $(BUILD_FLAG)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
