@@ -87,6 +87,7 @@ func TestPickBackfillType(t *testing.T) {
 	tp, err = pickBackfillType(mockJob)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
+	ingest.LitInitialized = false
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

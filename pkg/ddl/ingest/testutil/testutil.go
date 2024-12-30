@@ -27,7 +27,6 @@ import (
 
 // InjectMockBackendCtx mock LitBackCtxMgr.
 func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
-	oldInitialized := ingest.LitInitialized
 	oldLitDiskRoot := ingest.LitDiskRoot
 	oldLitMemRoot := ingest.LitMemRoot
 
@@ -41,7 +40,7 @@ func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
 	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 
 	return func() {
-		ingest.LitInitialized = oldInitialized
+		ingest.LitInitialized = false
 		ingest.LitDiskRoot = oldLitDiskRoot
 		ingest.LitMemRoot = oldLitMemRoot
 	}
