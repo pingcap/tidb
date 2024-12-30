@@ -198,7 +198,7 @@ func TestIssue58619(t *testing.T) {
 		`          └─Selection(Probe) 8000.00 root  not(ne(test.tbl_4.col_17, "Bob"))`,
 		`            └─IndexLookUp 1.00 root  `,
 		`              ├─Selection(Build) 10000.00 cop[tikv]  not(isnull(test.tbl_4.col_16))`,
-		`              │ └─IndexRangeScan 10009.01 cop[tikv] table:tbl_4, index:idx_5(col_16, col_17) range: decided by [eq(test.tbl_4.col_16, test.tbl_10.col_52)], keep order:false, stats:pseudo`,
+		`              │ └─IndexRangeScan 10010.01 cop[tikv] table:tbl_4, index:idx_5(col_16, col_17) range: decided by [eq(test.tbl_4.col_16, test.tbl_10.col_52)], keep order:false, stats:pseudo`,
 		`              └─Selection(Probe) 1.00 cop[tikv]  ge(test.tbl_4.col_16, "EmWPH5cZQK"), le(test.tbl_4.col_16, NULL)`,
 		`                └─TableRowIDScan 10000.00 cop[tikv] table:tbl_4 keep order:false, stats:pseudo`))
 }

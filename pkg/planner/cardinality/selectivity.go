@@ -147,6 +147,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			cnt = max(1, cnt)
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
 		} else if !col.IsHidden {
 			// TODO: We are able to remove this path if we remove the async stats load.

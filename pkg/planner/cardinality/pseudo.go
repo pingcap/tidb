@@ -212,7 +212,7 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 
 // getPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
 func getPseudoRowCountByColumnRanges(tc types.Context, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
-	var rowCount = 1.0
+	var rowCount = 0.0
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {
 			rowCount += tableRowCount
