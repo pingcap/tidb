@@ -177,13 +177,8 @@ func (ctx *litTableMutateContext) GetReservedRowIDAlloc() (*stmtctx.ReservedRowI
 
 // GetStatisticsSupport implements the `table.MutateContext` interface.
 func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSupport, bool) {
-	return ctx, true
-}
-
-// UpdatePhysicalTableDelta implements the `table.StatisticsSupport` interface.
-func (*litTableMutateContext) UpdatePhysicalTableDelta(
-	_, _, _ int64,
-) {
+	intest.Assert(false, "implement the needed method if necessary")
+	return nil, true
 }
 
 // GetCachedTableSupport implements the `table.MutateContext` interface.
