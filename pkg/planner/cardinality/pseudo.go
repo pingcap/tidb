@@ -207,7 +207,6 @@ func getPseudoRowCountByIndexRanges(tc types.Context, indexRanges []*ranger.Rang
 	if totalCount > tableRowCount {
 		totalCount = tableRowCount / 3.0
 	}
-	totalCount = max(1, totalCount)
 	return totalCount, nil
 }
 
