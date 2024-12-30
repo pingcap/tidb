@@ -1236,17 +1236,13 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version239 = 239
 
-	// version 240
-	// Add indexes to mysql.analyze_jobs to speed up the query.
-	version240 = 240
-
 	// Add index on user field for some mysql tables.
-	version241 = 241
+	version240 = 240
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version240
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1422,7 +1418,6 @@ var (
 		upgradeToVer218,
 		upgradeToVer239,
 		upgradeToVer240,
-		upgradeToVer241,
 	}
 )
 
@@ -3334,26 +3329,8 @@ func upgradeToVer239(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
-const (
-	// addAnalyzeJobsSchemaTableStateIndex is a DDL statement that adds an index on (table_schema, table_name, state)
-	// columns to mysql.analyze_jobs table. This index is currently unused since queries filter on partition_name='',
-	// even for non-partitioned tables. It is kept for potential future optimization where queries could use this
-	// simpler index directly for non-partitioned tables.
-	addAnalyzeJobsSchemaTableStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_state (table_schema, table_name, state)"
-	// addAnalyzeJobsSchemaTablePartitionStateIndex adds an index on (table_schema, table_name, partition_name, state) to mysql.analyze_jobs
-	addAnalyzeJobsSchemaTablePartitionStateIndex = "ALTER TABLE mysql.analyze_jobs ADD INDEX idx_schema_table_partition_state (table_schema, table_name, partition_name, state)"
-)
-
 func upgradeToVer240(s sessiontypes.Session, ver int64) {
 	if ver >= version240 {
-		return
-	}
-	doReentrantDDL(s, addAnalyzeJobsSchemaTableStateIndex, dbterror.ErrDupKeyName)
-	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
-}
-
-func upgradeToVer241(s sessiontypes.Session, ver int64) {
-	if ver >= version241 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
