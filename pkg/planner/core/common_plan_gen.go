@@ -32,11 +32,7 @@ func (e *Explain) unityPlanAll() (string, error) {
 	}
 
 	allPossibleHintSets := e.iterateHints(leadingHints, indexHints)
-
-	if len(allPossibleHintSets) > 5 { // TODO
-		allPossibleHintSets = allPossibleHintSets[:5]
-	}
-
+	planDigestMap := make(map[string]struct{})
 	sctx := e.SCtx()
 	plans := make([]*UnityPlan, 0, len(allPossibleHintSets))
 	for _, hs := range allPossibleHintSets {
@@ -55,6 +51,10 @@ func (e *Explain) unityPlanAll() (string, error) {
 		if err != nil {
 			panic(err)
 		}
+		if _, ok := planDigestMap[plan.PlanDigest]; ok {
+			continue
+		}
+		planDigestMap[plan.PlanDigest] = struct{}{}
 		plans = append(plans, plan)
 	}
 
