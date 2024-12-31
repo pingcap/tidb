@@ -314,8 +314,8 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
-	// refer to #58633
-	// Note that does not explicitly set rule with label.key==EngineLabelKey, because the
+	// refer to tidb#58633
+	// Does not explicitly set exclude rule with label.key==EngineLabelKey, because the
 	// PD may wrongly add peer to the unexpected stores if that key is specified.
 	tempRules := b.Rules[:0]
 	id := 0
