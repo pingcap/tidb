@@ -5206,6 +5206,7 @@ type TblColPosInfo struct {
 	HandleCols util.HandleCols
 
 	// IndexesRowLayout store the row layout of indexes. We need it if column pruning happens.
+	// If it's nil, means no column pruning happens.
 	IndexesRowLayout table.IndexesLayout
 }
 
@@ -5350,10 +5351,9 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 		return TblColPosInfo{}, err
 	}
 	return TblColPosInfo{
-		TblID:            tid,
-		Start:            offset,
-		HandleCols:       handleCol,
-		IndexesRowLayout: make(map[int64]table.IndexRowLayoutOption),
+		TblID:      tid,
+		Start:      offset,
+		HandleCols: handleCol,
 	}, nil
 }
 
