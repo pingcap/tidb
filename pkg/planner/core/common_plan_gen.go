@@ -7,6 +7,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
+func (e *Explain) unityPlanAll() {
+}
+
 func (e *Explain) unityPlanOne() (string, error) {
 	up := new(UnityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
