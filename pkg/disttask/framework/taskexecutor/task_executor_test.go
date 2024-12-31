@@ -897,8 +897,8 @@ func TestCheckBalanceSubtask(t *testing.T) {
 			task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, errors.New("error"))
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
-		runCtx, cancelCause := context.WithCancelCause(ctx)
-		taskExecutor.mu.runtimeCancel = cancelCause
+		runCtx, cancel := context.WithCancel(ctx)
+		taskExecutor.cancel = cancel
 		require.NoError(t, runCtx.Err())
 		taskExecutor.checkBalanceSubtask(ctx)
 		require.ErrorIs(t, runCtx.Err(), context.Canceled)
