@@ -291,6 +291,9 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 			defer func() {
 				if restoreErr == nil {
 					log.Info("import files done", zap.Duration("take", time.Since(fileStart)))
+					for _, fileSet := range filesReplica {
+						fileCount += len(fileSet.SSTFiles)
+					}
 					onProgress(1)
 				}
 			}()

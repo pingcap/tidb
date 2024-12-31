@@ -60,8 +60,8 @@ func defaultOutputTableChan() chan *CreatedTable {
 	return make(chan *CreatedTable, defaultChannelSize)
 }
 
-// Exhaust drains all remaining errors in the channel, into a slice of errors.
-func Exhaust(ec <-chan error) []error {
+// ExhaustErrors drains all remaining errors in the channel, into a slice of errors.
+func ExhaustErrors(ec <-chan error) []error {
 	out := make([]error, 0, len(ec))
 	for {
 		select {
@@ -92,7 +92,7 @@ type PipelineContext struct {
 	Glue       glue.Glue
 }
 
-// RestorePipeline do some work in pipeline, such as checkum, load stats and wait tiflash ready.
+// RestorePipeline does checksum, load stats and wait for tiflash to be ready.
 func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) (err error) {
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
@@ -111,8 +111,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	defer updateCh.Close()
 	// pipeline checksum
 	if plCtx.Checksum {
-		postHandleCh = rc.GoValidateChecksum(
-			ctx, postHandleCh, plCtx.KvClient, errCh, updateCh, plCtx.ChecksumConcurrency)
+		postHandleCh = rc.GoValidateChecksum(ctx, postHandleCh, plCtx.KvClient, errCh, updateCh, plCtx.ChecksumConcurrency)
 	}
 
 	// pipeline update meta and load stats
@@ -127,7 +126,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 
 	select {
 	case err = <-errCh:
-		err = multierr.Append(err, multierr.Combine(Exhaust(errCh)...))
+		err = multierr.Append(err, multierr.Combine(ExhaustErrors(errCh)...))
 	case <-finish:
 	}
 
@@ -154,11 +153,7 @@ func afterTableRestoredCh(ctx context.Context, createdTables []*CreatedTable) <-
 
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
-func dropToBlackhole(
-	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	errCh chan<- error,
-) <-chan struct{} {
+func dropToBlackhole(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) <-chan struct{} {
 	outCh := make(chan struct{}, 1)
 	go func() {
 		defer func() {
