@@ -7,7 +7,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
-func (e *Explain) unityPlan() (string, error) {
+func (e *Explain) unityPlanOne() (string, error) {
 	up := new(UnityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
 	rootStats, _, memTracker, _ := getRuntimeInfo(e.SCtx(), e.TargetPlan, e.RuntimeStatsColl)

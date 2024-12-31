@@ -40,8 +40,8 @@ var (
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
 
-	ExplainFormatUnityPlan = "unity_plan"
-	ExplainFormatUnityPlanGen = "unity_plan_gen"
+	ExplainFormatUnityPlanOne = "unity_plan_one"
+	ExplainFormatUnityPlanAll = "unity_plan_all"
 	ExplainFormatUnityJoin    = "unity_join"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
@@ -58,8 +58,8 @@ var (
 		ExplainFormatTiDBJSON,
 		ExplainFormatCostTrace,
 		ExplainFormatPlanCache,
-		ExplainFormatUnityPlan,
-		ExplainFormatUnityPlanGen,
+		ExplainFormatUnityPlanOne,
+		ExplainFormatUnityPlanAll,
 		ExplainFormatUnityJoin,
 	}
 )
