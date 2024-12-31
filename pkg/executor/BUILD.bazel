@@ -311,7 +311,7 @@ go_library(
 
 go_test(
     name = "executor_test",
-    timeout = "moderate",
+    timeout = "short",
     srcs = [
         "adapter_test.go",
         "analyze_test.go",
