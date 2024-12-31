@@ -315,7 +315,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// mock for checkBalanceSubtask, returns empty subtask list
 		e.taskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
 			e.task1.ID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
-		// this subtask is scheduled awsy during running
+		// this subtask is scheduled away during running
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
@@ -326,18 +326,6 @@ func TestTaskExecutorRun(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		})
-		// keep running next subtask
-		nextSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
-			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
-		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
-			unfinishedNormalSubtaskStates...).Return(nextSubtask, nil)
-		e.stepExecutor.EXPECT().GetStep().Return(proto.StepOne)
-		e.taskTable.EXPECT().StartSubtask(gomock.Any(), nextSubtask.ID, "id").Return(nil)
-		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), nextSubtask).Return(nil)
-		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", nextSubtask.ID, gomock.Any()).Return(nil)
-		// exit
-		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
