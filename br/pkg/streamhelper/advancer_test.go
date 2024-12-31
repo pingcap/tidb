@@ -474,7 +474,7 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription-handler-loop"))
 	require.Eventually(t, func() bool {
-		return !adv.HasSubscribion()
+		return !adv.HasSubscriptions()
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
