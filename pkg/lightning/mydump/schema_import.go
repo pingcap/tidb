@@ -317,6 +317,16 @@ func (si *SchemaImporter) getExistingDatabases(ctx context.Context) (set.StringS
 
 // isTableExist checks whether the table exists in the downstream database, it
 // works for view too.
+// info schema V2 only store one copy of schema object in memory, so read/write
+// need to lock, if we read too much and takes too long, it affects write, i.e.
+// schema reloading during DDL execution, we can mitigate this by using
+// finer-grained lock, but we cannot avoid it completely with current strategy.
+// that's why we don't check table existence in batch by
+// 'select table_name information_schema.tables where schema=xxx', and uses a
+// 'show create table' to check table by table instead.
+// 'select table_name information_schema.tables where schema=xxx and table_name=xxx'
+// should be fine too, but that depends on how memory table is implemented, so we
+// stick to 'show create table' for now.
 func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName string) (bool, error) {
 	sb := new(strings.Builder)
 	sqlescape.MustFormatSQL(sb, `SHOW CREATE TABLE %n.%n`, dbName, tableName)
