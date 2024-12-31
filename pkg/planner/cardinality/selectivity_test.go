@@ -1434,13 +1434,13 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	expectedA := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.a, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	expectedB := testkit.Rows(
-		"TableReader 0.08 root  data:Selection",
-		"└─Selection 0.08 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  in(test.t.b, 1, 2, 3, 4, 5, 6, 7, 8)",
 		"  └─TableFullScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	)
 	tk.MustQuery("explain format='brief' select * from t where a in (1, 2, 3, 4, 5, 6, 7, 8)").Check(expectedA)
