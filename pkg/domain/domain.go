@@ -1512,7 +1512,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		}, "closestReplicaReadCheckLoop")
 	}
 
-	err = do.initLogBackupAdvancer(do.ctx, pdCli)
+	err = do.initLogBackup(do.ctx, pdCli)
 	if err != nil {
 		return err
 	}
@@ -1540,7 +1540,7 @@ func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
 }
 
-func (do *Domain) initLogBackupAdvancer(ctx context.Context, pdClient pd.Client) error {
+func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	cfg := config.GetGlobalConfig()
 	if pdClient == nil || do.etcdClient == nil {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
