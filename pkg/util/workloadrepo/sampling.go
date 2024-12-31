@@ -56,8 +56,8 @@ func (w *worker) startSample(ctx context.Context) func() {
 				// sample thread
 				var wg util.WaitGroupWrapper
 
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
+				for rtIdx := range w.workloadTables {
+					rt := &w.workloadTables[rtIdx]
 					if rt.tableType != samplingTable {
 						continue
 					}

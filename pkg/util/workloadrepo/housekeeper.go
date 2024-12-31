@@ -64,8 +64,8 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 	return nil
 }
 
-func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
-	for _, tbl := range workloadTables {
+func (w *worker) createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time) error {
+	for _, tbl := range w.workloadTables {
 		if err := createPartition(ctx, is, &tbl, sess, now); err != nil {
 			return err
 		}
@@ -107,14 +107,14 @@ func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
 	return nil
 }
 
-func dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time, retention int) error {
+func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema, now time.Time, retention int) error {
 	if retention == 0 {
 		// disabled housekeeping
 		return nil
 	}
 
 	var err error
-	for _, tbl := range workloadTables {
+	for _, tbl := range w.workloadTables {
 		err2 := dropOldPartition(ctx, is, &tbl, now, retention, sess)
 		if err2 != nil {
 			logutil.BgLogger().Warn("workload repository could not drop partitions", zap.NamedError("err", err2))
@@ -149,7 +149,7 @@ func (w *worker) getHouseKeeper(ctx context.Context, fn func(time.Time) time.Dur
 				is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
 
 				// create new partitions
-				if err := createAllPartitions(ctx, sess, is, now); err != nil {
+				if err := w.createAllPartitions(ctx, sess, is, now); err != nil {
 					continue
 				}
 
@@ -158,7 +158,7 @@ func (w *worker) getHouseKeeper(ctx context.Context, fn func(time.Time) time.Dur
 				w.Unlock()
 
 				// drop old partitions
-				if err := dropOldPartitions(ctx, sess, is, now, retention); err != nil {
+				if err := w.dropOldPartitions(ctx, sess, is, now, retention); err != nil {
 					continue
 				}
 

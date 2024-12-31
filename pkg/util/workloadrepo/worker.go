@@ -106,14 +106,15 @@ type sessionPool interface {
 // worker is the main struct for workload repository.
 type worker struct {
 	sync.Mutex
-	etcdClient *clientv3.Client
-	sesspool   sessionPool
-	cancel     context.CancelFunc
-	newOwner   func(string, string) owner.Manager
-	owner      owner.Manager
-	wg         *util.WaitGroupEnhancedWrapper
-	enabled    bool
-	instanceID string
+	etcdClient     *clientv3.Client
+	sesspool       sessionPool
+	cancel         context.CancelFunc
+	newOwner       func(string, string) owner.Manager
+	owner          owner.Manager
+	wg             *util.WaitGroupEnhancedWrapper
+	enabled        bool
+	instanceID     string
+	workloadTables []repositoryTable
 
 	samplingInterval int32
 	samplingTicker   *time.Ticker
@@ -187,10 +188,11 @@ func init() {
 	})
 }
 
-func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string, string) owner.Manager, sesspool sessionPool) {
+func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string, string) owner.Manager, sesspool sessionPool, workloadTables []repositoryTable) {
 	w.etcdClient = etcdCli
 	w.sesspool = sesspool
 	w.newOwner = newOwner
+	w.workloadTables = workloadTables
 	w.wg = util.NewWaitGroupEnhancedWrapper("workloadrepo", nil, false)
 }
 
@@ -199,7 +201,7 @@ func SetupRepository(dom *domain.Domain) {
 	workerCtx.Lock()
 	defer workerCtx.Unlock()
 
-	initializeWorker(&workerCtx, dom.GetEtcdClient(), dom.NewOwnerManager, dom.SysSessionPool())
+	initializeWorker(&workerCtx, dom.GetEtcdClient(), dom.NewOwnerManager, dom.SysSessionPool(), workloadTables)
 
 	if workerCtx.enabled {
 		if err := workerCtx.start(); err != nil {
@@ -274,9 +276,9 @@ func (w *worker) readInstanceID() error {
 	return nil
 }
 
-func fillInTableNames() {
-	for rtIdx := range workloadTables {
-		rt := &workloadTables[rtIdx]
+func (w *worker) fillInTableNames() {
+	for rtIdx := range w.workloadTables {
+		rt := &w.workloadTables[rtIdx]
 		if rt.table != "" {
 			if rt.destTable == "" {
 				rt.destTable = "HIST_" + rt.table
@@ -295,7 +297,7 @@ func (w *worker) startRepository(ctx context.Context) func() {
 		}
 		ticker := time.NewTicker(time.Second)
 
-		fillInTableNames()
+		w.fillInTableNames()
 
 		for {
 			select {

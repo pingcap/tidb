@@ -40,13 +40,16 @@ func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *doma
 	if !testWorker {
 		wrk = &workerCtx
 	}
+	workloadTables2 := make([]repositoryTable, len(workloadTables))
+	copy(workloadTables2, workloadTables)
+
 	owner.ManagerSessionTTL = 3
 	initializeWorker(wrk,
 		etcdCli, func(s1, s2 string) owner.Manager {
 			return owner.NewOwnerManager(ctx, etcdCli, s1, id, s2)
 		},
 		dom.SysSessionPool(),
-	)
+		workloadTables2)
 	wrk.samplingInterval = 1
 	wrk.snapshotInterval = 1
 	wrk.instanceID = id
@@ -390,15 +393,16 @@ func TestSnapshotTimingWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
+	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
+
 	// MEMORY_USAGE will contain a single row.  Ideal for testing here.
-	workloadTables[1] = repositoryTable{
+	wrk.workloadTables[1] = repositoryTable{
 		"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, "HIST_MEMORY_USAGE2", "", "", "",
 	}
-	workloadTables = append(workloadTables, repositoryTable{
+	wrk.workloadTables = append(wrk.workloadTables, repositoryTable{
 		"INFORMATION_SCHEMA", "MEMORY_USAGE", snapshotTable, "HIST_MEMORY_USAGE3", "", "", "",
 	})
 
-	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 	wrk.changeSnapshotInterval(ctx, "2")
 	now := time.Now()
 	wrk.setRepositoryDest(ctx, "table")
@@ -530,9 +534,9 @@ func TestSettingSQLVariables(t *testing.T) {
 	require.Contains(t, err.Error(), "invalid repository destination")
 }
 
-func getTable(t *testing.T, tableName string) *repositoryTable {
+func getTable(t *testing.T, tableName string, wrk *worker) *repositoryTable {
 	var tbl *repositoryTable = nil
-	for _, nt := range workloadTables {
+	for _, nt := range wrk.workloadTables {
 		if nt.table == tableName {
 			tbl = &nt
 		}
@@ -610,10 +614,9 @@ func createTableWithParts(ctx context.Context, t *testing.T, tk *testkit.TestKit
 }
 
 func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
-	sess sessionctx.Context, tk *testkit.TestKit,
-	firstTestFails bool, tableName string, partitions []time.Time, expectedParts []time.Time,
-) {
-	tbl := getTable(t, tableName)
+	sess sessionctx.Context, tk *testkit.TestKit, wrk *worker,
+	firstTestFails bool, tableName string, partitions []time.Time, expectedParts []time.Time) {
+	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
@@ -639,7 +642,7 @@ func TestCreatePartition(t *testing.T) {
 	_sessctx := wrk.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 
-	fillInTableNames()
+	wrk.fillInTableNames()
 
 	now := time.Now()
 
@@ -648,36 +651,36 @@ func TestCreatePartition(t *testing.T) {
 	// Should create one partition for today and tomorrow on a table with only old partitions before today.
 	partitions := []time.Time{now.AddDate(0, 0, -1)}
 	expectedParts := []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, tk, true, "PROCESSLIST", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, true, "PROCESSLIST", partitions, expectedParts)
 
 	// Should create one partition for tomorrow on a table with only a partition for today.
 	partitions = []time.Time{now}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, tk, true, "DATA_LOCK_WAITS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, true, "DATA_LOCK_WAITS", partitions, expectedParts)
 
 	// Should not create any partitions on a table with only a partition for tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, tk, false, "TIDB_TRX", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_TRX", partitions, expectedParts)
 
 	// Should not create any partitions on a table with only partitions for both today and tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
-	validatePartitionCreation(ctx, now, t, sess, tk, false, "MEMORY_USAGE", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "MEMORY_USAGE", partitions, expectedParts)
 
 	// Should not create any partitions on a table with a partition for the day after tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 2)}
-	validatePartitionCreation(ctx, now, t, sess, tk, false, "CLUSTER_LOAD", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "CLUSTER_LOAD", partitions, expectedParts)
 
 	// Should not fill in missing partitions on a table with a partition for dates beyond tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 3)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 3)}
-	validatePartitionCreation(ctx, now, t, sess, tk, false, "TIDB_HOT_REGIONS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_HOT_REGIONS", partitions, expectedParts)
 
 	// this table should be updated when the repository is enabled
 	partitions = []time.Time{now}
-	createTableWithParts(ctx, t, tk, getTable(t, "DEADLOCKS"), sess, partitions)
+	createTableWithParts(ctx, t, tk, getTable(t, "DEADLOCKS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
 	now = time.Now()
@@ -686,9 +689,9 @@ func TestCreatePartition(t *testing.T) {
 }
 
 func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
-	sess sessionctx.Context, tk *testkit.TestKit,
+	sess sessionctx.Context, tk *testkit.TestKit, wrk *worker,
 	tableName string, partitions []time.Time, retention int, shouldErr bool, expectedParts []time.Time) {
-	tbl := getTable(t, tableName)
+	tbl := getTable(t, tableName, wrk)
 	createTableWithParts(ctx, t, tk, tbl, sess, partitions)
 
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, tbl, partitions))
@@ -715,7 +718,7 @@ func TestDropOldPartitions(t *testing.T) {
 	_sessctx := wrk.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 
-	fillInTableNames()
+	wrk.fillInTableNames()
 
 	now := time.Now()
 
@@ -726,44 +729,44 @@ func TestDropOldPartitions(t *testing.T) {
 	// Should not trim any partitions
 	partitions = []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "PROCESSLIST", partitions, 1, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "PROCESSLIST", partitions, 1, false, expectedParts)
 
 	// Test trimming a single partition more than one date before retention date.
 	partitions = []time.Time{now.AddDate(0, 0, -2), now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "DATA_LOCK_WAITS", partitions, 1, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "DATA_LOCK_WAITS", partitions, 1, false, expectedParts)
 
 	// Check that multiple partitions can be removed.
 	partitions = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "TIDB_TRX", partitions, 1, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_TRX", partitions, 1, false, expectedParts)
 
 	// should trim nothing
 	partitions = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), now, now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "MEMORY_USAGE", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "MEMORY_USAGE", partitions, 2, false, expectedParts)
 
 	// should trim one partition
 	partitions = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "CLUSTER_LOAD", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "CLUSTER_LOAD", partitions, 2, false, expectedParts)
 
 	// validate that it works when not dropping any partitions
 	partitions = []time.Time{now.AddDate(0, 0, -1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "TIDB_HOT_REGIONS", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_HOT_REGIONS", partitions, 2, false, expectedParts)
 
 	// there must be partitions, so this should error
 	partitions = []time.Time{now.AddDate(0, 0, -2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2)}
-	validatePartitionDrop(ctx, now, t, sess, tk, "TIKV_STORE_STATUS", partitions, 1, true, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIKV_STORE_STATUS", partitions, 1, true, expectedParts)
 }
 
 func TestAddNewPartitionsOnStart(t *testing.T) {
 	ctx, _, dom, addr := setupDomainAndContext(t)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
-	fillInTableNames()
+	wrk.fillInTableNames()
 	now := time.Now()
 	require.NoError(t, wrk.createAllTables(ctx, now))
 	require.True(t, wrk.checkTablesExists(ctx, now))
@@ -771,7 +774,7 @@ func TestAddNewPartitionsOnStart(t *testing.T) {
 	_sessctx := wrk.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 	expectedParts := []time.Time{now, now.AddDate(0, 0, 1)}
-	for _, tbl := range workloadTables {
+	for _, tbl := range wrk.workloadTables {
 		// check for now and now + 1 partitions
 		require.True(t, validatePartitionsMatchExpected(ctx, t, sess, &tbl, expectedParts))
 	}
@@ -792,24 +795,24 @@ func TestHouseKeeperThread(t *testing.T) {
 	_sessctx := wrk.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)
 
-	workloadTables = []repositoryTable{
+	wrk.workloadTables = []repositoryTable{
 		{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
 		{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
 	}
-	fillInTableNames()
+	wrk.fillInTableNames()
 
 	now := time.Now()
 	var parts []time.Time
 
 	// This will have a partition added for tomorrow.
 	parts = []time.Time{now.AddDate(0, 0, -1), now}
-	plTbl := getTable(t, "PROCESSLIST")
+	plTbl := getTable(t, "PROCESSLIST", wrk)
 	createTableWithParts(ctx, t, tk, plTbl, sess, parts)
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, plTbl, parts))
 
 	// This will have partitions removed.   -3 will be removed when retention is 2, and -2 will be removed at 1.
 	parts = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), now}
-	dlwTbl := getTable(t, "DATA_LOCK_WAITS")
+	dlwTbl := getTable(t, "DATA_LOCK_WAITS", wrk)
 	createTableWithParts(ctx, t, tk, dlwTbl, sess, parts)
 	require.True(t, validatePartitionsMatchExpected(ctx, t, sess, dlwTbl, parts))
 

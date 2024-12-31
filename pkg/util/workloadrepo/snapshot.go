@@ -246,11 +246,11 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 					continue
 				}
 
-				errs := make([]error, len(workloadTables))
+				errs := make([]error, len(w.workloadTables))
 				var wg util.WaitGroupWrapper
 				cnt := 0
-				for rtIdx := range workloadTables {
-					rt := &workloadTables[rtIdx]
+				for rtIdx := range w.workloadTables {
+					rt := &w.workloadTables[rtIdx]
 					if rt.tableType != snapshotTable {
 						continue
 					}

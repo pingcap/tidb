@@ -111,7 +111,7 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 		}
 	}
 
-	for _, tbl := range workloadTables {
+	for _, tbl := range w.workloadTables {
 		if checkTableExistsByIS(ctx, is, tbl.destTable, zeroTime) {
 			continue
 		}
@@ -143,7 +143,7 @@ func (w *worker) createAllTables(ctx context.Context, now time.Time) error {
 	}
 
 	is = sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-	return createAllPartitions(ctx, sess, is, now)
+	return w.createAllPartitions(ctx, sess, is, now)
 }
 
 func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
@@ -151,8 +151,8 @@ func (w *worker) checkTablesExists(ctx context.Context, now time.Time) bool {
 	sess := _sessctx.(sessionctx.Context)
 	defer w.sesspool.Put(_sessctx)
 	is := sess.GetDomainInfoSchema().(infoschema.InfoSchema)
-	return slice.AllOf(workloadTables, func(i int) bool {
-		return checkTableExistsByIS(ctx, is, workloadTables[i].destTable, now)
+	return slice.AllOf(w.workloadTables, func(i int) bool {
+		return checkTableExistsByIS(ctx, is, w.workloadTables[i].destTable, now)
 	})
 }
 
