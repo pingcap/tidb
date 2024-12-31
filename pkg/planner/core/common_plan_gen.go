@@ -29,9 +29,35 @@ func (e *Explain) unityPlanAll() (string, error) {
 		indexHints[i] = e.iterateIndexHints(t)
 	}
 
-	fmt.Println(leadingHints)
-	fmt.Println(indexHints)
+	allPossibleHintSets := e.iterateHints(leadingHints, indexHints)
+	fmt.Println("???>>>>>> ", allPossibleHintSets)
+	for _, hs := range allPossibleHintSets {
+		fmt.Println(">>> hs ", hs)
+	}
 	return "", nil
+}
+
+func (e *Explain) iterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
+	currentIndexHints := make([]string, len(indexHints))
+	var possibleIndexHints []string
+	var f func(int)
+	f = func(depth int) {
+		if depth == len(indexHints) {
+			possibleIndexHints = append(possibleIndexHints, strings.Join(currentIndexHints, " "))
+			return
+		}
+		for _, hint := range indexHints[depth] {
+			currentIndexHints[depth] = hint
+			f(depth + 1)
+		}
+	}
+	f(0)
+	for _, leading := range leadingHints {
+		for _, hint := range possibleIndexHints {
+			hints = append(hints, fmt.Sprintf("/*+ %s %s */", leading, hint))
+		}
+	}
+	return
 }
 
 func (e *Explain) iterateIndexHints(t *tableName) (hints []string) {
