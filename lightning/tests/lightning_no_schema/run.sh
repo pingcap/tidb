@@ -20,9 +20,12 @@ set -eu
 run_sql "DROP DATABASE IF EXISTS noschema;"
 run_sql "create database noschema;"
 run_sql "create table noschema.t (x int primary key);"
+run_sql "create table noschema.invalid (x int primary key);"
 
 # Starting importing
 run_lightning --no-schema=1
 
 run_sql "SELECT sum(x) FROM noschema.t;"
 check_contains 'sum(x): 120'
+run_sql "SELECT sum(x) FROM noschema.invalid;"
+check_contains 'sum(x): 1'
