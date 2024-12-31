@@ -30,9 +30,9 @@ func (e *Explain) unityPlanAll() (string, error) {
 	}
 
 	allPossibleHintSets := e.iterateHints(leadingHints, indexHints)
-	fmt.Println("???>>>>>> ", allPossibleHintSets)
-	for _, hs := range allPossibleHintSets {
-		fmt.Println(">>> hs ", hs)
+
+	if len(allPossibleHintSets) > 5 {
+		allPossibleHintSets = allPossibleHintSets[:5]
 	}
 	return "", nil
 }
