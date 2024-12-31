@@ -146,7 +146,7 @@ type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
-	bindHandle      bindinfo.GlobalBindingHandle
+	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -2080,13 +2080,17 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 
 // BindHandle returns domain's bindHandle.
 func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
-	return do.bindHandle
+	v := do.bindHandle.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(bindinfo.GlobalBindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle = bindinfo.NewGlobalBindingHandle(do.sysSessionPool)
+	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
 	err := do.BindHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err

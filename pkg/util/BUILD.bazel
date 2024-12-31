@@ -41,6 +41,7 @@ go_library(
         "//pkg/session/cursor",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/disk",
         "//pkg/util/execdetails",
