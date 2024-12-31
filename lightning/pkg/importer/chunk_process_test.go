@@ -86,7 +86,7 @@ func (s *chunkRestoreSuite) SetupTest() {
 	}
 
 	var err error
-	s.cr, err = newChunkProcessor(context.Background(), 1, s.cfg, &chunk, w, s.store, nil, nil)
+	s.cr, err = newChunkProcessor(context.Background(), 1, s.cfg, &chunk, w, s.store, nil)
 	require.NoError(s.T(), err)
 }
 
@@ -768,7 +768,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	cfg.App.TableConcurrency = 2
 	cfg.Mydumper.CSV.Header = false
 
-	cr, err := newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil, nil)
+	cr, err := newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil)
 	require.NoError(t, err)
 	var (
 		id, lastID int
@@ -800,7 +800,7 @@ func TestCompressChunkRestore(t *testing.T) {
 			RowIDMax:     100,
 		},
 	}
-	cr, err = newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil, nil)
+	cr, err = newChunkProcessor(ctx, 1, cfg, &chunk, w, store, nil)
 	require.NoError(t, err)
 	for id = lastID; id < 300; {
 		err = cr.parser.ReadRow()
