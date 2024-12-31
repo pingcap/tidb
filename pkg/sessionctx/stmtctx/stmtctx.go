@@ -438,7 +438,7 @@ type StatementContext struct {
 	ForShareLockEnabledByNoop bool
 
 	// OperatorNum is used to record the number of operators in the current logical plan.
-	OperatorNum int
+	OperatorNum uint64
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

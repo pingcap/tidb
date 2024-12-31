@@ -60,7 +60,7 @@ type columnStatsUsageCollector struct {
 	tblID2PartitionIDs map[int64][]int64
 
 	// operatorNum is the number of operators in the logical plan.
-	operatorNum int
+	operatorNum uint64
 }
 
 func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
@@ -322,7 +322,7 @@ func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
-	int,
+	uint64,
 ) {
 	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(nil, lp)
