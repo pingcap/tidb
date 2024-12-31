@@ -440,14 +440,14 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	intest.AssertFunc(func() bool {
 		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
 		now := time.Now()
-		if timeOfTS.After(now) {
+		if timeOfTS.Sub(now) > time.Hour {
 			return false
 		}
 		if now.Sub(timeOfTS) > 24*time.Hour {
 			return false
 		}
 		return true
-	}, "TS used in import should in [now-1d, now], but got %d", dataCommitTS)
+	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
 	if dataCommitTS == 0 {
 		return errors.New("data commitTS is 0")
 	}
