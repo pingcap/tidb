@@ -61,6 +61,9 @@ func DefineFlagsForCheckpointAdvancerConfig(f *pflag.FlagSet) {
 	// used for chaos testing
 	f.Duration(flagOwnershipCycleInterval, DefaultOwnershipCycleInterval,
 		"The interval that the owner will retire itself")
+
+	// mark hidden
+	_ = f.MarkHidden(flagOwnershipCycleInterval)
 }
 
 func Default() Config {
