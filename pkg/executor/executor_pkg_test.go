@@ -503,3 +503,37 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 		}
 	}
 }
+
+func TestImportIntoShouldHaveSameFlagsAsInsert(t *testing.T) {
+	insertStmt := &ast.InsertStmt{}
+	importStmt := &ast.ImportIntoStmt{}
+	insertCtx := mock.NewContext()
+	importCtx := mock.NewContext()
+	domain.BindDomain(insertCtx, &domain.Domain{})
+	domain.BindDomain(importCtx, &domain.Domain{})
+	for _, modeStr := range []string{
+		"",
+		"IGNORE_SPACE",
+		"STRICT_TRANS_TABLES",
+		"STRICT_ALL_TABLES",
+		"ALLOW_INVALID_DATES",
+		"NO_ZERO_IN_DATE",
+		"NO_ZERO_DATE",
+		"NO_ZERO_IN_DATE,STRICT_ALL_TABLES",
+		"NO_ZERO_DATE,STRICT_ALL_TABLES",
+		"NO_ZERO_IN_DATE,NO_ZERO_DATE,STRICT_ALL_TABLES",
+	} {
+		t.Run(fmt.Sprintf("mode %s", modeStr), func(t *testing.T) {
+			mode, err := mysql.GetSQLMode(modeStr)
+			require.NoError(t, err)
+			insertCtx.GetSessionVars().SQLMode = mode
+			require.NoError(t, ResetContextOfStmt(insertCtx, insertStmt))
+			importCtx.GetSessionVars().SQLMode = mode
+			require.NoError(t, ResetContextOfStmt(importCtx, importStmt))
+
+			insertTypeCtx := insertCtx.GetSessionVars().StmtCtx.TypeCtx()
+			importTypeCtx := importCtx.GetSessionVars().StmtCtx.TypeCtx()
+			require.EqualValues(t, insertTypeCtx.Flags(), importTypeCtx.Flags())
+		})
+	}
+}
