@@ -2909,12 +2909,12 @@ Warning	1815	NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will
 explain format = 'brief' select t1.a from t1 where t1.a in (select t2.b from t2 where t2.a = t1.b);
 id	estRows	task	access object	operator info
 HashJoin	7984.01	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
-├─TableReader(Build)	9990.00	root		data:Selection
-│ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b))
-│   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader(Probe)	9980.01	root		data:Selection
-  └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a)), not(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.b))
-    └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─TableReader(Build)	9980.01	root		data:Selection
+│ └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a)), not(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.b))
+│   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader(Probe)	9990.00	root		data:Selection
+  └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b))
+    └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select t1.a from t1 where t1.a in (select t2.b from t2 where t2.a = t1.b);
 a
 1
