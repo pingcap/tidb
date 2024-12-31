@@ -86,7 +86,7 @@ func (e *Explain) iterateLeadingHints(tableNames []*tableName) (hints []string) 
 					if i == k || j == k {
 						continue
 					}
-					hints = append(hints, fmt.Sprintf("leading(%s %s %s)",
+					hints = append(hints, fmt.Sprintf("leading(%s,%s,%s)",
 						tableNames[i].HintName(), tableNames[j].HintName(), tableNames[k].HintName()))
 				}
 			}
