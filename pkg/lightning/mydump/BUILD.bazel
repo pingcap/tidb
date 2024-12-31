@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/errno",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
@@ -39,6 +40,7 @@ go_library(
         "//pkg/util/sqlescape",
         "//pkg/util/table-filter",
         "//pkg/util/zeropool",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_spkg_bom//:bom",
@@ -80,6 +82,7 @@ go_test(
     deps = [
         "//br/pkg/mock/storage",
         "//br/pkg/storage",
+        "//pkg/errno",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
@@ -92,6 +95,7 @@ go_test(
         "//pkg/util/table-filter",
         "//pkg/util/table-router",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
