@@ -56,6 +56,11 @@ func (e *Explain) unityPlanAll() (string, error) {
 		}
 		planDigestMap[plan.PlanDigest] = struct{}{}
 		plans = append(plans, plan)
+
+		// TODO:
+		if len(plans) >= 5 {
+			break
+		}
 	}
 
 	data, err := json.Marshal(plans)
