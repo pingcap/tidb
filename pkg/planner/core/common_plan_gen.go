@@ -156,7 +156,7 @@ func (t *tableName) String() string {
 
 func (t *tableName) HintName() string {
 	if t.alias != "" {
-		return fmt.Sprintf("%s.%s", t.schema, t.table)
+		return fmt.Sprintf("%s.%s", t.schema, t.alias)
 	}
 	return fmt.Sprintf("%s.%s", t.schema, t.table)
 }
