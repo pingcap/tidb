@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -998,8 +997,9 @@ func (m *dupeDetector) processRemoteDupTask(
 			}
 			return nil
 		}
-		if stderrors.Is(err, context.Canceled) {
-			return errors.Trace(err)
+		if err2 := ctx.Err(); err2 != nil {
+			// stop retry when user cancel the context
+			return errors.Trace(err2)
 		}
 		if !madeProgress {
 			_, isRegionErr := errors.Cause(err).(regionError)
