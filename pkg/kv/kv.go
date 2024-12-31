@@ -327,7 +327,7 @@ type ClientSendOption struct {
 	EnableCollectExecutionInfo bool
 	TiFlashReplicaRead         tiflash.ReplicaRead
 	AppendWarning              func(warn error)
-	TryCopLiteWorker           *uint32
+	TryCopLiteWorker           *atomic.Uint32
 }
 
 // ReqTypes.
