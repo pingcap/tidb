@@ -2,18 +2,11 @@ package core
 
 import (
 	"encoding/json"
+
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
-/*
-explain analyze format='unity_plan' select * from t;
-
-	{
-		"time_cost": 10.1,
-		""
-	}
-*/
 func (e *Explain) unityPlan() (string, error) {
 	up := new(UnityPlan)
 	up.PlanDigest = planDigest(e.TargetPlan)
