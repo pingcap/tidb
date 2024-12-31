@@ -414,7 +414,7 @@ func TestAddIndexScheduleAway(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockNoEnoughSlots", "return")
 	afterCancel := make(chan struct{})
 	// Capture the cancel operation from checkBalanceLoop.
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelRunningSubtask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelSubtaskExec", func() {
 		close(afterCancel)
 	})
 	var once sync.Once

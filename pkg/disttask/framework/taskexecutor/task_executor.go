@@ -143,8 +143,8 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			e.cancelRunStepWith(nil)
-			failpoint.InjectCall("afterCancelRunningSubtask")
+			e.Cancel()
+			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
 
@@ -308,9 +308,7 @@ func (e *BaseTaskExecutor) Run() {
 		// reset it when we get a subtask
 		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
 
-		if e.stepExec != nil &&
-			(e.stepExec.GetStep() != subtask.Step ||
-				e.stepCtx.Err() != nil) { // Previous step ctx is done, cleanup and use a new one.
+		if e.stepExec != nil && e.stepExec.GetStep() != subtask.Step {
 			e.cleanStepExecutor()
 		}
 		if e.stepExec == nil {
@@ -319,6 +317,12 @@ func (e *BaseTaskExecutor) Run() {
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
 			}
+		}
+		if err := e.stepCtx.Err(); err != nil {
+			e.logger.Error("step executor context is done, the task should have been reverted",
+				zap.String("step", proto.Step2Str(task.Type, task.Step)),
+				zap.Error(err))
+			continue
 		}
 		err = e.runSubtask(subtask)
 		if err != nil {
