@@ -2996,7 +2996,7 @@ error = '''
 client has multi-statement capability disabled. Run SET GLOBAL tidb_multi_statement_mode='ON' after you understand the security risk
 '''
 
-["server:9014"]
+["server:9015"]
 error = '''
 Username is not valid
 '''
