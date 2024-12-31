@@ -8,11 +8,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 func (e *Explain) unityPlanAll() (string, error) {
@@ -31,10 +33,36 @@ func (e *Explain) unityPlanAll() (string, error) {
 
 	allPossibleHintSets := e.iterateHints(leadingHints, indexHints)
 
-	if len(allPossibleHintSets) > 5 {
+	if len(allPossibleHintSets) > 5 { // TODO
 		allPossibleHintSets = allPossibleHintSets[:5]
 	}
-	return "", nil
+
+	sctx := e.SCtx()
+	plans := make([]*UnityPlan, 0, len(allPossibleHintSets))
+	for _, hs := range allPossibleHintSets {
+		currentSQL := sctx.GetSessionVars().StmtCtx.OriginalSQL
+		prefix := "explain analyze format='unity_plan_all' SELECT "
+		sql := fmt.Sprintf("explain analyze format='unity_plan_one' select %s %s ", hs, currentSQL[len(prefix):])
+		sqlExec := sctx.GetRestrictedSQLExecutor()
+		rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql)
+		if err != nil {
+			panic(err)
+		}
+		data := rows[0].GetString(0)
+		plan := new(UnityPlan)
+		err = json.Unmarshal([]byte(data), plan)
+		if err != nil {
+			panic(err)
+		}
+		plans = append(plans, plan)
+	}
+
+	data, err := json.Marshal(plans)
+	if err != nil {
+		panic(err)
+	}
+	return string(data), nil
 }
 
 func (e *Explain) iterateHints(leadingHints []string, indexHints [][]string) (hints []string) {
