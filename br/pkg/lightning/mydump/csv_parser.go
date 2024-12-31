@@ -344,7 +344,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if len(buf) > LargestEntryLimit {
+		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
 			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
 		}
 		parser.buf = nil
@@ -376,6 +376,39 @@ func (parser *CSVParser) readRecord(dst []string) ([]string, error) {
 
 outside:
 	for {
+<<<<<<< HEAD:br/pkg/lightning/mydump/csv_parser.go
+=======
+		// we should drop
+		// 1. the whole line if it does not contain startingBy
+		// 2. any character before startingBy
+		// since we have checked startingBy does not contain terminator, we can
+		// split at terminator to check the substring contains startingBy. Even
+		// if the terminator is inside a quoted field which means it's not the
+		// end of a line, the substring can still be dropped by rule 2.
+		if len(parser.startingBy) > 0 && !foundStartingByThisLine {
+			oldPos := parser.pos
+			content, _, err := parser.readUntilTerminator()
+			if err != nil {
+				if !(errors.Cause(err) == io.EOF) {
+					return nil, err
+				}
+				if len(content) == 0 {
+					return nil, err
+				}
+				// if we reached EOF, we should still check the content contains
+				// startingBy and try to put back and parse it.
+			}
+			idx := bytes.Index(content, parser.startingBy)
+			if idx == -1 {
+				continue
+			}
+			foundStartingByThisLine = true
+			content = content[idx+len(parser.startingBy):]
+			parser.buf = append(content, parser.buf...)
+			parser.pos = oldPos + int64(idx+len(parser.startingBy))
+		}
+
+>>>>>>> b71ad38bcd9 (importinto/lightning: check max row size when parsing csv to avoid OOM (#58592)):pkg/lightning/mydump/csv_parser.go
 		content, firstByte, err := parser.readUntil(&parser.unquoteByteSet)
 
 		if len(content) > 0 {
@@ -513,6 +546,8 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -563,6 +598,8 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -579,9 +616,26 @@ func (parser *CSVParser) ReadColumns() error {
 }
 
 // ReadUntilTerminator seeks the file until the terminator token is found, and
+<<<<<<< HEAD:br/pkg/lightning/mydump/csv_parser.go
 // returns the file offset beyond the terminator.
 // This function is used in strict-format dividing a CSV file.
 func (parser *CSVParser) ReadUntilTerminator() (int64, error) {
+=======
+// returns
+// - the content with terminator, or the content read before meet error
+// - the file offset beyond the terminator, or the offset when meet error
+// - error
+// Note that the terminator string pattern may be the content of a field, which
+// means it's inside quotes. Caller should make sure to handle this case.
+func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+	return parser.readUntilTerminator()
+}
+
+func (parser *CSVParser) readUntilTerminator() ([]byte, int64, error) {
+	var ret []byte
+>>>>>>> b71ad38bcd9 (importinto/lightning: check max row size when parsing csv to avoid OOM (#58592)):pkg/lightning/mydump/csv_parser.go
 	for {
 		_, firstByte, err := parser.readUntil(&parser.newLineByteSet)
 		if err != nil {
