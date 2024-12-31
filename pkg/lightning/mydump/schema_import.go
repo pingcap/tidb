@@ -119,7 +119,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 			p.SetSQLMode(si.sqlMode)
 			for dbMeta := range ch {
 				sqlStr := dbMeta.GetSchema(egCtx, si.store)
-				if err2 := si.runJob(egCtx, p, &schemaJob{
+				if err2 := si.runCommonJob(egCtx, p, &schemaJob{
 					dbName:   dbMeta.Name,
 					stmtType: schemaCreateDatabase,
 					sqlStr:   sqlStr,
@@ -178,7 +178,7 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 				if err != nil {
 					return err
 				}
-				if err = si.runJob(egCtx, p, &schemaJob{
+				if err = si.runCreateTableJob(egCtx, p, &schemaJob{
 					dbName:   tableMeta.DB,
 					tblName:  tableMeta.Name,
 					stmtType: schemaCreateTable,
@@ -243,7 +243,7 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 					zap.String("view-name", viewMeta.Name))
 				continue
 			}
-			if err = si.runJob(ctx, p, &schemaJob{
+			if err = si.runCommonJob(ctx, p, &schemaJob{
 				dbName:   dbMeta.Name,
 				tblName:  viewMeta.Name,
 				stmtType: schemaCreateView,
@@ -256,7 +256,7 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 	return nil
 }
 
-func (si *SchemaImporter) runJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
+func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
 	if err != nil {
 		// if the schema supplied by the user is un-parsable by TiDB, we allow
@@ -274,6 +274,18 @@ func (si *SchemaImporter) runJob(ctx context.Context, p *parser.Parser, job *sch
 		}
 		return errors.Trace(err)
 	}
+	return si.runJob(ctx, job, stmts)
+}
+
+func (si *SchemaImporter) runCommonJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return si.runJob(ctx, job, stmts)
+}
+
+func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []string) error {
 	conn, err := si.db.Conn(ctx)
 	if err != nil {
 		return err
