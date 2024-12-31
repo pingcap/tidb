@@ -43,7 +43,11 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 8,
+>>>>>>> 64dd762fde7 (planner: Fix load stats failure when stats file contains with `null` (#57818))
     deps = [
         ":optimizor",
         "//pkg/config",
