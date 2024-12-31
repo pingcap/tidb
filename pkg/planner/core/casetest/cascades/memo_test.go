@@ -50,8 +50,9 @@ func TestDeriveStats(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum int
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -117,6 +118,7 @@ func TestDeriveStats(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
 		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
@@ -142,8 +144,9 @@ func TestGroupNDVCols(t *testing.T) {
 	p := parser.New()
 	var input []string
 	var output []struct {
-		SQL string
-		Str []string
+		SQL   string
+		Str   []string
+		OpNum int
 	}
 	statsSuiteData := GetCascadesSuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
@@ -207,6 +210,7 @@ func TestGroupNDVCols(t *testing.T) {
 		testdata.OnRecord(func() {
 			output[i].SQL = tt
 			output[i].Str = strs
+			output[i].OpNum = lp.SCtx().GetSessionVars().StmtCtx.OperatorNum
 		})
 		require.Equal(t, output[i].Str, strs, "case i:"+strconv.Itoa(i)+" "+tt)
 	}
