@@ -162,6 +162,7 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 		explainNode := e.explainOpRecursivelyInJSONFormat(op, flat.Main)
 		planNode := &UnityPlanNode{
 			ExplainInfoForEncode: explainNode,
+			PreSequences:         planPreSequences(op.Origin),
 			Hints:                planHints(op.Origin),
 		}
 		subPlans = append(subPlans, planNode)
@@ -175,7 +176,8 @@ func (e *Explain) unitySubPlan() (subPlans []*UnityPlanNode) {
 
 type UnityPlanNode struct {
 	*ExplainInfoForEncode
-	Hints string `json:"hints"`
+	PreSequences []string `json:"preSequences"`
+	Hints        string   `json:"hints"`
 }
 
 type UnityPlan struct {
@@ -183,6 +185,32 @@ type UnityPlan struct {
 	TimeInMS   float64          `json:"TimeInMS"`
 	MemInByte  int64            `json:"memInByte"`
 	SubPlans   []*UnityPlanNode `json:"subPlans"`
+}
+
+func planPreSequences(p base.Plan) (preSeq []string) {
+	flat := FlattenPhysicalPlan(p, true)
+	for _, op := range flat.Main {
+		if !op.IsRoot {
+			continue
+		}
+		switch node := op.Origin.(type) {
+		case *PhysicalTableReader:
+			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
+		case *PhysicalIndexReader:
+			indexScan := node.IndexPlans[len(node.IndexPlans)-1].(*PhysicalIndexScan)
+			preSeq = append(preSeq, fmt.Sprintf("%s.%s", indexScan.DBName.L, indexScan.Table.Name.L))
+		case *PhysicalIndexLookUpReader:
+			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
+		case *PhysicalIndexMergeReader:
+			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
+		default:
+			continue
+		}
+	}
+	return
 }
 
 func planHints(p base.Plan) string {
