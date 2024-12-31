@@ -394,7 +394,7 @@ func (pp *ParquetParser) GetMemoryUage() int {
 		}
 		dataPageUsage = roundup(dataPageUsage)
 	}
-	return roundup(dataPageUsage+dictUsage+readBufferUsage) * len(pp.columnNames)
+	return (dataPageUsage + dictUsage + readBufferUsage) * len(pp.columnNames)
 }
 
 func (pp *ParquetParser) setStringData(readNum, col, offset int) {
@@ -741,6 +741,9 @@ func (pp *ParquetParser) Close() error {
 			return errors.Trace(err)
 		}
 	}
+	if buddy, ok := pp.alloc.(*memory.BuddyAllocator); ok {
+		buddy.Close()
+	}
 	return nil
 }
 
@@ -884,7 +887,6 @@ func NewParquetParser(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
-	allocator memory.Allocator,
 	path string,
 ) (*ParquetParser, error) {
 	wrapper, ok := r.(*parquetFileWrapper)
@@ -898,6 +900,8 @@ func NewParquetParser(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
+	allocator := &memory.BuddyAllocator{}
+	allocator.Init(2 << 30)
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 

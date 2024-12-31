@@ -65,7 +65,6 @@ import (
 
 var memLimiter *membuf.Limiter
 var memoryForAllocator int
-var memoryAllocator pmemory.Allocator
 
 func init() {
 	memTotal, err := memory.MemTotal()
@@ -74,11 +73,9 @@ func init() {
 		memTotal = math.MaxInt32
 	}
 	// TODO(joechenrh): set a more proper waterline
-	memoryForAllocator = int(memTotal / 2)
+	memoryForAllocator = int(memTotal / 5 * 4)
 	memLimiter = membuf.NewLimiter(memoryForAllocator)
-	allocator := &pmemory.BuddyAllocator{}
-	allocator.Init(memoryForAllocator)
-	memoryAllocator = allocator
+	pmemory.SetMaxMemoryUsage(memoryForAllocator)
 }
 
 // TableImporter is a helper struct to import a table.
@@ -798,7 +795,7 @@ ChunkLoop:
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core, memoryAllocator)
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
 		if err != nil {
 			setError(err)
 			break

@@ -151,7 +151,7 @@ require (
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-require github.com/joechenrh/arrow-go/v18 v18.0.0-20241227080927-1a72af1ee113
+require github.com/joechenrh/arrow-go/v18 v18.0.0-20241231055212-8bc1d3aa614a
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect

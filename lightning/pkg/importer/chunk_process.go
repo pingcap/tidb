@@ -20,7 +20,6 @@ import (
 	"io"
 	"time"
 
-	pmemory "github.com/joechenrh/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -67,9 +66,8 @@ func newChunkProcessor(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tableInfo *model.TableInfo,
-	allocator pmemory.Allocator,
 ) (*chunkProcessor, error) {
-	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo, allocator)
+	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -87,7 +85,7 @@ func openParser(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tblInfo *model.TableInfo,
-	allocator pmemory.Allocator,
+
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
@@ -113,7 +111,7 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, allocator, chunk.FileMeta.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
 		if err != nil {
 			return nil, err
 		}

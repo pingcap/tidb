@@ -203,7 +203,7 @@ func (d *dupDetector) addKeysByChunk(
 	adder *duplicate.KeyAdder,
 	chunk *checkpoints.ChunkCheckpoint,
 ) error {
-	parser, err := openParser(ctx, d.rc.cfg, chunk, d.rc.ioWorkers, d.rc.store, d.tr.tableInfo.Core, nil)
+	parser, err := openParser(ctx, d.rc.cfg, chunk, d.rc.ioWorkers, d.rc.store, d.tr.tableInfo.Core)
 	if err != nil {
 		return err
 	}
