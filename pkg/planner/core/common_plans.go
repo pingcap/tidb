@@ -1033,7 +1033,7 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = append(e.Rows, []string{planJSON})
 	case types.ExplainFormatUnityPlanAll:
-		planJSON, err := e.unityPlanOne()
+		planJSON, err := e.unityPlanAll()
 		if err != nil {
 			return err
 		}

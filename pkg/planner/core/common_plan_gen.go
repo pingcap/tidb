@@ -4,12 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/bindinfo"
+	"sort"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -20,21 +21,57 @@ func (e *Explain) unityPlanAll() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	tableNames := bindinfo.CollectTableNames(stmt)
-	for _, t := range tableNames {
-		fmt.Println("?>>>>>>>>>> ", t.Name)
-		fmt.Println(">>>>>> ", e.tableIndexNames(t))
+	tableNames := collectTableNames(e.SCtx().GetSessionVars().CurrentDB, stmt)
+	leadingHints := e.iterateLeadingHints(tableNames)
+
+	indexHints := make([][]string, len(tableNames))
+	for i, t := range tableNames {
+		indexHints[i] = e.iterateIndexHints(t)
 	}
+
+	fmt.Println(leadingHints)
+	fmt.Println(indexHints)
 	return "", nil
 }
 
-func (e *Explain) tableIndexNames(t *ast.TableName) (idxNames []string) {
-	is := domain.GetDomain(e.SCtx()).InfoSchema()
-	schema := t.Schema
-	if schema.L == "" {
-		schema = model.NewCIStr(e.SCtx().GetSessionVars().CurrentDB)
+func (e *Explain) iterateIndexHints(t *tableName) (hints []string) {
+	hints = append(hints, "")                                         // empty hint
+	hints = append(hints, fmt.Sprintf("use_index(%s)", t.HintName())) // don't use index
+	idxNames := e.tableIndexNames(t)
+	for _, idxName := range idxNames {
+		hints = append(hints, fmt.Sprintf("use_index(%s, %s)", t.HintName(), idxName))
 	}
-	tt, err := is.TableByName(context.Background(), schema, t.Name)
+	return
+}
+
+func (e *Explain) iterateLeadingHints(tableNames []*tableName) (hints []string) {
+	hints = append(hints, "") // empty
+	n := len(tableNames)
+	switch n {
+	case 0, 1, 2:
+		return
+	default: // leading-3
+		for i := 0; i < n; i++ {
+			for j := 0; j < n; j++ {
+				if i == j {
+					continue
+				}
+				for k := 0; k < n; k++ {
+					if i == k || j == k {
+						continue
+					}
+					hints = append(hints, fmt.Sprintf("leading(%s %s %s)",
+						tableNames[i].HintName(), tableNames[j].HintName(), tableNames[k].HintName()))
+				}
+			}
+		}
+		return
+	}
+}
+
+func (e *Explain) tableIndexNames(t *tableName) (idxNames []string) {
+	is := domain.GetDomain(e.SCtx()).InfoSchema()
+	tt, err := is.TableByName(context.Background(), model.NewCIStr(t.schema), model.NewCIStr(t.table))
 	if err != nil {
 		panic(err)
 	}
@@ -99,4 +136,71 @@ func planDigest(p base.Plan) string {
 	flat := FlattenPhysicalPlan(p, true)
 	_, digest := NormalizeFlatPlan(flat)
 	return digest.String()
+}
+
+func collectTableNames(currentSchema string, stmt ast.StmtNode) []*tableName {
+	collector := newTableNameCollector(currentSchema)
+	stmt.Accept(collector)
+	return collector.AllTables()
+}
+
+type tableName struct {
+	schema string
+	table  string
+	alias  string
+}
+
+func (t *tableName) String() string {
+	return fmt.Sprintf("%s.%s:%s", t.schema, t.table, t.alias)
+}
+
+func (t *tableName) HintName() string {
+	if t.alias != "" {
+		return fmt.Sprintf("%s.%s", t.schema, t.table)
+	}
+	return fmt.Sprintf("%s.%s", t.schema, t.table)
+}
+
+type tableNameCollector struct {
+	currentSchema string
+	tables        map[string]*tableName
+}
+
+func newTableNameCollector(schema string) *tableNameCollector {
+	return &tableNameCollector{
+		currentSchema: schema,
+		tables:        make(map[string]*tableName),
+	}
+}
+
+func (c *tableNameCollector) AllTables() []*tableName {
+	ret := make([]*tableName, 0, len(c.tables))
+	for _, t := range c.tables {
+		ret = append(ret, t)
+	}
+	sort.Slice(ret, func(i, j int) bool { return ret[i].String() < ret[j].String() })
+	return ret
+}
+
+// Enter implements Visitor interface.
+func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	if node, ok := in.(*ast.TableSource); ok {
+		if table, ok := node.Source.(*ast.TableName); ok {
+			t := new(tableName)
+			if table.Schema.L == "" {
+				t.schema = strings.ToLower(c.currentSchema)
+			} else {
+				t.schema = table.Schema.L
+			}
+			t.table = table.Name.L
+			t.alias = node.AsName.L
+			c.tables[t.String()] = t
+		}
+	}
+	return in, false
+}
+
+// Leave implements Visitor interface.
+func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
