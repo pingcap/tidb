@@ -1839,7 +1839,11 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 			continue
 		}
 
+		if pi.StmtCtx != nil && pi.RefCountOfStmtCtx != nil && !pi.RefCountOfStmtCtx.TryIncrease() {
+			continue
+		}
 		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone())
+		pi.RefCountOfStmtCtx.Decrease()
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}
