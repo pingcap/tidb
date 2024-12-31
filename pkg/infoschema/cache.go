@@ -74,7 +74,7 @@ func NewCache(r autoid.Requirement, capacity int) *InfoCache {
 //	The keepAlive() function will compare the InfoSchemaV2's ts with Data.recentMinTS, and
 //	update the Data.recentMinTS to smaller one.
 //
-// In a nutshell, every round of ReportMinStartTS(), the minimal known TS used be InfoSchemaV2 APIs will be reported.
+// In a nutshell, every round of ReportMinStartTS(), the minimal known TS used by InfoSchemaV2 APIs will be reported.
 // Some corner cases might happen: the caller take an InfoSchemaV2 instance and not use it immediately.
 // Seveval rounds later, that InfoSchema is used and its TS is reported to block GC safepoint advancing.
 // But that's too late, the GC has been done, "GC life time is shorter than transaction duration" error still happen.

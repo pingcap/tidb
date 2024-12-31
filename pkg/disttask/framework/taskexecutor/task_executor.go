@@ -15,6 +15,7 @@
 package taskexecutor
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -55,15 +56,32 @@ var (
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
 )
 
+// Param is the parameters to create a task executor.
+type Param struct {
+	taskTable TaskTable
+	slotMgr   *slotManager
+	nodeRc    *NodeResource
+	// id, it's the same as server id now, i.e. host:port.
+	execID string
+}
+
+// NewParamForTest creates a new Param for test.
+func NewParamForTest(taskTable TaskTable, slotMgr *slotManager, nodeRc *NodeResource, execID string) Param {
+	return Param{
+		taskTable: taskTable,
+		slotMgr:   slotMgr,
+		nodeRc:    nodeRc,
+		execID:    execID,
+	}
+}
+
 // BaseTaskExecutor is the base implementation of TaskExecutor.
 type BaseTaskExecutor struct {
-	// id, it's the same as server id now, i.e. host:port.
-	id        string
-	task      atomic.Pointer[proto.Task]
-	taskTable TaskTable
-	logger    *zap.Logger
-	ctx       context.Context
-	cancel    context.CancelFunc
+	Param
+	task   atomic.Pointer[proto.Task]
+	logger *zap.Logger
+	ctx    context.Context
+	cancel context.CancelFunc
 	Extension
 
 	currSubtaskID atomic.Int64
@@ -83,18 +101,17 @@ type BaseTaskExecutor struct {
 // see TaskExecutor.Init for why we want to use task-base to create TaskExecutor.
 // TODO: we can refactor this part to pass task base only, but currently ADD-INDEX
 // depends on it to init, so we keep it for now.
-func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
+func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *BaseTaskExecutor {
 	logger := logutil.ErrVerboseLogger().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
 	if intest.InTest {
-		logger = logger.With(zap.String("server-id", id))
+		logger = logger.With(zap.String("server-id", param.execID))
 	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	taskExecutorImpl := &BaseTaskExecutor{
-		id:        id,
-		taskTable: taskTable,
-		ctx:       subCtx,
-		cancel:    cancelFunc,
-		logger:    logger,
+		Param:  param,
+		ctx:    subCtx,
+		cancel: cancelFunc,
+		logger: logger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -116,14 +133,15 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		}
 
 		task := e.task.Load()
-		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.id, task.ID, task.Step,
+		subtasks, err := e.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
 			e.logger.Error("get subtasks failed", zap.Error(err))
 			continue
 		}
 		if len(subtasks) == 0 {
-			e.logger.Info("subtask is scheduled away, cancel running")
+			e.logger.Info("subtask is scheduled away, cancel running",
+				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
 			e.cancelRunStepWith(nil)
 			return
@@ -187,13 +205,13 @@ func (*BaseTaskExecutor) Init(_ context.Context) error {
 }
 
 // Ctx returns the context of the task executor.
-// TODO: remove it when add-index.taskexecutor.Init don't depends on it.
+// TODO: remove it when add-index.taskexecutor.Init don't depend on it.
 func (e *BaseTaskExecutor) Ctx() context.Context {
 	return e.ctx
 }
 
 // Run implements the TaskExecutor interface.
-func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
+func (e *BaseTaskExecutor) Run() {
 	defer func() {
 		if r := recover(); r != nil {
 			e.logger.Error("run task panicked, fail the task", zap.Any("recover", r), zap.Stack("stack"))
@@ -223,19 +241,56 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			}
 		}
 		skipBackoff = false
-		if err := e.refreshTask(); err != nil {
+		oldTask := e.task.Load()
+		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
+		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
+		if err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
 				return
 			}
 			e.logger.Error("refresh task failed", zap.Error(err))
 			continue
 		}
-		task := e.task.Load()
-		if task.State != proto.TaskStateRunning {
+
+		if !bytes.Equal(oldTask.Meta, newTask.Meta) {
+			e.logger.Info("task meta modified",
+				zap.String("oldStep", proto.Step2Str(oldTask.Type, oldTask.Step)),
+				zap.String("newStep", proto.Step2Str(newTask.Type, newTask.Step)))
+			// when task switch to next step, task meta might change too, but in
+			// this case step executor will be recreated with new concurrency and
+			// meta, so we only notify it when it's still running the same step.
+			if e.stepExec != nil && e.stepExec.GetStep() == newTask.Step {
+				e.logger.Info("notify step executor to update task meta")
+				if err2 := e.stepExec.TaskMetaModified(newTask); err2 != nil {
+					e.logger.Info("notify step executor failed, will recreate it", zap.Error(err2))
+					e.cleanStepExecutor()
+					continue
+				}
+			}
+		}
+		if newTask.Concurrency != oldTask.Concurrency {
+			if !e.slotMgr.exchange(&newTask.TaskBase) {
+				e.logger.Info("task concurrency modified, but not enough slots, executor exit",
+					zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency))
+				return
+			}
+			e.logger.Info("task concurrency modified",
+				zap.Int("old", oldTask.Concurrency), zap.Int("new", newTask.Concurrency),
+				zap.Int("availableSlots", e.slotMgr.availableSlots()))
+			newResource := e.nodeRc.getStepResource(newTask.Concurrency)
+
+			if e.stepExec != nil {
+				e.stepExec.SetResource(newResource)
+			}
+		}
+
+		e.task.Store(newTask)
+		task := newTask
+		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateModifying {
 			return
 		}
 
-		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.id, task.ID, task.Step,
+		subtask, err := e.taskTable.GetFirstSubtaskInStates(e.ctx, e.execID, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			e.logger.Warn("get first subtask meets error", zap.Error(err))
@@ -256,7 +311,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			e.cleanStepExecutor()
 		}
 		if e.stepExec == nil {
-			if err2 := e.createStepExecutor(resource); err2 != nil {
+			if err2 := e.createStepExecutor(); err2 != nil {
 				e.logger.Error("create step executor failed",
 					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
 				continue
@@ -276,7 +331,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	}
 }
 
-func (e *BaseTaskExecutor) createStepExecutor(resource *proto.StepResource) error {
+func (e *BaseTaskExecutor) createStepExecutor() error {
 	task := e.task.Load()
 
 	stepExecutor, err := e.GetStepExecutor(task)
@@ -285,6 +340,7 @@ func (e *BaseTaskExecutor) createStepExecutor(resource *proto.StepResource) erro
 		e.failOneSubtask(e.ctx, task.ID, err)
 		return errors.Trace(err)
 	}
+	resource := e.nodeRc.getStepResource(e.GetTaskBase().Concurrency)
 	execute.SetFrameworkInfo(stepExecutor, task.Step, resource)
 
 	if err := stepExecutor.Init(e.ctx); err != nil {
@@ -383,7 +439,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
-	failpoint.InjectCall("mockTiDBShutdown", e, e.id, e.GetTaskBase())
+	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
 		if err := e.markSubTaskCanceledOrFailed(e.stepCtx, subtask, subtaskErr); err != nil {
@@ -423,17 +479,6 @@ func (e *BaseTaskExecutor) Close() {
 	e.Cancel()
 }
 
-// refreshTask fetch task state from tidb_global_task table.
-func (e *BaseTaskExecutor) refreshTask() error {
-	oldTask := e.task.Load()
-	newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
-	if err != nil {
-		return err
-	}
-	e.task.Store(newTask)
-	return nil
-}
-
 func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -468,7 +513,7 @@ func (e *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) er
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, e.logger,
 		func(ctx context.Context) (bool, error) {
-			err := e.taskTable.StartSubtask(ctx, subtaskID, e.id)
+			err := e.taskTable.StartSubtask(ctx, subtaskID, e.execID)
 			if err == storage.ErrSubtaskNotFound {
 				// No need to retry.
 				return false, err
@@ -528,7 +573,7 @@ func (e *BaseTaskExecutor) failOneSubtask(ctx context.Context, taskID int64, sub
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, e.logger,
 		func(_ context.Context) (bool, error) {
-			return true, e.taskTable.FailSubtask(ctx, e.id, taskID, subtaskErr)
+			return true, e.taskTable.FailSubtask(ctx, e.execID, taskID, subtaskErr)
 		},
 	)
 	if err1 != nil {
