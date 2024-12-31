@@ -359,7 +359,6 @@ go_test(
         "revoke_test.go",
         "sample_test.go",
         "select_into_test.go",
-        "select_nokit_test.go",
         "select_test.go",
         "set_test.go",
         "show_ddl_jobs_test.go",
