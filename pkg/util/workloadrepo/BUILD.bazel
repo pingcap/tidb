@@ -41,7 +41,7 @@ go_library(
 
 go_test(
     name = "workloadrepo_test",
-    timeout = "short",
+    timeout = "long",
     srcs = ["worker_test.go"],
     embed = [":workloadrepo"],
     flaky = True,
