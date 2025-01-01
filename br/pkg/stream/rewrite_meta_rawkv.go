@@ -24,24 +24,20 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
 
-// Default columnFamily and write columnFamily
-const (
-	DefaultCF = "default"
-	WriteCF   = "write"
-)
-
+type RewriteStatus int
 type UpstreamID = int64
 type DownstreamID = int64
 
-// TableReplace specifies table information mapping from up-stream cluster to up-stream cluster.
+// TableReplace specifies table information mapping from up-stream cluster to down-stream cluster.
 type TableReplace struct {
 	Name         string
 	TableID      DownstreamID
@@ -49,24 +45,23 @@ type TableReplace struct {
 	IndexMap     map[UpstreamID]DownstreamID
 }
 
-// DBReplace specifies database information mapping from up-stream cluster to up-stream cluster.
+// DBReplace specifies database information mapping from up-stream cluster to down-stream cluster.
 type DBReplace struct {
 	Name     string
 	DbID     DownstreamID
 	TableMap map[UpstreamID]*TableReplace
 }
 
-// SchemasReplace specifies schemas information mapping from up-stream cluster to up-stream cluster.
+// SchemasReplace specifies schemas information mapping from up-stream cluster to down-stream cluster.
 type SchemasReplace struct {
-	DbMap map[UpstreamID]*DBReplace
+	DbReplaceMap map[UpstreamID]*DBReplace
 
 	delRangeRecorder *brDelRangeExecWrapper
 	ingestRecorder   *ingestrec.IngestRecorder
 	TiflashRecorder  *tiflashrec.TiFlashRecorder
-	RewriteTS        uint64        // used to rewrite commit ts in meta kv.
-	TableFilter      filter.Filter // used to filter schema/table
+	RewriteTS        uint64 // used to rewrite commit ts in meta kv.
 
-	AfterTableRewritten func(deleted bool, tableInfo *model.TableInfo)
+	AfterTableRewrittenFn func(deleted bool, tableInfo *model.TableInfo)
 }
 
 // NewTableReplace creates a TableReplace struct.
@@ -90,14 +85,13 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 
 // NewSchemasReplace creates a SchemasReplace struct.
 func NewSchemasReplace(
-	dbMap map[UpstreamID]*DBReplace,
+	dbReplaceMap map[UpstreamID]*DBReplace,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	restoreTS uint64,
-	tableFilter filter.Filter,
 	recordDeleteRange func(*PreDelRangeQuery),
 ) *SchemasReplace {
 	globalTableIdMap := make(map[UpstreamID]DownstreamID)
-	for _, dr := range dbMap {
+	for _, dr := range dbReplaceMap {
 		for tblID, tr := range dr.TableMap {
 			globalTableIdMap[tblID] = tr.TableID
 			for oldpID, newpID := range tr.PartitionMap {
@@ -107,12 +101,11 @@ func NewSchemasReplace(
 	}
 
 	return &SchemasReplace{
-		DbMap:            dbMap,
+		DbReplaceMap:     dbReplaceMap,
 		delRangeRecorder: newDelRangeExecWrapper(globalTableIdMap, recordDeleteRange),
 		ingestRecorder:   ingestrec.New(),
 		TiflashRecorder:  tiflashRecorder,
 		RewriteTS:        restoreTS,
-		TableFilter:      tableFilter,
 	}
 }
 
@@ -127,14 +120,14 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		return nil, errors.Trace(err)
 	}
 
-	dbMap, exist := sr.DbMap[dbID]
+	dbMap, exist := sr.DbReplaceMap[dbID]
 	if !exist {
 		// db filtered out
 		return nil, nil
 	}
 
 	rawMetaKey.UpdateField(meta.DBkey(dbMap.DbID))
-	if cf == WriteCF {
+	if cf == consts.WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
 	return rawMetaKey.EncodeMetaKey(), nil
@@ -146,7 +139,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 		return nil, errors.Trace(err)
 	}
 
-	dbMap, exist := sr.DbMap[dbInfo.ID]
+	dbMap, exist := sr.DbReplaceMap[dbInfo.ID]
 	if !exist {
 		// db filtered out
 		return nil, nil
@@ -206,7 +199,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		return nil, errors.Trace(err)
 	}
 
-	dbReplace, exist := sr.DbMap[dbID]
+	dbReplace, exist := sr.DbReplaceMap[dbID]
 	if !exist {
 		// db filtered out
 		return nil, nil
@@ -217,10 +210,9 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		// table filtered out
 		return nil, nil
 	}
-
 	rawMetaKey.UpdateKey(meta.DBkey(dbReplace.DbID))
 	rawMetaKey.UpdateField(encodeField(tableReplace.TableID))
-	if cf == WriteCF {
+	if cf == consts.WriteCF {
 		rawMetaKey.UpdateTS(sr.RewriteTS)
 	}
 	return rawMetaKey.EncodeMetaKey(), nil
@@ -239,7 +231,7 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	}
 
 	// construct or find the id map.
-	dbReplace, exist = sr.DbMap[dbID]
+	dbReplace, exist = sr.DbReplaceMap[dbID]
 	if !exist {
 		// db filtered out
 		return nil, nil
@@ -269,8 +261,8 @@ func (sr *SchemasReplace) rewriteTableInfo(value []byte, dbID int64) ([]byte, er
 	if tableInfo.TTLInfo != nil {
 		tableInfo.TTLInfo.Enable = false
 	}
-	if sr.AfterTableRewritten != nil {
-		sr.AfterTableRewritten(false, &tableInfo)
+	if sr.AfterTableRewrittenFn != nil {
+		sr.AfterTableRewrittenFn(false, &tableInfo)
 	}
 
 	// marshal to json
@@ -311,8 +303,8 @@ func (sr *SchemasReplace) rewriteEntryForTable(e *kv.Entry, cf string) (*kv.Entr
 	//       for now, we rewrite key and value separately hence we cannot
 	//       get a view of (is_delete, table_id, table_info) at the same time :(.
 	//       Maybe we can extract the rewrite part from rewriteTableInfo.
-	if result.Deleted && sr.AfterTableRewritten != nil {
-		sr.AfterTableRewritten(true, &model.TableInfo{ID: newTableID})
+	if result.Deleted && sr.AfterTableRewrittenFn != nil {
+		sr.AfterTableRewrittenFn(true, &model.TableInfo{ID: newTableID})
 	}
 
 	return &kv.Entry{Key: newKey, Value: result.NewValue}, nil
@@ -380,10 +372,10 @@ type rewriteResult struct {
 }
 
 // rewriteValue rewrite the value if cf is "default", or rewrite the shortValue if cf is "write".
-func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewrite func([]byte) ([]byte, error)) (rewriteResult, error) {
+func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewriteFunc func([]byte) ([]byte, error)) (rewriteResult, error) {
 	switch cf {
-	case DefaultCF:
-		newValue, err := rewrite(value)
+	case consts.DefaultCF:
+		newValue, err := rewriteFunc(value)
 		if err != nil {
 			return rewriteResult{}, errors.Trace(err)
 		}
@@ -391,7 +383,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewrite func([]b
 			NewValue: newValue,
 			Deleted:  false,
 		}, nil
-	case WriteCF:
+	case consts.WriteCF:
 		rawWriteCFValue := new(RawWriteCFValue)
 		if err := rawWriteCFValue.ParseFrom(value); err != nil {
 			return rewriteResult{}, errors.Trace(err)
@@ -415,7 +407,7 @@ func (sr *SchemasReplace) rewriteValue(value []byte, cf string, rewrite func([]b
 			}, nil
 		}
 
-		shortValue, err := rewrite(rawWriteCFValue.GetShortValue())
+		shortValue, err := rewriteFunc(rawWriteCFValue.GetShortValue())
 		if err != nil {
 			log.Info("failed to rewrite short value",
 				zap.ByteString("write-type", []byte{rawWriteCFValue.GetWriteType()}),
@@ -434,11 +426,12 @@ func (sr *SchemasReplace) GetIngestRecorder() *ingestrec.IngestRecorder {
 	return sr.ingestRecorder
 }
 
-// RewriteKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
-func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
-	// skip mDDLJob
-	if !IsMetaDBKey(e.Key) {
-		if cf == DefaultCF && IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
+// RewriteMetaKvEntry uses to rewrite tableID/dbID in entry.key and entry.value
+func (sr *SchemasReplace) RewriteMetaKvEntry(e *kv.Entry, cf string) (*kv.Entry, error) {
+	if !utils.IsMetaDBKey(e.Key) {
+		// need to special handle ddl job history during actual restore phase. The job history contains index ingestion
+		// and range deletion that need to be handled separately after restore.
+		if cf == consts.DefaultCF && utils.IsMetaDDLJobHistoryKey(e.Key) { // mDDLJobHistory
 			job := &model.Job{}
 			if err := job.Decode(e.Value); err != nil {
 				log.Debug("failed to decode the job",
@@ -448,7 +441,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
-			return nil, sr.restoreFromHistory(job)
+			return nil, sr.processIngestIndexAndDeleteRangeFromJob(job)
 		}
 		return nil, nil
 	}
@@ -463,6 +456,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil, nil
 	}
+
 	if meta.IsTableKey(rawKey.Field) {
 		return sr.rewriteEntryForTable(e, cf)
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
@@ -492,7 +486,10 @@ func (sr *SchemasReplace) tryRecordIngestIndex(job *model.Job) error {
 	return nil
 }
 
-func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
+// processIngestIndexAndDeleteRangeFromJob handles two special cases during log backup meta key replay.
+// 1. index ingestion is not captured by the log backup, thus we need to restore them manually later
+// 2. delete range also needs to be handled to clean up dropped table since it was previously relying on GC to clean it up
+func (sr *SchemasReplace) processIngestIndexAndDeleteRangeFromJob(job *model.Job) error {
 	if ddl.JobNeedGC(job) {
 		if err := ddl.AddDelRangeJobInternal(context.TODO(), sr.delRangeRecorder, job); err != nil {
 			return err
@@ -549,7 +546,8 @@ func (bdr *brDelRangeExecWrapper) PrepareParamsList(sz int) {
 func (bdr *brDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {
 	newTableID, exists := bdr.globalTableIdMap[tableID]
 	if !exists {
-		log.Warn("failed to find the downstream id when rewrite delete range", zap.Int64("old tableID", tableID))
+		log.Warn("failed to find the downstream id when rewrite delete range, "+
+			"it might due to table has been filtered out if filters have been specified", zap.Int64("old tableID", tableID))
 	}
 	return newTableID, exists
 }
