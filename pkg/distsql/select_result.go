@@ -387,12 +387,10 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil {
 			return nil
 		}
-	}
-	failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
-		if chk.NumRows() > 0 {
+		failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
 			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
-		}
-	})
+		})
+	}
 	// TODO(Shenghui Wu): add metrics
 	encodeType := r.selectResp.GetEncodeType()
 	switch encodeType {

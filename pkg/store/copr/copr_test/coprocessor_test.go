@@ -340,7 +340,7 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(50)`))
 	start := time.Now()
 	tk.MustExec("update t1 set b=b+1 where id >= 0;")
-	require.Less(t, time.Since(start), time.Millisecond*350)
+	require.Less(t, time.Since(start), time.Millisecond*400)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
 }
