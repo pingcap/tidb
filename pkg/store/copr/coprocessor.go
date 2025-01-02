@@ -1195,14 +1195,14 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 			}
 			memTrackerConsumeResp(it.memTracker, resp)
 			return resp, nil
-		} else {
-			resp, ok, closed := it.recvFromRespCh(ctx, w.respCh)
-			if !ok || closed {
-				it.actionOnExceed.close()
-				return nil, errors.Trace(ctx.Err())
-			}
-			return resp, nil
 		}
+		resp, ok, closed := it.recvFromRespCh(ctx, w.respCh)
+		if !ok || closed {
+			it.actionOnExceed.close()
+			return nil, errors.Trace(ctx.Err())
+		}
+		return resp, nil
+
 	}
 	return
 }
