@@ -99,6 +99,10 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 	defer func() {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
+	logutil.BgLogger().Info("swep session stats list",
+		zap.Int("tableCount", len(deltaMap)),
+		zap.Duration("duration", time.Since(start)),
+	)
 
 	// Sort table IDs
 	tableIDs := make([]int64, 0, len(deltaMap))
@@ -106,8 +110,15 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		tableIDs = append(tableIDs, id)
 	}
 	slices.Sort(tableIDs)
+	logutil.BgLogger().Info("sort table IDs",
+		zap.Int("tableCount", len(tableIDs)),
+		zap.Duration("duration", time.Since(start)),
+	)
 	defer func() {
-		logutil.BgLogger().Info("dump stats delta to kv", zap.Int("tableCount", len(tableIDs)))
+		logutil.BgLogger().Info("dump stats delta to kv",
+			zap.Int("tableCount", len(tableIDs)),
+			zap.Duration("duration", time.Since(start)),
+		)
 	}()
 
 	currentTime := time.Now()
@@ -140,6 +151,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 					Delta:   item,
 				})
 			}
+			logutil.BgLogger().Info("collect stats delta batch",
+				zap.Int("batchSize", len(batchUpdates)),
+				zap.Duration("batchDuration", time.Since(batchStart)),
+				zap.Duration("totalDuration", time.Since(start)),
+			)
 
 			if len(batchUpdates) == 0 {
 				return nil
