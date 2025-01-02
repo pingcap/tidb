@@ -754,6 +754,11 @@ func getProgressCountOfRanges(
 	if len(ranges) > 1000 {
 		return len(ranges), backup.RangeUnit, nil
 	}
+	failpoint.Inject("progress-call-back", func(_ failpoint.Value) {
+		if len(ranges) > 100 {
+			failpoint.Return(len(ranges), backup.RangeUnit, nil)
+		}
+	})
 	// The number of regions need to backup
 	approximateRegions := 0
 	for _, r := range ranges {
