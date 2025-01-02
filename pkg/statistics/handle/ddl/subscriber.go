@@ -413,9 +413,11 @@ func updateGlobalTableStats4DropPartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		&storage.DeltaUpdate{
+			TableID:  globalTableInfo.ID,
+			Delta:    variable.TableDelta{Count: count, Delta: delta},
+			IsLocked: isLocked,
+		},
 	))
 }
 
@@ -597,9 +599,11 @@ func updateGlobalTableStats4TruncatePartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		&storage.DeltaUpdate{
+			TableID:  globalTableInfo.ID,
+			Delta:    variable.TableDelta{Count: count, Delta: delta},
+			IsLocked: isLocked,
+		},
 	)
 	if err != nil {
 		fields := truncatePartitionsLogFields(
