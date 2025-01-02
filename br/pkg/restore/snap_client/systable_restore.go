@@ -45,16 +45,16 @@ var statsTables = map[string]map[string]struct{}{
 }
 
 // tables in this map is restored when fullClusterRestore=true
-var sysPrivilegeTableMap = map[string]struct{}{
-	"user":          {}, // since v1.0.0
-	"db":            {}, // since v1.0.0
-	"tables_priv":   {}, // since v1.0.0
-	"columns_priv":  {}, // since v1.0.0
-	"default_roles": {}, // since v3.0.0
-	"role_edges":    {}, // since v3.0.0
-	"global_priv":   {}, // since v3.0.8
-	"global_grants": {}, // since v5.0.3
-	"bind_info":     {}, // since v7.6.0
+var sysTableMap = map[string]bool{
+	"user":          true, // since v1.0.0
+	"db":            true, // since v1.0.0
+	"tables_priv":   true, // since v1.0.0
+	"columns_priv":  true, // since v1.0.0
+	"default_roles": true, // since v3.0.0
+	"role_edges":    true, // since v3.0.0
+	"global_priv":   true, // since v3.0.8
+	"global_grants": true, // since v5.0.3
+	"bind_info":     true, // since v7.6.0
 }
 
 var unRecoverableTable = map[string]map[string]struct{}{
@@ -313,15 +313,15 @@ func (rc *SnapClient) cleanTemporaryDatabase(ctx context.Context, originDB strin
 
 func CheckSysTableCompatibility(dom *domain.Domain, tables []*metautil.Table) error {
 	log.Info("checking target cluster system table compatibility with backed up data")
-	privilegeTablesInBackup := make([]*metautil.Table, 0)
+	sysTablesInBackup := make([]*metautil.Table, 0)
 	for _, table := range tables {
 		decodedSysDBName, ok := utils.GetSysDBCIStrName(table.DB.Name)
-		if ok && decodedSysDBName.L == mysql.SystemDB && sysPrivilegeTableMap[table.Info.Name.L] != "" {
-			privilegeTablesInBackup = append(privilegeTablesInBackup, table)
+		if ok && decodedSysDBName.L == mysql.SystemDB && sysTableMap[table.Info.Name.L] {
+			sysTablesInBackup = append(sysTablesInBackup, table)
 		}
 	}
 	sysDB := ast.NewCIStr(mysql.SystemDB)
-	for _, table := range privilegeTablesInBackup {
+	for _, table := range sysTablesInBackup {
 		ti, err := restore.GetTableSchema(dom, sysDB, table.Info.Name)
 		if err != nil {
 			log.Error("missing table on target cluster", zap.Stringer("table", table.Info.Name))
