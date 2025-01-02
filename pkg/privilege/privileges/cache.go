@@ -263,25 +263,25 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 	return ok
 }
 
-type immutable struct {
-	user         []UserRecord
-	db           []dbRecord
-	tablesPriv   []tablesPrivRecord
-	columnsPriv  []columnsPrivRecord
-	defaultRoles []defaultRoleRecord
+// type immutable struct {
+// 	user         []UserRecord
+// 	db           []dbRecord
+// 	tablesPriv   []tablesPrivRecord
+// 	columnsPriv  []columnsPrivRecord
+// 	defaultRoles []defaultRoleRecord
 
-	globalPriv  []globalPrivRecord
-	dynamicPriv []dynamicPrivRecord
-	roleGraph   map[string]roleGraphEdgesTable
-}
+// 	globalPriv  []globalPrivRecord
+// 	dynamicPriv []dynamicPrivRecord
+// 	roleGraph   map[string]roleGraphEdgesTable
+// }
 
-type extended struct {
-	UserMap       map[string][]UserRecord // Accelerate User searching
-	Global        map[string][]globalPrivRecord
-	Dynamic       map[string][]dynamicPrivRecord
-	DBMap         map[string][]dbRecord         // Accelerate DB searching
-	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
-}
+// type extended struct {
+// 	UserMap       map[string][]UserRecord // Accelerate User searching
+// 	Global        map[string][]globalPrivRecord
+// 	Dynamic       map[string][]dynamicPrivRecord
+// 	DBMap         map[string][]dbRecord         // Accelerate DB searching
+// 	TablesPrivMap map[string][]tablesPrivRecord // Accelerate TablesPriv searching
+// }
 
 // MySQLPrivilege is the in-memory cache of mysql privilege tables.
 type MySQLPrivilege struct {
@@ -294,9 +294,16 @@ type MySQLPrivilege struct {
 	// which is that usernames can not contain wildcards.
 	// This means that DB-records are organized in both a
 	// slice (p.DB) and a Map (p.DBMap).
-	immutable
 
-	extended
+	user btree.BTreeG[UserRecord]
+	db btree.BTreeG[dbRecord]
+	tablesPriv btree.BTreeG[tablesPrivRecord]
+	columnsPriv btree.BTreeG[columnsPrivRecord]
+	defaultRoles btree.BTreeG[defaultRoleRecord]
+
+	globalPriv btree.BTreeG[globalPrivRecord]
+	dynamicPriv btree.BTreeG[dynamicPrivRecord]
+	roleGraph map[string]roleGraphEdgesTable
 }
 
 // FindAllUserEffectiveRoles is used to find all effective roles grant to this user.
@@ -998,7 +1005,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.user = append(p.user, value)
+	p.user.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1032,7 +1039,7 @@ func (p *immutable) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.globalPriv = append(p.globalPriv, value)
+	p.globalPriv.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1048,7 +1055,7 @@ func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.Resu
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.dynamicPriv = append(p.dynamicPriv, value)
+	p.dynamicPriv.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1072,7 +1079,7 @@ func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) e
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.db = append(p.db, value)
+	p.db.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1092,7 +1099,7 @@ func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.tablesPriv = append(p.tablesPriv, value)
+	p.tablesPriv.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1133,7 +1140,7 @@ func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.Resul
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.defaultRoles = append(p.defaultRoles, value)
+	p.defaultRoles.ReplaceOrInsert(value)
 	return nil
 }
 
@@ -1159,7 +1166,7 @@ func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.Resul
 			value.assignUserOrHost(row, i, f)
 		}
 	}
-	p.columnsPriv = append(p.columnsPriv, value)
+	p.columnsPriv.ReplaceOrInsert(value)
 	return nil
 }
 
