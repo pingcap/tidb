@@ -2293,12 +2293,14 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 		}()
 		defer util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 
+		ctx, cancel := context.WithCancel(context.Background())
 		for {
 			select {
 			case <-do.exit:
+				cancel()
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(ctx, time.Hour, time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")

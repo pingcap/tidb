@@ -21,10 +21,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1721,7 +1723,7 @@ var (
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
 	// ValidateCloudStorageURI validates the cloud storage URI.
-	ValidateCloudStorageURI func(ctx context.Context, uri string) error
+	ValidateCloudStorageURI func(ctx context.Context, uri string) error = validateCloudStorageURI
 	// SetLowResolutionTSOUpdateInterval is the func registered by domain to set slow resolution tso update interval.
 	SetLowResolutionTSOUpdateInterval func(interval time.Duration) error = nil
 	// ChangeSchemaCacheSize is called when tidb_schema_cache_size is changed.
@@ -1764,4 +1766,21 @@ func mustParseTime(layout string, str string) time.Time {
 	}
 
 	return time
+}
+
+// ValidateCloudStorageURI makes validation for tidb_cloud_storage_uri.
+func validateCloudStorageURI(ctx context.Context, uri string) error {
+	b, err := storage.ParseBackend(uri, nil)
+	if err != nil {
+		return err
+	}
+	_, err = storage.New(ctx, b, &storage.ExternalStorageOptions{
+		CheckPermissions: []storage.Permission{
+			storage.ListObjects,
+			storage.GetObject,
+			storage.AccessBuckets,
+		},
+		NoCredentials: intest.InTest,
+	})
+	return err
 }

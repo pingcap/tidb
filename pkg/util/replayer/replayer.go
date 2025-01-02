@@ -15,16 +15,17 @@
 package replayer
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util/external"
 )
 
 // PlanReplayerTaskKey indicates key of a plan replayer task
@@ -34,21 +35,19 @@ type PlanReplayerTaskKey struct {
 }
 
 // GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (*os.File, string, error) {
+func GeneratePlanReplayerFile(ctx context.Context, isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (io.WriteCloser, string, error) {
 	path := GetPlanReplayerDirName()
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
+	storage := external.GetExternalStorage()
 	fileName, err := generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	zf, err := os.Create(filepath.Join(path, fileName))
+	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	return zf, fileName, err
+	wrapper := external.NewExternalFileWriterWrap(ctx, writer)
+	return wrapper, fileName, err
 }
 
 // GeneratePlanReplayerFileName generates plan replayer capture task name
@@ -79,9 +78,13 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }
 
-// GetPlanReplayerDirName returns plan replayer directory path.
+// GetPlanReplayerDirName returns plan replayer directory name.
 // The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	tidbLogDir := filepath.Dir(config.GetGlobalConfig().TempDir)
-	return filepath.Join(tidbLogDir, "replayer")
+	return "replayer"
+}
+
+// GetPlanReplayerFullPathDirName returns plan replayer directory path.
+func GetPlanReplayerFullPathDirName() string {
+	return filepath.Join(external.GetBasePath(), "replayer")
 }

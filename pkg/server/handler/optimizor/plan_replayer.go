@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/external"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
@@ -90,30 +91,33 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	path := dfHandler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
 	localAddr := net.JoinHostPort(dfHandler.address, strconv.Itoa(int(dfHandler.statusPort)))
-	exist, err := isExists(path)
+
+	storage := external.GetExternalStorage()
+	ctx := context.Background()
+	exist, err := storage.FileExists(ctx, path)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 	if exist {
 		//nolint: gosec
-		file, err := os.Open(path)
+		fileReader, err := storage.Open(ctx, path, nil)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		content, err := io.ReadAll(file)
+		content, err := io.ReadAll(fileReader)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		err = file.Close()
+		err = fileReader.Close()
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
 		if dfHandler.downloadedFilename == "plan_replayer" {
-			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
+			content, err = handlePlanReplayerCaptureFile(ctx, content, path, dfHandler)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -217,7 +221,7 @@ func isExists(path string) (bool, error) {
 	return true, nil
 }
 
-func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
+func handlePlanReplayerCaptureFile(ctx context.Context, content []byte, path string, handler downloadFileHandler) ([]byte, error) {
 	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
@@ -244,20 +248,21 @@ func handlePlanReplayerCaptureFile(content []byte, path string, handler download
 		}
 		tbl.jsonStats = jsonStats
 	}
-	newPath, err := dumpJSONStatsIntoZip(tbls, content, path)
+	newPath, err := dumpJSONStatsIntoZip(ctx, tbls, content, path)
 	if err != nil {
 		return nil, err
 	}
 	//nolint: gosec
-	file, err := os.Open(newPath)
+	storage := external.GetExternalStorage()
+	fileReader, err := storage.Open(ctx, newPath, nil)
 	if err != nil {
 		return nil, err
 	}
-	content, err = io.ReadAll(file)
+	content, err = io.ReadAll(fileReader)
 	if err != nil {
 		return nil, err
 	}
-	err = file.Close()
+	err = fileReader.Close()
 	if err != nil {
 		return nil, err
 	}
@@ -324,16 +329,18 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 	return r, nil
 }
 
-func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) (string, error) {
+func dumpJSONStatsIntoZip(ctx context.Context, tbls map[int64]*tblInfo, content []byte, path string) (string, error) {
 	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
 		return "", err
 	}
 	newPath := strings.Replace(path, "capture_replayer", "copy_capture_replayer", 1)
-	zf, err := os.Create(newPath)
+	storage := external.GetExternalStorage()
+	writer, err := storage.Create(ctx, newPath, nil)
 	if err != nil {
 		return "", err
 	}
+	zf := external.NewExternalFileWriterWrap(ctx, writer)
 	zw := zip.NewWriter(zf)
 	for _, f := range zr.File {
 		err = zw.Copy(f)

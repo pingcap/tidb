@@ -21,7 +21,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/external"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
@@ -162,7 +163,7 @@ func (e *TraceExec) nextOptimizerDebugPlanTrace(ctx context.Context, se sessionc
 }
 
 func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Context, req *chunk.Chunk) error {
-	zf, fileName, err := generateOptimizerTraceFile()
+	zf, fileName, err := generateOptimizerTraceFile(ctx)
 	if err != nil {
 		return err
 	}
@@ -387,26 +388,23 @@ func generateLogResult(allSpans []basictracer.RawSpan, chk *chunk.Chunk) {
 	}
 }
 
-func generateOptimizerTraceFile() (*os.File, string, error) {
+func generateOptimizerTraceFile(ctx context.Context) (io.WriteCloser, string, error) {
 	dirPath := domain.GetOptimizerTraceDirName()
-	// Create path
-	err := os.MkdirAll(dirPath, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
 	// Generate key and create zip file
 	time := time.Now().UnixNano()
 	b := make([]byte, 16)
 	//nolint: gosec
-	_, err = rand.Read(b)
+	_, err := rand.Read(b)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
 	key := base64.URLEncoding.EncodeToString(b)
 	fileName := fmt.Sprintf("optimizer_trace_%v_%v.zip", key, time)
-	zf, err := os.Create(filepath.Join(dirPath, fileName))
+	storage := external.GetExternalStorage()
+	writer, err := storage.Create(ctx, filepath.Join(dirPath, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
+	zf := external.NewExternalFileWriterWrap(ctx, writer)
 	return zf, fileName, nil
 }

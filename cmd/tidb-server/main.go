@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/external"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -989,4 +991,16 @@ func enablePyroscope() {
 			log.Fatal("fail to start pyroscope", zap.Error(err))
 		}
 	}
+}
+
+func setupExternalStorage(keyspaceName string) error {
+	cfg := config.GetGlobalConfig()
+	path := cfg.ExternalStoragePath
+	if len(path) == 0 {
+		path = cfg.TempDir
+	}
+
+	// If `keyspaceName` is set, storage path will be isolated based on `keyspaceName`.
+	namespace := keyspaceName
+	return external.CreateExternalStorage(path, namespace, nil)
 }
