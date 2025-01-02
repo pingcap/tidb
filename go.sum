@@ -520,6 +520,12 @@ github.com/joechenrh/arrow-go/v18 v18.0.0-20241231031812-53833096a527 h1:SPTAgul
 github.com/joechenrh/arrow-go/v18 v18.0.0-20241231031812-53833096a527/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
 github.com/joechenrh/arrow-go/v18 v18.0.0-20241231055212-8bc1d3aa614a h1:TRWmL6aSpSj8MPZLc4cHpGxQUivvhAOEqxKos8cUVIU=
 github.com/joechenrh/arrow-go/v18 v18.0.0-20241231055212-8bc1d3aa614a/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231081713-7bace6c313a2 h1:VlNIeUAhBh6+3N+Cs9Jn4t77dnp/o3AZvVyPJVC/u0A=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231081713-7bace6c313a2/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231083420-6131e1087c61 h1:WbgGeWZpukO65agrWVlAzvu4PDk4fyEEkeRi5Reh/XQ=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231083420-6131e1087c61/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231101551-0f1e67b25b9e h1:7iY3f14jAyh+dwSy92IPyxoYg2BWn46O2uPOR3fpO5k=
+github.com/joechenrh/arrow-go/v18 v18.0.0-20241231101551-0f1e67b25b9e/go.mod h1:3HV4S6TBzH1biWLoyhiUV7DQ2XUygpKwV9bHWFyG89E=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877 h1:O7syWuYGzre3s73s+NkgB8e0ZvsIVhT/zxNU7V1gHK8=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877/go.mod h1:AxgWC4DDX54O2WDoQO1Ceabtn6IbktjU/7bigor+66g=
 github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df h1:Zrb0IbuLOGHL7nrO2WrcuNWgDTlzFv3zY69QMx4ggQE=

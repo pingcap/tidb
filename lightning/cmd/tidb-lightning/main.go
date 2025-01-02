@@ -42,7 +42,7 @@ func bToMb(b uint64) uint64 {
 }
 
 func TrackSysMemUsage(ctx context.Context) {
-	tick := time.NewTicker(3 * time.Second)
+	tick := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-ctx.Done():
@@ -50,7 +50,9 @@ func TrackSysMemUsage(ctx context.Context) {
 		case <-tick.C:
 			var m runtime.MemStats
 			runtime.ReadMemStats(&m)
-			fmt.Printf("HeapInUse = %v MiB, HeapAlloc = %v MiB\n", bToMb(m.HeapInuse), bToMb(m.HeapAlloc))
+
+			fmt.Printf("HeapInUse = %v MiB, limit = %d MiB, canReturn = %dMiB\n",
+				bToMb(m.HeapInuse), bToMb(m.Sys-m.HeapReleased), bToMb(m.HeapIdle-m.HeapReleased))
 		}
 	}
 }

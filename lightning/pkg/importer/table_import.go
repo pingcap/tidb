@@ -63,19 +63,18 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-var memLimiter *membuf.Limiter
-var memoryForAllocator int
+var memLimit int               // memory limit for parquet reader
+var memLimiter *membuf.Limiter // memory limiter for parquet reader
 
-func init() {
+func setMemoryLimitForParquet(percent int) {
 	memTotal, err := memory.MemTotal()
 	if err != nil {
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
-	// TODO(joechenrh): set a more proper waterline
-	memoryForAllocator = int(memTotal / 5 * 4)
-	memLimiter = membuf.NewLimiter(memoryForAllocator)
-	pmemory.SetMaxMemoryUsage(memoryForAllocator)
+	memLimit = int(memTotal) * min(percent, 100) / 100
+	memLimiter = membuf.NewLimiter(memLimit)
+	pmemory.SetMaxMemoryUsage(memLimit)
 }
 
 // TableImporter is a helper struct to import a table.
@@ -804,6 +803,24 @@ ChunkLoop:
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			memoryUsage := tr.tableMeta.DataFiles[0].FileMeta.MemoryUsage
+
+			// If memory usage is larger than memory limit, set memory usage
+			// to limit to block other file import.
+			if memoryUsage > memLimit {
+				tr.logger.Warn("Memory usage larger than limit",
+					zap.String("file", chunk.FileMeta.Path),
+					zap.String("memory usage", fmt.Sprintf("%d MB", 4990697472>>20)),
+					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+				)
+				memoryUsage = memLimit
+			} else {
+				tr.logger.Info("Get memory limit",
+					zap.String("file", chunk.FileMeta.Path),
+					zap.String("memory usage", fmt.Sprintf("%d MB", 4990697472>>20)),
+					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+				)
+			}
+
 			memLimiter.Acquire(memoryUsage)
 			cr.memLimiter = memLimiter
 			cr.memoryUsage = memoryUsage

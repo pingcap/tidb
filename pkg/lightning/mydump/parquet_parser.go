@@ -400,7 +400,7 @@ func (pp *ParquetParser) GetMemoryUage() int {
 func (pp *ParquetParser) setStringData(readNum, col, offset int) {
 	buf, _ := pp.dumpers[col].valueBuffer.([]parquet.ByteArray)
 	for i := 0; i < readNum; i++ {
-		pp.rows[offset+i][col].SetString(buf[i].String(), "utf8mb4_bin")
+		pp.rows[offset+i][col].SetString(string(buf[i]), "utf8mb4_bin")
 	}
 }
 

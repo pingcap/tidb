@@ -28,6 +28,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
+	pmemory "github.com/joechenrh/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -542,6 +543,8 @@ func (rc *Controller) Close() {
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
 	failpoint.Inject("beforeRun", func() {})
+
+	setMemoryLimitForParquet(rc.cfg.App.MaxMemoryUsage)
 
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
@@ -1537,6 +1540,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		return err
 	default:
 	}
+
+	// All tables are read, we can free memory used for parquet.
+	logTask.Info("Read table done, free memory and call GC")
+	pmemory.FreeMemory()
 
 	postProgress = func() error {
 		close(postProcessTaskChan)
