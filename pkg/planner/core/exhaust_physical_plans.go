@@ -401,7 +401,8 @@ func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 		return false
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin,
+		logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		// null aware join is not supported yet
 		if len(leftNAJoinKeys) > 0 {
 			return false

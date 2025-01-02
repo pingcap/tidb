@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,26 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package skip
+package testflag
 
-import (
-	"testing"
+import "flag"
 
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
-)
+var long = flag.Bool("long", false, "run long tests")
 
-// UnderShort skips the test if the -short flag is set.
-func UnderShort(t *testing.T, args ...any) {
-	t.Helper()
-	if testing.Short() {
-		t.Skip(append([]any{"disabled under -short"}, args...)...)
-	}
-}
-
-// NotUnderLong skips the test if the -long flag is not set
-func NotUnderLong(t *testing.T, args ...any) {
-	t.Helper()
-	if !testflag.Long() {
-		t.Skip(append([]any{"disabled not under -short"}, args...)...)
-	}
+// Long returns whether the -long flag is set.
+func Long() bool {
+	return *long
 }
