@@ -4169,8 +4169,8 @@ func TestIssue57608(t *testing.T) {
 	tk.MustExec("create view v2 as select 0 as q2 from t1;")
 
 	for i := 0; i < 10; i++ {
-		a := tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));")
-		require.Equal(t, 1, len(a.Rows()))
-		require.Equal(t, "<nil> <nil> <nil>", a.String())
+		tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));").Check(testkit.Rows(
+			"<nil> <nil> <nil>",
+		))
 	}
 }
