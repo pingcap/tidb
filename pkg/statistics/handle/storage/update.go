@@ -62,7 +62,8 @@ type DeltaUpdate struct {
 	IsLocked bool
 }
 
-// UpdateStatsMeta update the stats meta stat for multiple Tables.
+// UpdateStatsMeta updates the stats meta for multiple tables.
+// It uses the INSERT INTO ... ON DUPLICATE KEY UPDATE syntax to fill the missing records.
 func UpdateStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
