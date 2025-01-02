@@ -401,7 +401,8 @@ func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 		return false
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin,
+		logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		// null aware join is not supported yet
 		if len(leftNAJoinKeys) > 0 {
 			return false
@@ -442,10 +443,8 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, false))
-			} else if !forceRightToBuild {
-				joins = append(joins, getHashJoin(p, prop, 1, true))
-			} else {
-				joins = append(joins, getHashJoin(p, prop, 1, false))
+			}
+			if !forceRightToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, true))
 			}
 		} else {
