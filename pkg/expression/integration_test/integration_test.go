@@ -31,6 +31,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -4167,7 +4168,11 @@ func TestIssue57608(t *testing.T) {
 	tk.MustExec("create table t1 ( c1 int primary key);")
 	tk.MustExec("insert into t1 (c1) values (1), (2), (3), (4), (5), (6), (7), (11), (12), (13), (14), (15), (16), (17), (21), (22), (23), (24), (25), (26), (27), (116), (127), (121), (122), (113), (214), (251), (261), (217), (91), (92), (39), (94), (95), (69), (79), (191), (129);")
 	tk.MustExec("create view v2 as select 0 as q2 from t1;")
-	a := tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));")
-	require.Equal(t, 1, len(a.Rows()))
-	require.Equal(t, "<nil> <nil> <nil>", a.String())
+
+	for i := 0; i < 10; i++ {
+		a := tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));")
+		log.Info(fmt.Sprintf("-------------------- %s", a.String()))
+		require.Equal(t, 1, len(a.Rows()))
+		require.Equal(t, "<nil> <nil> <nil>", a.String())
+	}
 }
