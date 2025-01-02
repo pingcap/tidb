@@ -1183,28 +1183,27 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 		memTrackerConsumeResp(it.memTracker, resp)
 		return resp, nil
 	}
-	for len(it.tasks) > 0 {
-		if w.respCh == nil {
-			resp, err = w.liteSendReq(it)
-			if err != nil {
-				return nil, err
-			}
-			if len(it.tasks) > 0 {
-				w.respCh = make(chan *copResponse, 2)
-				go w.sendRemainTasks(it.tasks)
-			}
-			memTrackerConsumeResp(it.memTracker, resp)
-			return resp, nil
-		}
-		resp, ok, closed := it.recvFromRespCh(ctx, w.respCh)
-		if !ok || closed {
-			it.actionOnExceed.close()
-			return nil, errors.Trace(ctx.Err())
-		}
-		return resp, nil
-
+	if len(it.tasks) == 0 {
+		return nil, nil
 	}
-	return
+	if w.respCh == nil {
+		resp, err = w.liteSendReq(it)
+		if err != nil {
+			return nil, err
+		}
+		if len(it.tasks) > 0 {
+			w.respCh = make(chan *copResponse, 2)
+			go w.sendRemainTasks(it.tasks)
+		}
+		memTrackerConsumeResp(it.memTracker, resp)
+		return resp, nil
+	}
+	resp, ok, closed := it.recvFromRespCh(ctx, w.respCh)
+	if !ok || closed {
+		it.actionOnExceed.close()
+		return nil, errors.Trace(ctx.Err())
+	}
+	return resp, nil
 }
 
 func (w *liteCopIteratorWorker) liteSendReq(it *copIterator) (resp *copResponse, err error) {
