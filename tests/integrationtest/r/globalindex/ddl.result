@@ -5,39 +5,11 @@ Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create table t (a int, b int, unique index idx(a) global) partition by hash(b) partitions 3;
 drop table t;
 create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
-Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
+drop table t;
 create table t3(a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
 drop table t3;
 create table t (a int primary key nonclustered, b int) partition by hash(b) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'PRIMARY', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
-create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
-alter table t partition by hash(b) partitions 3;
-Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
-alter table t partition by hash(b) partitions 3 update indexes (a global);
-alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-alter table t add unique index idxOK (b) global;
-create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-create unique index idxOK2 on t (b) global;
-alter table t remove partitioning;
-alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-alter table t add unique index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create unique index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-drop table t;
-create table t (a int, b int, unique index idx(a) global);
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create table t (a int, b int, index idx(a) global);
-Error 8200 (HY000): Unsupported Global Index on non-partitioned table
-create table t (a int, b int, index idx(a) global) partition by hash(b) partitions 3;
-Error 8200 (HY000): Unsupported GLOBAL IndexOption on non-unique index
-create table t (a int not null, b int, primary key(a) nonclustered, unique idx_b(b) global) partition by hash(a) partitions 3;
-drop table t;
 create table t (a int key global, b int) partition by hash(b) partitions 3;
 Error 8200 (HY000): Unsupported create an index that is both a global index and a clustered index
 create table t (a int unique, b int) partition by hash(b) partitions 3;
@@ -65,14 +37,21 @@ create table t (a int, b int, unique key (a)) partition by hash(a) partitions 3;
 alter table t partition by hash(b) partitions 3;
 Error 8264 (HY000): Global Index is needed for index 'a', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 alter table t partition by hash(b) partitions 3 UPDATE INDEXES (a GLOBAL);
+alter table t add index idxOK (b) global;
+alter table t add unique index idxOK2 (a) global;
+alter table t add unique index idxOK3 (b) global;
+create index idxOK4 on t (b) global;
+create unique index idxOK5 on t (a) global;
+create unique index idxOK6 on t (b) global;
+alter table t remove partitioning;
 alter table t add index idxErr (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-alter table t add unique index idxOK (a) global;
-alter table t add unique index idxOK2 (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
+alter table t add unique index idxErr (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 create index idxErr on t (b) global;
-Error 8200 (HY000): Unsupported Global IndexOption on non-unique index
-create unique index idxOK3 on t (a) global;
-create unique index idxOK4 on t (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
+create unique index idxErr on t (b) global;
+Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 drop table t;
 create table t(a int, b int, primary key (a) nonclustered global);
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
