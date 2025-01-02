@@ -230,6 +230,12 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		var count float64
+		var lowVal, highVal types.Datum
+		isSingleRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
+		if isSingleRange {
+			lowVal = indexRange.LowVal[0]
+			highVal = indexRange.HighVal[0]
+		}
 		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
 		err = sc.HandleError(err)
 		if err != nil {
@@ -243,7 +249,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
 		}
-		isMysqlTime := indexRange.LowVal[0].Kind() == types.KindMysqlTime && indexRange.HighVal[0].Kind() == types.KindMysqlTime
+		//isMysqlTime := indexRange.LowVal[0].Kind() == types.KindMysqlTime && indexRange.HighVal[0].Kind() == types.KindMysqlTime
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
@@ -355,7 +361,11 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					histNDV -= int64(idx.TopN.Num())
 				}
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, isMysqlTime)
+			if isSingleRange {
+				l = lowVal
+				r = highVal
+			}
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, false)
 		}
 
 		if debugTrace {
