@@ -16,7 +16,6 @@ package cardinality
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"slices"
 	"strings"
@@ -215,19 +214,9 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 	return false
 }
 
-func Shortening(lb []byte, rb []byte, kind byte) {
-	if kind != types.KindMysqlTime {
-		return
-	}
-
-}
-
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -250,6 +239,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		if debugTrace {
 			debugTraceStartEstimateRange(sctx, indexRange, lb, rb, totalCount)
 		}
+		isMysqlTime := indexRange.LowVal[0].Kind() == types.KindMysqlTime && indexRange.HighVal[0].Kind() == types.KindMysqlTime
 		fullLen := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == len(idx.Info.Columns)
 		if bytes.Equal(lb, rb) {
 			// case 1: it's a point
@@ -361,7 +351,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					histNDV -= int64(idx.TopN.Num())
 				}
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
+			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, isMysqlTime)
 		}
 
 		if debugTrace {

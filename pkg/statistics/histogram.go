@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -896,6 +897,22 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+func convertTime(d *types.Datum) (*types.Datum, error) {
+	_, packedUint, err := codec.DecodeUint(d.GetBytes()[1:])
+	if err != nil {
+		logutil.BgLogger().Warn("fail to decode uint", zap.Error(err))
+		return nil, err
+	}
+	var t types.Time
+	err = t.FromPackedUint(packedUint)
+	if err != nil {
+		logutil.BgLogger().Warn("get time by FromPackedUint", zap.Error(err))
+		return nil, err
+	}
+	result := types.NewDatum(t)
+	return &result, nil
+}
+
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
@@ -921,7 +938,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	realtimeRowCount, modifyCount, histNDV int64,
+	realtimeRowCount, modifyCount, histNDV int64, isDatetime bool,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -951,18 +968,33 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
+	var l, r float64
 	commonPrefix := 0
-	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
-		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
-		commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
-			hg.GetUpper(hg.Len()-1).GetBytes(),
-			lDatum.GetBytes(),
-			rDatum.GetBytes())
+	if isDatetime {
+		ltime, err := convertTime(lDatum)
+		if err != nil {
+			return 0
+		}
+		rtime, err := convertTime(rDatum)
+		if err != nil {
+			return 0
+		}
+		l = convertMysqlTimeDatumToScalar(ltime)
+		r = convertMysqlTimeDatumToScalar(rtime)
+	} else {
+		if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
+			// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
+			commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
+				hg.GetUpper(hg.Len()-1).GetBytes(),
+				lDatum.GetBytes(),
+				rDatum.GetBytes())
+		}
+
+		// Convert the range we want to estimate to scalar value(float64)
+		l = convertDatumToScalar(lDatum, commonPrefix)
+		r = convertDatumToScalar(rDatum, commonPrefix)
 	}
 
-	// Convert the range we want to estimate to scalar value(float64)
-	l := convertDatumToScalar(lDatum, commonPrefix)
-	r := convertDatumToScalar(rDatum, commonPrefix)
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
@@ -993,8 +1025,23 @@ func (hg *Histogram) OutOfRangeRowCount(
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
-	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
-	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	var histL, histR float64
+	if isDatetime {
+		ltime, err := convertTime(hg.GetLower(0))
+		if err != nil {
+			return 0
+		}
+		rtime, err := convertTime(hg.GetUpper(hg.Len() - 1))
+		if err != nil {
+			return 0
+		}
+		histL = convertMysqlTimeDatumToScalar(ltime)
+		histR = convertMysqlTimeDatumToScalar(rtime)
+	} else {
+		histL = convertDatumToScalar(hg.GetLower(0), commonPrefix)
+		histR = convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	}
+
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
 	// the impact of modifications to the table
