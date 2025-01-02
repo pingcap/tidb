@@ -208,5 +208,12 @@ func TestIssue50080(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec("CREATE TABLE `test` (`ecif_party_no` varchar(20) DEFAULT NULL,`busi_cust_no` varchar(20) DEFAULT NULL,`busi_series_cd` varchar(2) DEFAULT NULL,`org_belong` varchar(15) DEFAULT NULL,`party_no` varchar(20) DEFAULT NULL,`rela_status_cd` varchar(2) DEFAULT NULL,`rela_status_desc` varchar(20) DEFAULT NULL,`created_by` varchar(100) DEFAULT 'ecifdata',`created_date` datetime DEFAULT CURRENT_TIMESTAMP,`updated_by` varchar(100) DEFAULT 'ecifdata',`updated_date` datetime DEFAULT CURRENT_TIMESTAMP,`id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),KEY `IX_CUST_RELA_DATE` (`updated_date`),KEY `IX_TPCNR_BCN` (`busi_cust_no`),KEY `IX_TPCNR_EPN` (`ecif_party_no`),KEY `IX_TPCNR_PAN` (`party_no`),PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */);")
 	require.NoError(t, loadTableStats("test.json", dom))
-	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2024-01-01 00:00:01';").Check(testkit.Rows())
+	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2023-12-31 23:59:59';").Check(testkit.Rows(
+		"IndexLookUp_7 286.79 root  ",
+		"├─IndexRangeScan_5(Build) 286.79 cop[tikv] table:test, index:IX_CUST_RELA_DATE(updated_date) range:(2023-12-31 23:59:00,2023-12-31 23:59:59), keep order:false",
+		"└─TableRowIDScan_6(Probe) 286.79 cop[tikv] table:test keep order:false"))
+	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2024-01-01 00:00:01';").Check(testkit.Rows(
+		"IndexLookUp_7 237.21 root  ",
+		"├─IndexRangeScan_5(Build) 237.21 cop[tikv] table:test, index:IX_CUST_RELA_DATE(updated_date) range:(2023-12-31 23:59:00,2024-01-01 00:00:01), keep order:false",
+		"└─TableRowIDScan_6(Probe) 237.21 cop[tikv] table:test keep order:false"))
 }
