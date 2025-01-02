@@ -72,7 +72,7 @@ func (alloc *autoIDValue) alloc4Unsigned(ctx context.Context, store kv.Storage, 
 	// calcNeededBatchSize calculates the total batch size needed.
 	n1 := calcNeededBatchSize(alloc.base, int64(n), increment, offset, isUnsigned)
 
-	if math.MaxUint64-uint64(alloc.base) < uint64(n1) {
+	if math.MaxUint64-uint64(alloc.base) <= uint64(n1) {
 		return 0, 0, errors.Trace(autoid1.ErrAutoincReadFailed)
 	}
 
