@@ -96,8 +96,14 @@ type LogBackupKit struct {
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
 	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
+	begin := time.Now()
 	// So the cases can finish faster...
 	tk.MustExec("set config tikv `log-backup.max-flush-interval` = '30s';")
+	t.Cleanup(func() {
+		if !t.Failed() {
+			log.Info("[TEST.LogBackupKit] success", zap.String("case", t.Name()), zap.Stringer("takes", time.Since(begin)))
+		}
+	})
 	return &LogBackupKit{
 		tk:      tk,
 		t:       t,
@@ -492,12 +498,13 @@ func TestPiTRAndFailureRestore(t *testing.T) {
 	}))
 	checker := func(e error) { require.Error(t, e) }
 	kit.WithChecker(checker, func() {
-		kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {
+			rc.UseCheckpoint = false
+		})
 	})
 	kit.forceFlushAndWait(taskName)
 
 	s.cleanSimpleData(kit)
-	kit.tk.MustExec("DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish"))
 
 	kit.StopTaskIfExists(taskName)
@@ -505,5 +512,5 @@ func TestPiTRAndFailureRestore(t *testing.T) {
 		rc.FullBackupStorage = kit.LocalURI("full2")
 	})
 	res := kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", t.Name()))
-	res.Check([][]any{{0}})
+	res.Check([][]any{{"0"}})
 }

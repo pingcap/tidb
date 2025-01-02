@@ -130,6 +130,8 @@ func (c *pitrCollector) close() error {
 		return nil
 	}
 
+	defer c.writerRoutine.close()
+
 	cx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -146,7 +148,6 @@ func (c *pitrCollector) close() error {
 	log.Info("Log backup SSTs are committed.",
 		zap.Uint64("commitTS", commitTS), zap.String("committedTo", c.outputPath()))
 
-	c.writerRoutine.close()
 	return nil
 }
 
