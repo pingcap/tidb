@@ -356,19 +356,19 @@ type ProbeWorkerV2 struct {
 	restoredChkBuf *chunk.Chunk
 }
 
-func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
+func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64, lastMaxFetchAndProbe int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
 	atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t)+ lastMaxFetchAndProbe)
 }
 
-func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
+func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, lastMaxFetchAndProbe int64) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
-			w.updateProbeStatistic(start, probeTime)
+			w.updateProbeStatistic(start, probeTime, lastMaxFetchAndProbe)
 		}()
 	}
 
@@ -488,8 +488,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 	return nil
 }
 
-func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
-	cost := int64(0)
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chunk.DataInDiskByChunks, syncCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, errCh chan error, doneCh chan struct{}, cost int64) {
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
 			b.updatePartitionData(cost)
@@ -523,12 +522,10 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 	cost += int64(time.Since(start))
 }
 
-func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}) {
-	cost := int64(0)
+func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context, fetcherAndWorkerSyncer *sync.WaitGroup, srcChkCh chan *chunk.Chunk, errCh chan error, doneCh chan struct{}, cost int64) {
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
-			atomic.AddInt64(&b.HashJoinCtx.stats.partitionData, cost)
-			setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
+			b.updatePartitionData(cost)
 		}
 	}()
 
@@ -580,8 +577,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableImpl(typeCtx types.Cont
 }
 
 // buildHashTableForList builds hash table from `list`.
-func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask) error {
-	cost := int64(0)
+func (b *BuildWorkerV2) buildHashTable(taskCh chan *buildTask, cost int64) error {
 	defer func() {
 		if b.HashJoinCtx.stats != nil {
 			atomic.AddInt64(&b.HashJoinCtx.stats.buildHashTable, cost)
@@ -749,6 +745,10 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.stats = &hashJoinRuntimeStatsV2{}
 		e.stats.concurrent = int(e.Concurrency)
 	}
+
+	if e.stats != nil {
+		e.stats.reset()
+	}
 	return nil
 }
 
@@ -817,14 +817,19 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		}
 	}
 
+	lastMaxFetchAndProbe := int64(0)
+	if e.HashJoinCtxV2.stats != nil {
+		lastMaxFetchAndProbe = e.HashJoinCtxV2.stats.maxFetchAndProbe
+	}
+
 	for i := uint(0); i < e.Concurrency; i++ {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
 			if e.inRestore {
-				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID])
+				e.ProbeWorkers[workerID].restoreAndProbe(e.restoredProbeInDisk[workerID], lastMaxFetchAndProbe)
 			} else {
-				e.ProbeWorkers[workerID].runJoinWorker()
+				e.ProbeWorkers[workerID].runJoinWorker(lastMaxFetchAndProbe)
 			}
 		}, e.ProbeWorkers[workerID].handleProbeWorkerPanic)
 	}
@@ -952,15 +957,12 @@ func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bo
 	return true, waitTime, joinResult
 }
 
-func (w *ProbeWorkerV2) runJoinWorker() {
+func (w *ProbeWorkerV2) runJoinWorker(lastMaxFetchAndProbe int64) {
 	probeTime := int64(0)
 	if w.HashJoinCtx.stats != nil {
 		start := time.Now()
 		defer func() {
-			t := time.Since(start)
-			atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
-			atomic.AddInt64(&w.HashJoinCtx.stats.fetchAndProbe, int64(t))
-			setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbe, int64(t))
+			w.updateProbeStatistic(start, probeTime, lastMaxFetchAndProbe)
 		}()
 	}
 
@@ -1228,7 +1230,7 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 	if e.stats != nil {
 		start := time.Now()
 		defer func() {
-			e.stats.fetchAndBuildHashTable = time.Since(start)
+			e.stats.fetchAndBuildHashTable += time.Since(start)
 		}()
 	}
 
@@ -1342,10 +1344,6 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 		close(waitForController)
 	}()
 
-	if e.stats != nil {
-		e.stats.fetchAndBuildStartTime = time.Now()
-	}
-
 	for i := 0; i < chunkNum; i++ {
 		if e.finished.Load() {
 			return
@@ -1382,15 +1380,20 @@ func handleErr(err error, errCh chan error, doneCh chan struct{}) {
 }
 
 func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+	initCost := int64(0)
+	if e.HashJoinCtxV2.stats != nil {
+		initCost = e.HashJoinCtxV2.stats.maxPartitionData
+	}
+
 	wg.Add(int(e.Concurrency))
 	for i := uint(0); i < e.Concurrency; i++ {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
 				if e.inRestore {
-					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh)
+					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTableForRestore(e.restoredBuildInDisk[workIndex], srcChkCh, waitForController, fetcherAndWorkerSyncer, errCh, doneCh, initCost)
 				} else {
-					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh)
+					e.BuildWorkers[workIndex].splitPartitionAndAppendToRowTable(e.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), fetcherAndWorkerSyncer, srcChkCh, errCh, doneCh, initCost)
 				}
 			},
 			func(r any) {
@@ -1421,12 +1424,17 @@ func (e *HashJoinV2Exec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGrou
 }
 
 func (e *HashJoinV2Exec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
+	initCost := int64(0)
+	if e.HashJoinCtxV2.stats != nil {
+		initCost = e.HashJoinCtxV2.stats.maxBuildHashTable
+	}
+
 	for i := uint(0); i < e.Concurrency; i++ {
 		wg.Add(1)
 		workID := i
 		e.workerWg.RunWithRecover(
 			func() {
-				err := e.BuildWorkers[workID].buildHashTable(buildTaskCh)
+				err := e.BuildWorkers[workID].buildHashTable(buildTaskCh, initCost)
 				if err != nil {
 					errCh <- err
 					doneCh <- struct{}{}
@@ -1472,6 +1480,14 @@ func setMaxValue(addr *int64, currentValue int64) {
 // Tp implements the RuntimeStats interface.
 func (*hashJoinRuntimeStatsV2) Tp() int {
 	return execdetails.TpHashJoinRuntimeStats
+}
+
+func (e *hashJoinRuntimeStatsV2) reset() {
+	e.partitionData = 0
+	e.maxPartitionData = 0
+	e.buildHashTable = 0
+	e.maxBuildHashTable = 0
+	e.hashJoinRuntimeStats.reset()
 }
 
 func (e *hashJoinRuntimeStatsV2) String() string {

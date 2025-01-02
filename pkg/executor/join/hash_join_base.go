@@ -372,13 +372,20 @@ type probeChkResource struct {
 }
 
 type hashJoinRuntimeStats struct {
-	fetchAndBuildStartTime time.Time
 	fetchAndBuildHashTable time.Duration
 	hashStat               hashStatistic
 	fetchAndProbe          int64
 	probe                  int64
 	concurrent             int
 	maxFetchAndProbe       int64
+}
+
+func (e *hashJoinRuntimeStats) reset() {
+	e.fetchAndBuildHashTable = 0
+	e.fetchAndProbe = 0
+	e.probe = 0
+	e.maxFetchAndProbe = 0
+	e.hashStat.reset()
 }
 
 func (e *hashJoinRuntimeStats) setMaxFetchAndProbeTime(t int64) {
@@ -461,6 +468,11 @@ type hashStatistic struct {
 	// NOTE: probeCollision may be accessed from multiple goroutines concurrently.
 	probeCollision   int64
 	buildTableElapse time.Duration
+}
+
+func (s *hashStatistic) reset() {
+	s.probeCollision = 0
+	s.buildTableElapse = 0
 }
 
 func (s *hashStatistic) String() string {
