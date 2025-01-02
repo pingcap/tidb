@@ -38,7 +38,6 @@ go_library(
         "//pkg/util/sqlexec",
         "//pkg/util/timeutil",
         "//pkg/util/tracing",
-        "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
