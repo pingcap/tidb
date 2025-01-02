@@ -1910,11 +1910,6 @@ func (s *builtinPISig) SafeToShareAcrossSession() bool {
 }
 
 // SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
-func (s *builtinPasswordSig) SafeToShareAcrossSession() bool {
-	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
-}
-
-// SafeToShareAcrossSession implements BuiltinFunc.SafeToShareAcrossSession.
 func (s *builtinPeriodAddSig) SafeToShareAcrossSession() bool {
 	return safeToShareAcrossSession(&s.safeToShareAcrossSessionFlag, s.args)
 }

@@ -707,43 +707,6 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	return nil
 }
 
-func (b *builtinPasswordSig) vectorized() bool {
-	return true
-}
-
-func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	n := input.NumRows()
-	buf, err := b.bufAllocator.get()
-	if err != nil {
-		return err
-	}
-	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
-		return err
-	}
-	result.ReserveString(n)
-	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
-			result.AppendString("")
-			continue
-		}
-
-		passBytes := buf.GetBytes(i)
-		if len(passBytes) == 0 {
-			result.AppendString("")
-			continue
-		}
-
-		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
-		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-		tc := typeCtx(ctx)
-		tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD", ""))
-
-		result.AppendString(auth.EncodePasswordBytes(passBytes))
-	}
-	return nil
-}
-
 func (b *builtinSHA1Sig) vectorized() bool {
 	return true
 }
