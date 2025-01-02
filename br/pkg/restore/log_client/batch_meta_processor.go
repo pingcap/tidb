@@ -84,7 +84,7 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// UpdateTable global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+	// AddTable global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
 	// the latest schema update.
 	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
 		return errors.Trace(err)

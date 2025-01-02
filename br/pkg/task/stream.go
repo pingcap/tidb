@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1338,9 +1339,12 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: pitr filtered restore doesn't support restore system table yet, hacky way to override the sys filter here
+	// TODO: pitr filtered restore doesn't support restore system table yet
 	if cfg.ExplicitFilter {
-		// add some check
+		if cfg.TableFilter.MatchSchema(mysql.SystemDB) {
+			return errors.Annotatef(berrors.ErrInvalidArgument,
+				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
+		}
 	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
 	// only doesn't need to build if id map has been saved during log restore
@@ -1355,7 +1359,7 @@ func RunStreamRestore(
 			return errors.Trace(err)
 		}
 		dbReplace := metaInfoProcessor.GetTableMappingManager().DBReplaceMap
-		stream.LogDBReplaceMap("scanning log meta kv before snapshot restore", dbReplace)
+		stream.LogDBReplaceMap("scanned log meta kv before snapshot restore", dbReplace)
 	}
 
 	// restore full snapshot.

@@ -79,6 +79,7 @@ go_test(
         "backoff_test.go",
         "db_test.go",
         "error_handling_test.go",
+        "filter_test.go",
         "json_test.go",
         "key_test.go",
         "main_test.go",

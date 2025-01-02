@@ -276,7 +276,7 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	return nil
 }
 
-func (tm *TableMappingManager) FilterDBReplaceMap(filter *utils.PiTRTableFilter) {
+func (tm *TableMappingManager) FilterDBReplaceMap(filter *utils.PiTRTableTracker) {
 	// collect all IDs that should be kept
 	keepIDs := make(map[UpstreamID]struct{})
 

@@ -308,8 +308,6 @@ func TestFilterDDLJobs(t *testing.T) {
 	ddlJobs := task.FilterDDLJobs(allDDLJobs, tables)
 	for _, job := range ddlJobs {
 		t.Logf("get ddl job: %s", job.Query)
-		t.Logf("table name: %s", job.TableName)
-		t.Logf("dbid: %s", job.SchemaName)
 	}
 	require.Equal(t, 7, len(ddlJobs))
 }

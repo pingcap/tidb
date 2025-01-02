@@ -22,44 +22,45 @@ import (
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
 
-type PiTRTableFilter struct {
-	DbIdToTable map[int64]map[int64]struct{}
+// PiTRTableTracker tracks all the DB and table ids that need to restore in a PiTR
+type PiTRTableTracker struct {
+	DBIdToTable map[int64]map[int64]struct{}
 }
 
-func NewPiTRTableFilter() *PiTRTableFilter {
-	return &PiTRTableFilter{
-		DbIdToTable: make(map[int64]map[int64]struct{}),
+func NewPiTRTableFilter() *PiTRTableTracker {
+	return &PiTRTableTracker{
+		DBIdToTable: make(map[int64]map[int64]struct{}),
 	}
 }
 
-// UpdateTable adds a table ID to the filter for the given database ID
-func (f *PiTRTableFilter) UpdateTable(dbID, tableID int64) {
-	if f.DbIdToTable == nil {
-		f.DbIdToTable = make(map[int64]map[int64]struct{})
+// AddTable adds a table ID to the filter for the given database ID
+func (f *PiTRTableTracker) AddTable(dbID, tableID int64) {
+	if f.DBIdToTable == nil {
+		f.DBIdToTable = make(map[int64]map[int64]struct{})
 	}
 
-	if _, ok := f.DbIdToTable[dbID]; !ok {
-		f.DbIdToTable[dbID] = make(map[int64]struct{})
+	if _, ok := f.DBIdToTable[dbID]; !ok {
+		f.DBIdToTable[dbID] = make(map[int64]struct{})
 	}
 
-	f.DbIdToTable[dbID][tableID] = struct{}{}
+	f.DBIdToTable[dbID][tableID] = struct{}{}
 }
 
-// UpdateDB adds the database id
-func (f *PiTRTableFilter) UpdateDB(dbID int64) {
-	if f.DbIdToTable == nil {
-		f.DbIdToTable = make(map[int64]map[int64]struct{})
+// AddDB adds the database id
+func (f *PiTRTableTracker) AddDB(dbID int64) {
+	if f.DBIdToTable == nil {
+		f.DBIdToTable = make(map[int64]map[int64]struct{})
 	}
 
-	if _, ok := f.DbIdToTable[dbID]; !ok {
-		f.DbIdToTable[dbID] = make(map[int64]struct{})
+	if _, ok := f.DBIdToTable[dbID]; !ok {
+		f.DBIdToTable[dbID] = make(map[int64]struct{})
 	}
 }
 
 // Remove removes a table ID from the filter for the given database ID.
 // Returns true if the table was found and removed, false otherwise.
-func (f *PiTRTableFilter) Remove(dbID, tableID int64) bool {
-	if tables, ok := f.DbIdToTable[dbID]; ok {
+func (f *PiTRTableTracker) Remove(dbID, tableID int64) bool {
+	if tables, ok := f.DBIdToTable[dbID]; ok {
 		if _, exists := tables[tableID]; exists {
 			delete(tables, tableID)
 			return true
@@ -69,8 +70,8 @@ func (f *PiTRTableFilter) Remove(dbID, tableID int64) bool {
 }
 
 // ContainsTable checks if the given database ID and table ID combination exists in the filter
-func (f *PiTRTableFilter) ContainsTable(dbID, tableID int64) bool {
-	if tables, ok := f.DbIdToTable[dbID]; ok {
+func (f *PiTRTableTracker) ContainsTable(dbID, tableID int64) bool {
+	if tables, ok := f.DBIdToTable[dbID]; ok {
 		_, exists := tables[tableID]
 		return exists
 	}
@@ -78,20 +79,20 @@ func (f *PiTRTableFilter) ContainsTable(dbID, tableID int64) bool {
 }
 
 // ContainsDB checks if the given database ID exists in the filter
-func (f *PiTRTableFilter) ContainsDB(dbID int64) bool {
-	_, ok := f.DbIdToTable[dbID]
+func (f *PiTRTableTracker) ContainsDB(dbID int64) bool {
+	_, ok := f.DBIdToTable[dbID]
 	return ok
 }
 
-// String returns a string representation of the PiTRTableFilter for debugging
-func (f *PiTRTableFilter) String() string {
-	if f == nil || f.DbIdToTable == nil {
-		return "PiTRTableFilter{nil}"
+// String returns a string representation of the PiTRTableTracker for debugging
+func (f *PiTRTableTracker) String() string {
+	if f == nil || f.DBIdToTable == nil {
+		return "PiTRTableTracker{nil}"
 	}
 
 	var result strings.Builder
-	result.WriteString("PiTRTableFilter{\n")
-	for dbID, tables := range f.DbIdToTable {
+	result.WriteString("PiTRTableTracker{\n")
+	for dbID, tables := range f.DBIdToTable {
 		result.WriteString(fmt.Sprintf("  DB[%d]: {", dbID))
 		tableIDs := make([]int64, 0, len(tables))
 		for tableID := range tables {

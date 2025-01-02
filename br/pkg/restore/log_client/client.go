@@ -950,7 +950,7 @@ func readFilteredFullBackupTables(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	tableFilter filter.Filter,
-	piTRTableFilter *utils.PiTRTableFilter,
+	piTRTableFilter *utils.PiTRTableTracker,
 	cipherInfo *backuppb.CipherInfo,
 ) (map[int64]*metautil.Table, error) {
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1027,7 +1027,7 @@ type GetIDMapConfig struct {
 	// optional
 	FullBackupStorage *FullBackupStorageConfig
 	CipherInfo        *backuppb.CipherInfo
-	PiTRTableFilter   *utils.PiTRTableFilter // generated table filter that contain all the table id that needs to restore
+	PiTRTableFilter   *utils.PiTRTableTracker // generated table filter that contain all the table id that needs to restore
 }
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"

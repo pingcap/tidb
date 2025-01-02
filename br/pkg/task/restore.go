@@ -1412,7 +1412,7 @@ func adjustTablesToRestoreAndCreateFilter(
 	newlyCreatedDBs := logBackupTableHistory.GetNewlyCreatedDBHistory()
 	for dbId, dbName := range newlyCreatedDBs {
 		if utils.MatchSchema(cfg.TableFilter, dbName) {
-			piTRTableFilter.UpdateDB(dbId)
+			piTRTableFilter.AddDB(dbId)
 		}
 	}
 
@@ -1449,7 +1449,7 @@ func adjustTablesToRestoreAndCreateFilter(
 			// put this db/table id into pitr filter as it matches with user's filter
 			// have to update filter here since table might be empty or not in snapshot so nothing will be returned .
 			// but we still need to capture this table id to restore during log restore.
-			piTRTableFilter.UpdateTable(end.DbID, tableID)
+			piTRTableFilter.AddTable(end.DbID, tableID)
 
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
@@ -1508,7 +1508,7 @@ func adjustTablesToRestoreAndCreateFilter(
 
 func UpdatePiTRFilter(cfg *RestoreConfig, tableMap map[int64]*metautil.Table) {
 	for _, table := range tableMap {
-		cfg.PiTRTableFilter.UpdateTable(table.DB.ID, table.Info.ID)
+		cfg.PiTRTableFilter.AddTable(table.DB.ID, table.Info.ID)
 	}
 }
 
