@@ -1417,6 +1417,9 @@ func filterRestoreFiles(
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
 			dbName = name
+			if !cfg.WithSysTable {
+				continue
+			}
 		}
 		if checkpoint.IsCheckpointDB(db.Info.Name) {
 			continue

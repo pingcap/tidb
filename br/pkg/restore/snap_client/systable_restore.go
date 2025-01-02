@@ -54,6 +54,7 @@ var sysPrivilegeTableMap = map[string]string{
 	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
 	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
 	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
+	"bind_info":     "(user = '%s' and host = '%%')",       // since v7.6.0
 }
 
 var unRecoverableTable = map[string]map[string]struct{}{
