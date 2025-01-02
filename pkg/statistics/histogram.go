@@ -897,8 +897,8 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-func convertTime(Datum *types.Datum) (*types.Datum, error) {
-	_, packedUint, err := codec.DecodeUint(Datum.GetBytes()[1:])
+func convertTime(d *types.Datum) (*types.Datum, error) {
+	_, packedUint, err := codec.DecodeUint(d.GetBytes()[1:])
 	if err != nil {
 		logutil.BgLogger().Warn("fail to decode uint", zap.Error(err))
 		return nil, err
