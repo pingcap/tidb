@@ -1185,9 +1185,9 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 	}
 	for len(it.tasks) > 0 {
 		if w.respCh == nil {
-			resp = w.liteSendReq(it)
-			if resp == nil {
-				continue
+			resp, err = w.liteSendReq(it)
+			if err != nil {
+				return nil, err
 			}
 			if len(it.tasks) > 0 {
 				w.respCh = make(chan *copResponse, 2)
@@ -1207,16 +1207,14 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 	return
 }
 
-func (w *liteCopIteratorWorker) liteSendReq(it *copIterator) (resp *copResponse) {
+func (w *liteCopIteratorWorker) liteSendReq(it *copIterator) (resp *copResponse, err error) {
 	worker := w.worker
 	curTask := it.tasks[0]
 	backoffermap := make(map[uint64]*Backoffer)
 	bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
 	result, err := worker.handleTaskOnce(bo, curTask)
 	if err != nil {
-		resp = &copResponse{err: errors.Trace(err)}
-		worker.checkRespOOM(resp)
-		return resp
+		return nil, err
 	}
 
 	if result != nil && len(result.remains) > 0 {
@@ -1231,15 +1229,15 @@ func (w *liteCopIteratorWorker) liteSendReq(it *copIterator) (resp *copResponse)
 	if result != nil {
 		if result.resp != nil {
 			w.batchCopRespList = result.batchRespList
-			return result.resp
+			return result.resp, nil
 		}
 		if len(result.batchRespList) > 0 {
 			resp = result.batchRespList[0]
 			w.batchCopRespList = result.batchRespList[1:]
-			return resp
+			return resp, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (w *liteCopIteratorWorker) sendRemainTasks(tasks []*copTask) {
