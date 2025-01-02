@@ -741,7 +741,7 @@ func (pp *ParquetParser) Close() error {
 			return errors.Trace(err)
 		}
 	}
-	if buddy, ok := pp.alloc.(*memory.BuddyAllocator); ok {
+	if buddy, ok := pp.alloc.(*buddyAllocator); ok {
 		buddy.Close()
 	}
 	return nil
@@ -900,8 +900,8 @@ func NewParquetParser(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
-	allocator := &memory.BuddyAllocator{}
-	allocator.Init(2 << 30)
+	allocator := &buddyAllocator{}
+	allocator.Init(0)
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 

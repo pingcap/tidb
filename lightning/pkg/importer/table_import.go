@@ -28,7 +28,6 @@ import (
 	"time"
 
 	dmysql "github.com/go-sql-driver/mysql"
-	pmemory "github.com/joechenrh/arrow-go/v18/arrow/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -74,7 +73,7 @@ func setMemoryLimitForParquet(percent int) {
 	}
 	memLimit = int(memTotal) * min(percent, 100) / 100
 	memLimiter = membuf.NewLimiter(memLimit)
-	pmemory.SetMaxMemoryUsage(memLimit)
+	mydump.SetMaxMemoryUsage(memLimit)
 }
 
 // TableImporter is a helper struct to import a table.
@@ -803,27 +802,27 @@ ChunkLoop:
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			memoryUsage := tr.tableMeta.DataFiles[0].FileMeta.MemoryUsage
+			memLimiter.Acquire(memoryUsage)
+			cr.memLimiter = memLimiter
+			cr.memoryUsage = memoryUsage
 
 			// If memory usage is larger than memory limit, set memory usage
 			// to limit to block other file import.
 			if memoryUsage > memLimit {
 				tr.logger.Warn("Memory usage larger than limit",
 					zap.String("file", chunk.FileMeta.Path),
-					zap.String("memory usage", fmt.Sprintf("%d MB", 4990697472>>20)),
+					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
 				)
 				memoryUsage = memLimit
 			} else {
 				tr.logger.Info("Get memory limit",
 					zap.String("file", chunk.FileMeta.Path),
-					zap.String("memory usage", fmt.Sprintf("%d MB", 4990697472>>20)),
+					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
 				)
 			}
 
-			memLimiter.Acquire(memoryUsage)
-			cr.memLimiter = memLimiter
-			cr.memoryUsage = memoryUsage
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()

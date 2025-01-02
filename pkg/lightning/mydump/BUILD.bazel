@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "mydump",
     srcs = [
+        "buddy_allocator.go",
         "bytes.go",
         "charset_convertor.go",
         "csv_parser.go",
@@ -33,6 +34,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/filter",
+        "//pkg/util/memory",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",
         "//pkg/util/slice",
