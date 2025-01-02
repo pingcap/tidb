@@ -18,6 +18,7 @@ go_test(
         "//br/pkg/gluetidb",
         "//br/pkg/logutil",
         "//br/pkg/streamhelper",
+        "//br/pkg/summary",
         "//br/pkg/task",
         "//br/pkg/task/operator",
         "//pkg/config",

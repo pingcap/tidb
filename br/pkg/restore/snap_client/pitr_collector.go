@@ -237,9 +237,12 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 		From: f.GetName(),
 		To:   out,
 	}
+
+	copyStart := time.Now()
 	if err := copier.CopyFrom(ctx, c.restoreStorage, spec); err != nil {
 		return err
 	}
+	log.Info("Copy SST to log backup storage success.", zap.String("file", f.Name), zap.Stringer("takes", time.Since(copyStart)))
 
 	f.Name = out
 	c.doWithExtraBackupMetaLock(func() { c.extraBackupMeta.msg.Files = append(c.extraBackupMeta.msg.Files, f) })
@@ -274,7 +277,9 @@ func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error
 	c.extraBackupMetaLock.Lock()
 	defer c.extraBackupMetaLock.Unlock()
 
-	logutil.CL(ctx).Info("Persisting extra backup meta.", zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()))
+	begin := time.Now()
+	logutil.CL(ctx).Info("Persisting extra backup meta.",
+		zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()), zap.Stringer("takes", time.Since(begin)))
 	msg := c.extraBackupMeta.genMsg()
 	bs, err := msg.Marshal()
 	if err != nil {
