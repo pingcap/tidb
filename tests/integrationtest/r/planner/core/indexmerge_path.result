@@ -1194,10 +1194,12 @@ index iac(a,c),
 index iad(a,d));
 explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or c = 3 or d = 4);
 id	estRows	task	access object	operator info
-IndexLookUp	0.03	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:iab(a, b)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	0.03	cop[tikv]		or(eq(planner__core__indexmerge_path.t.b, 2), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)))
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	0.00	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iab(a, b)	range:[1 2,1 2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iac(a, c)	range:[1 3,1 3], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iad(a, d)	range:[1 4,1 4], keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, 2), or(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)))
+  └─TableRowIDScan	8.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, d int,
 index iab(b,a),
@@ -1205,10 +1207,12 @@ index iac(c,a,d),
 index iad(a,d));
 explain format = brief select /*+ use_index_merge(t) */ * from t where a = 1 and (b = 2 or (c = 3 and d = 4) or d = 5);
 id	estRows	task	access object	operator info
-IndexLookUp	0.02	root		
-├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:iad(a, d)	range:[1,1], keep order:false, stats:pseudo
-└─Selection(Probe)	0.02	cop[tikv]		or(eq(planner__core__indexmerge_path.t.b, 2), or(and(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)), eq(planner__core__indexmerge_path.t.d, 5)))
-  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexMerge	0.00	root		type: union
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iab(b, a)	range:[2 1,2 1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.10	cop[tikv]	table:t, index:iad(a, d)	range:[1 5,1 5], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	0.00	cop[tikv]	table:t, index:iac(c, a, d)	range:[3 1 4,3 1 4], keep order:false, stats:pseudo
+└─Selection(Probe)	0.00	cop[tikv]		eq(planner__core__indexmerge_path.t.a, 1), or(eq(planner__core__indexmerge_path.t.b, 2), or(and(eq(planner__core__indexmerge_path.t.c, 3), eq(planner__core__indexmerge_path.t.d, 4)), eq(planner__core__indexmerge_path.t.d, 5)))
+  └─TableRowIDScan	8.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t (a int, b int, c int, j1 json, j2 json,
 key mvi1((cast(j1 as unsigned array)), a),

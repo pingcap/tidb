@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
@@ -51,6 +52,7 @@ func TestParallelLockNewTask(t *testing.T) {
 
 	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
+	defer se.Close()
 
 	now := se.Now()
 
@@ -72,9 +74,16 @@ func TestParallelLockNewTask(t *testing.T) {
 	tk.MustExec("DELETE FROM mysql.tidb_ttl_task")
 
 	// lock one table in parallel, only one of them should lock successfully
-	testTimes := 100
+	testDuration := time.Second
 	concurrency := 5
-	for i := 0; i < testTimes; i++ {
+	if testflag.Long() {
+		testDuration = 5 * time.Minute
+		concurrency = 50
+	}
+
+	testStart := time.Now()
+	for time.Since(testStart) < testDuration {
+		now := se.Now()
 		sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
 		require.NoError(t, err)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -90,6 +99,7 @@ func TestParallelLockNewTask(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				se := sessionFactory()
+				defer se.Close()
 
 				isc := cache.NewInfoSchemaCache(time.Minute)
 				require.NoError(t, isc.Update(se))

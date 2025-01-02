@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timertable "github.com/pingcap/tidb/pkg/timer/tablestore"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -47,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/skip"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -107,6 +110,7 @@ func TestGetSession(t *testing.T) {
 func TestParallelLockNewJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
+	tk := testkit.NewTestKit(t, store)
 
 	sessionFactory := sessionFactory(t, dom)
 
@@ -116,21 +120,31 @@ func TestParallelLockNewJob(t *testing.T) {
 	m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 	se := sessionFactory()
+	defer se.Close()
 	job, err := m.LockJob(context.Background(), se, testTable, se.Now(), uuid.NewString(), false)
 	require.NoError(t, err)
 	job.Finish(se, se.Now(), &ttlworker.TTLSummary{})
 
 	// lock one table in parallel, only one of them should lock successfully
-	testTimes := 100
+	testDuration := time.Second
 	concurrency := 5
-	now := se.Now()
-	for i := 0; i < testTimes; i++ {
+	if testflag.Long() {
+		testDuration = 5 * time.Minute
+		concurrency = 50
+	}
+
+	testStart := time.Now()
+	for time.Since(testStart) < testDuration {
+		now := se.Now()
+
+		// reset the table status.
+		tk.MustExec("delete from mysql.tidb_ttl_table_status")
+
 		successCounter := atomic.NewUint64(0)
 		successJob := &ttlworker.TTLJob{}
 
-		now = now.Add(time.Hour * 48)
-
 		wg := sync.WaitGroup{}
+		stopErr := atomic.NewError(nil)
 		for j := 0; j < concurrency; j++ {
 			jobManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
@@ -139,6 +153,7 @@ func TestParallelLockNewJob(t *testing.T) {
 				m.InfoSchemaCache().Tables[testTable.ID] = testTable
 
 				se := sessionFactory()
+				defer se.Close()
 				job, err := m.LockJob(context.Background(), se, testTable, now, uuid.NewString(), false)
 				if err == nil {
 					successCounter.Add(1)
@@ -146,12 +161,17 @@ func TestParallelLockNewJob(t *testing.T) {
 				} else {
 					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
 				}
+
+				m.Stop()
+				err = m.WaitStopped(context.Background(), 5*time.Second)
+				stopErr.CompareAndSwap(nil, err)
 				wg.Done()
 			}()
 		}
 		wg.Wait()
 
 		require.Equal(t, uint64(1), successCounter.Load())
+		require.Nil(t, stopErr.Load())
 		successJob.Finish(se, se.Now(), &ttlworker.TTLSummary{})
 	}
 }
@@ -1455,7 +1475,6 @@ func boostJobScheduleForTest(t *testing.T) func() {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ttl/ttlworker/gc-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/model/overwrite-ttl-job-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
 
 	return func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-job-triggered-interval"))
@@ -1467,7 +1486,6 @@ func boostJobScheduleForTest(t *testing.T) func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/task-manager-loop-interval"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/check-task-interval"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ttl/ttlworker/gc-interval"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/model/overwrite-ttl-job-interval"))
 	}
 }
 
@@ -1652,11 +1670,24 @@ func accelerateHeartBeat(t *testing.T, tk *testkit.TestKit) func() {
 	}
 }
 
+func overwriteJobInterval(t *testing.T) func() {
+	// TODO: it sounds better to explicitly support 'ms' unit for test in the parser. The only issue is that we need to port a new `intest`
+	// pkg to the `parser` pkg, as it cannot depend on the `tidb` root pkg.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/model/overwrite-ttl-job-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/timer/api/overwrite-ttl-job-interval", fmt.Sprintf("return(%d)", 100*time.Millisecond)))
+
+	return func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/model/overwrite-ttl-job-interval"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/timer/api/overwrite-ttl-job-interval"))
+	}
+}
+
 func TestJobManagerWithFault(t *testing.T) {
 	// TODO: add a flag `-long` to enable this test
-	t.Skip("skip this test because it'll need to run for a long time")
+	skip.NotUnderLong(t)
 
 	defer boostJobScheduleForTest(t)()
+	defer overwriteJobInterval(t)()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
@@ -1665,7 +1696,8 @@ func TestJobManagerWithFault(t *testing.T) {
 	defer accelerateHeartBeat(t, tk)()
 	tk.MustExec("set @@global.tidb_ttl_running_tasks=32")
 
-	managerCount := 20
+	// don't run too many manager, or the test will be unstable
+	managerCount := runtime.GOMAXPROCS(0) * 2
 	testDuration := 10 * time.Minute
 	faultPercent := 0.5
 
@@ -1773,8 +1805,11 @@ func TestJobManagerWithFault(t *testing.T) {
 			}
 
 			logutil.BgLogger().Info("get row count", zap.String("count", rows[0][0].(string)))
+
+			tableStatus := tk.MustQuery("SELECT * FROM mysql.tidb_ttl_table_status").String()
+			logutil.BgLogger().Info("get job state", zap.String("tidb_ttl_table_status", tableStatus))
 			return false
-		}, time.Second*5, time.Millisecond*100)
+		}, time.Second*30, time.Millisecond*100)
 
 		require.Eventually(t, func() bool {
 			rows := tk.MustQuery("SELECT current_job_state FROM mysql.tidb_ttl_table_status").Rows()
@@ -1785,7 +1820,7 @@ func TestJobManagerWithFault(t *testing.T) {
 			tableStatus := tk.MustQuery("SELECT * FROM mysql.tidb_ttl_table_status").String()
 			logutil.BgLogger().Info("get job state", zap.String("tidb_ttl_table_status", tableStatus))
 			return false
-		}, time.Second*5, time.Millisecond*100)
+		}, time.Second*30, time.Millisecond*100)
 
 		logutil.BgLogger().Info("finish workload", zap.Duration("duration", time.Since(start)))
 	}
@@ -1795,6 +1830,11 @@ func TestJobManagerWithFault(t *testing.T) {
 	close(stopTestCh)
 
 	wg.Wait()
+
+	for _, m := range managers {
+		m.m.Stop()
+		require.NoError(t, m.m.WaitStopped(context.Background(), time.Minute))
+	}
 }
 
 func TestTimerJobAfterDropTable(t *testing.T) {

@@ -17,7 +17,9 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
+	"iter"
 	"math"
+	"reflect"
 	"time"
 	"unsafe"
 
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 )
 
@@ -45,6 +48,60 @@ func SliceDeepClone[T interface{ Clone() T }](s []T) []T {
 		cloned = append(cloned, item.Clone())
 	}
 	return cloned
+}
+
+// SliceRecursiveFlattenIter returns an iterator (iter.Seq2) that recursively iterates over all elements of an
+// any-dimensional slice of any type.
+// Performance note:
+// For each slice, this function need to check the dynamic type before iterating over it. For each non-leaf slice, this
+// function uses reflect to iterate over it. Be careful when trying to use this function in performance-critical code.
+/*
+Example:
+	paths := [][][]*AccessPath{...}
+	for idx, path := range SliceRecursiveFlattenIter[*AccessPath](paths) {
+		// path is a *AccessPath here
+	}
+*/
+func SliceRecursiveFlattenIter[E any, T any, Slice ~[]T](s Slice) iter.Seq2[int, E] {
+	return func(yield func(int, E) bool) {
+		sliceRecursiveFlattenIterHelper(s, yield, 0)
+	}
+}
+
+func sliceRecursiveFlattenIterHelper[E any, Slice any](
+	s Slice,
+	yield func(int, E) bool,
+	startIdx int,
+) (nextIdx int, stop bool) {
+	intest.AssertFunc(func() bool {
+		return reflect.TypeOf(s).Kind() == reflect.Slice
+	})
+	// Case 1: Input slice is []E, which means it's already the lowest level.
+	if leafSlice, isLeafSlice := any(s).([]E); isLeafSlice {
+		idx := startIdx
+		for _, v := range leafSlice {
+			if !yield(idx, v) {
+				return idx + 1, true
+			}
+			idx++
+		}
+		return idx, false
+	}
+	// Case 2: Otherwise, element of Slice is still a slice, we need to flatten it recursively.
+	idx := startIdx
+	// We have to use reflect to iterate over the slice here.
+	v := reflect.ValueOf(s)
+	for i := range v.Len() {
+		val := v.Index(i).Interface()
+		intest.AssertFunc(func() bool {
+			return reflect.TypeOf(val).Kind() == reflect.Slice
+		})
+		idx, stop = sliceRecursiveFlattenIterHelper[E](val, yield, idx)
+		if stop {
+			return idx, true
+		}
+	}
+	return idx, false
 }
 
 // CloneFieldNames uses types.FieldName.Clone to clone a slice of types.FieldName.

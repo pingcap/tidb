@@ -35,11 +35,12 @@ go_test(
     ],
     embed = [":memo"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 11,
     deps = [
         "//pkg/expression",
         "//pkg/planner/cascades/base",
         "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util",
         "//pkg/testkit/testsetup",
         "//pkg/util/mock",
         "@com_github_pingcap_failpoint//:failpoint",
