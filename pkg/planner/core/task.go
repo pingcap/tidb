@@ -1100,10 +1100,6 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 		return nil, false
 	}
 
-	if copTsk.tablePlan.(*PhysicalTableScan).Table.Name.O != infoschema.ClusterTableSlowLog {
-		return nil, false
-	}
-
 	var (
 		selOnTblScan   *PhysicalSelection
 		selSelectivity float64
@@ -1121,6 +1117,11 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 		finalTblScanPlan = finalTblScanPlan.Children()[0]
 	}
 	tblScan = finalTblScanPlan.(*PhysicalTableScan)
+
+	// Check the table is `CLUSTER_SLOW_QUERY` or not.
+	if tblScan.Table.Name.O != infoschema.ClusterTableSlowLog {
+		return nil, false
+	}
 
 	colsProp, ok := GetPropByOrderByItems(p.ByItems)
 	if !ok {
