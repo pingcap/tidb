@@ -93,7 +93,6 @@ func TestInsertGE(t *testing.T) {
 	require.Equal(t, mm.GetGroups().Back().Value.(*Group).GetGroupID(), GroupID(cnt-1))
 }
 
-<<<<<<< HEAD
 // TestMergeGroup test the group merge logic inside one memo when detecting two group expression
 // are logical equivalent while they are belonged to two different group. for this case:
 //
