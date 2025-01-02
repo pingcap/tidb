@@ -21,12 +21,14 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,7 +81,11 @@ ut run --junitfile xxx
 ut run --race
 
 // test with test.short flag
-ut run --short`
+ut run --short
+
+// test with long flag
+// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurreny to make them stabler.
+ut run --long`
 
 	fmt.Println(msg)
 	return true
@@ -197,6 +203,12 @@ func cmdRun(args ...string) bool {
 	}
 	tasks := make([]task, 0, 5000)
 	start := time.Now()
+
+	// if `-long` flag is set, only build long tests and run them
+	if long {
+		pkgs = slices.Collect(maps.Keys(longTests))
+	}
+
 	// run all tests
 	if len(args) == 0 {
 		if err := buildTestBinaryMulti(pkgs); err != nil {
@@ -204,9 +216,15 @@ func cmdRun(args ...string) bool {
 			return false
 		}
 
-		if tasks, err = runExistingTestCases(pkgs); err != nil {
-			log.Println("run existing test cases error", err)
-			return false
+		if long {
+			for _, pkg := range pkgs {
+				tasks = listLongTasks(pkg, tasks)
+			}
+		} else {
+			if tasks, err = runExistingTestCases(pkgs); err != nil {
+				log.Println("run existing test cases error", err)
+				return false
+			}
 		}
 	}
 
@@ -228,10 +246,15 @@ func cmdRun(args ...string) bool {
 			fmt.Println("no test case in ", pkg)
 			return false
 		}
-		tasks, err = listTestCases(pkg, tasks)
-		if err != nil {
-			log.Println("list test cases error", err)
-			return false
+
+		if long {
+			tasks = listLongTasks(pkg, tasks)
+		} else {
+			tasks, err = listTestCases(pkg, tasks)
+			if err != nil {
+				log.Println("list test cases error", err)
+				return false
+			}
 		}
 	}
 
@@ -297,10 +320,14 @@ func cmdRun(args ...string) bool {
 
 	fmt.Printf("building task finish, parallelism=%d, count=%d, takes=%v\n", buildParallel, len(tasks), time.Since(start))
 
+	testWorkerCount := p
+	if long {
+		testWorkerCount = longTestWorkerCount
+	}
 	taskCh := make(chan task, 100)
-	works := make([]numa, p)
+	works := make([]numa, testWorkerCount)
 	var wg sync.WaitGroup
-	for i := range p {
+	for i := range testWorkerCount {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
@@ -441,6 +468,7 @@ var coverprofile string
 var coverFileTempDir string
 var race bool
 var short bool
+var long bool
 
 var except string
 var only string
@@ -453,6 +481,7 @@ func main() {
 	only = handleFlags("--only")
 	race = handleFlag("--race")
 	short = handleFlag("--short")
+	long = handleFlag("--long")
 
 	if coverprofile != "" {
 		var err error
@@ -472,6 +501,7 @@ func main() {
 	workDir, err = os.Getwd()
 	if err != nil {
 		fmt.Println("os.Getwd() error", err)
+		os.Exit(1)
 	}
 
 	var isSucceed bool
@@ -698,6 +728,13 @@ func filterTestCases(tasks []task, arg1 string) ([]task, error) {
 	return tmp, nil
 }
 
+func listLongTasks(pkg string, tasks []task) []task {
+	for _, t := range longTests[pkg] {
+		tasks = append(tasks, task{pkg, t})
+	}
+	return tasks
+}
+
 func listPackages() ([]string, error) {
 	listPath := strings.Join([]string{".", "..."}, string(filepath.Separator))
 	cmd := exec.Command("go", "list", listPath)
@@ -761,6 +798,13 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 		// Combine the test case output, so the run result for failed cases can be displayed.
 		cmd.Stdout = &buf
 		cmd.Stderr = &buf
+
+		if short {
+			cmd.Args = append(cmd.Args, "--test.short")
+		}
+		if long {
+			cmd.Args = append(cmd.Args, "-long")
+		}
 
 		start = time.Now()
 		err = cmd.Run()
@@ -851,8 +895,13 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		tmpFile := filepath.Join(coverFileTempDir, fileName)
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
-	args = append(args, "-test.cpu", "1")
-	if !race {
+	// for long test, gives it more CPU resources for each test and limit the parallelism.
+	testCPU := 1
+	if long && p > longTestWorkerCount {
+		testCPU = p / longTestWorkerCount
+	}
+	args = append(args, "-test.cpu", strconv.Itoa(testCPU))
+	if !race && !long {
 		args = append(args, []string{"-test.timeout", "2m"}...)
 	} else {
 		// it takes a longer when race is enabled. so it is set more timeout value.
