@@ -48,14 +48,18 @@ type Memo struct {
 }
 
 // NewMemo creates a new memo.
-func NewMemo() *Memo {
+func NewMemo(caps ...uint64) *Memo {
+	// default capacity is 4.
+	capacity := uint64(4)
+	if len(caps) > 1 {
+		capacity = caps[0]
+	}
 	return &Memo{
 		groupIDGen:    &GroupIDGenerator{id: 0},
 		groups:        list.New(),
 		groupID2Group: make(map[GroupID]*list.Element),
 		hash2GlobalGroupExpr: hashmap.New[*GroupExpression, *GroupExpression](
-			// todo: feel the operator count at the prev normalization rule.
-			4,
+			capacity,
 			func(a, b *GroupExpression) bool {
 				return a.Equals(b)
 			},
