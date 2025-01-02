@@ -1126,7 +1126,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 	if !ok {
 		return nil, false
 	}
-	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx(), tblScan.HandleCols.GetCol(0)) {
+	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
 		return nil, false
 	}
 	if selOnTblScan != nil && tblScan.StatsInfo().RowCount > 0 {
