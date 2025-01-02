@@ -728,7 +728,7 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	if statsTbl != nil && rhs.path.Index != nil {
 		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
 	}
-	if !lhs.path.IsIntHandlePath && !rhs.path.IsIntHandlePath && // Not a table scan
+	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
 		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
 		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
