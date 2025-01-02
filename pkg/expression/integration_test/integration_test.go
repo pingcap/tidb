@@ -31,7 +31,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -4171,7 +4170,6 @@ func TestIssue57608(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		a := tk.MustQuery("select distinct 1 between NULL and 1 as w0, truncate(1, (cast(ref_1.q2 as unsigned) % 0)) as w1, (1 between truncate(1, (cast(ref_1.q2 as unsigned) % 0)) and 1) as w2 from (v2 as ref_0 inner join v2 as ref_1 on (1=1));")
-		log.Info(fmt.Sprintf("-------------------- %s", a.String()))
 		require.Equal(t, 1, len(a.Rows()))
 		require.Equal(t, "<nil> <nil> <nil>", a.String())
 	}
