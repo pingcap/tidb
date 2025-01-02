@@ -177,6 +177,11 @@ type AlterDDLJob struct {
 	Options []*AlterDDLJobOpt
 }
 
+// WorkloadRepoCreate is the plan of admin create workload snapshot.
+type WorkloadRepoCreate struct {
+	baseSchemaProducer
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
