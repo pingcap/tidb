@@ -982,7 +982,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		l = convertMysqlTimeDatumToScalar(ltime)
 		r = convertMysqlTimeDatumToScalar(rtime)
 	} else {
-
 		if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
 			// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
 			commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
@@ -1028,7 +1027,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	var histL, histR float64
 	if isDatetime {
-
 		ltime, err := convertTime(hg.GetLower(0))
 		if err != nil {
 			return 0
