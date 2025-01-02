@@ -118,7 +118,7 @@ func (kit *LogBackupKit) tempFile(name string, content []byte) string {
 func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
-		cfg.Storage = "local://" + kit.base + "/full"
+		cfg.Storage = kit.LocalURI("full")
 		cfg.FilterStr = []string{"test.*"}
 		var err error
 		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
@@ -126,6 +126,7 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 		require.NoError(kit.t, err)
 
 		extConfig(&cfg)
+		cfg.UseCheckpoint = false
 		return task.RunRestore(ctx, kit.Glue(), task.FullRestoreCmd, &cfg)
 	})
 }
@@ -133,19 +134,28 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultRestoreConfig(task.DefaultConfig())
-		cfg.Storage = "local://" + kit.base + "/incr"
-		cfg.FullBackupStorage = "local://" + kit.base + "/full"
+		cfg.Storage = kit.LocalURI("incr")
+		cfg.FullBackupStorage = kit.LocalURI("full")
 		cfg.CheckRequirements = false
+		cfg.UseCheckpoint = false
 
 		extConfig(&cfg)
 		return task.RunRestore(ctx, kit.Glue(), task.PointRestoreCmd, &cfg)
 	})
 }
 
+func (kit *LogBackupKit) SetFilter(cfg *task.Config, f ...string) {
+	var err error
+	cfg.TableFilter, err = filter.Parse(f)
+	require.NoError(kit.t, err)
+	cfg.FilterStr = f
+	cfg.ExplicitFilter = true
+}
+
 func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultBackupConfig(task.DefaultConfig())
-		cfg.Storage = "local://" + kit.base + "/full"
+		cfg.Storage = kit.LocalURI("full")
 		extConfig(&cfg)
 		return task.RunBackup(ctx, kit.Glue(), "backup full[intest]", &cfg)
 	})
@@ -166,7 +176,7 @@ func (kit *LogBackupKit) StopTaskIfExists(taskName string) {
 func (kit *LogBackupKit) RunLogStart(taskName string, extConfig func(*task.StreamConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultStreamConfig(task.DefineStreamStartFlags)
-		cfg.Storage = "local://" + kit.base + "/incr"
+		cfg.Storage = kit.LocalURI("incr")
 		cfg.TaskName = taskName
 		cfg.EndTS = math.MaxUint64
 		cfg.TableFilter = filter.All()
@@ -186,6 +196,10 @@ func (kit *LogBackupKit) TSO() uint64 {
 	ts, err := kit.tk.Session().GetStore().(tikv.Storage).GetOracle().GetTimestamp(kit.ctx(), &oracle.Option{})
 	require.NoError(kit.t, err)
 	return ts
+}
+
+func (kit *LogBackupKit) LocalURI(rel ...string) string {
+	return "local://" + kit.base + "/" + filepath.Join(rel...)
 }
 
 func (kit *LogBackupKit) CheckpointTSOf(taskName string) uint64 {
@@ -212,10 +226,12 @@ func (kit *LogBackupKit) WithChecker(checker func(v error), f func()) {
 
 func (kit *LogBackupKit) runAndCheck(f func(context.Context) error) {
 	ctx, cancel := context.WithCancel(context.Background())
+	begin := time.Now()
 	summary.SetSuccessStatus(false)
 	err := f(ctx)
 	cancel()
 	kit.checkerF(err)
+	log.Info("[TEST.runAndCheck] A task finished.", zap.StackSkip("caller", 1), zap.Stringer("take", time.Since(begin)))
 }
 
 func (kit *LogBackupKit) forceFlush() {
@@ -236,6 +252,7 @@ func (kit *LogBackupKit) forceFlush() {
 
 func (kit *LogBackupKit) forceFlushAndWait(taskName string) {
 	ts := kit.TSO()
+	start := time.Now()
 	kit.forceFlush()
 	require.Eventually(kit.t, func() bool {
 		ckpt := kit.CheckpointTSOf(taskName)
@@ -243,88 +260,124 @@ func (kit *LogBackupKit) forceFlushAndWait(taskName string) {
 		return ckpt >= ts
 	}, 300*time.Second, 1*time.Second)
 	time.Sleep(6 * time.Second) // Wait the storage checkpoint uploaded...
+	log.Info("[TEST.forceFlushAndWait] done", zap.Stringer("take", time.Since(start)))
 }
 
-func createSimpleTableWithData(kit *LogBackupKit) {
-	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTs test.%s", kit.t.Name()))
-	kit.tk.MustExec(fmt.Sprintf("CREATE TABLE test.%s(t text)", kit.t.Name()))
-	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Ear'), ('Eye'), ('Nose')", kit.t.Name()))
+func (kit *LogBackupKit) simpleWorkload() simpleWorkload {
+	return simpleWorkload{
+		tbl: kit.t.Name(),
+	}
 }
 
-func insertSimpleIncreaseData(kit *LogBackupKit) {
-	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Body')", kit.t.Name()))
-	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Mind')", kit.t.Name()))
+type simpleWorkload struct {
+	tbl string
 }
 
-func verifySimpleData(kit *LogBackupKit) {
-	kit.tk.MustQuery(fmt.Sprintf("SELECT * FROM test.%s", kit.t.Name())).Check([][]any{{"Ear"}, {"Eye"}, {"Nose"}, {"Body"}, {"Mind"}})
+func (s simpleWorkload) createSimpleTableWithData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTs test.%s", s.tbl))
+	kit.tk.MustExec(fmt.Sprintf("CREATE TABLE test.%s(t text)", s.tbl))
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Ear'), ('Eye'), ('Nose')", s.tbl))
 }
 
-func cleanSimpleData(kit *LogBackupKit) {
-	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTS test.%s", kit.t.Name()))
+func (s simpleWorkload) insertSimpleIncreaseData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Body')", s.tbl))
+	kit.tk.MustExec(fmt.Sprintf("INSERT INTO test.%s VALUES ('Mind')", s.tbl))
+}
+
+func (s simpleWorkload) verifySimpleData(kit *LogBackupKit) {
+	kit.tk.MustQuery(fmt.Sprintf("SELECT * FROM test.%s", s.tbl)).Check([][]any{{"Ear"}, {"Eye"}, {"Nose"}, {"Body"}, {"Mind"}})
+}
+
+func (s simpleWorkload) cleanSimpleData(kit *LogBackupKit) {
+	kit.tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTS test.%s", s.tbl))
 }
 
 func TestPiTRAndBackupInSQL(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
-	insertSimpleIncreaseData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
+	s.insertSimpleIncreaseData(kit)
 
 	taskName := t.Name()
 	kit.RunFullBackup(func(bc *task.BackupConfig) {})
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 
 	ts := kit.TSO()
 	kit.RunFullBackup(func(bc *task.BackupConfig) {
-		bc.Storage = "local://" + kit.base + "/full2"
+		bc.Storage = kit.LocalURI("full2")
 		bc.BackupTS = ts
 	})
 	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
 		sc.StartTS = ts
 	})
-	_ = kit.tk.MustQuery(fmt.Sprintf("RESTORE TABLE test.%s FROM '%s'", t.Name(), "local://"+kit.base+"/full"))
-	verifySimpleData(kit)
+	_ = kit.tk.MustQuery(fmt.Sprintf("RESTORE TABLE test.%s FROM '%s'", t.Name(), kit.LocalURI("full")))
+	s.verifySimpleData(kit)
 	kit.forceFlushAndWait(taskName)
 
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 	kit.StopTaskIfExists(taskName)
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.FullBackupStorage = "local://" + kit.base + "/full2"
+		rc.FullBackupStorage = kit.LocalURI("full2")
 	})
-	verifySimpleData(kit)
+	s.verifySimpleData(kit)
 }
 
-func TestPiTRAndBackup(t *testing.T) {
+func TestPiTRAndManyBackups(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
-	insertSimpleIncreaseData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
+	s.insertSimpleIncreaseData(kit)
 
 	taskName := t.Name()
 
-	kit.RunFullBackup(func(bc *task.BackupConfig) {})
-	cleanSimpleData(kit)
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s.tbl))
+		bc.Storage = kit.LocalURI("fulla")
+	})
+	s.cleanSimpleData(kit)
+
+	s2 := kit.simpleWorkload()
+	s2.tbl += "2"
+	s2.createSimpleTableWithData(kit)
+	s2.insertSimpleIncreaseData(kit)
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s2.tbl))
+		bc.Storage = kit.LocalURI("fullb")
+	})
+	s2.cleanSimpleData(kit)
 
 	ts := kit.TSO()
 	kit.RunFullBackup(func(bc *task.BackupConfig) {
-		bc.Storage = "local://" + kit.base + "/full2"
+		bc.Storage = kit.LocalURI("pitr_base")
 		bc.BackupTS = ts
 	})
 	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
 		sc.StartTS = ts
 	})
-	kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {
+		rc.Storage = kit.LocalURI("fulla")
+		kit.SetFilter(&rc.Config, fmt.Sprintf("test.%s", s.tbl))
+	})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {
+		rc.Storage = kit.LocalURI("fullb")
+		kit.SetFilter(&rc.Config, fmt.Sprintf("test.%s", s2.tbl))
+	})
 
 	kit.forceFlushAndWait(taskName)
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
+	s2.cleanSimpleData(kit)
 	kit.StopTaskIfExists(taskName)
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.FullBackupStorage = "local://" + kit.base + "/full2"
+		rc.FullBackupStorage = kit.LocalURI("pitr_base")
 	})
-	verifySimpleData(kit)
+	s.verifySimpleData(kit)
+	s2.verifySimpleData(kit)
 }
 
-func TestEncryptedFullBackup(t *testing.T) {
+func TestPiTRAndEncryptedFullBackup(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
 	keyContent, err := hex.DecodeString("9d4cf8f268514d2c38836197008eded1050a5806afa632f7ab1e313bb6697da2")
 	require.NoError(t, err)
 
@@ -335,7 +388,7 @@ func TestEncryptedFullBackup(t *testing.T) {
 		}
 	})
 
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {})
 	chk := func(err error) { require.ErrorContains(t, err, "the data you want to restore is encrypted") }
 	kit.WithChecker(chk, func() {
@@ -348,18 +401,17 @@ func TestEncryptedFullBackup(t *testing.T) {
 	})
 }
 
-func TestEncryptedLogBackup(t *testing.T) {
+func TestPiTRAndEncryptedLogBackup(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
 
 	keyContent, err := hex.DecodeString("0ae31c060ff933cabe842430e1716185cc9c6b5cdde8e56976afaff41b92528f")
 	require.NoError(t, err)
 	keyFile := kit.tempFile("KEY", keyContent)
 
-	kit.RunFullBackup(func(bc *task.BackupConfig) {
-
-	})
-	cleanSimpleData(kit)
+	kit.RunFullBackup(func(bc *task.BackupConfig) {})
+	s.cleanSimpleData(kit)
 
 	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {
 		sc.MasterKeyConfig.EncryptionType = encryptionpb.EncryptionMethod_AES256_CTR
@@ -378,9 +430,10 @@ func TestEncryptedLogBackup(t *testing.T) {
 	})
 }
 
-func TestBothEncrypted(t *testing.T) {
+func TestPiTRAndBothEncrypted(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
 
 	keyContent, err := hex.DecodeString("319b4a104651746f1bf1ad67c9ba7d635d8c4769b03f3e5c63f1da93891ce4f9")
 	require.NoError(t, err)
@@ -392,7 +445,7 @@ func TestBothEncrypted(t *testing.T) {
 			CipherKey:  keyContent,
 		}
 	})
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 
 	kit.RunLogStart(t.Name(), func(sc *task.StreamConfig) {
 		sc.MasterKeyConfig.EncryptionType = encryptionpb.EncryptionMethod_AES256_CTR
@@ -416,18 +469,19 @@ func TestBothEncrypted(t *testing.T) {
 	})
 }
 
-func TestFailureRestoreAndPiTR(t *testing.T) {
+func TestPiTRAndFailureRestore(t *testing.T) {
 	kit := NewLogBackupKit(t)
-	createSimpleTableWithData(kit)
-	insertSimpleIncreaseData(kit)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
+	s.insertSimpleIncreaseData(kit)
 
 	taskName := t.Name()
 	kit.RunFullBackup(func(bc *task.BackupConfig) {})
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 
 	ts := kit.TSO()
 	kit.RunFullBackup(func(bc *task.BackupConfig) {
-		bc.Storage = "local://" + kit.base + "/full2"
+		bc.Storage = kit.LocalURI("full2")
 		bc.BackupTS = ts
 	})
 	kit.RunLogStart(taskName, func(sc *task.StreamConfig) {
@@ -442,13 +496,13 @@ func TestFailureRestoreAndPiTR(t *testing.T) {
 	})
 	kit.forceFlushAndWait(taskName)
 
-	cleanSimpleData(kit)
+	s.cleanSimpleData(kit)
 	kit.tk.MustExec("DROP DATABASE __TiDB_BR_Temporary_Snapshot_Restore_Checkpoint;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/task/run-snapshot-restore-about-to-finish"))
 
 	kit.StopTaskIfExists(taskName)
 	kit.RunStreamRestore(func(rc *task.RestoreConfig) {
-		rc.FullBackupStorage = "local://" + kit.base + "/full2"
+		rc.FullBackupStorage = kit.LocalURI("full2")
 	})
 	res := kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", t.Name()))
 	res.Check([][]any{{0}})
