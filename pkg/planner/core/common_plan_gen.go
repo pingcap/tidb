@@ -195,16 +195,16 @@ func planPreSequences(p base.Plan) (preSeq []string) {
 		}
 		switch node := op.Origin.(type) {
 		case *PhysicalTableReader:
-			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			tableScan := node.TablePlans[0].(*PhysicalTableScan)
 			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
 		case *PhysicalIndexReader:
-			indexScan := node.IndexPlans[len(node.IndexPlans)-1].(*PhysicalIndexScan)
+			indexScan := node.IndexPlans[0].(*PhysicalIndexScan)
 			preSeq = append(preSeq, fmt.Sprintf("%s.%s", indexScan.DBName.L, indexScan.Table.Name.L))
 		case *PhysicalIndexLookUpReader:
-			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			tableScan := node.TablePlans[0].(*PhysicalTableScan)
 			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
 		case *PhysicalIndexMergeReader:
-			tableScan := node.TablePlans[len(node.TablePlans)-1].(*PhysicalTableScan)
+			tableScan := node.TablePlans[0].(*PhysicalTableScan)
 			preSeq = append(preSeq, fmt.Sprintf("%s.%s", tableScan.DBName.L, tableScan.Table.Name.L))
 		default:
 			continue
