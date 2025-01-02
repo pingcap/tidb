@@ -57,14 +57,18 @@ func (w writerRoutine) write(ctx context.Context) error {
 func (c *pitrCollector) goWriter() {
 	hnd := make(chan writerCall, 2048)
 	exhaust := func(f func(writerCall)) {
-		select {
-		case cb, ok := <-hnd:
-			if !ok {
-				log.Warn("Early channel close. Should not happen.")
-				return
+	collect:
+		for {
+			select {
+			case cb, ok := <-hnd:
+				if !ok {
+					log.Warn("Early channel close. Should not happen.")
+					return
+				}
+				f(cb)
+			default:
+				break collect
 			}
-			f(cb)
-		default:
 		}
 	}
 
