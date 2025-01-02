@@ -1153,6 +1153,7 @@ func (p *PhysicalTopN) pushPartialTopNDownToTiDBCop(copTsk *CopTask) (base.Task,
 	return attachPlan2Task(p, rootTask), true
 }
 
+// Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
