@@ -15,13 +15,16 @@
 package bindinfo
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -281,8 +284,8 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 		return err
 	}
 	tableNames := CollectTableNames(bindingStmt)
-	isFuzzy := isCrossDBBinding(bindingStmt)
-	if isFuzzy {
+	isCrossDB := isCrossDBBinding(bindingStmt)
+	if isCrossDB {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
@@ -290,15 +293,8 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	if err != nil {
 		return err
 	}
-	if sctx != nil && !isFuzzy {
-		paramChecker := &paramMarkerChecker{}
-		stmt.Accept(paramChecker)
-		if !paramChecker.hasParamMarker {
-			_, err = getHintsForSQL(sctx, binding.BindSQL)
-			if err != nil {
-				return err
-			}
-		}
+	if err := verifyBindingStmt(sctx, stmt); err != nil {
+		return err
 	}
 	hintsStr, err := hintsSet.Restore()
 	if err != nil {
@@ -313,6 +309,28 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	binding.Hint = hintsSet
 	binding.ID = hintsStr
 	binding.TableNames = tableNames
+	return nil
+}
+
+// verifyBindingStmt briefly verifies whether this binding statement is valid.
+func verifyBindingStmt(sctx sessionctx.Context, stmt ast.StmtNode) error {
+	if stmt == nil || sctx == nil {
+		return nil
+	}
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tableNames := CollectTableNames(stmt)
+	for _, t := range tableNames {
+		if t.Schema.L == "*" { // cross-db binding
+			continue
+		}
+		schema := t.Schema
+		if schema.L == "" {
+			schema = model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+		}
+		if _, err := is.TableByName(context.Background(), schema, t.Name); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

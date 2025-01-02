@@ -101,7 +101,6 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 		bindinfo.Manual + "', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
 	tk.MustExec("admin reload bindings;")
 
 	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
