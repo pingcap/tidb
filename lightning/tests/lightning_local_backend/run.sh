@@ -140,9 +140,14 @@ for ckpt in mysql file; do
   run_lightning_ctl --check-local-storage \
     --backend local \
     --enable-checkpoint=1 \
-    --checkpoint-dump $TEST_DIR \
     --config=$CUR/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
+
+  run_lightning_ctl \
+    --backend local \
+    --enable-checkpoint=1 \
+    --checkpoint-dump $TEST_DIR \
+    --config=$CUR/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   # --checkpoint-dump option in lightning-ctl will dump checkpoint table as csv files to $TEST_DIR
   for file in engines.csv chunks.csv tables.csv; do
     if [ ! -f "$TEST_DIR/$file" ]; then
