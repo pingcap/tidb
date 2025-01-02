@@ -304,9 +304,6 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
 	tk.MustExec("set @@tidb_executor_concurrency=15")
-	tk.MustExec("create table t3 (id bigint key, b int, c int);")
-	tk.MustExec("insert into t3 select * from t1")
-	tk.MustQuery("split table t3 by (0), (1), (2), (3), (4), (5), (6), (7), (8), (9);")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
 	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
 	start := time.Now()
@@ -324,11 +321,26 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	start = time.Now()
 	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
 	require.Less(t, time.Since(start), time.Millisecond*150)
-
-	// Test
-	start = time.Now()
-	tk.MustQuery("update t3 set b=b+1 where id >= 0")
-	fmt.Printf("update cost %v------------\n\n\n", time.Since(start))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
-	//tk.MustQuery("select * from t3").Check(testkit.Rows(""))
+}
+
+func TestDMLWithLiteCopWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id bigint auto_increment key, b int);")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (b) select b from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
+	tk.MustQuery("split table t1 by (1025);")
+	tk.MustExec("set @@tidb_enable_paging = off")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(50)`))
+	start := time.Now()
+	tk.MustExec("update t1 set b=b+1 where id >= 0;")
+	require.Less(t, time.Since(start), time.Millisecond*350)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
 }

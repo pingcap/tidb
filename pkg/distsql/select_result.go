@@ -388,6 +388,11 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 			return nil
 		}
 	}
+	failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
+		if chk.NumRows() > 0 {
+			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
+		}
+	})
 	// TODO(Shenghui Wu): add metrics
 	encodeType := r.selectResp.GetEncodeType()
 	switch encodeType {
