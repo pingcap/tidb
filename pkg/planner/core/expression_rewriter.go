@@ -822,7 +822,19 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
-
+	// if the right expression is wrapped with a "cast" function, update it to avoid potential incorrect results
+	// See details at https://github.com/pingcap/tidb/issues/50785
+	cond, err := expression.NewFunction(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, rexpr)
+	if err != nil {
+		er.err = err
+		return
+	}
+	if scalar, isScalar := cond.(*expression.ScalarFunction); isScalar {
+		arg1 := scalar.GetArgs()[1]
+		if arg1Func, arg1IsScalar := arg1.(*expression.ScalarFunction); arg1IsScalar && arg1Func.FuncName.L == ast.Cast {
+			rexpr = arg1
+		}
+	}
 	// Create a "max" or "min" aggregation.
 	funcName := ast.AggFuncMax
 	if useMin {
@@ -846,7 +858,11 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	plan4Agg.SetSchema(schema)
 	plan4Agg.AggFuncs = []*aggregation.AggFuncDesc{funcMaxOrMin}
 
-	cond := expression.NewFunctionInternal(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
+	cond, err = expression.NewFunction(er.sctx, cmpFunc, types.NewFieldType(mysql.TypeTiny), lexpr, colMaxOrMin)
+	if err != nil {
+		er.err = err
+		return
+	}
 	er.buildQuantifierPlan(planCtx, plan4Agg, cond, lexpr, rexpr, all, markNoDecorrelate)
 }
 
