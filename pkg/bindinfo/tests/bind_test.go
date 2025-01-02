@@ -17,6 +17,11 @@ package tests
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"strconv"
+	"strings"
+	"testing"
+
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -27,10 +32,6 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
-	"math/rand"
-	"strconv"
-	"strings"
-	"testing"
 )
 
 // utilCleanBindingEnv cleans the binding environment.
