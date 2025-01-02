@@ -1189,7 +1189,9 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 	if w.respCh == nil {
 		resp, err = w.liteSendReq(it)
 		if err != nil {
-			return nil, err
+			resp = &copResponse{err: errors.Trace(err)}
+			w.worker.checkRespOOM(resp)
+			return resp, nil
 		}
 		if len(it.tasks) > 0 {
 			w.respCh = make(chan *copResponse, 2)
