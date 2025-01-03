@@ -374,6 +374,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 	}
 
 	encodedTask := make([][]byte, 0, len(e.TargetTasks))
+
 	for _, task := range e.TargetTasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
@@ -381,6 +382,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		}
 		encodedTask = append(encodedTask, encodedStr)
 	}
+
 	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(e.TargetCTEReaderTasks))
 	for _, cteRTasks := range e.TargetCTEReaderTasks {
 		encodedTasksForOneCTEReader := &tipb.EncodedBytesSlice{
@@ -442,6 +444,7 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 // ToPB generates the pb structure.
 func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
 	encodedTask := make([][]byte, 0, len(e.Tasks))
+
 	for _, task := range e.Tasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
