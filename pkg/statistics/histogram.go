@@ -940,7 +940,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 	lDatum, rDatum *types.Datum,
 	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
-	isDatetime := false
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -971,30 +970,17 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Here we calculate the length of common prefix.
 	var l, r float64
 	commonPrefix := 0
-	if isDatetime {
-		ltime, err := convertTime(lDatum)
-		if err != nil {
-			return 0
-		}
-		rtime, err := convertTime(rDatum)
-		if err != nil {
-			return 0
-		}
-		l = convertMysqlTimeDatumToScalar(ltime)
-		r = convertMysqlTimeDatumToScalar(rtime)
-	} else {
-		if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
-			// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
-			commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
-				hg.GetUpper(hg.Len()-1).GetBytes(),
-				lDatum.GetBytes(),
-				rDatum.GetBytes())
-		}
-
-		// Convert the range we want to estimate to scalar value(float64)
-		l = convertDatumToScalar(lDatum, commonPrefix)
-		r = convertDatumToScalar(rDatum, commonPrefix)
+	if hg.GetLower(0).Kind() == types.KindBytes || hg.GetLower(0).Kind() == types.KindString {
+		// Calculate the common prefix length among the lower and upper bound of histogram and the range we want to estimate.
+		commonPrefix = commonPrefixLength(hg.GetLower(0).GetBytes(),
+			hg.GetUpper(hg.Len()-1).GetBytes(),
+			lDatum.GetBytes(),
+			rDatum.GetBytes())
 	}
+
+	// Convert the range we want to estimate to scalar value(float64)
+	l = convertDatumToScalar(lDatum, commonPrefix)
+	r = convertDatumToScalar(rDatum, commonPrefix)
 
 	unsigned := mysql.HasUnsignedFlag(hg.Tp.GetFlag())
 	// If this is an unsigned column, we need to make sure values are not negative.
@@ -1027,21 +1013,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	var histL, histR float64
-	if isDatetime {
-		ltime, err := convertTime(hg.GetLower(0))
-		if err != nil {
-			return 0
-		}
-		rtime, err := convertTime(hg.GetUpper(hg.Len() - 1))
-		if err != nil {
-			return 0
-		}
-		histL = convertMysqlTimeDatumToScalar(ltime)
-		histR = convertMysqlTimeDatumToScalar(rtime)
-	} else {
-		histL = convertDatumToScalar(hg.GetLower(0), commonPrefix)
-		histR = convertDatumToScalar(hg.GetLower(hg.Len()-1), commonPrefix)
-	}
+	histL = convertDatumToScalar(hg.GetLower(0), commonPrefix)
+	histR = convertDatumToScalar(hg.GetLower(hg.Len()-1), commonPrefix)
 
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
