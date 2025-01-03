@@ -87,6 +87,7 @@ go_library(
         "update.go",
         "utils.go",
         "window.go",
+        "workloadrepo.go",
         "write.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor",

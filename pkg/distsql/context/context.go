@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"go.uber.org/atomic"
 )
 
 // DistSQLContext provides all information needed by using functions in `distsql`
@@ -86,8 +87,8 @@ type DistSQLContext struct {
 
 	ExecDetails *execdetails.SyncExecDetails
 
-	// Only one cop-reader can use lite worker. Using lite-worker in multiple readers will affect the concurrent execution of readers.
-	TryCopLiteWorker uint32
+	// Only one cop-reader can use lite worker at the same time. Using lite-worker in multiple readers will affect the concurrent execution of readers.
+	TryCopLiteWorker atomic.Uint32
 }
 
 // AppendWarning appends the warning to the warning handler.

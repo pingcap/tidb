@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -118,6 +119,7 @@ type worker struct {
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
+	snapshotChan     chan struct{}
 	retentionDays    int32
 }
 
@@ -127,7 +129,17 @@ var workerCtx = worker{
 	retentionDays:    defRententionDays,
 }
 
+func takeSnapshot() error {
+	if workerCtx.snapshotChan == nil {
+		return errors.New("Workload repository is not enabled yet")
+	}
+	workerCtx.snapshotChan <- struct{}{}
+	return nil
+}
+
 func init() {
+	executor.TakeSnapshot = takeSnapshot
+
 	variable.RegisterSysVar(&variable.SysVar{
 		Scope: variable.ScopeGlobal,
 		Name:  repositoryDest,
@@ -336,6 +348,7 @@ func (w *worker) start() error {
 	}
 
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
+	w.snapshotChan = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -344,6 +357,7 @@ func (w *worker) start() error {
 	return nil
 }
 
+// stop will stop the worker.
 func (w *worker) stop() {
 	w.enabled = false
 
@@ -362,8 +376,10 @@ func (w *worker) stop() {
 	}
 
 	w.cancel = nil
+	w.snapshotChan = nil
 }
 
+// setRepositoryDest will change the dest of workload snapshot.
 func (w *worker) setRepositoryDest(_ context.Context, dst string) error {
 	w.Lock()
 	defer w.Unlock()
