@@ -62,6 +62,15 @@ type DeltaUpdate struct {
 	IsLocked bool
 }
 
+// NewDeltaUpdate creates a new DeltaUpdate.
+func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *DeltaUpdate {
+	return &DeltaUpdate{
+		Delta:    delta,
+		TableID:  tableID,
+		IsLocked: isLocked,
+	}
+}
+
 // UpdateStatsMeta updates the stats meta for multiple tables.
 // It uses the INSERT INTO ... ON DUPLICATE KEY UPDATE syntax to fill the missing records.
 func UpdateStatsMeta(
