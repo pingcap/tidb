@@ -243,7 +243,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok || row.err != nil {
 				return row.err
 			}
-			// Be carefule, if inline projection occurs.
+			// Be careful, if inline projection occurs.
 			// TopN's schema may be not match child executor's output columns.
 			// We should extract only the required columns from child's executor.
 			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
