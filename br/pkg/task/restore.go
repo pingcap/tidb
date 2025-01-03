@@ -874,7 +874,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.logTableHistoryManager != nil {
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
-		err := adjustTablesToRestoreAndCreateFilter(cfg.logTableHistoryManager, cfg.RestoreConfig, client, fileMap, tableMap)
+		err := adjustTablesToRestoreAndCreateTableTracker(cfg.logTableHistoryManager, cfg.RestoreConfig, client, fileMap, tableMap)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -885,7 +885,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			zap.Int("db", len(dbMap)))
 
 		// need to update to include all eligible table id from snapshot restore
-		UpdatePiTRFilter(cfg.RestoreConfig, tableMap)
+		UpdatePiTRTableTracker(cfg.RestoreConfig, tableMap)
 	}
 	files, tables, dbs := convertMapsToSlices(fileMap, tableMap, dbMap)
 
@@ -1396,7 +1396,7 @@ func filterRestoreFiles(
 	return
 }
 
-func adjustTablesToRestoreAndCreateFilter(
+func adjustTablesToRestoreAndCreateTableTracker(
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
 	cfg *RestoreConfig,
 	client *snapclient.SnapClient,
@@ -1405,14 +1405,14 @@ func adjustTablesToRestoreAndCreateFilter(
 ) (err error) {
 	snapshotDBMap := client.GetDatabaseMap()
 
-	// build filter for pitr restore to use later
-	piTRTableFilter := utils.NewPiTRTableFilter()
+	// build tracker for pitr restore to use later
+	piTRTableTracker := utils.NewPiTRTableTracker()
 
 	// put all the newly created db that matches the filter during log backup into the pitr filter
 	newlyCreatedDBs := logBackupTableHistory.GetNewlyCreatedDBHistory()
 	for dbId, dbName := range newlyCreatedDBs {
 		if utils.MatchSchema(cfg.TableFilter, dbName) {
-			piTRTableFilter.AddDB(dbId)
+			piTRTableTracker.AddDB(dbId)
 		}
 	}
 
@@ -1424,10 +1424,11 @@ func adjustTablesToRestoreAndCreateFilter(
 		end := dbIDAndTableName[1]
 
 		var dbName string
+		// check in snapshot
 		if snapDb, exists := snapshotDBMap[end.DbID]; exists {
 			dbName = snapDb.Info.Name.O
 		} else if name, exists := logBackupTableHistory.GetDBNameByID(end.DbID); exists {
-			// if db id does not exist in the snapshot, meaning it's created during log backup
+			// check during log backup
 			dbName = name
 		} else {
 			log.Warn("did not find db id in full/log backup, "+
@@ -1446,10 +1447,10 @@ func adjustTablesToRestoreAndCreateFilter(
 		// 2. original has been renamed and current is in the filter range
 		// we need to restore original table
 		if utils.MatchTable(cfg.TableFilter, dbName, end.TableName) {
-			// put this db/table id into pitr filter as it matches with user's filter
+			// put this db/table id into pitr tracker as it matches with user's filter
 			// have to update filter here since table might be empty or not in snapshot so nothing will be returned .
 			// but we still need to capture this table id to restore during log restore.
-			piTRTableFilter.AddTable(end.DbID, tableID)
+			piTRTableTracker.AddTable(end.DbID, tableID)
 
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
@@ -1477,7 +1478,7 @@ func adjustTablesToRestoreAndCreateFilter(
 			// restoring
 		} else if utils.MatchTable(cfg.TableFilter, dbName, start.TableName) {
 			// remove it from the filter, will not remove db even table size becomes 0
-			_ = piTRTableFilter.Remove(start.DbID, tableID)
+			_ = piTRTableTracker.Remove(start.DbID, tableID)
 
 			// check if snapshot contains the original db/table
 			originalDB, exists := snapshotDBMap[start.DbID]
@@ -1500,15 +1501,15 @@ func adjustTablesToRestoreAndCreateFilter(
 			}
 		}
 	}
-	// store the filter into config
-	log.Info("pitr table filter", zap.String("map", piTRTableFilter.String()))
-	cfg.PiTRTableFilter = piTRTableFilter
+	// store the tracker into config
+	log.Info("pitr table tracker", zap.String("map", piTRTableTracker.String()))
+	cfg.PiTRTableTracker = piTRTableTracker
 	return
 }
 
-func UpdatePiTRFilter(cfg *RestoreConfig, tableMap map[int64]*metautil.Table) {
+func UpdatePiTRTableTracker(cfg *RestoreConfig, tableMap map[int64]*metautil.Table) {
 	for _, table := range tableMap {
-		cfg.PiTRTableFilter.AddTable(table.DB.ID, table.Info.ID)
+		cfg.PiTRTableTracker.AddTable(table.DB.ID, table.Info.ID)
 	}
 }
 

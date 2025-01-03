@@ -27,7 +27,7 @@ type PiTRTableTracker struct {
 	DBIdToTable map[int64]map[int64]struct{}
 }
 
-func NewPiTRTableFilter() *PiTRTableTracker {
+func NewPiTRTableTracker() *PiTRTableTracker {
 	return &PiTRTableTracker{
 		DBIdToTable: make(map[int64]map[int64]struct{}),
 	}

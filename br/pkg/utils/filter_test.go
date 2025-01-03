@@ -8,14 +8,14 @@ import (
 
 func TestPiTRTableTracker(t *testing.T) {
 	t.Run("test new tracker", func(t *testing.T) {
-		tracker := NewPiTRTableFilter()
+		tracker := NewPiTRTableTracker()
 		require.NotNil(t, tracker)
 		require.NotNil(t, tracker.DBIdToTable)
 		require.Empty(t, tracker.DBIdToTable)
 	})
 
 	t.Run("test update and contains table", func(t *testing.T) {
-		tracker := NewPiTRTableFilter()
+		tracker := NewPiTRTableTracker()
 
 		tracker.AddDB(1)
 		tracker.AddTable(1, 100)
@@ -38,7 +38,7 @@ func TestPiTRTableTracker(t *testing.T) {
 	})
 
 	t.Run("test remove table", func(t *testing.T) {
-		tracker := NewPiTRTableFilter()
+		tracker := NewPiTRTableTracker()
 
 		tracker.AddTable(1, 100)
 		tracker.AddTable(1, 101)

@@ -2101,7 +2101,7 @@ func buildSchemaReplace(
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig,
 	tableMappingManager *stream.TableMappingManager) error {
 	// get full backup meta storage if needed.
-	fullBackupStorage, err := parseFullBackupTablesStorage(cfg.RestoreConfig)
+	fullBackupStorageConfig, err := parseFullBackupTablesStorage(cfg.RestoreConfig)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2109,11 +2109,10 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	dbReplaces, err := client.GetBaseIDMap(ctx, &logclient.GetIDMapConfig{
-		LoadSavedIDMap:    saved,
-		TableFilter:       cfg.TableFilter,
-		PiTRTableFilter:   cfg.PiTRTableFilter,
-		FullBackupStorage: fullBackupStorage,
-		CipherInfo:        &cfg.Config.CipherInfo,
+		LoadSavedIDMap:          saved,
+		PiTRTableTracker:        cfg.PiTRTableTracker,
+		FullBackupStorageConfig: fullBackupStorageConfig,
+		CipherInfo:              &cfg.Config.CipherInfo,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2126,7 +2125,11 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		}
 	} else {
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
-		tableMappingManager.FilterDBReplaceMap(cfg.PiTRTableFilter)
+		if cfg.PiTRTableTracker != nil {
+			tableMappingManager.FilterDBReplaceMap(cfg.PiTRTableTracker)
+		} else {
+			log.Warn("pitr table tracker is nil, base map is not from full backup")
+		}
 		err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 		if err != nil {
 			return errors.Trace(err)

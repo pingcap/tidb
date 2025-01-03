@@ -68,7 +68,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -949,10 +948,12 @@ func (rc *LogClient) loadSchemasMap(
 func readFilteredFullBackupTables(
 	ctx context.Context,
 	s storage.ExternalStorage,
-	tableFilter filter.Filter,
 	piTRTableFilter *utils.PiTRTableTracker,
 	cipherInfo *backuppb.CipherInfo,
 ) (map[int64]*metautil.Table, error) {
+	if piTRTableFilter == nil {
+		return nil, errors.Errorf("missing pitr table tracker information")
+	}
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -978,11 +979,7 @@ func readFilteredFullBackupTables(
 
 	tables := make(map[int64]*metautil.Table)
 	for _, db := range databases {
-		dbName := db.Info.Name.O
-		if name, ok := utils.StripTempTableNamePrefixIfNeeded(db.Info.Name.O); utils.IsSysDB(name) && ok {
-			dbName = name
-		}
-		if !tableFilter.MatchSchema(dbName) && !(piTRTableFilter != nil && piTRTableFilter.ContainsDB(db.Info.ID)) {
+		if !piTRTableFilter.ContainsDB(db.Info.ID) {
 			continue
 		}
 
@@ -994,8 +991,7 @@ func readFilteredFullBackupTables(
 				tableAdded = true
 				continue
 			}
-			if !tableFilter.MatchTable(dbName, table.Info.Name.O) &&
-				!(piTRTableFilter != nil && piTRTableFilter.ContainsTable(db.Info.ID, table.Info.ID)) {
+			if !piTRTableFilter.ContainsTable(db.Info.ID, table.Info.ID) {
 				continue
 			}
 			tables[table.Info.ID] = table
@@ -1022,12 +1018,12 @@ type FullBackupStorageConfig struct {
 type GetIDMapConfig struct {
 	// required
 	LoadSavedIDMap bool
-	TableFilter    filter.Filter // original table filter from user
 
 	// optional
-	FullBackupStorage *FullBackupStorageConfig
-	CipherInfo        *backuppb.CipherInfo
-	PiTRTableFilter   *utils.PiTRTableTracker // generated table filter that contain all the table id that needs to restore
+	FullBackupStorageConfig *FullBackupStorageConfig
+	CipherInfo              *backuppb.CipherInfo
+	// generated at full restore step that contains all the table ids that need to restore
+	PiTRTableTracker *utils.PiTRTableTracker
 }
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
@@ -1040,7 +1036,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	cfg *GetIDMapConfig,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
-	if cfg.FullBackupStorage == nil {
+	if cfg.FullBackupStorageConfig == nil {
 		envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
 		if ok && len(envVal) > 0 {
 			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
@@ -1048,11 +1044,11 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 		}
 		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
 	}
-	s, err := storage.New(ctx, cfg.FullBackupStorage.Backend, cfg.FullBackupStorage.Opts)
+	s, err := storage.New(ctx, cfg.FullBackupStorageConfig.Backend, cfg.FullBackupStorageConfig.Opts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	filteredFullBackupTables, err := readFilteredFullBackupTables(ctx, s, cfg.TableFilter, cfg.PiTRTableFilter, cfg.CipherInfo)
+	filteredFullBackupTables, err := readFilteredFullBackupTables(ctx, s, cfg.PiTRTableTracker, cfg.CipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1116,7 +1112,7 @@ func (rc *LogClient) GetBaseIDMap(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && cfg.FullBackupStorage == nil {
+	if len(dbMaps) <= 0 && cfg.FullBackupStorageConfig == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS)
 		if err != nil {
