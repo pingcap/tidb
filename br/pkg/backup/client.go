@@ -1209,7 +1209,7 @@ func (bc *Client) OnBackupResponse(
 			if len(errMsg) <= 0 {
 				errMsg = errPb.Msg
 			}
-			log.Warn("the backup error from tikv make br progress been given up", zap.String("error message", errPb.Msg))
+			logutil.CL(ctx).Error("the backup error from tikv make br progress been given up", zap.String("error message", errPb.Msg))
 			// TODO output a precise store address. @3pointer
 			return nil, errors.Annotatef(berrors.ErrKVStorage, "error happen in store %v: %s",
 				storeID,
