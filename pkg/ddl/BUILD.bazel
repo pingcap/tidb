@@ -200,6 +200,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//servicediscovery",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_x_sync//errgroup",
