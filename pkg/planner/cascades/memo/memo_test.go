@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -349,4 +350,71 @@ func TestRecursiveMergeGroup(t *testing.T) {
 	})
 	require.False(t, mask2[0])
 	require.True(t, mask2[1])
+}
+
+func TestIteratorLogicalPlan(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/cascades/memo/MockPlanSkipMemoDeriveStats"))
+	}()
+	ctx := mock.NewContext()
+	asT1 := pmodel.NewCIStr("t1")
+	asT2 := pmodel.NewCIStr("t2")
+	t1 := logicalop.DataSource{TableAsName: &asT1}.Init(ctx, 0)
+	t2 := logicalop.DataSource{TableAsName: &asT2}.Init(ctx, 0)
+	join1 := logicalop.LogicalJoin{}.Init(ctx, 0)
+	join1.SetChildren(t1, t2)
+
+	asT3 := pmodel.NewCIStr("t3")
+	asT4 := pmodel.NewCIStr("t4")
+	t3 := logicalop.DataSource{TableAsName: &asT3}.Init(ctx, 0)
+	t4 := logicalop.DataSource{TableAsName: &asT4}.Init(ctx, 0)
+
+	mm := NewMemo()
+	gE, err := mm.Init(join1)
+	require.Nil(t, err)
+
+	// which means t1 and t3 are equivalent class.
+	mm.CopyIn(gE.Inputs[0], t3)
+	// which means t2 and t4 are equivalent class.
+	mm.CopyIn(gE.Inputs[1], t4)
+	//           G1
+	//         /    \
+	//  G2{t1,t3}   G3{t2,t4}
+
+	iter := &IteratorLP{
+		root:      mm.rootGroup,
+		stackInfo: make([]*list.Element, 0, 4),
+		traceID:   -1,
+	}
+	lp := iter.Next()
+	require.NotNil(t, lp)
+	join, ok := lp.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t1")
+	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t2")
+
+	lp = iter.Next()
+	require.NotNil(t, lp)
+	join, ok = lp.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t1")
+	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t4")
+
+	lp = iter.Next()
+	require.NotNil(t, lp)
+	join, ok = lp.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t3")
+	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t2")
+
+	lp = iter.Next()
+	require.NotNil(t, lp)
+	join, ok = lp.(*logicalop.LogicalJoin)
+	require.True(t, ok)
+	require.True(t, join.Children()[0].(*logicalop.DataSource).TableAsName.L == "t3")
+	require.True(t, join.Children()[1].(*logicalop.DataSource).TableAsName.L == "t4")
+
+	lp = iter.Next()
+	require.Nil(t, lp)
 }

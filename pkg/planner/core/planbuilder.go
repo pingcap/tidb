@@ -1584,6 +1584,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		if err != nil {
 			return nil, err
 		}
+	case ast.AdminWorkloadRepoCreate:
+		return &WorkloadRepoCreate{}, nil
 	default:
 		return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported ast.AdminStmt(%T) for buildAdmin", as)
 	}
