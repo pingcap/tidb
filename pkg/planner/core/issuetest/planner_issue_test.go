@@ -218,7 +218,7 @@ func TestIssue50080(t *testing.T) {
 		"└─TableRowIDScan_6(Probe) 133.66 cop[tikv] table:test keep order:false"))
 	tk.MustExec("drop index IX_CUST_RELA_DATE ON  test")
 	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2024-01-01 00:00:01';").Check(testkit.Rows(
-		"TableReader_7 237.16 root  data:Selection_6",
-		"└─Selection_6 237.16 cop[tikv]  gt(test.test.updated_date, 2023-12-31 23:59:00.000000), lt(test.test.updated_date, 2024-01-01 00:00:01.000000)",
+		"TableReader_7 237.21 root  data:Selection_6",
+		"└─Selection_6 237.21 cop[tikv]  gt(test.test.updated_date, 2023-12-31 23:59:00.000000), lt(test.test.updated_date, 2024-01-01 00:00:01.000000)",
 		"  └─TableFullScan_5 859718933.00 cop[tikv] table:test keep order:false"))
 }
