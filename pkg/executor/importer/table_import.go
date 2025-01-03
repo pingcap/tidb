@@ -399,24 +399,22 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
-
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
 		return nil, err2
 	}
 
-	var maxRowID int64
 	timestamp := time.Now().Unix()
-	tableCp := &checkpoints.TableCheckpoint{
-		Engines: map[int32]*checkpoints.EngineCheckpoint{},
-	}
+	// engines indicates the map that contains the k-v: the engineID -> EngineCheckpoint.
+	engines := make(map[int32]*checkpoints.EngineCheckpoint, 0)
+
 	for _, region := range tableRegions {
-		engine, found := tableCp.Engines[region.EngineID]
+		engine, found := engines[region.EngineID]
 		if !found {
 			engine = &checkpoints.EngineCheckpoint{
 				Status: checkpoints.CheckpointStatusLoaded,
 			}
-			tableCp.Engines[region.EngineID] = engine
+			engines[region.EngineID] = engine
 		}
 		ccp := &checkpoints.ChunkCheckpoint{
 			Key: checkpoints.ChunkCheckpointKey{
@@ -429,14 +427,12 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 			Timestamp:         timestamp,
 		}
 		engine.Chunks = append(engine.Chunks, ccp)
-		if region.Chunk.RowIDMax > maxRowID {
-			maxRowID = region.Chunk.RowIDMax
-		}
 	}
 
+	
 	// Add index engine checkpoint
-	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return tableCp.Engines, nil
+	engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
+	return engines, nil
 }
 
 // a simplified version of EstimateCompactionThreshold
