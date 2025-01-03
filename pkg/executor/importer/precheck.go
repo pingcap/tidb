@@ -46,7 +46,7 @@ var GetEtcdClient = getEtcdClient
 //   - when import from file
 //     1. there is no active job on the target table
 //     2. the total file size > 0
-//     3. if global sort, thread count >= 16 and have required privileges
+//     3. if global sort, check required privileges
 //   - target table should be empty
 //   - no CDC or PiTR tasks running
 //

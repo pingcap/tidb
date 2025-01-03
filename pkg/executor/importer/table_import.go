@@ -412,9 +412,9 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 		chunks, found := engineChunks[region.EngineID]
 		if !found {
 			chunks = make([]checkpoints.Chunk, 0)
-			engineChunks[region.EngineID] = chunks
 		}
-		chunks = append(chunks, checkpoints.Chunk{
+
+		engineChunks[region.EngineID] = append(chunks, checkpoints.Chunk{
 			Path:         region.FileMeta.Path,
 			FileSize:     region.FileMeta.FileSize,
 			Offset:       region.Chunk.Offset,

@@ -375,6 +375,7 @@ func TestPopulateChunks(t *testing.T) {
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)
 	require.Len(t, engines, 3)
-	require.Len(t, engines[0].Chunks, 2)
-	require.Len(t, engines[1].Chunks, 1)
+	require.Len(t, engines[0], 2)
+	require.Len(t, engines[1], 1)
+	require.Len(t, engines[common.IndexEngineID], 0)
 }
