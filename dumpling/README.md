@@ -6,7 +6,7 @@
 **Dumpling** is a tool and a Go library for creating an SQL dump from a MySQL-compatible database.
 It is intended to replace `mysqldump` and `mydumper` when targeting TiDB.
 
-You may read the [design document](https://github.com/pingcap/community/blob/master/archive/misc/rfc/2019-12-06-dumpling.md), [English user guide](docs/en/user-guide.md) and [中文使用手册](docs/cn/user-guide.md) for details. The end-user documentation is available here: [en](https://docs.pingcap.com/tidb/stable/dumpling-overview), [zh](https://docs.pingcap.com/zh/tidb/stable/dumpling-overview), [ja](https://docs.pingcap.com/ja/tidb/stable/dumpling-overview).
+You may read the original [design document](https://github.com/pingcap/community/blob/master/archive/misc/rfc/2019-12-06-dumpling.md). The end-user documentation is available here: [en](https://docs.pingcap.com/tidb/stable/dumpling-overview), [zh](https://docs.pingcap.com/zh/tidb/stable/dumpling-overview), [ja](https://docs.pingcap.com/ja/tidb/stable/dumpling-overview).
 
 Features
 --------
