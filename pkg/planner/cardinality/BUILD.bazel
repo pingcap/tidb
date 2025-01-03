@@ -59,7 +59,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 28,
+=======
+    shard_count = 30,
+>>>>>>> 4721bc3a5a8 (planner: Choose index with statistics vs one without (#58593))
     deps = [
         "//pkg/config",
         "//pkg/domain",
