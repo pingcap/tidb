@@ -44,6 +44,19 @@ create index idxOK4 on t (b) global;
 create unique index idxOK5 on t (a) global;
 create unique index idxOK6 on t (b) global;
 alter table t remove partitioning;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int DEFAULT NULL,
+  `b` int DEFAULT NULL,
+  UNIQUE KEY `a` (`a`),
+  KEY `idxOK` (`b`),
+  UNIQUE KEY `idxOK2` (`a`),
+  UNIQUE KEY `idxOK3` (`b`),
+  KEY `idxOK4` (`b`),
+  UNIQUE KEY `idxOK5` (`a`),
+  UNIQUE KEY `idxOK6` (`b`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t add index idxErr (b) global;
 Error 8200 (HY000): Unsupported Global Index on non-partitioned table
 alter table t add unique index idxErr (b) global;

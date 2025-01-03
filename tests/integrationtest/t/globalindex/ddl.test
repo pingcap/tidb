@@ -41,6 +41,7 @@ create unique index idxOK5 on t (a) global;
 create unique index idxOK6 on t (b) global;
 
 alter table t remove partitioning;
+show create table t;
 -- error 8200
 alter table t add index idxErr (b) global;
 -- error 8200
