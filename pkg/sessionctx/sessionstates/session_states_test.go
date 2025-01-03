@@ -1293,7 +1293,10 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop table test.t1")
 				return nil
 			},
-			restoreErr: errno.ErrNoSuchTable,
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
+				return
+			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
 			},
@@ -1308,7 +1311,10 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("drop database test1")
 				return nil
 			},
-			restoreErr: errno.ErrNoSuchTable,
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
+				return
+			},
 		},
 		{
 			// alter the table
@@ -1317,7 +1323,10 @@ func TestSQLBinding(t *testing.T) {
 				tk.MustExec("alter table test.t1 drop index name")
 				return nil
 			},
-			restoreErr: errno.ErrKeyDoesNotExist,
+			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, 1, len(tk.MustQuery("show session bindings").Rows()))
+				return
+			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("alter table test.t1 add index name(name)")
 			},
