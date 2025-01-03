@@ -11,13 +11,11 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core/resolve",
