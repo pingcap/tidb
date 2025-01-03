@@ -2071,11 +2071,7 @@ func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) err
 }
 
 func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore) bool {
-	newTask := false
-	if checkpointTaskInfo != nil && checkpointTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersisted {
-		newTask = true
-	}
-	return newTask
+	return checkpointTaskInfo != nil && checkpointTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersisted
 }
 
 func buildSchemaReplace(

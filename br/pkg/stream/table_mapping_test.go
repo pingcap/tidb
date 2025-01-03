@@ -557,61 +557,10 @@ func TestFilterDBReplaceMap(t *testing.T) {
 			tm := NewTableMappingManager()
 			tm.DBReplaceMap = tt.initial
 
-			// create a copy of globalIdMap before filtering
-			globalIdMap := make(map[UpstreamID]DownstreamID)
-			for dbID, dbReplace := range tt.initial {
-				globalIdMap[dbID] = dbReplace.DbID
-				for tblID, tblReplace := range dbReplace.TableMap {
-					globalIdMap[tblID] = tblReplace.TableID
-					for partID, partDownID := range tblReplace.PartitionMap {
-						globalIdMap[partID] = partDownID
-					}
-				}
-			}
-			tm.globalIdMap = globalIdMap
-
 			tm.FilterDBReplaceMap(tt.filter)
 
 			// verify DBReplaceMap is as expected
 			require.Equal(t, tt.expected, tm.DBReplaceMap)
-
-			// verify globalIdMap is properly filtered as well
-			for dbID, dbReplace := range tt.expected {
-				require.Equal(t, dbReplace.DbID, tm.globalIdMap[dbID])
-				for tblID, tblReplace := range dbReplace.TableMap {
-					require.Equal(t, tblReplace.TableID, tm.globalIdMap[tblID])
-					for partID, partDownID := range tblReplace.PartitionMap {
-						require.Equal(t, partDownID, tm.globalIdMap[partID])
-					}
-				}
-			}
-
-			// verify that filtered IDs are removed from globalIdMap
-			for upID := range globalIdMap {
-				found := false
-				for dbID, dbReplace := range tt.expected {
-					if upID == dbID {
-						found = true
-						break
-					}
-					for tblID, tblReplace := range dbReplace.TableMap {
-						if upID == tblID {
-							found = true
-							break
-						}
-						for partID := range tblReplace.PartitionMap {
-							if upID == partID {
-								found = true
-								break
-							}
-						}
-					}
-				}
-				if !found {
-					_, exists := tm.globalIdMap[upID]
-					require.False(t, exists, "ID %d should have been removed from globalIdMap", upID)
-				}
-			}
 		})
 	}
 }
@@ -913,18 +862,6 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 			tm.DBReplaceMap = tt.initial
 			tm.tempIDCounter = tt.tempCounter
 
-			globalIdMap := make(map[UpstreamID]DownstreamID)
-			for dbID, dbReplace := range tt.initial {
-				globalIdMap[dbID] = dbReplace.DbID
-				for tblID, tblReplace := range dbReplace.TableMap {
-					globalIdMap[tblID] = tblReplace.TableID
-					for partID, partDownID := range tblReplace.PartitionMap {
-						globalIdMap[partID] = partDownID
-					}
-				}
-			}
-			tm.globalIdMap = globalIdMap
-
 			err := tm.ReplaceTemporaryIDs(context.Background(), tt.genGlobalIDs)
 
 			if tt.expectedErr != nil {
@@ -936,22 +873,6 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tt.expected, tm.DBReplaceMap)
 			require.Equal(t, InitialTempId, tm.tempIDCounter)
-
-			// verify globalIdMap is properly updated as well
-			for dbID, dbReplace := range tt.expected {
-				require.Equal(t, dbReplace.DbID, tm.globalIdMap[dbID])
-				for tblID, tblReplace := range dbReplace.TableMap {
-					require.Equal(t, tblReplace.TableID, tm.globalIdMap[tblID])
-					for partID, partDownID := range tblReplace.PartitionMap {
-						require.Equal(t, partDownID, tm.globalIdMap[partID])
-					}
-				}
-			}
-
-			// verify no temporary IDs remain
-			for _, id := range tm.globalIdMap {
-				require.False(t, id < 0, "temporary ID %d still exists in globalIdMap", id)
-			}
 		})
 	}
 }

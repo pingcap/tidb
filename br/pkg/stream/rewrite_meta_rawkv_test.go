@@ -411,7 +411,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	value, err := json.Marshal(&t1Copy)
 	require.Nil(t, err)
 
-	err = tc.ProcessTableValueAndUpdateIdMapping(dbID1, *t1Copy)
+	err = tc.ProcessTableValueAndUpdateIdMapping(dbID1, t1Copy)
 	require.Nil(t, err)
 
 	sr := NewSchemasReplace(
@@ -433,7 +433,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// rewrite no partition table
 	value, err = json.Marshal(&t2Copy)
 	require.Nil(t, err)
-	err = tc.ProcessTableValueAndUpdateIdMapping(dbID2, *t2Copy)
+	err = tc.ProcessTableValueAndUpdateIdMapping(dbID2, t2Copy)
 	require.Nil(t, err)
 	value, err = sr.rewriteTableInfo(value, dbID2)
 	require.Nil(t, err)

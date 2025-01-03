@@ -1118,15 +1118,9 @@ func (rc *LogClient) GetBaseIDMap(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		existTiFlashTable := false
-		rc.dom.InfoSchema().ListTablesWithSpecialAttribute(func(tableInfo *model.TableInfo) bool {
-			if tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 {
-				existTiFlashTable = true
-			}
-			return false
-		})
-		if existTiFlashTable {
-			return nil, errors.Errorf("exist table(s) have tiflash replica, please remove it before restore")
+		err := rc.validateNoTiFlashReplica()
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 

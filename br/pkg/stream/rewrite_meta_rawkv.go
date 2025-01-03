@@ -33,7 +33,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type RewriteStatus int
 type UpstreamID = int64
 type DownstreamID = int64
 

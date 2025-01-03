@@ -43,7 +43,10 @@ const InitialTempId int64 = 0
 // the dummy ids, it builds the final state of the db replace map
 type TableMappingManager struct {
 	DBReplaceMap map[UpstreamID]*DBReplace
-	globalIdMap  map[UpstreamID]DownstreamID
+
+	// used during scanning log to identify already seen id mapping. For example after exchange partition, the
+	// exchanged-in table already had an id mapping can be identified in the partition so don't allocate a new id.
+	globalIdMap map[UpstreamID]DownstreamID
 
 	// a counter for temporary IDs, need to get real global id
 	// once full restore completes
@@ -67,22 +70,13 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 	if dbReplaceMap == nil {
 		dbReplaceMap = make(map[UpstreamID]*DBReplace)
 	}
-	globalTableIdMap := make(map[UpstreamID]DownstreamID)
-	for _, dr := range dbReplaceMap {
-		for tblID, tr := range dr.TableMap {
-			globalTableIdMap[tblID] = tr.TableID
-			for oldpID, newpID := range tr.PartitionMap {
-				globalTableIdMap[oldpID] = newpID
-			}
-		}
-	}
-	tm.globalIdMap = globalTableIdMap
-	tm.DBReplaceMap = dbReplaceMap
 
+	// doesn't even need to build globalIdMap since loading DBReplaceMap from saved checkpoint
+	tm.DBReplaceMap = dbReplaceMap
 	return nil
 }
 
-func (tm *TableMappingManager) ProcessDBValueAndUpdateIdMapping(dbInfo model.DBInfo) error {
+func (tm *TableMappingManager) ProcessDBValueAndUpdateIdMapping(dbInfo *model.DBInfo) error {
 	if dr, exist := tm.DBReplaceMap[dbInfo.ID]; !exist {
 		newID := tm.generateTempID()
 		tm.DBReplaceMap[dbInfo.ID] = NewDBReplace(dbInfo.Name.O, newID)
@@ -93,7 +87,7 @@ func (tm *TableMappingManager) ProcessDBValueAndUpdateIdMapping(dbInfo model.DBI
 	return nil
 }
 
-func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, tableInfo model.TableInfo) error {
+func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, tableInfo *model.TableInfo) error {
 	var (
 		exist        bool
 		dbReplace    *DBReplace
@@ -144,18 +138,6 @@ func (tm *TableMappingManager) ProcessTableValueAndUpdateIdMapping(dbID int64, t
 }
 
 func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBReplace) {
-	// update globalIdMap
-	for upstreamID, dbReplace := range baseMap {
-		tm.globalIdMap[upstreamID] = dbReplace.DbID
-
-		for tableUpID, tableReplace := range dbReplace.TableMap {
-			tm.globalIdMap[tableUpID] = tableReplace.TableID
-			for partUpID, partDownID := range tableReplace.PartitionMap {
-				tm.globalIdMap[partUpID] = partDownID
-			}
-		}
-	}
-
 	// merge baseMap to DBReplaceMap
 	for upstreamID, baseDBReplace := range baseMap {
 		if existingDBReplace, exists := tm.DBReplaceMap[upstreamID]; exists {
@@ -179,7 +161,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
-	return len(tm.DBReplaceMap) == 0 && len(tm.globalIdMap) == 0
+	return len(tm.DBReplaceMap) == 0
 }
 
 func (tm *TableMappingManager) ReplaceTemporaryIDs(
@@ -192,28 +174,33 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	// find actually used temporary IDs
 	usedTempIDs := make(map[DownstreamID]struct{})
 
+	// Helper function to check and add temporary ID
+	addTempIDIfNeeded := func(id DownstreamID) error {
+		if id < 0 {
+			if _, exists := usedTempIDs[id]; exists {
+				return errors.Annotate(berrors.ErrRestoreInvalidRewrite,
+					fmt.Sprintf("found duplicate temporary ID: %d", id))
+			}
+			usedTempIDs[id] = struct{}{}
+		}
+		return nil
+	}
+
 	// check DBReplaceMap for used temporary IDs
 	// any value less than 0 is temporary ID
 	for _, dr := range tm.DBReplaceMap {
-		if dr.DbID < 0 {
-			usedTempIDs[dr.DbID] = struct{}{}
+		if err := addTempIDIfNeeded(dr.DbID); err != nil {
+			return err
 		}
 		for _, tr := range dr.TableMap {
-			if tr.TableID < 0 {
-				usedTempIDs[tr.TableID] = struct{}{}
+			if err := addTempIDIfNeeded(tr.TableID); err != nil {
+				return err
 			}
 			for _, partID := range tr.PartitionMap {
-				if partID < 0 {
-					usedTempIDs[partID] = struct{}{}
+				if err := addTempIDIfNeeded(partID); err != nil {
+					return err
 				}
 			}
-		}
-	}
-
-	// check in globalIdMap as well just be safe
-	for _, downID := range tm.globalIdMap {
-		if downID < 0 {
-			usedTempIDs[downID] = struct{}{}
 		}
 	}
 
@@ -223,7 +210,7 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 		tempIDs = append(tempIDs, id)
 	}
 
-	// sort to -1, -2, -4 ... etc
+	// sort to -1, -2, -4, -8 ... etc
 	sort.Slice(tempIDs, func(i, j int) bool {
 		return tempIDs[i] > tempIDs[j]
 	})
@@ -244,13 +231,6 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	idMapping := make(map[DownstreamID]DownstreamID, len(tempIDs))
 	for i, tempID := range tempIDs {
 		idMapping[tempID] = newIDs[i]
-	}
-
-	// replace temp id in globalIdMap
-	for upID, downID := range tm.globalIdMap {
-		if newID, exists := idMapping[downID]; exists {
-			tm.globalIdMap[upID] = newID
-		}
 	}
 
 	// replace temp id in DBReplaceMap
@@ -277,9 +257,6 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 }
 
 func (tm *TableMappingManager) FilterDBReplaceMap(filter *utils.PiTRTableTracker) {
-	// collect all IDs that should be kept
-	keepIDs := make(map[UpstreamID]struct{})
-
 	// iterate through existing DBReplaceMap
 	for dbID, dbReplace := range tm.DBReplaceMap {
 		// remove entire database if not in filter
@@ -288,25 +265,11 @@ func (tm *TableMappingManager) FilterDBReplaceMap(filter *utils.PiTRTableTracker
 			continue
 		}
 
-		keepIDs[dbID] = struct{}{}
-
 		// filter tables in this database
-		for tableID, tableReplace := range dbReplace.TableMap {
+		for tableID := range dbReplace.TableMap {
 			if !filter.ContainsTable(dbID, tableID) {
 				delete(dbReplace.TableMap, tableID)
-			} else {
-				keepIDs[tableID] = struct{}{}
-				for partitionID := range tableReplace.PartitionMap {
-					keepIDs[partitionID] = struct{}{}
-				}
 			}
-		}
-	}
-
-	// remove any ID from globalIdMap that isn't in keepIDs
-	for id := range tm.globalIdMap {
-		if _, ok := keepIDs[id]; !ok {
-			delete(tm.globalIdMap, id)
 		}
 	}
 }

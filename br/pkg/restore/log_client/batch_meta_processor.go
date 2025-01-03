@@ -186,7 +186,7 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
 
 				// update the id map
-				if err = mp.tableMappingManager.ProcessDBValueAndUpdateIdMapping(dbInfo); err != nil {
+				if err = mp.tableMappingManager.ProcessDBValueAndUpdateIdMapping(&dbInfo); err != nil {
 					return nil, errors.Trace(err)
 				}
 			} else if !meta.IsDBkey(rawKey.Key) {
@@ -210,7 +210,7 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
 
 				// update the id map
-				if err = mp.tableMappingManager.ProcessTableValueAndUpdateIdMapping(dbID, tableInfo); err != nil {
+				if err = mp.tableMappingManager.ProcessTableValueAndUpdateIdMapping(dbID, &tableInfo); err != nil {
 					return nil, errors.Trace(err)
 				}
 			}
