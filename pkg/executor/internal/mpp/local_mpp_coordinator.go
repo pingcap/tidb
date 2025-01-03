@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
@@ -40,11 +41,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/store/helper"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/tikv"
 	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -202,6 +205,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
 	}
+	storeZoneMap := prepareZoneInfo(c.sessionCtx.GetStore())
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
 			err = util.UpdateExecutorTableID(context.Background(), dagReq.RootExecutor, true, mppTask.PartitionTableIDs)
@@ -217,6 +221,8 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		if err != nil {
 			return err
 		}
+		taskZoneLabel := storeZoneMap[mppTask.Meta.GetAddress()]
+		c.fillSameZoneFlagForExchange(dagReq.RootExecutor, taskZoneLabel, storeZoneMap)
 		pbData, err := dagReq.Marshal()
 		if err != nil {
 			return errors.Trace(err)
@@ -341,6 +347,96 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 		}
 	}
 	return nil
+}
+
+func prepareZoneInfo(store kv.Storage) map[string]string {
+	tikvStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil
+	}
+	storeZoneMap := make(map[string]string)
+	cache := tikvStore.GetRegionCache()
+	allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
+	for _, tiflashStore := range allTiFlashStores {
+		tiflashStoreAddr := tiflashStore.GetAddr()
+		if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
+			storeZoneMap[tiflashStoreAddr] = tiflashZone
+		}
+	}
+	return storeZoneMap
+}
+
+func (c *localMppCoordinator) fillSameZoneFlagForExchange(exec *tipb.Executor, taskZoneLabel string, zoneMap map[string]string) {
+	children := make([]*tipb.Executor, 0, 2)
+	switch exec.Tp {
+	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
+	case tipb.ExecType_TypeSelection:
+		children = append(children, exec.Selection.Child)
+	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
+		children = append(children, exec.Aggregation.Child)
+	case tipb.ExecType_TypeTopN:
+		children = append(children, exec.TopN.Child)
+	case tipb.ExecType_TypeLimit:
+		children = append(children, exec.Limit.Child)
+	case tipb.ExecType_TypeExchangeSender:
+		children = append(children, exec.ExchangeSender.Child)
+		sameZoneFlags := make([]bool, len(exec.ExchangeSender.EncodedTaskMeta))
+		if len(taskZoneLabel) == 0 {
+			for i := 0; i < len(exec.ExchangeSender.EncodedTaskMeta); i++ {
+				sameZoneFlags = append(sameZoneFlags, true)
+			}
+			exec.ExchangeSender.SameZoneFlag = sameZoneFlags
+			break
+		}
+		for _, taskBytes := range exec.ExchangeSender.EncodedTaskMeta {
+			taskMeta := &mpp.TaskMeta{}
+			err := taskMeta.Unmarshal(taskBytes)
+			if err != nil {
+				sameZoneFlags = append(sameZoneFlags, true)
+				continue
+			}
+			receiverZone, receiverExist := zoneMap[taskMeta.GetAddress()]
+			sameZoneFlags = append(sameZoneFlags, !receiverExist || taskZoneLabel == receiverZone)
+		}
+		exec.ExchangeSender.SameZoneFlag = sameZoneFlags
+	case tipb.ExecType_TypeExchangeReceiver:
+		sameZoneFlags := make([]bool, len(exec.ExchangeReceiver.EncodedTaskMeta))
+		if len(taskZoneLabel) == 0 {
+			for i := 0; i < len(exec.ExchangeReceiver.EncodedTaskMeta); i++ {
+				sameZoneFlags = append(sameZoneFlags, true)
+			}
+			exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
+			break
+		}
+		for _, taskBytes := range exec.ExchangeReceiver.EncodedTaskMeta {
+			taskMeta := &mpp.TaskMeta{}
+			err := taskMeta.Unmarshal(taskBytes)
+			if err != nil {
+				sameZoneFlags = append(sameZoneFlags, true)
+				continue
+			}
+			senderZone, senderExist := zoneMap[taskMeta.GetAddress()]
+			sameZoneFlags = append(sameZoneFlags, !senderExist || taskZoneLabel == senderZone)
+		}
+		exec.ExchangeReceiver.SameZoneFlag = sameZoneFlags
+	case tipb.ExecType_TypeJoin:
+		children = append(children, exec.Join.Children...)
+	case tipb.ExecType_TypeProjection:
+		children = append(children, exec.Projection.Child)
+	case tipb.ExecType_TypeWindow:
+		children = append(children, exec.Window.Child)
+	case tipb.ExecType_TypeSort:
+		children = append(children, exec.Sort.Child)
+	case tipb.ExecType_TypeExpand:
+		children = append(children, exec.Expand.Child)
+	case tipb.ExecType_TypeExpand2:
+		children = append(children, exec.Expand2.Child)
+	default:
+		logutil.BgLogger().Warn(fmt.Sprintf("unknown new tipb protocol %d", exec.Tp))
+	}
+	for _, child := range children {
+		c.fillSameZoneFlagForExchange(child, taskZoneLabel, zoneMap)
+	}
 }
 
 func getActualPhysicalPlan(plan base.Plan) base.PhysicalPlan {

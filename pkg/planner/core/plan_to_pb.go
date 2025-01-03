@@ -16,9 +16,6 @@ package core
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -34,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 // ToPB implements PhysicalPlan ToPB interface.
@@ -378,21 +374,12 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 	}
 
 	encodedTask := make([][]byte, 0, len(e.TargetTasks))
-
-	isTiDBLabelZoneSet, storeSameZoneMap := prepareZoneInfo(e.Plan.SCtx().GetStore())
-	sameZoneFlags := make([]bool, len(e.TargetTasks))
 	for _, task := range e.TargetTasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		encodedTask = append(encodedTask, encodedStr)
-		sameZoneFlag := true
-		if isTiDBLabelZoneSet {
-			sameZone, exist := storeSameZoneMap[task.Meta.GetAddress()]
-			sameZoneFlag = !exist || sameZone
-		}
-		sameZoneFlags = append(sameZoneFlags, sameZoneFlag)
 	}
 	encodedUpstreamCTETask := make([]*tipb.EncodedBytesSlice, 0, len(e.TargetCTEReaderTasks))
 	for _, cteRTasks := range e.TargetCTEReaderTasks {
@@ -441,7 +428,6 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 		AllFieldTypes:       allFieldTypes,
 		Compression:         e.CompressionMode.ToTipbCompressionMode(),
 		UpstreamCteTaskMeta: encodedUpstreamCTETask,
-		SameZoneFlag:        sameZoneFlags,
 	}
 	executorID := e.ExplainID().String()
 	return &tipb.Executor{
@@ -453,48 +439,15 @@ func (e *PhysicalExchangeSender) ToPB(ctx *base.BuildPBContext, storeType kv.Sto
 	}, nil
 }
 
-func prepareZoneInfo(store kv.Storage) (bool, map[string]bool) {
-	tidbZone, isTiDBLabelZoneSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]
-	//logutil.BgLogger().Info(fmt.Sprintf("%v %v", tidbZone, isTiDBLabelZoneSet))
-	if !isTiDBLabelZoneSet {
-		return isTiDBLabelZoneSet, nil
-	}
-
-	storeSameZoneMap := make(map[string]bool)
-	tikvStore, ok := store.(helper.Storage)
-	if !ok {
-		return false, nil
-	}
-	cache := tikvStore.GetRegionCache()
-	allTiFlashStores := cache.GetTiFlashStores(tikv.LabelFilterNoTiFlashWriteNode)
-	for _, tiflashStore := range allTiFlashStores {
-		tiflashStoreAddr := tiflashStore.GetAddr()
-		if tiflashZone, isSet := tiflashStore.GetLabelValue(placement.DCLabelKey); isSet {
-			storeSameZoneMap[tiflashStoreAddr] = tiflashZone == tidbZone
-		} else {
-			storeSameZoneMap[tiflashStoreAddr] = true
-		}
-	}
-	return isTiDBLabelZoneSet, storeSameZoneMap
-}
-
 // ToPB generates the pb structure.
 func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType) (*tipb.Executor, error) {
 	encodedTask := make([][]byte, 0, len(e.Tasks))
-	isTiDBLabelZoneSet, storeSameZoneMap := prepareZoneInfo(e.Plan.SCtx().GetStore())
-	sameZoneFlags := make([]bool, len(e.Tasks))
 	for _, task := range e.Tasks {
 		encodedStr, err := task.ToPB().Marshal()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		encodedTask = append(encodedTask, encodedStr)
-		sameZoneFlag := true
-		if isTiDBLabelZoneSet {
-			sameZone, exist := storeSameZoneMap[task.Meta.GetAddress()]
-			sameZoneFlag = !exist || sameZone
-		}
-		sameZoneFlags = append(sameZoneFlags, sameZoneFlag)
 	}
 
 	fieldTypes := make([]*tipb.FieldType, 0, len(e.Schema().Columns))
@@ -508,7 +461,6 @@ func (e *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 	ecExec := &tipb.ExchangeReceiver{
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
-		SameZoneFlag:    sameZoneFlags,
 	}
 	if e.IsCTEReader {
 		encodedTaskShallowCopy := make([][]byte, len(e.Tasks))
