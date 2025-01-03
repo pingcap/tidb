@@ -176,7 +176,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 				utilstats.StatsCtx,
 				sctx,
 				statsVersion,
-				storage.NewDeltaUpdate(tableID, delta, tableOrPartitionLocked),
+				storage.NewDeltaUpdate(physicalTableID, delta, tableOrPartitionLocked),
 			); err != nil {
 				return err
 			}
@@ -198,7 +198,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 					utilstats.StatsCtx,
 					sctx,
 					statsVersion,
-					storage.NewDeltaUpdate(tableID, delta, isPartitionLocked),
+					storage.NewDeltaUpdate(tableID, delta, isTableLocked),
 				); err != nil {
 					return err
 				}
