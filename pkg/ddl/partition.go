@@ -3233,7 +3233,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				// When removing partitioning, set all indexes to 'local' since it will become a non-partitioned table!
 				newGlobal = false
 			}
-			if !index.Global {
+			if !index.Global && !newGlobal {
 				continue
 			}
 			inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
@@ -3244,10 +3244,6 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			if !inAllPartitionColumns && !newGlobal {
 				job.State = model.JobStateCancelled
 				return ver, dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
-			}
-			if !index.Global && !newGlobal {
-				// still local index, no need to duplicate index.
-				continue
 			}
 			if tblInfo.Partition.DDLChangedIndex == nil {
 				tblInfo.Partition.DDLChangedIndex = make(map[int64]bool)
