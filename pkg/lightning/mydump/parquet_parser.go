@@ -382,7 +382,7 @@ func (pp *ParquetParser) GetMemoryUage() (int, int) {
 
 	alloc, ok := pp.alloc.(*sampleAllocator)
 	if !ok {
-		return 0
+		return 0, 0
 	}
 	bufSizes := alloc.allocated
 
@@ -391,31 +391,31 @@ func (pp *ParquetParser) GetMemoryUage() (int, int) {
 	// read buffer, decompressed dict buffer, compressed buffer, decompressed data page buffer, compressed data page buffer...
 	// and compressed buffer is released after decompression.
 	// So we estimate the memory usage as:
-	// (roundup(decompressed dict buffer) + roundup(decompressed data page buffer) + roundup(read buffer) + roundup(parquet read buffer)) * num_cols
+	// (roundToPower2(decompressed dict buffer) + roundToPower2(decompressed data page buffer) + roundToPower2(read buffer) + roundToPower2(parquet read buffer)) * num_cols
 
 	dictUsage := 0
 	dataPageUsage := 0
-	readBufferUsage := roundup(bufSizes[0]) + roundup(defaultBufSize)
+	readBufferUsage := roundToPower2(bufSizes[0]) + roundToPower2(defaultBufSize)
 
 	readBufferUsageTotal := 0
 	meta := pp.readers[0].MetaData()
 	for _, rg := range meta.RowGroups {
 		currUsage := 0
 		for _, c := range rg.Columns {
-			currUsage += roundUp(int(c.MetaData.GetTotalCompressedSize()))
+			currUsage += roundToPower2(int(c.MetaData.GetTotalCompressedSize()))
 		}
 		readBufferUsage = max(readBufferUsage, currUsage)
 	}
-	readBufferUsageTotal += roundUp(defaultBufSize) * len(pp.columnNames)
+	readBufferUsageTotal += roundToPower2(defaultBufSize) * len(pp.columnNames)
 
 	if len(bufSizes) == 3 {
-		dataPageUsage = roundup(bufSizes[1])
+		dataPageUsage = roundToPower2(bufSizes[1])
 	} else {
-		dictUsage = roundup(bufSizes[1])
+		dictUsage = roundToPower2(bufSizes[1])
 		for i := 3; i < len(bufSizes); i += 2 {
 			dataPageUsage = max(bufSizes[i], dataPageUsage)
 		}
-		dataPageUsage = roundup(dataPageUsage)
+		dataPageUsage = roundToPower2(dataPageUsage)
 	}
 	return (dataPageUsage + dictUsage + readBufferUsage) * len(pp.columnNames), (dataPageUsage+dictUsage)*len(pp.columnNames) + readBufferUsageTotal
 }
@@ -993,7 +993,7 @@ func (sa *sampleAllocator) Reallocate(size int, buf []byte) []byte {
 	return make([]byte, size)
 }
 
-func roundup(n int) int {
+func roundToPower2(n int) int {
 	v := uint(n)
 	v--
 	v |= v >> 1
