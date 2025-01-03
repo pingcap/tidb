@@ -1380,3 +1380,18 @@ func TestExchangePartition(t *testing.T) {
 	require.Equal(t, int64(200), count)
 	require.Equal(t, int64(200), modifyCount)
 }
+
+func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	// Insert some data.
+	tk.MustExec("insert into t values (1), (2), (3)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Find the DDL event.
+	event := findEvent(h.DDLEventCh(), model.ActionCreateTable)
+	err := statstestutil.HandleDDLEventWithTxn(h, event)
+	require.NoError(t, err)
+}
