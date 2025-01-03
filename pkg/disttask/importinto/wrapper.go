@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
-func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
+func toChunkCheckpoint(chunk checkpoints.Chunk) checkpoints.ChunkCheckpoint {
 	return checkpoints.ChunkCheckpoint{
 		Key: checkpoints.ChunkCheckpointKey{
 			Path:   chunk.Path,
@@ -41,8 +41,8 @@ func toChunkCheckpoint(chunk Chunk) checkpoints.ChunkCheckpoint {
 	}
 }
 
-func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) Chunk {
-	return Chunk{
+func toChunk(chunkCheckpoint checkpoints.ChunkCheckpoint) checkpoints.Chunk {
+	return checkpoints.Chunk{
 		Path:         chunkCheckpoint.FileMeta.Path,
 		FileSize:     chunkCheckpoint.FileMeta.FileSize,
 		Offset:       chunkCheckpoint.Chunk.Offset,

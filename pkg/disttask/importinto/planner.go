@@ -31,6 +31,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
@@ -54,7 +55,7 @@ type LogicalPlan struct {
 	Plan              importer.Plan
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
-	ChunkMap          map[int32][]Chunk
+	ChunkMap          map[int32][]checkpoints.Chunk
 }
 
 // ToTaskMeta converts the logical plan to task meta.
@@ -156,7 +157,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 type ImportSpec struct {
 	ID     int32
 	Plan   importer.Plan
-	Chunks []Chunk
+	Chunks []checkpoints.Chunk
 }
 
 // ToSubtaskMeta converts the import spec to subtask meta.
@@ -257,7 +258,7 @@ func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataContro
 }
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	var chunkMap map[int32][]Chunk
+	var chunkMap map[int32][]checkpoints.Chunk
 	if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
@@ -270,12 +271,12 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		}
 
 		controller.SetExecuteNodeCnt(pCtx.ExecuteNodesCnt)
-		engineCheckpoints, err2 := controller.PopulateChunks(pCtx.Ctx)
+		chunkMap, err2 = controller.PopulateChunks(pCtx.Ctx)
 		if err2 != nil {
 			return nil, err2
 		}
-		chunkMap = toChunkMap(engineCheckpoints)
 	}
+
 	importSpecs := make([]planner.PipelineSpec, 0, len(chunkMap))
 	for id := range chunkMap {
 		if id == common.IndexEngineID {

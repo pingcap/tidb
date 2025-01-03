@@ -214,11 +214,11 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
 	if importFromServer {
-		ecp, err2 := e.controller.PopulateChunks(ctx)
+		chunkMap, err2 := e.controller.PopulateChunks(ctx)
 		if err2 != nil {
 			return 0, nil, err2
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, ecp)
+		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
 	if variable.EnableDistTask.Load() {
