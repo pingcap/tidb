@@ -109,7 +109,11 @@ func (ap *arenaPool) adjustGCPercent() {
 	gogc := os.Getenv("GOGC")
 	memTotal, err := memory.MemTotal()
 	if gogc == "" && err == nil {
-		percent := int(memTotal) * 90 / max(ap.allocated*arenaDefaultSize, 1)
+		if ap.allocated == 0 {
+			debug.SetGCPercent(100)
+			return
+		}
+		percent := int(memTotal)*90/(ap.allocated*arenaDefaultSize) - 100
 		percent = min(percent, 100) / 10 * 10
 		old := debug.SetGCPercent(percent)
 		runtime.GC()

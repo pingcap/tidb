@@ -71,7 +71,7 @@ func setMemoryLimitForParquet(percent int) {
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
-	memLimit = int(memTotal) * min(percent, 100) / 100
+	memLimit = int(memTotal) * min(percent, 90) / 100
 	memLimiter = membuf.NewLimiter(memLimit)
 	mydump.SetMaxMemoryUsage(memLimit)
 }
