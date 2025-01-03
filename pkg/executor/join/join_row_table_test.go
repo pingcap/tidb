@@ -28,7 +28,7 @@ func TestHeapObjectCanMove(t *testing.T) {
 
 func TestFixedOffsetInRowLayout(t *testing.T) {
 	require.Equal(t, 8, sizeOfNextPtr)
-	require.Equal(t, 8, sizeOfLengthField)
+	require.Equal(t, 4, sizeOfElementSize)
 }
 
 func TestBitMaskInUint32(t *testing.T) {

@@ -33,10 +33,10 @@ import (
 // outputting 0/1 row with zero column. This semantic may be different from your expectation sometimes but should not
 // cause any actual problems now.
 type LogicalTableDual struct {
-	LogicalSchemaProducer
+	LogicalSchemaProducer `hash64-equals:"true"`
 
 	// RowCount could only be 0 or 1.
-	RowCount int
+	RowCount int `hash64-equals:"true"`
 }
 
 // Init initializes LogicalTableDual.
@@ -114,7 +114,7 @@ func (p *LogicalTableDual) BuildKeyInfo(selfSchema *expression.Schema, childSche
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalTableDual) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		return p.StatsInfo(), nil
 	}

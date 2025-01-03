@@ -364,3 +364,20 @@ func getPartitionNames(partitionIndexes map[string][]string) []string {
 	}
 	return names
 }
+
+// AsJSON converts the job to a JSON object.
+func (j *DynamicPartitionedTableAnalysisJob) AsJSON() statstypes.AnalysisJobJSON {
+	partitionIDs := make([]int64, 0, len(j.PartitionIDs))
+	for partition := range j.PartitionIDs {
+		partitionIDs = append(partitionIDs, partition)
+	}
+	return statstypes.AnalysisJobJSON{
+		Type:               string(j.getAnalyzeType()),
+		TableID:            j.GlobalTableID,
+		PartitionIDs:       partitionIDs,
+		PartitionIndexIDs:  j.PartitionIndexIDs,
+		Weight:             j.Weight,
+		Indicators:         asJSONIndicators(j.Indicators),
+		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
+	}
+}

@@ -325,3 +325,10 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
 }
+
+func TestIssue57530(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+	tk.MustQuery("select * from  TIKV_REGION_STATUS where table_id = 81920").Check(testkit.Rows())
+}

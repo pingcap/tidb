@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2005,36 +2006,20 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		Type:                model.ActionMultiSchemaChange,
 		BinlogInfo:          &model.HistoryInfo{},
 		MultiSchemaInfo:     info,
-		ReorgMeta:           nil,
 		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
 		InvolvingSchemaInfo: involvingSchemaInfo,
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 	}
-	if containsDistTaskSubJob(subJobs) {
-		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		job.ReorgMeta = NewDDLReorgMeta(ctx)
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
 	err = checkMultiSchemaInfo(info, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
 	return e.DoDDLJob(ctx, job)
-}
-
-func containsDistTaskSubJob(subJobs []*model.SubJob) bool {
-	for _, sub := range subJobs {
-		if sub.Type == model.ActionAddIndex ||
-			sub.Type == model.ActionAddPrimaryKey {
-			return true
-		}
-	}
-	return false
 }
 
 func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int64, tp autoid.AllocatorType, force bool) error {
@@ -2451,9 +2436,12 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionAlterTablePartitioning,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
 	}
 
 	args := &model.TablePartitionArgs{
@@ -2517,9 +2505,12 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionReorganizePartition,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2583,9 +2574,12 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 		TableName:      meta.Name.L,
 		Type:           model.ActionRemovePartitioning,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -3385,9 +3379,12 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 		TableName:      tbl.Meta().Name.L,
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(ctx),
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return err
 	}
 
 	args := &model.ModifyColumnArgs{
@@ -4070,6 +4067,9 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
+	if schema == "workload_schema" {
+		return true
+	}
 	if schema != mysql.SystemDB {
 		return false
 	}
@@ -4615,6 +4615,10 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 		}
 	}
 
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	sqlMode := ctx.GetSessionVars().SQLMode
 	// global is set to  'false' is just there to be backwards compatible,
 	// to avoid unmarshal issues, it is now part of indexOption.
@@ -4641,15 +4645,15 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 			SQLMode:                 sqlMode,
 			Global:                  false,
 			IsPK:                    true,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
 
-	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
+	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
-	job.ReorgMeta = reorgMeta
 
 	err = e.doDDLJob2(ctx, job, args)
 	return errors.Trace(err)
@@ -4758,10 +4762,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 		return errors.Trace(err)
 	}
 
-	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
-	if err != nil {
-		return errors.Trace(err)
-	}
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddVectorIndex
 	indexPartSpecifications[0].Expr = nil
@@ -4788,8 +4789,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	return errors.Trace(err)
 }
 
-func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) (*model.Job, error) {
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
 	charset, collate := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -4797,23 +4797,12 @@ func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DB
 		SchemaName: schema.Name.L,
 		TableName:  t.Meta().Name.L,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
-		Charset:  charset,
-		Collate:  collate,
-		SQLMode:  ctx.GetSessionVars().SQLMode,
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		Charset:    charset,
+		Collate:    collate,
+		SQLMode:    ctx.GetSessionVars().SQLMode,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	job.ReorgMeta = reorgMeta
-	return job, nil
+	return job
 }
 
 func (e *executor) CreateIndex(ctx sessionctx.Context, stmt *ast.CreateIndexStmt) error {
@@ -4904,17 +4893,24 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return e.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	// global is set to  'false' is just there to be backwards compatible,
-	// to avoid unmarshal issues, it is now part of indexOption.
-	global := false
-	job, err := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	splitOpt, err := buildIndexPresplitOpt(indexOption)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
+	// global is set to  'false' is just there to be backwards compatible,
+	// to avoid unmarshal issues, it is now part of indexOption.
+	global := false
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddIndex
 	job.CDCWriteSource = ctx.GetSessionVars().CDCWriteSource
+
+	err = initJobReorgMetaFromVariables(job, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
@@ -4924,6 +4920,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 			IndexOption:             indexOption,
 			HiddenCols:              hiddenCols,
 			Global:                  global,
+			SplitOpt:                splitOpt,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4937,44 +4934,143 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
-	reorgMeta := NewDDLReorgMeta(sctx)
-	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
-	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
-	reorgMeta.TargetScope = variable.ServiceScope.Load()
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
-		reorgMeta.Concurrency = variable.TidbOptInt(sv, 0)
-	}
-	if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
-		reorgMeta.BatchSize = variable.TidbOptInt(sv, 0)
-	}
-
-	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
-		return nil, dbterror.ErrUnsupportedDistTask
-	}
-	if hasSysDB(job) {
-		if reorgMeta.IsDistReorg {
-			logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
-				zap.Stringer("job", job))
+func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
+	m := NewDDLReorgMeta(sctx)
+	setReorgParam := func() {
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgWorkerCount); ok {
+			m.SetConcurrency(variable.TidbOptInt(sv, 0))
 		}
-		reorgMeta.IsDistReorg = false
-		reorgMeta.IsFastReorg = false
-		failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
-			LastReorgMetaFastReorgDisabled = true
-		})
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(variable.TiDBDDLReorgBatchSize); ok {
+			m.SetBatchSize(variable.TidbOptInt(sv, 0))
+		}
+		m.SetMaxWriteSpeed(int(variable.DDLReorgMaxWriteSpeed.Load()))
+	}
+	setDistTaskParam := func() error {
+		m.IsDistReorg = variable.EnableDistTask.Load()
+		m.IsFastReorg = variable.EnableFastReorg.Load()
+		m.TargetScope = variable.ServiceScope.Load()
+		if hasSysDB(job) {
+			if m.IsDistReorg {
+				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
+					zap.Stringer("job", job))
+			}
+			m.IsDistReorg = false
+			m.IsFastReorg = false
+			failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+				LastReorgMetaFastReorgDisabled = true
+			})
+		}
+		if m.IsDistReorg && !m.IsFastReorg {
+			return dbterror.ErrUnsupportedDistTask
+		}
+		return nil
 	}
 
+	switch job.Type {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		setReorgParam()
+		err := setDistTaskParam()
+		if err != nil {
+			return err
+		}
+	case model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning,
+		model.ActionModifyColumn:
+		setReorgParam()
+	case model.ActionMultiSchemaChange:
+		for _, sub := range job.MultiSchemaInfo.SubJobs {
+			switch sub.Type {
+			case model.ActionAddIndex, model.ActionAddPrimaryKey:
+				setReorgParam()
+				err := setDistTaskParam()
+				if err != nil {
+					return err
+				}
+			case model.ActionReorganizePartition,
+				model.ActionRemovePartitioning,
+				model.ActionAlterTablePartitioning,
+				model.ActionModifyColumn:
+				setReorgParam()
+			}
+		}
+	default:
+		return nil
+	}
+	job.ReorgMeta = m
 	logutil.DDLLogger().Info("initialize reorg meta",
 		zap.String("jobSchema", job.SchemaName),
 		zap.String("jobTable", job.TableName),
 		zap.Stringer("jobType", job.Type),
-		zap.Bool("enableDistTask", reorgMeta.IsDistReorg),
-		zap.Bool("enableFastReorg", reorgMeta.IsFastReorg),
-		zap.String("targetScope", reorgMeta.TargetScope),
-		zap.Int("concurrency", reorgMeta.Concurrency),
-		zap.Int("batchSize", reorgMeta.BatchSize),
+		zap.Bool("enableDistTask", m.IsDistReorg),
+		zap.Bool("enableFastReorg", m.IsFastReorg),
+		zap.String("targetScope", m.TargetScope),
+		zap.Int("concurrency", m.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))),
+		zap.Int("batchSize", m.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))),
 	)
-	return reorgMeta, nil
+	return nil
+}
+
+func buildIndexPresplitOpt(indexOpt *ast.IndexOption) (*model.IndexArgSplitOpt, error) {
+	if indexOpt == nil {
+		return nil, nil
+	}
+	opt := indexOpt.SplitOpt
+	if opt == nil {
+		return nil, nil
+	}
+	if len(opt.ValueLists) > 0 {
+		valLists := make([][]string, 0, len(opt.ValueLists))
+		for _, lst := range opt.ValueLists {
+			values := make([]string, 0, len(lst))
+			for _, exp := range lst {
+				var sb strings.Builder
+				rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+				err := exp.Restore(rCtx)
+				if err != nil {
+					return nil, errors.Trace(err)
+				}
+				values = append(values, sb.String())
+			}
+			valLists = append(valLists, values)
+		}
+		return &model.IndexArgSplitOpt{
+			Num:        opt.Num,
+			ValueLists: valLists,
+		}, nil
+	}
+
+	lowers := make([]string, 0, len(opt.Lower))
+	for _, expL := range opt.Lower {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expL.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		lowers = append(lowers, sb.String())
+	}
+	uppers := make([]string, 0, len(opt.Upper))
+	for _, expU := range opt.Upper {
+		var sb strings.Builder
+		rCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+		err := expU.Restore(rCtx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		uppers = append(uppers, sb.String())
+	}
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
+	if opt.Num > maxSplitRegionNum {
+		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
+	} else if opt.Num < 1 {
+		return nil, errors.Errorf("Split index region num should be greater than 0")
+	}
+	return &model.IndexArgSplitOpt{
+		Lower: lowers,
+		Upper: uppers,
+		Num:   opt.Num,
+	}, nil
 }
 
 // LastReorgMetaFastReorgDisabled is used for test.
@@ -6069,7 +6165,7 @@ func (e *executor) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResou
 	if checker == nil {
 		return errors.New("miss privilege checker")
 	}
-	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	user, matched := checker.MatchUserResourceGroupName(ctx.GetRestrictedSQLExecutor(), groupName.L)
 	if matched {
 		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
 		return err
@@ -6565,8 +6661,15 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		}
 	})
 
-	// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
-	result := <-jobW.ResultCh[0]
+	var result jobSubmitResult
+	select {
+	case <-e.ctx.Done():
+		logutil.DDLLogger().Info("DoDDLJob will quit because context done")
+		return e.ctx.Err()
+	case res := <-jobW.ResultCh[0]:
+		// worker should restart to continue handling tasks in limitJobCh, and send back through jobW.err
+		result = res
+	}
 	// job.ID must be allocated after previous channel receive returns nil.
 	jobID, err := result.jobID, result.err
 	defer e.delJobDoneCh(jobID)
@@ -6636,7 +6739,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 			ticker = updateTickerInterval(ticker, 10*e.lease, ddlAction, i)
 		case <-e.ctx.Done():
 			logutil.DDLLogger().Info("DoDDLJob will quit because context done")
-			return context.Canceled
+			return e.ctx.Err()
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.

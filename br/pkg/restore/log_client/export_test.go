@@ -63,9 +63,9 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	m *stream.TableMappingManager,
 ) error {
-	return rc.saveIDMap(ctx, sr)
+	return rc.saveIDMap(ctx, m)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
@@ -91,7 +91,7 @@ func (rc *LogFileManager) ReadStreamMeta(ctx context.Context) ([]*MetaName, erro
 func TEST_NewLogClient(clusterID, startTS, restoreTS, upstreamClusterID uint64, dom *domain.Domain, se glue.Session) *LogClient {
 	return &LogClient{
 		dom:               dom,
-		se:                se,
+		unsafeSession:     se,
 		upstreamClusterID: upstreamClusterID,
 		LogFileManager: &LogFileManager{
 			startTS:   startTS,

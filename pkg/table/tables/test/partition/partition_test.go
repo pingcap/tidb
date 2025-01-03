@@ -2076,7 +2076,8 @@ func TestPruneModeWarningInfo(t *testing.T) {
 
 func TestPartitionByIntListExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntListExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2190,7 +2191,8 @@ func getInt7ValuesFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByIntExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByIntExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2415,7 +2417,8 @@ func getIntValuesUniqueFunc() func(string, bool, *rand.Rand) string {
 
 func TestPartitionByExtensivePart(t *testing.T) {
 	limitSizeOfTest := true
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "PartitionByExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2521,7 +2524,8 @@ func TestPartitionByExtensivePart(t *testing.T) {
 }
 
 func TestReorgPartExtensivePart(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	dom.TTLJobManager().Stop()
 	tk := testkit.NewTestKit(t, store)
 	schemaName := "ReorgPartExtensive"
 	tk.MustExec("create database " + schemaName)
@@ -2674,7 +2678,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 	prevTbl, err := currSchema.TableByName(context.Background(), pmodel.NewCIStr(schemaName), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	var hookErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if hookErr != nil {
 			// Enough to find a single error
 			return
@@ -3114,7 +3118,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
 	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	tk.MustExec(alterStr)
 	require.NoError(t, hookErr)
 	tk.MustExec(`admin check table t`)

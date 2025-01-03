@@ -32,12 +32,12 @@ import (
 type LogicalTopN struct {
 	BaseLogicalPlan
 
-	ByItems []*util.ByItems
+	ByItems []*util.ByItems `hash64-equals:"true"`
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
-	Offset           uint64
-	Count            uint64
-	PreferLimitToCop bool
+	PartitionBy      []property.SortItem `hash64-equals:"true"` // This is used for enhanced topN optimization
+	Offset           uint64              `hash64-equals:"true"`
+	Count            uint64              `hash64-equals:"true"`
+	PreferLimitToCop bool                `hash64-equals:"true"`
 }
 
 // Init initializes LogicalTopN.
@@ -115,7 +115,7 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	if lt.StatsInfo() != nil {
 		return lt.StatsInfo(), nil
 	}

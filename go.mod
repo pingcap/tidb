@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.23
+go 1.23.4
 
 require (
 	cloud.google.com/go/kms v1.15.7
@@ -39,7 +39,7 @@ require (
 	github.com/docker/go-units v0.5.0
 	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
-	github.com/fatih/color v1.17.0
+	github.com/fatih/color v1.18.0
 	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
@@ -50,7 +50,7 @@ require (
 	github.com/golang/protobuf v1.5.4
 	github.com/golang/snappy v0.0.4
 	github.com/golangci/gofmt v0.0.0-20240816233607-d8596aa466a9
-	github.com/golangci/golangci-lint v1.61.1-0.20240915150923-7187c89d4091
+	github.com/golangci/golangci-lint v1.62.2
 	github.com/golangci/gosec v0.0.0-20180901114220-8afd9cbb6cfb
 	github.com/golangci/misspell v0.6.0
 	github.com/golangci/prealloc v0.0.0-20180630174525-215b22d4de21
@@ -61,6 +61,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.1.0
+	github.com/grafana/pyroscope-go v1.2.0
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/hashicorp/go-version v1.7.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
@@ -70,12 +71,11 @@ require (
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/karamaru-alpha/copyloopvar v1.1.0
-	github.com/kisielk/errcheck v1.7.0
-	github.com/klauspost/compress v1.17.9
+	github.com/kisielk/errcheck v1.8.0
+	github.com/klauspost/compress v1.17.11
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
-	github.com/lance6716/pebble v0.0.0-20241108073934-da961314c63f
 	github.com/lestrrat-go/jwx/v2 v2.0.21
-	github.com/mgechev/revive v1.4.0
+	github.com/mgechev/revive v1.5.1
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
@@ -87,14 +87,14 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20241113043844-e1fa7ea8c302
-	github.com/pingcap/log v1.1.1-0.20240314023424-862ccc32f18d
+	github.com/pingcap/kvproto v0.0.0-20241120071417-b5b7843d9037
+	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20241022082558-0607513e7fa4
+	github.com/pingcap/tipb v0.0.0-20241105053214-f91fdb81a69e
 	github.com/prometheus/client_golang v1.20.5
 	github.com/prometheus/client_model v0.6.1
-	github.com/prometheus/common v0.57.0
+	github.com/prometheus/common v0.61.0
 	github.com/prometheus/prometheus v0.50.1
 	github.com/qri-io/jsonschema v0.2.1
 	github.com/robfig/cron/v3 v3.0.1
@@ -106,12 +106,11 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/spkg/bom v1.0.0
 	github.com/stathat/consistent v1.0.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20241111090227-70049ae310bf
-	github.com/tikv/pd/client v0.0.0-20241111073742-238d4d79ea31
+	github.com/tikv/client-go/v2 v2.0.8-0.20250102095521-f2025c1297c5
+	github.com/tikv/pd/client v0.0.0-20241220053006-461b86adc78d
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -119,6 +118,7 @@ require (
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.6.3-0.20240520233950-75e935fc3e17
 	github.com/xitongsys/parquet-go-source v0.0.0-20200817004010-026bad9b25d0
+	github.com/zyedidia/generic v1.2.1
 	go.etcd.io/etcd/api/v3 v3.5.12
 	go.etcd.io/etcd/client/pkg/v3 v3.5.12
 	go.etcd.io/etcd/client/v3 v3.5.12
@@ -132,21 +132,21 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/exp v0.0.0-20240909161429-701f63a606c0
-	golang.org/x/net v0.30.0
-	golang.org/x/oauth2 v0.23.0
-	golang.org/x/sync v0.9.0
-	golang.org/x/sys v0.27.0
-	golang.org/x/term v0.26.0
-	golang.org/x/text v0.20.0
+	golang.org/x/net v0.33.0
+	golang.org/x/oauth2 v0.24.0
+	golang.org/x/sync v0.10.0
+	golang.org/x/sys v0.28.0
+	golang.org/x/term v0.27.0
+	golang.org/x/text v0.21.0
 	golang.org/x/time v0.7.0
-	golang.org/x/tools v0.26.0
+	golang.org/x/tools v0.28.0
 	google.golang.org/api v0.169.0
 	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
 	honnef.co/go/tools v0.5.1
-	k8s.io/api v0.28.6
+	k8s.io/api v0.29.11
 	sourcegraph.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
@@ -169,6 +169,7 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/qri-io/jsonpointer v0.1.1 // indirect
+	github.com/segmentio/fasthash v1.0.3 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 )
 
@@ -225,6 +226,7 @@ require (
 	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/gostaticanalysis/analysisutil v0.7.1 // indirect
 	github.com/gostaticanalysis/comment v1.4.2 // indirect
+	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // indirect
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd // indirect
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0 // indirect
@@ -268,7 +270,7 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/rogpeppe/go-internal v1.12.0 // indirect
+	github.com/rogpeppe/go-internal v1.13.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
@@ -299,18 +301,18 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.29.0 // indirect
-	golang.org/x/exp/typeparams v0.0.0-20240314144324-c7f7c6466f7f // indirect
-	golang.org/x/mod v0.21.0 // indirect
+	golang.org/x/crypto v0.31.0 // indirect
+	golang.org/x/exp/typeparams v0.0.0-20241108190413-2d47ceb2692f // indirect
+	golang.org/x/mod v0.22.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240318140521-94a12d6c2237 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
-	google.golang.org/protobuf v1.34.2
+	google.golang.org/protobuf v1.35.2
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apimachinery v0.28.6 // indirect
+	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b // indirect
 	sigs.k8s.io/json v0.0.0-20221116044647-bc3834ca7abd // indirect
@@ -322,8 +324,6 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-
-	github.com/tikv/client-go/v2 => github.com/ekexium/client-go/v2 v2.0.0-alpha.0.20241118131202-fa819720fdff
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.

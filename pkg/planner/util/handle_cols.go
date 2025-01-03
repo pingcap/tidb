@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -34,6 +35,7 @@ import (
 // HandleCols is the interface that holds handle columns.
 type HandleCols interface {
 	expression.StringerWithCtx
+	base.HashEquals
 
 	// BuildHandle builds a Handle from a row.
 	BuildHandle(row chunk.Row) (kv.Handle, error)
@@ -84,6 +86,59 @@ func (cb *CommonHandleCols) Clone(newCtx *stmtctx.StatementContext) HandleCols {
 		columns: newCols,
 		sc:      newCtx,
 	}
+}
+
+// Hash64 implements HashEquals interface.
+func (cb *CommonHandleCols) Hash64(h base.Hasher) {
+	if cb.tblInfo != nil {
+		h.HashByte(base.NotNilFlag)
+		cb.tblInfo.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+	if cb.idxInfo != nil {
+		h.HashByte(base.NotNilFlag)
+		cb.idxInfo.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+	if cb.columns != nil {
+		h.HashByte(base.NotNilFlag)
+		h.HashInt(len(cb.columns))
+		for _, one := range cb.columns {
+			one.Hash64(h)
+		}
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implements HashEquals interface.
+func (cb *CommonHandleCols) Equals(other any) bool {
+	cb2, ok := other.(*CommonHandleCols)
+	if !ok {
+		return false
+	}
+	if cb == nil {
+		return cb2 == nil
+	}
+	if cb2 == nil {
+		return false
+	}
+	if !cb.tblInfo.Equals(cb2.tblInfo) || !cb.idxInfo.Equals(cb2.idxInfo) {
+		return false
+	}
+	if cb.columns == nil && cb2.columns != nil ||
+		cb.columns != nil && cb2.columns == nil ||
+		len(cb.columns) != len(cb2.columns) {
+		return false
+	}
+	for i, one := range cb.columns {
+		if !one.Equals(cb2.columns[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 // GetColumns returns all the internal columns out.
@@ -260,6 +315,31 @@ func NewCommonHandlesColsWithoutColsAlign(sc *stmtctx.StatementContext, tblInfo 
 // IntHandleCols implements the kv.HandleCols interface.
 type IntHandleCols struct {
 	col *expression.Column
+}
+
+// Hash64 implements HashEquals interface.
+func (ib *IntHandleCols) Hash64(h base.Hasher) {
+	if ib.col != nil {
+		h.HashByte(base.NotNilFlag)
+		ib.col.Hash64(h)
+	} else {
+		h.HashByte(base.NilFlag)
+	}
+}
+
+// Equals implements HashEquals interface.
+func (ib *IntHandleCols) Equals(other any) bool {
+	ib2, ok := other.(*IntHandleCols)
+	if !ok {
+		return false
+	}
+	if ib == nil {
+		return ib2 == nil
+	}
+	if ib2 == nil {
+		return false
+	}
+	return ib.col.Equals(ib2.col)
 }
 
 // Clone implements the kv.HandleCols interface.

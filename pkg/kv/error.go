@@ -47,6 +47,8 @@ var (
 	ErrTxnTooLarge = dbterror.ClassKV.NewStd(mysql.ErrTxnTooLarge)
 	// ErrEntryTooLarge is the error when a key value entry is too large.
 	ErrEntryTooLarge = dbterror.ClassKV.NewStd(mysql.ErrEntryTooLarge)
+	// ErrKeyTooLarge is the error when a key is too large to be handled by MemBuffer.
+	ErrKeyTooLarge = dbterror.ClassKV.NewStd(mysql.ErrKeyTooLarge)
 	// ErrKeyExists returns when key is already exist. Caller should try to use
 	// GenKeyExistsErr to generate this error for correct format.
 	ErrKeyExists = dbterror.ClassKV.NewStd(mysql.ErrDupEntry)

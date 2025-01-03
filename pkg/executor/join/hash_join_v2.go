@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -56,14 +57,6 @@ var (
 	// HashJoinV2Strings is used for test
 	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
-
-// IsHashJoinV2Supported return true if hash join v2 is supported in current env
-func IsHashJoinV2Supported() bool {
-	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
-	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
-	// change this
-	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
-}
 
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
@@ -359,6 +352,8 @@ type ProbeWorkerV2 struct {
 	// We build individual joinProbe for each join worker when use chunk-based
 	// execution, to avoid the concurrency of joiner.chk and joiner.selected.
 	JoinProbe ProbeV2
+
+	restoredChkBuf *chunk.Chunk
 }
 
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
@@ -392,8 +387,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
-		// TODO reuse chunk
-		chk, err := inDisk.GetChunk(i)
+		err := inDisk.FillChunk(i, w.restoredChkBuf)
 		if err != nil {
 			joinResult.err = err
 			break
@@ -407,7 +401,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks) {
 
 		start := time.Now()
 		waitTime := int64(0)
-		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(chk, joinResult)
+		ok, waitTime, joinResult = w.processOneRestoredProbeChunk(joinResult)
 		probeTime += int64(time.Since(start)) - waitTime
 		if !ok {
 			break
@@ -434,6 +428,7 @@ type BuildWorkerV2 struct {
 	HasNullableKey bool
 	WorkerID       uint
 	builder        *rowTableBuilder
+	restoredChkBuf *chunk.Chunk
 }
 
 func (b *BuildWorkerV2) getSegmentsInRowTable(partID int) []*rowTableSegment {
@@ -449,9 +444,9 @@ func (b *BuildWorkerV2) updatePartitionData(cost int64) {
 	setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
 }
 
-func (b *BuildWorkerV2) processOneRestoredChunk(chk *chunk.Chunk, cost *int64) error {
+func (b *BuildWorkerV2) processOneRestoredChunk(cost *int64) error {
 	start := time.Now()
-	err := b.builder.processOneRestoredChunk(chk, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
+	err := b.builder.processOneRestoredChunk(b.restoredChkBuf, b.HashJoinCtx, int(b.WorkerID), int(b.HashJoinCtx.partitionNumber))
 	if err != nil {
 		return err
 	}
@@ -476,10 +471,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return nil
 	}
 
-	var chk *chunk.Chunk
-
-	// TODO reuse chunk
-	chk, err = inDisk.GetChunk(i)
+	err = inDisk.FillChunk(i, b.restoredChkBuf)
 	if err != nil {
 		return err
 	}
@@ -489,7 +481,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestoreImpl(i int, i
 		return err
 	}
 
-	err = b.processOneRestoredChunk(chk, cost)
+	err = b.processOneRestoredChunk(cost)
 	if err != nil {
 		return err
 	}
@@ -503,11 +495,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 			b.updatePartitionData(cost)
 		}
 	}()
-
-	partitionNumber := b.HashJoinCtx.partitionNumber
-	hashJoinCtx := b.HashJoinCtx
-
-	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
@@ -544,10 +531,6 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTable(typeCtx types.Context,
 			setMaxValue(&b.HashJoinCtx.stats.maxPartitionData, cost)
 		}
 	}()
-	partitionNumber := b.HashJoinCtx.partitionNumber
-	hashJoinCtx := b.HashJoinCtx
-
-	b.builder = createRowTableBuilder(b.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, partitionNumber, b.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
 
 	hasErr := false
 	for chk := range srcChkCh {
@@ -923,8 +906,8 @@ func (w *ProbeWorkerV2) scanRowTableAfterProbeDone() {
 	}
 }
 
-func (w *ProbeWorkerV2) processOneRestoredProbeChunk(probeChunk *chunk.Chunk, joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
-	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(probeChunk)
+func (w *ProbeWorkerV2) processOneRestoredProbeChunk(joinResult *hashjoinWorkerResult) (ok bool, waitTime int64, _ *hashjoinWorkerResult) {
+	joinResult.err = w.JoinProbe.SetRestoredChunkForProbe(w.restoredChkBuf)
 	if joinResult.err != nil {
 		return false, 0, joinResult
 	}
@@ -941,6 +924,9 @@ func (w *ProbeWorkerV2) processOneProbeChunk(probeChunk *chunk.Chunk, joinResult
 
 func (w *ProbeWorkerV2) probeAndSendResult(joinResult *hashjoinWorkerResult) (bool, int64, *hashjoinWorkerResult) {
 	if w.HashJoinCtx.spillHelper.areAllPartitionsSpilled() {
+		if intest.InTest && w.HashJoinCtx.spillHelper.hashJoinExec.inRestore {
+			w.HashJoinCtx.spillHelper.skipProbeInRestoreForTest.Store(true)
+		}
 		return true, 0, joinResult
 	}
 
@@ -1263,6 +1249,11 @@ func (e *HashJoinV2Exec) fetchAndBuildHashTableImpl(ctx context.Context) {
 
 	// doneCh is used by the consumer(splitAndAppendToRowTable) to info the producer(fetchBuildSideRows) that the consumer meet error and stop consume data
 	doneCh := make(chan struct{}, e.Concurrency)
+	// init builder, todo maybe the builder can be reused during the whole life cycle of the executor
+	hashJoinCtx := e.HashJoinCtxV2
+	for _, worker := range e.BuildWorkers {
+		worker.builder = createRowTableBuilder(worker.BuildKeyColIdx, hashJoinCtx.BuildKeyTypes, hashJoinCtx.partitionNumber, worker.HasNullableKey, hashJoinCtx.BuildFilter != nil, hashJoinCtx.needScanRowTableAfterProbeDone)
+	}
 	srcChkCh, waitForController := e.fetchBuildSideRows(ctx, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	e.splitAndAppendToRowTable(srcChkCh, waitForController, fetcherAndWorkerSyncer, wg, errCh, doneCh)
 	success := waitJobDone(wg, errCh)

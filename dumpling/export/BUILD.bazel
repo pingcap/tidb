@@ -62,6 +62,7 @@ go_library(
         "@com_github_spf13_pflag//:pflag",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",

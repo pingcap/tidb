@@ -36,6 +36,7 @@ go_library(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/chunk",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",

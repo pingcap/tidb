@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // PlanCacheKeyTestIssue43667 is only for test.
@@ -61,7 +64,11 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		var (
+			val types.Datum
+			err error
+		)
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -115,23 +122,23 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 			if err != nil {
 				return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 			}
+			// Table ID is changed, for example, drop & create table, truncate table.
 			delete(stmt.RelateVersion, stmt.tbls[i].Meta().ID)
-			stmt.tbls[i] = tblByName
-			stmt.RelateVersion[tblByName.Meta().ID] = tblByName.Meta().Revision
+			tbl = tblByName
 		}
-		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], stmt.tbls[i], is)
+		// newTbl is the 'should be used' table info for this execution.
+		newTbl, err := tryLockMDLAndUpdateSchemaIfNecessary(ctx, sctx.GetPlanCtx(), stmt.dbName[i], tbl, is)
 		if err != nil {
+			logutil.BgLogger().Warn("meet error during tryLockMDLAndUpdateSchemaIfNecessary", zap.String("table name", tbl.Meta().Name.String()), zap.Error(err))
+			// Invalid the cache key related fields to avoid using plan cache.
+			stmt.RelateVersion[tbl.Meta().ID] = math.MaxUint64
 			schemaNotMatch = true
 			continue
 		}
-		// The revision of tbl and newTbl may not be the same.
-		// Example:
-		// The version of stmt.tbls[i] is taken from the prepare statement and is revision v1.
-		// When stmt.tbls[i] is locked in MDL, the revision of newTbl is also v1.
-		// The revision of tbl is v2. The reason may have other statements trigger "tryLockMDLAndUpdateSchemaIfNecessary" before, leading to tbl revision update.
-		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision || (tbl != nil && tbl.Meta().Revision != newTbl.Meta().Revision) {
+		if stmt.tbls[i].Meta().Revision != newTbl.Meta().Revision {
 			schemaNotMatch = true
 		}
+		// Update the cache key related fields.
 		stmt.tbls[i] = newTbl
 		stmt.RelateVersion[newTbl.Meta().ID] = newTbl.Meta().Revision
 	}
@@ -236,12 +243,16 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, paramTypes)
+	return generateNewPlan(ctx, sctx, isNonPrepared, is, stmt, cacheKey, binding, paramTypes)
 }
 
 func clonePlanForInstancePlanCache(ctx context.Context, sctx sessionctx.Context,
 	stmt *PlanCacheStmt, plan base.Plan) (clonedPlan base.Plan, ok bool) {
-	// TODO: add metrics to record the time cost of this clone operation.
+	defer func(begin time.Time) {
+		if ok {
+			core_metrics.GetPlanCacheCloneDuration().Observe(time.Since(begin).Seconds())
+		}
+	}(time.Now())
 	fastPoint := stmt.PointGet.Executor != nil // this case is specially handled
 	pointPlan, isPoint := plan.(*PointGetPlan)
 	if fastPoint && isPoint { // special optimization for fast point plans
@@ -288,7 +299,8 @@ func lookupPlanCache(ctx context.Context, sctx sessionctx.Context, cacheKey stri
 		return nil, nil, nil, false
 	}
 	pcv := v.(*PlanCacheValue)
-	return pcv.Plan, pcv.OutputColumns, pcv.stmtHints, true
+	sctx.GetSessionVars().PlanCacheValue = pcv
+	return pcv.Plan, pcv.OutputColumns, pcv.StmtHints, true
 }
 
 func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
@@ -322,7 +334,7 @@ func adjustCachedPlan(ctx context.Context, sctx sessionctx.Context,
 // generateNewPlan call the optimizer to generate a new plan for current statement
 // and try to add it to cache
 func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema,
-	stmt *PlanCacheStmt, cacheKey string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
+	stmt *PlanCacheStmt, cacheKey, binding string, paramTypes []*types.FieldType) (base.Plan, []*types.FieldName, error) {
 	stmtAst := stmt.PreparedAst
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
@@ -345,15 +357,24 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// put this plan into the plan cache.
 	if stmtCtx.UseCache() {
-		cached := NewPlanCacheValue(p, names, paramTypes, &stmtCtx.StmtHints)
 		stmt.NormalizedPlan, stmt.PlanDigest = NormalizePlan(p)
+		cached := NewPlanCacheValue(sctx, stmt, cacheKey, binding, p, names, paramTypes, &stmtCtx.StmtHints)
 		stmtCtx.SetPlan(p)
 		stmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 		if instancePlanCacheEnabled(ctx) {
-			domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+			if cloned, ok := p.CloneForPlanCache(sctx.GetPlanCtx()); ok {
+				// Clone this plan before putting it into the cache to avoid read-write DATA RACE. For example,
+				// before this session finishes the execution, the next session has started cloning this plan.
+				// Time:  | ------------------------------------------------------------------------------- |
+				// Sess1: | put plan into cache | ----------- execution (might modify the plan) ----------- |
+				// Sess2:                  | start | ------- hit this plan and clone it (DATA RACE) ------- |
+				cached.Plan = cloned
+				domain.GetDomain(sctx).GetInstancePlanCache().Put(cacheKey, cached, paramTypes)
+			}
 		} else {
 			sctx.GetSessionPlanCache().Put(cacheKey, cached, paramTypes)
 		}
+		sctx.GetSessionVars().PlanCacheValue = cached
 	}
 	sessVars.FoundInPlanCache = false
 	return p, names, err

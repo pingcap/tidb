@@ -33,7 +33,7 @@ import (
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	job           *model.Job
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -132,7 +132,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = subtask.Concurrency * 2
+	local.WorkerConcurrency = int(m.GetResource().CPU.Capacity()) * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err == nil {
 		return nil
@@ -157,10 +157,5 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	return nil
-}
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
 }

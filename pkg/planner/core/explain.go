@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -572,13 +573,15 @@ func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) 
 
 	exprCtx := p.SCtx().GetExprCtx()
 	evalCtx := exprCtx.GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(strings.Builder)
+	buffer.WriteString(p.JoinType.String())
 	buffer.WriteString(", inner:")
 	if normalized {
 		buffer.WriteString(p.Children()[p.InnerChildIdx].TP())
 	} else {
 		buffer.WriteString(p.Children()[p.InnerChildIdx].ExplainID().String())
 	}
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.OuterJoinKeys) > 0 {
 		buffer.WriteString(", outer key:")
 		buffer.Write(expression.ExplainColumnList(evalCtx, p.OuterJoinKeys))
@@ -654,7 +657,7 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	}
 
 	buffer.WriteString(p.JoinType.String())
-
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	if len(p.EqualConditions) > 0 {
 		if normalized {
@@ -726,6 +729,17 @@ func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	return buffer.String()
 }
 
+func explainJoinLeftSide(buffer *strings.Builder, isInnerJoin bool, normalized bool, leftSide base.PhysicalPlan) {
+	if !isInnerJoin {
+		buffer.WriteString(", left side:")
+		if normalized {
+			buffer.WriteString(leftSide.TP())
+		} else {
+			buffer.WriteString(leftSide.ExplainID().String())
+		}
+	}
+}
+
 // ExplainInfo implements Plan interface.
 func (p *PhysicalMergeJoin) ExplainInfo() string {
 	return p.explainInfo(false)
@@ -740,7 +754,9 @@ func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	}
 
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
-	buffer := bytes.NewBufferString(p.JoinType.String())
+	buffer := new(strings.Builder)
+	buffer.WriteString(p.JoinType.String())
+	explainJoinLeftSide(buffer, p.JoinType.IsInnerJoin(), normalized, p.Children()[0])
 	if len(p.LeftJoinKeys) > 0 {
 		fmt.Fprintf(buffer, ", left key:%s",
 			expression.ExplainColumnList(evalCtx, p.LeftJoinKeys))

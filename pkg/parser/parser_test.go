@@ -498,6 +498,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
 		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin create workload snapshot;", true, "ADMIN CREATE WORKLOAD SNAPSHOT"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
@@ -1693,7 +1694,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT tidb_decode_key('abc');`, true, "SELECT TIDB_DECODE_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_base64_key('abc');`, true, "SELECT TIDB_DECODE_BASE64_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_sql_digests('[]');`, true, "SELECT TIDB_DECODE_SQL_DIGESTS(_UTF8MB4'[]')"},
-		{`SELECT get_mvcc_info('hex', '0xabc');`, true, "SELECT GET_MVCC_INFO(_UTF8MB4'hex', _UTF8MB4'0xabc')"},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true, "CREATE TABLE `t` (`c1` TIME(2),`c2` DATETIME(2),`c3` TIMESTAMP(2))"},
@@ -2255,7 +2255,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true, "SELECT ENCRYPT(_UTF8MB4'hello'),ENCRYPT(_UTF8MB4'hello', @`salt`)"},
 		{`SELECT MD5('testing');`, true, "SELECT MD5(_UTF8MB4'testing')"},
 		{`SELECT OLD_PASSWORD(@str);`, true, "SELECT OLD_PASSWORD(@`str`)"},
-		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD_FUNC(@`str`)"},
+		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD(@`str`)"},
 		{`SELECT RANDOM_BYTES(@len);`, true, "SELECT RANDOM_BYTES(@`len`)"},
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
@@ -3179,6 +3179,17 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX IF NOT EXISTS (a) USING BTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX IF NOT EXISTS(`a`) USING BTREE COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING RTREE COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING RTREE COMMENT 'a'"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 'a'", false, ""},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) CLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) NONCLUSTERED PRE_SPLIT_REGIONS = 4"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (by (1, 'a'), (2, 'b'), (3, 'c'));", true, "ALTER TABLE `t` ADD INDEX(`a`) PRE_SPLIT_REGIONS = (BY (1,_UTF8MB4'a'),(2,_UTF8MB4'b'),(3,_UTF8MB4'c'))"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"CREATE INDEX idx ON t (a, b) pre_split_regions = 100", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = 100"},
+		{"CREATE INDEX idx ON t (a, b) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", true, "CREATE INDEX `idx` ON `t` (`a`, `b`) PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4)"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", true, "ALTER TABLE `t` ADD INDEX `idx`(`a`) PRE_SPLIT_REGIONS = 100, ADD INDEX `idx2`(`b`) PRE_SPLIT_REGIONS = (BY (1),(2),(3))"},
 		{"ALTER TABLE t ADD KEY (a) USING HASH COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING HASH COMMENT 'a'"},
 		{"ALTER TABLE t ADD INDEX (a) USING BTREE /*T![global_index] GLOBAL */ COMMENT 'a'", true, "ALTER TABLE `t` ADD INDEX(`a`) USING BTREE COMMENT 'a' GLOBAL"},
 		{"ALTER TABLE t ADD UNIQUE INDEX (a) /*T![global_index] GLOBAL */", true, "ALTER TABLE `t` ADD UNIQUE(`a`) GLOBAL"},
@@ -7371,6 +7382,59 @@ func TestPlanReplayer(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "SELECT a FROM t", v.Stmt.Text())
 	require.True(t, v.Analyze)
+}
+
+func TestTrafficStmt(t *testing.T) {
+	table := []testCase{
+		{"traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' duration '1s' encryption_method 'aes' compress true", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1s' ENCRYPTION_METHOD = 'aes' COMPRESS = TRUE"},
+		{"traffic capture to '/tmp' encryption_method='aes' duration='1s'", true, "TRAFFIC CAPTURE TO '/tmp' ENCRYPTION_METHOD = 'aes' DURATION = '1s'"},
+		{"traffic capture to '/tmp' duration='1m'", true, "TRAFFIC CAPTURE TO '/tmp' DURATION = '1m'"},
+		{"traffic capture to '/tmp' duration='1'", false, ""},
+		{"traffic capture to '/tmp' duration=1s", false, ""},
+		{"traffic capture to '/tmp' compress='true'", false, ""},
+		{"traffic capture duration='1m'", false, ""},
+		{"traffic capture", false, ""},
+		{"traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' user 'root' password '123456' speed 1.0 read_only true", true, "TRAFFIC REPLAY FROM '/tmp' USER = 'root' PASSWORD = '123456' SPEED = 1.0 READONLY = TRUE"},
+		{"traffic replay from '/tmp' speed 1.0 user='root'", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1.0 USER = 'root'"},
+		{"traffic replay from '/tmp' speed=1", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 1"},
+		{"traffic replay from '/tmp' speed=0.5", true, "TRAFFIC REPLAY FROM '/tmp' SPEED = 0.5"},
+		{"traffic replay from '/tmp' speed=-1", false, ""},
+		{"traffic replay speed=1", false, ""},
+		{"traffic replay", false, ""},
+		{"show traffic jobs", true, "SHOW TRAFFIC JOBS"},
+		{"show traffic jobs duration='1m'", false, ""},
+		{"show traffic", false, ""},
+		{"cancel traffic jobs", true, "CANCEL TRAFFIC JOBS"},
+		{"cancel traffic jobs duration='1m'", false, ""},
+		{"cancel traffic", false, ""},
+		{"traffic test", false, ""},
+		{"traffic", false, ""},
+	}
+
+	p := parser.New()
+	var sb strings.Builder
+	for _, tbl := range table {
+		stmts, _, err := p.Parse(tbl.src, "", "")
+		if !tbl.ok {
+			require.Error(t, err, tbl.src)
+			continue
+		}
+		require.NoError(t, err, tbl.src)
+		require.Len(t, stmts, 1)
+		v, ok := stmts[0].(*ast.TrafficStmt)
+		require.True(t, ok)
+		switch v.OpType {
+		case ast.TrafficOpCapture, ast.TrafficOpReplay:
+			require.Equal(t, "/tmp", v.Dir)
+		}
+		sb.Reset()
+		ctx := NewRestoreCtx(RestoreStringSingleQuotes|RestoreSpacesAroundBinaryOperation|RestoreStringWithoutCharset|RestoreNameBackQuotes, &sb)
+		err = v.Restore(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tbl.restore, sb.String())
+	}
 }
 
 func TestGBKEncoding(t *testing.T) {

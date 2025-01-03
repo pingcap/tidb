@@ -304,6 +304,13 @@ SELECT original_sql, bind_sql, default_db, status, create_time, update_time, cha
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2019-10-13 20:08:13' and time < now();").Check(testkit.Rows("3"))
 	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2022-04-29 17:50:00'").Check(testkit.Rows("0"))
 	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time < '2010-01-02 15:04:05'").Check(testkit.Rows("0"))
+
+	// test the time zone change cases, see issue: https://github.com/pingcap/tidb/issues/58452
+	tk.MustExec("set @@time_zone='UTC'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustQuery("select count(plan_digest) from `information_schema`.`slow_query` where time > '2020-10-13 12:08:13' and time < '2020-10-13 13:08:13'").Check(testkit.Rows("1"))
+	tk.MustExec("set @@time_zone='+10:00'")
+	tk.MustQuery("select count(*) from `information_schema`.`slow_query` where time > '2022-04-21 16:44:54' and time < '2022-04-21 16:44:55'").Check(testkit.Rows("1"))
 }
 
 func TestIssue37066(t *testing.T) {

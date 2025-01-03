@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -81,14 +82,33 @@ type ttlScanTask struct {
 	statistics *ttlStatistics
 }
 
+// TaskTerminateReason indicates the reason why the task is terminated.
+type TaskTerminateReason string
+
+const (
+	// ReasonTaskFinished indicates the task is finished.
+	ReasonTaskFinished TaskTerminateReason = "finished"
+	// ReasonError indicates whether the task is terminated because of error.
+	ReasonError TaskTerminateReason = "error"
+	// ReasonWorkerStop indicates whether the task is terminated because the scan worker stops.
+	// We should reschedule this task in another worker or TiDB again.
+	ReasonWorkerStop TaskTerminateReason = "workerStop"
+)
+
 type ttlScanTaskExecResult struct {
 	time time.Time
 	task *ttlScanTask
 	err  error
+	// reason indicates why the task is terminated.
+	reason TaskTerminateReason
 }
 
 func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
-	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err}
+	reason := ReasonTaskFinished
+	if err != nil {
+		reason = ReasonError
+	}
+	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err, reason: reason}
 }
 
 func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
@@ -97,6 +117,15 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row) [][]types.Datum {
 		datums[i] = row.GetDatumRow(t.tbl.KeyColumnTypes)
 	}
 	return datums
+}
+
+func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
+	return l.With(
+		zap.String("jobID", t.JobID),
+		zap.Int64("scanID", t.ScanID),
+		zap.Int64("tableID", t.TableID),
+		zap.String("table", t.tbl.FullName()),
+	)
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
@@ -121,13 +150,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		case <-doScanFinished.Done():
 			return
 		}
-		logger := logutil.BgLogger().With(
-			zap.Int64("tableID", t.TableID),
-			zap.String("table", t.tbl.Name.O),
-			zap.String("partition", t.tbl.Partition.O),
-			zap.String("jobID", t.JobID),
-			zap.Int64("scanID", t.ScanID),
-		)
+		logger := t.taskLogger(logutil.BgLogger())
 		logger.Info("kill the running statement in scan task because the task or worker cancelled")
 		rawSess.KillStmt()
 		ticker := time.NewTicker(time.Minute)
@@ -151,7 +174,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		rawSess.Close()
 	}()
 
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
+	now := rawSess.Now()
+	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, now)
 	if err != nil {
 		return t.result(err)
 	}
@@ -167,7 +191,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
+		return t.result(errors.Errorf(
+			"current expire time is after safe expire time. (%d > %d, expire expr: %s %s, now: %d, nowTZ: %s)",
+			t.ExpireTime.Unix(), safeExpire.Unix(),
+			t.tbl.TTLInfo.IntervalExprStr, ast.TimeUnitType(t.tbl.TTLInfo.IntervalTimeUnit).String(),
+			now.Unix(), now.Location().String(),
+		))
 	}
 
 	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
@@ -253,6 +282,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		}
 
 		delTask := &ttlDeleteTask{
+			jobID:      t.JobID,
+			scanID:     t.ScanID,
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
 			rows:       lastResult,
@@ -378,6 +409,10 @@ func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlSca
 	result := task.doScan(ctx, w.delCh, w.sessionPool)
 	if result == nil {
 		result = task.result(nil)
+	}
+
+	if result.reason == ReasonError && w.baseWorker.ctx.Err() != nil {
+		result.reason = ReasonWorkerStop
 	}
 
 	w.baseWorker.Lock()

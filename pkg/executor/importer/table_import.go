@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -139,7 +140,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := NewClientWithContext(ctx, caller.Component("tidb-table-importer"), addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -154,7 +155,7 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -234,7 +235,7 @@ type TableImporter struct {
 
 // NewTableImporterForTest creates a new table importer for test.
 func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)

@@ -44,7 +44,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		require.Len(t, rows, n)
 		for i := 0; i < n; i++ {
 			//nolint: forcetypeassert
-			jobTp := rows[i][3].(string)
+			jobTp := rows[i][12].(string)
 			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 		}
 	}
@@ -99,7 +99,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp := rows[0][3].(string)
+	jobTp := rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 
 	tk.MustExec("drop table t;")
@@ -115,7 +115,7 @@ func TestIngestError(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	rows = tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
-	jobTp = rows[0][3].(string)
+	jobTp = rows[0][12].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
@@ -181,7 +181,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	tk.MustExec("create table t (a int, b int);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
 	cancelled := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if cancelled {
 			return
 		}
@@ -201,7 +201,7 @@ func TestAddIndexIngestCancel(t *testing.T) {
 	})
 	tk.MustGetErrCode("alter table t add index idx(b);", errno.ErrCancelledDDLJob)
 	require.True(t, cancelled)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	ok, err := ingest.LitBackCtxMgr.CheckMoreTasksAvailable()
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -250,7 +250,7 @@ func TestAddIndexCancelOnNoneState(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 
 	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.SchemaState == model.StateNone && first {
 			_, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			assert.NoError(t, err)
@@ -508,7 +508,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
 	i.Store(3)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
 		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))

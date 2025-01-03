@@ -1378,7 +1378,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -3230,3 +3230,9 @@ INSERT INTO test.t VALUES (1234567890123456);
 SELECT IFNULL(id, 'abcdef') FROM test.t;
 IFNULL(id, 'abcdef')
 1234567890123456
+drop table if exists test.t;
+create table test.t(a double);
+insert into test.t values('20000102030405.0078125');
+select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
+a
+20000102030405.008
