@@ -805,10 +805,6 @@ ChunkLoop:
 			arenaSize := mydump.GetArenaSize()
 			memoryUsage = (memoryUsage + arenaSize - 1) / arenaSize * arenaSize
 
-			memLimiter.Acquire(memoryUsage)
-			cr.memLimiter = memLimiter
-			cr.memoryUsage = memoryUsage
-
 			// If memory usage is larger than memory limit, set memory usage
 			// to limit to block other file import.
 			if memoryUsage > memLimit {
@@ -826,6 +822,9 @@ ChunkLoop:
 				)
 			}
 
+			memLimiter.Acquire(memoryUsage)
+			cr.memLimiter = memLimiter
+			cr.memoryUsage = memoryUsage
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()

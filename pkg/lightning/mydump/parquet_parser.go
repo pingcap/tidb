@@ -404,7 +404,7 @@ func (pp *ParquetParser) GetMemoryUage() (int, int) {
 		for _, c := range rg.Columns {
 			currUsage += roundToPower2(int(c.MetaData.GetTotalCompressedSize()))
 		}
-		readBufferUsage = max(readBufferUsage, currUsage)
+		readBufferUsageTotal = max(readBufferUsageTotal, currUsage)
 	}
 	readBufferUsageTotal += roundToPower2(defaultBufSize) * len(pp.columnNames)
 
