@@ -655,7 +655,7 @@ func validatePartitionCreation(ctx context.Context, now time.Time, t *testing.T,
 
 func TestCreatePartition(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
-	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
+	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database WORKLOAD_SCHEMA")
@@ -731,7 +731,7 @@ func validatePartitionDrop(ctx context.Context, now time.Time, t *testing.T,
 
 func TestDropOldPartitions(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
-	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
+	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database WORKLOAD_SCHEMA")
@@ -808,7 +808,7 @@ func getNextTick(now time.Time) time.Duration {
 
 func TestHouseKeeperThread(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
-	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
+	wrk := setupWorker(ctx, t, addr, dom, "worker", true)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("create database WORKLOAD_SCHEMA")
