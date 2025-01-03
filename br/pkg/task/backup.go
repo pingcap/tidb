@@ -752,11 +752,11 @@ func getProgressCountOfRanges(
 	ranges []rtree.Range,
 ) (int, backup.ProgressUnit, error) {
 	if len(ranges) > 1000 {
-		return len(ranges), backup.RangeUnit, nil
+		return len(ranges), backup.UnitRange, nil
 	}
 	failpoint.Inject("progress-call-back", func(_ failpoint.Value) {
 		if len(ranges) > 100 {
-			failpoint.Return(len(ranges), backup.RangeUnit, nil)
+			failpoint.Return(len(ranges), backup.UnitRange, nil)
 		}
 	})
 	// The number of regions need to backup
@@ -764,12 +764,12 @@ func getProgressCountOfRanges(
 	for _, r := range ranges {
 		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
 		if err != nil {
-			return 0, backup.RegionUnit, errors.Trace(err)
+			return 0, backup.UnitRegion, errors.Trace(err)
 		}
 		approximateRegions += regionCount
 	}
 	summary.CollectInt("backup total regions", approximateRegions)
-	return approximateRegions, backup.RegionUnit, nil
+	return approximateRegions, backup.UnitRegion, nil
 }
 
 // ParseTSString port from tidb setSnapshotTS.

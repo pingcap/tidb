@@ -72,10 +72,10 @@ type Checksum struct {
 type ProgressUnit string
 
 const (
-	// RangeUnit represents the progress updated counter when a range finished.
-	RangeUnit ProgressUnit = "range"
-	// RegionUnit represents the progress updated counter when a region finished.
-	RegionUnit ProgressUnit = "region"
+	// UnitRange represents the progress updated counter when a range finished.
+	UnitRange ProgressUnit = "range"
+	// UnitRegion represents the progress updated counter when a region finished.
+	UnitRegion ProgressUnit = "region"
 )
 
 type MainBackupLoop struct {
@@ -282,7 +282,9 @@ mainLoop:
 				startUpdate := time.Now()
 				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
 				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
-				incompleteRangesUpdateTicker.Reset(max(5*time.Since(startUpdate), IncompleteRangesUpdateInterval))
+				elapsed := time.Since(startUpdate)
+				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
+				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
 			case storeBackupInfo := <-loop.StateNotifier:
 				if storeBackupInfo.All {
 					logutil.CL(mainCtx).Info("cluster state changed. restart store backups", zap.Uint64("round", round))
@@ -369,7 +371,7 @@ mainLoop:
 				if lock != nil {
 					allTxnLocks = append(allTxnLocks, lock)
 				}
-				loop.ProgressCallBack(RegionUnit)
+				loop.ProgressCallBack(UnitRegion)
 			}
 		}
 	}
@@ -651,7 +653,7 @@ func (bc *Client) loadCheckpointRanges(ctx context.Context, progressCallBack fun
 			rangeDataMap[groupKey] = rangeTree
 		}
 		rangeTree.Put(rg.StartKey, rg.EndKey, rg.Files)
-		progressCallBack(RegionUnit)
+		progressCallBack(UnitRegion)
 	})
 
 	// we should adjust start-time of the summary to `pastDureTime` earlier
@@ -1115,7 +1117,7 @@ func (bc *Client) BackupRanges(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	globalProgressTree.SetCallBack(func() { progressCallBack(RangeUnit) })
+	globalProgressTree.SetCallBack(func() { progressCallBack(UnitRange) })
 
 	stateNotifier := make(chan BackupRetryPolicy)
 	ObserveStoreChangesAsync(ctx, stateNotifier, bc.mgr.GetPDClient())
