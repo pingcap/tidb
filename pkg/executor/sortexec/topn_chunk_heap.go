@@ -52,6 +52,8 @@ type topNChunkHeap struct {
 func (h *topNChunkHeap) init(topnExec *TopNExec, memTracker *memory.Tracker, totalLimit uint64, idx int, greaterRow func(chunk.Row, chunk.Row) bool, fieldTypes []*types.FieldType) {
 	h.memTracker = memTracker
 
+	// The schema of TopN keep same with its children without inline projection. After inline projection, TopN will have its own schema,
+	// so TopN can not be used to construct chunks, but children information needs to be used instead.
 	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
 	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
 	ch := topnExec.Children(0)
@@ -115,6 +117,8 @@ func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
 // but we want descending top N, then we will keep all data in memory.
 // But if data is distributed randomly, this function will be called log(n) times.
 func (h *topNChunkHeap) doCompaction(topnExec *TopNExec) error {
+	// The schema of TopN keep same with its children without inline projection. After inline projection, TopN will have its own schema,
+	// so TopN can not be used to construct chunks, but children information needs to be used instead.
 	// Row size of new chunk list may not be enough to hold the result set from child executor when inline projection occurs.
 	// To avoid this problem, we use child executor's schmea to build new chunk list by default.
 	ch := topnExec.Children(0)
