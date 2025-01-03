@@ -364,7 +364,7 @@ type ParquetParser struct {
 }
 
 // GetMemoryUage estimate the memory usage for this file.
-func (pp *ParquetParser) GetMemoryUage() int {
+func (pp *ParquetParser) GetMemoryUage() (int, int) {
 	// Initialize column reader
 	if pp.dumpers[0].reader == nil {
 		pp.ReadRow()
@@ -396,6 +396,18 @@ func (pp *ParquetParser) GetMemoryUage() int {
 	dictUsage := 0
 	dataPageUsage := 0
 	readBufferUsage := roundup(bufSizes[0]) + roundup(defaultBufSize)
+
+	readBufferUsageTotal := 0
+	meta := pp.readers[0].MetaData()
+	for _, rg := range meta.RowGroups {
+		currUsage := 0
+		for _, c := range rg.Columns {
+			currUsage += roundUp(int(c.MetaData.GetTotalCompressedSize()))
+		}
+		readBufferUsage = max(readBufferUsage, currUsage)
+	}
+	readBufferUsageTotal += roundUp(defaultBufSize) * len(pp.columnNames)
+
 	if len(bufSizes) == 3 {
 		dataPageUsage = roundup(bufSizes[1])
 	} else {
@@ -405,7 +417,7 @@ func (pp *ParquetParser) GetMemoryUage() int {
 		}
 		dataPageUsage = roundup(dataPageUsage)
 	}
-	return (dataPageUsage + dictUsage + readBufferUsage) * len(pp.columnNames)
+	return (dataPageUsage + dictUsage + readBufferUsage) * len(pp.columnNames), (dataPageUsage+dictUsage)*len(pp.columnNames) + readBufferUsageTotal
 }
 
 func (pp *ParquetParser) setStringData(readNum, col, offset int) {
