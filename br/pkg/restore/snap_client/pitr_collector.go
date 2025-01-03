@@ -245,7 +245,10 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 
 	copyStart := time.Now()
 	if err := copier.CopyFrom(ctx, c.restoreStorage, spec); err != nil {
-		return err
+		return errors.Annotatef(err, "failed to copy sst file %s to %s, "+
+			"you may check whether permissions are granted in both %s and %s, "+
+			"and the two storages are provided by the same cloud vendor",
+			spec.From, spec.To, c.restoreStorage.URI(), c.taskStorage.URI())
 	}
 	log.Info("Copy SST to log backup storage success.", zap.String("file", f.Name), zap.Stringer("takes", time.Since(copyStart)))
 
@@ -283,13 +286,14 @@ func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error
 	defer c.extraBackupMetaLock.Unlock()
 
 	begin := time.Now()
-	logutil.CL(ctx).Info("Persisting extra backup meta.",
-		zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()), zap.Stringer("takes", time.Since(begin)))
 	msg := c.extraBackupMeta.genMsg()
 	bs, err := msg.Marshal()
 	if err != nil {
 		return errors.Annotate(err, "failed to marsal the committing message")
 	}
+	logutil.CL(ctx).Info("Persisting extra backup meta.",
+		zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()), zap.Stringer("takes", time.Since(begin)))
+
 	err = c.taskStorage.WriteFile(ctx, c.metaPath(), bs)
 	if err != nil {
 		return errors.Annotatef(err, "failed to put content to meta to %s", c.metaPath())

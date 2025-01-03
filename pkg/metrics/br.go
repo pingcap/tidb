@@ -21,9 +21,9 @@ func InitBRMetrics() {
 		Subsystem: "br",
 		Name:      "restore_import_file_seconds",
 
-		Help: "The time cost for importing a file (send it to a file's all peers and put metadata)",
+		Help: "The time cost for importing a file. (including the time costed in queuing)",
 
-		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
+		Buckets: prometheus.ExponentialBuckets(0.01, 4, 14),
 	})
 
 	RestoreUploadSSTForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
