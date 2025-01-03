@@ -11,7 +11,7 @@ You may read the [design document](https://github.com/pingcap/community/blob/mas
 Features
 --------
 
-> Dumpling is currently in early development stage, and most features are incomplete. Contributions are welcomed!
+> Dumpling is in active development. Contributions are welcomed!
 
 - [x] SQL dump is split into multiple files (like `mydumper`) for easy management.
 - [x] Export multiple tables in parallel to speed up execution.
