@@ -802,6 +802,9 @@ ChunkLoop:
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			memoryUsage := tr.tableMeta.DataFiles[0].FileMeta.MemoryUsage
+			arenaSize := mydump.GetArenaSize()
+			memoryUsage = (memoryUsage + arenaSize - 1) / arenaSize * arenaSize
+
 			memLimiter.Acquire(memoryUsage)
 			cr.memLimiter = memLimiter
 			cr.memoryUsage = memoryUsage

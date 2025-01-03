@@ -263,6 +263,21 @@ func (pf *parquetFileWrapper) InitBuffer(bufSize int) {
 	pf.buf = make([]byte, bufSize)
 }
 
+func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
+	read := 0
+	for read < len(p) {
+		n, err := pf.Read(p[read:])
+		read += n
+		if err != nil {
+			return read, err
+		}
+	}
+	if read != len(p) {
+		return read, errors.Errorf("Error reading %d bytes, only read %d bytes", len(p), read)
+	}
+	return read, nil
+}
+
 // ReadAt implemement ReaderAt interface
 func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 	// We want to minimize the number of Seek call as much as possible,
@@ -274,22 +289,18 @@ func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 		}
 	} else {
 		pf.buf = pf.buf[:gap]
-		if _, err := pf.Read(pf.buf); err != nil {
-			return 0, err
-		}
-	}
-
-	read := 0
-	for read < len(p) {
-		n, err := pf.Read(p[read:])
-		read += n
-		pf.lastOff = off + int64(n)
-		if err != nil {
+		if read, err := pf.readNBytes(pf.buf); err != nil {
 			return read, err
 		}
 	}
 
-	return read, nil
+	read, err := pf.readNBytes(p)
+	if err != nil {
+		return read, err
+	}
+	pf.lastOff = off + int64(read)
+
+	return len(p), nil
 }
 
 // Seek implemement Seeker interface

@@ -32,13 +32,17 @@ import (
 
 var (
 	maxArenaCount    = 0         // maximum arena count
-	arenaDefaultSize = 1 << 30   // size of each arena
+	arenaDefaultSize = 512 << 20 // size of each arena
 	leafSize         = 256 << 10 // The smallest block size is 256KB
 )
 
 // SetMaxMemoryUsage set the memory used by parquet reader.
 func SetMaxMemoryUsage(size int) {
 	maxArenaCount = size / arenaDefaultSize
+}
+
+func GetArenaSize() int {
+	return arenaDefaultSize
 }
 
 // arenaPool is used to cache and reuse arenas
@@ -105,7 +109,7 @@ func (ap *arenaPool) adjustGCPercent() {
 	gogc := os.Getenv("GOGC")
 	memTotal, err := memory.MemTotal()
 	if gogc == "" && err == nil {
-		percent := int(memTotal) * 100 / max(ap.allocated*arenaDefaultSize, 1)
+		percent := int(memTotal) * 90 / max(ap.allocated*arenaDefaultSize, 1)
 		percent = min(percent, 100) / 10 * 10
 		old := debug.SetGCPercent(percent)
 		runtime.GC()
