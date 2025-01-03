@@ -95,6 +95,20 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 	}
 }
 
+func convertMysqlTimeDatumToScalar(value *types.Datum) float64 {
+	valueTime := value.GetMysqlTime()
+	var minTime types.Time
+	switch valueTime.Type() {
+	case mysql.TypeDate:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDate, types.DefaultFsp)
+	case mysql.TypeDatetime:
+		minTime = types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.DefaultFsp)
+	case mysql.TypeTimestamp:
+		minTime = types.MinTimestamp
+	}
+	return float64(valueTime.Sub(UTCWithAllowInvalidDateCtx, &minTime).Duration)
+}
+
 // PreCalculateScalar converts the lower and upper to scalar. When the datum type is KindString or KindBytes, we also
 // calculate their common prefix length, because when a value falls between lower and upper, the common prefix
 // of lower and upper equals to the common prefix of the lower, upper and the value. For some simple types like `Int64`,
