@@ -97,7 +97,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	updateTime0 := rows0[0][1]
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'invalid_binding', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
