@@ -67,7 +67,7 @@ replace into t values (2, 3);
 update t set a = 3, b = 4 where a = 1;
 select * from t;
 a	b
-3	4
-3	4
-3	4
 2	3
+3	4
+3	4
+3	4
