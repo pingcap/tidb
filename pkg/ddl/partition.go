@@ -3233,6 +3233,9 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 				// When removing partitioning, set all indexes to 'local' since it will become a non-partitioned table!
 				newGlobal = false
 			}
+			if !index.Global {
+				continue
+			}
 			inAllPartitionColumns, err := checkPartitionKeysConstraint(partInfo, index.Columns, tblInfo)
 			if err != nil {
 				return ver, errors.Trace(err)
