@@ -255,7 +255,7 @@ type HistColl struct {
 }
 
 // NewHistColl creates a new HistColl.
-func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
+func NewHistColl(id int64, realtimeCnt, modifyCnt int64, colNum, idxNum int) *HistColl {
 	return &HistColl{
 		columns:            make(map[int64]*Column, colNum),
 		indices:            make(map[int64]*Index, idxNum),
@@ -270,7 +270,7 @@ func NewHistColl(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, co
 }
 
 // NewHistCollWithColsAndIdxs creates a new HistColl with given columns and indices.
-func NewHistCollWithColsAndIdxs(id int64, havePhysicalID bool, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
+func NewHistCollWithColsAndIdxs(id int64, realtimeCnt, modifyCnt int64, cols map[int64]*Column, idxs map[int64]*Index) *HistColl {
 	return &HistColl{
 		columns:            cols,
 		indices:            idxs,

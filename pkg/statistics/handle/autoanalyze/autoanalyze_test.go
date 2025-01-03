@@ -326,21 +326,21 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed but modify count is small
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 0, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 0, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
