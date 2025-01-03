@@ -315,6 +315,9 @@ type tidbBackend struct {
 	// view should be the same.
 	onDuplicate config.DuplicateResolutionAlgorithm
 	errorMgr    *errormanager.ErrorManager
+	// customizeOnDupStmt is used with `CustomizeOnDup` onDuplicate mode, which indicates the customized SQL statement
+	// ran after ON DUPLICATE KEY UPDATE for conflict resolution.
+	customizeOnDupStmt string
 	// maxChunkSize and maxChunkRows are the target size and number of rows of each INSERT SQL
 	// statement to be sent to downstream. Sometimes we want to reduce the txn size to avoid
 	// affecting the cluster too much.
@@ -339,11 +342,15 @@ func NewTiDBBackend(
 ) backend.Backend {
 	conflict := cfg.Conflict
 	var onDuplicate config.DuplicateResolutionAlgorithm
+	var customizeOnDupStmt string
 	switch conflict.Strategy {
 	case config.ErrorOnDup:
 		onDuplicate = config.ErrorOnDup
 	case config.ReplaceOnDup:
 		onDuplicate = config.ReplaceOnDup
+	case config.CustomizeOnDup:
+		onDuplicate = config.CustomizeOnDup
+		customizeOnDupStmt = conflict.CustomizeOnDupStatement
 	case config.IgnoreOnDup:
 		if conflict.MaxRecordRows == 0 {
 			onDuplicate = config.IgnoreOnDup
@@ -365,14 +372,15 @@ func NewTiDBBackend(
 		})
 	}
 	return &tidbBackend{
-		db:             db,
-		conflictCfg:    conflict,
-		onDuplicate:    onDuplicate,
-		errorMgr:       errorMgr,
-		maxChunkSize:   uint64(cfg.TikvImporter.LogicalImportBatchSize),
-		maxChunkRows:   cfg.TikvImporter.LogicalImportBatchRows,
-		stmtCache:      stmtCache,
-		stmtCacheMutex: sync.RWMutex{},
+		db:                 db,
+		conflictCfg:        conflict,
+		onDuplicate:        onDuplicate,
+		customizeOnDupStmt: customizeOnDupStmt,
+		errorMgr:           errorMgr,
+		maxChunkSize:       uint64(cfg.TikvImporter.LogicalImportBatchSize),
+		maxChunkRows:       cfg.TikvImporter.LogicalImportBatchRows,
+		stmtCache:          stmtCache,
+		stmtCacheMutex:     sync.RWMutex{},
 	}
 }
 
@@ -724,6 +732,10 @@ type stmtTask struct {
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
 //
 //	insert into t1 values (111), (222), (333), (444);
+//
+// If onDuplication config is set to customize, insert statement will be like:
+//
+//	insert into t1 values (111), (222), (333), (444) ON DUPLICATE KEY UPDATE <customizeOnDupStmt>;
 func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, rows tidbRows) error {
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
 	if insertStmt == nil {
@@ -747,7 +759,12 @@ func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string,
 			insertStmt.WriteString(row.insertStmt)
 		}
 	}
+
+	if be.onDuplicate == config.CustomizeOnDup {
+		insertStmt.WriteString(be.customizeOnDupResolutionStmt())
+	}
 	stmtTasks[0] = stmtTask{rows, insertStmt.String(), values}
+
 	return be.execStmts(ctx, stmtTasks, tableName, true)
 }
 
@@ -765,6 +782,13 @@ func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, column
 //	insert into t1 values (333);
 //	insert into t1 values (444);
 //
+// If onDuplicate config is set to customize, insert statements will be like:
+//
+//	insert into t1 values (111) ON DUPLICATE KEY UPDATE <customizeOnDupStmt>;
+//	insert into t1 values (222) ON DUPLICATE KEY UPDATE <customizeOnDupStmt>;
+//	insert into t1 values (333) ON DUPLICATE KEY UPDATE <customizeOnDupStmt>;
+//	insert into t1 values (444) ON DUPLICATE KEY UPDATE <customizeOnDupStmt>;
+//
 // See more details in br#1366: https://github.com/pingcap/br/issues/1366
 func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, rows tidbRows) error {
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
@@ -781,6 +805,10 @@ func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, colu
 		} else {
 			finalInsertStmt.WriteString(row.insertStmt)
 		}
+
+		if be.onDuplicate == config.CustomizeOnDup {
+			finalInsertStmt.WriteString(be.customizeOnDupResolutionStmt())
+		}
 		stmtTasks = append(stmtTasks, stmtTask{[]tidbRow{row}, finalInsertStmt.String(), row.values})
 	}
 	return be.execStmts(ctx, stmtTasks, tableName, false)
@@ -793,7 +821,7 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 		insertStmt.WriteString("REPLACE INTO ")
 	case config.IgnoreOnDup:
 		insertStmt.WriteString("INSERT IGNORE INTO ")
-	case config.ErrorOnDup:
+	case config.ErrorOnDup, config.CustomizeOnDup:
 		insertStmt.WriteString("INSERT INTO ")
 	}
 	insertStmt.WriteString(tableName)
@@ -809,6 +837,10 @@ func (be *tidbBackend) buildStmt(tableName string, columnNames []string) *string
 	}
 	insertStmt.WriteString(" VALUES")
 	return &insertStmt
+}
+
+func (be *tidbBackend) customizeOnDupResolutionStmt() string {
+	return fmt.Sprintf(" ON DUPLICATE KEY UPDATE %s", be.customizeOnDupStmt)
 }
 
 func (be *tidbBackend) execStmts(ctx context.Context, stmtTasks []stmtTask, tableName string, batch bool) error {

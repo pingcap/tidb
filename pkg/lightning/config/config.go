@@ -31,7 +31,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
-	"github.com/docker/go-units"
+	units "github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	tidbcfg "github.com/pingcap/tidb/pkg/config"
@@ -637,6 +637,9 @@ const (
 	// ErrorOnDup indicates using INSERT INTO to insert data for TiDB backend, which would violate PK or UNIQUE constraint when detecting duplicate.
 	// ErrorOnDup reports an error after detecting the first conflict and stops the import process for local backend.
 	ErrorOnDup
+	// CustomizeOnDup indicates using INSERT INTO with ON DUPLICATE KEY UPDATE, which allows running customized
+	// operations on duplicates.
+	CustomizeOnDup
 )
 
 // UnmarshalTOML implements the toml.Unmarshaler interface.
@@ -666,6 +669,8 @@ func (dra *DuplicateResolutionAlgorithm) FromStringValue(s string) error {
 	case "remove", "record":
 		log.L().Warn("\"conflict.strategy '%s' is no longer supported, has been converted to 'replace'")
 		*dra = ReplaceOnDup
+	case "customize":
+		*dra = CustomizeOnDup
 	default:
 		return errors.Errorf("invalid conflict.strategy '%s', please choose valid option between ['', 'replace', 'ignore', 'error']", s)
 	}
@@ -1375,6 +1380,9 @@ type Conflict struct {
 	PrecheckConflictBeforeImport bool                         `toml:"precheck-conflict-before-import" json:"precheck-conflict-before-import"`
 	Threshold                    int64                        `toml:"threshold" json:"threshold"`
 	MaxRecordRows                int64                        `toml:"max-record-rows" json:"max-record-rows"`
+	// CustomizeOnDupStatements is used with `CustomizeOnDup` OnDuplicate mode, which indicates the customized statement
+	// ran after ON DUPLICATE KEY UPDATE for conflict resolution.
+	CustomizeOnDupStatement string `toml:"customize-on-dup-statement" json:"customize-on-dup-statement"`
 }
 
 // adjust assigns default values and check illegal values. The arguments must be
@@ -1397,6 +1405,11 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 	}
 	switch c.Strategy {
 	case ReplaceOnDup, IgnoreOnDup, ErrorOnDup, NoneOnDup:
+	case CustomizeOnDup:
+		if len(c.CustomizeOnDupStatement) == 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"customize on duplication without providing the on duplication customize statement")
+		}
 	default:
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
@@ -1420,7 +1433,7 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 		switch c.Strategy {
 		case ErrorOnDup, NoneOnDup:
 			c.Threshold = 0
-		case IgnoreOnDup, ReplaceOnDup:
+		case IgnoreOnDup, ReplaceOnDup, CustomizeOnDup:
 			c.Threshold = DefaultRecordDuplicateThreshold
 		}
 	}

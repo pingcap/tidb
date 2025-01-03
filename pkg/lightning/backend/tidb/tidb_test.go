@@ -22,7 +22,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
+	sqlmock "github.com/DATA-DOG/go-sqlmock"
 	gmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -273,6 +273,49 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	writerCfg := &backend.LocalWriterConfig{}
 	writerCfg.TiDB.TableName = "`foo`.`bar`"
 	writer, err := engine.LocalWriter(ctx, writerCfg)
+	require.NoError(t, err)
+	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
+	require.NoError(t, err)
+	st, err := writer.Close(ctx)
+	require.NoError(t, err)
+	require.Nil(t, st)
+}
+
+func TestWriteRowsCustomizeOnDup(t *testing.T) {
+	s := createMysqlSuite(t)
+	defer s.TearDownTest(t)
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1) ON DUPLICATE KEY UPDATE a = VALUES(a)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	ctx := context.Background()
+	logger := log.L()
+
+	encBuilder := tidb.NewEncodingBuilder()
+	cfg := config.NewConfig()
+	cfg.Conflict.Strategy = config.CustomizeOnDup
+	cfg.Conflict.Threshold = math.MaxInt64
+	cfg.Conflict.MaxRecordRows = 0
+	cfg.Conflict.CustomizeOnDupStatement = "a = VALUES(a)"
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
+	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
+	require.NoError(t, err)
+
+	dataRows := encBuilder.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := encBuilder.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+
+	encoder, err := encBuilder.NewEncoder(ctx, &encode.EncodingConfig{Table: s.tbl, Logger: logger})
+	require.NoError(t, err)
+	row, err := encoder.Encode([]types.Datum{
+		types.NewIntDatum(1),
+	}, 1, []int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, 0)
+	require.NoError(t, err)
+
+	row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+
+	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})
 	require.NoError(t, err)
 	err = writer.AppendRows(ctx, []string{"a"}, dataRows)
 	require.NoError(t, err)
