@@ -747,7 +747,7 @@ func TestErrorBind(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
+	tk.MustContainErrMsg("create global binding for select * xxx", "You have an error in your SQL syntax")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(i int, s varchar(20))")
