@@ -464,7 +464,7 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		if forceLeftToBuild || forceRightToBuild {
 			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
 				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
-					"The build side will always be the right table. Please remove these hints",
+					"Please remove these hints",
 				p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
