@@ -282,12 +282,15 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 }
 
 func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error) {
-	c.extraBackupMetaLock.Lock()
-	defer c.extraBackupMetaLock.Unlock()
-
+	var bs []byte
 	begin := time.Now()
-	msg := c.extraBackupMeta.genMsg()
-	bs, err := msg.Marshal()
+	c.doWithExtraBackupMetaLock(func() {
+		msg := c.extraBackupMeta.genMsg()
+		// Here, after generating a snapshot of the current message then we can continue.
+		// It is no need to blocking appending.
+		bs, err = msg.Marshal()
+	})
+
 	if err != nil {
 		return errors.Annotate(err, "failed to marsal the committing message")
 	}
@@ -298,6 +301,10 @@ func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error
 	if err != nil {
 		return errors.Annotatef(err, "failed to put content to meta to %s", c.metaPath())
 	}
+
+	metrics.RestoreUploadSSTMetaForPiTRSeconds.Observe(time.Since(begin).Seconds())
+	logutil.CL(ctx).Debug("Persisting extra backup meta.",
+		zap.Stringer("uuid", c.restoreUUID), zap.String("path", c.metaPath()), zap.Stringer("takes", time.Since(begin)))
 	return nil
 }
 

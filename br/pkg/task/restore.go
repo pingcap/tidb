@@ -676,6 +676,7 @@ func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 func printRestoreMetrics() {
 	log.Info("Metric: import_file_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreImportFileSeconds)))
 	log.Info("Metric: upload_sst_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTForPiTRSeconds)))
+	log.Info("Metric: upload_sst_meta_for_pitr_seconds", zap.Object("metric", logutil.MarshalHistogram(metrics.RestoreUploadSSTMetaForPiTRSeconds)))
 }
 
 // RunRestore starts a restore task inside the current goroutine.

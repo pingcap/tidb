@@ -157,7 +157,6 @@ type SnapClient struct {
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
 
-	pitrColl *pitrCollector
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
@@ -176,7 +175,6 @@ func NewRestoreClient(
 		tlsConf:       tlsConf,
 		keepaliveConf: keepaliveConf,
 		switchCh:      make(chan struct{}),
-		pitrColl:      new(pitrCollector),
 	}
 }
 
@@ -440,7 +438,17 @@ func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.pitrColl = collector
+	if !collector.enabled {
+		return nil
+	}
+	if rc.IsIncremental() {
+		// Even there were an error, don't return it to confuse the user...
+		_ = collector.close()
+		return errors.Annotatef(berrors.ErrStreamLogTaskExist, "it seems there is a log backup task exists, "+
+			"if an incremental restore were performed to such cluster, log backup cannot properly handle this, "+
+			"the restore will be aborted, you may stop the log backup task, then restore, finally restart the task")
+	}
+
 	collector.restoreUUID = rc.restoreUUID
 	if collector.restoreUUID == (uuid.UUID{}) {
 		collector.restoreUUID = uuid.New()

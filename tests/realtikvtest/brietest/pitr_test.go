@@ -129,10 +129,11 @@ func (kit *LogBackupKit) RunFullRestore(extConfig func(*task.RestoreConfig)) {
 		var err error
 		cfg.TableFilter, err = filter.Parse(cfg.FilterStr)
 		cfg.CheckRequirements = false
+		cfg.WithSysTable = false
 		require.NoError(kit.t, err)
+		cfg.UseCheckpoint = false
 
 		extConfig(&cfg)
-		cfg.UseCheckpoint = false
 		return task.RunRestore(ctx, kit.Glue(), task.FullRestoreCmd, &cfg)
 	})
 }
@@ -144,6 +145,7 @@ func (kit *LogBackupKit) RunStreamRestore(extConfig func(*task.RestoreConfig)) {
 		cfg.FullBackupStorage = kit.LocalURI("full")
 		cfg.CheckRequirements = false
 		cfg.UseCheckpoint = false
+		cfg.WithSysTable = false
 
 		extConfig(&cfg)
 		return task.RunRestore(ctx, kit.Glue(), task.PointRestoreCmd, &cfg)
@@ -162,6 +164,7 @@ func (kit *LogBackupKit) RunFullBackup(extConfig func(*task.BackupConfig)) {
 	kit.runAndCheck(func(ctx context.Context) error {
 		cfg := task.DefaultBackupConfig(task.DefaultConfig())
 		cfg.Storage = kit.LocalURI("full")
+
 		extConfig(&cfg)
 		return task.RunBackup(ctx, kit.Glue(), "backup full[intest]", &cfg)
 	})
@@ -513,4 +516,30 @@ func TestPiTRAndFailureRestore(t *testing.T) {
 	})
 	res := kit.tk.MustQuery(fmt.Sprintf("SELECT COUNT(*) FROM test.%s", t.Name()))
 	res.Check([][]any{{"0"}})
+}
+
+func TestPiTRAndIncrementalRestore(t *testing.T) {
+	kit := NewLogBackupKit(t)
+	s := kit.simpleWorkload()
+	s.createSimpleTableWithData(kit)
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s.tbl))
+	})
+	s.insertSimpleIncreaseData(kit)
+	ts := kit.TSO()
+	kit.RunFullBackup(func(bc *task.BackupConfig) {
+		kit.SetFilter(&bc.Config, fmt.Sprintf("test.%s", s.tbl))
+		bc.Storage = kit.LocalURI("incr-legacy")
+		bc.LastBackupTS = ts
+	})
+	s.cleanSimpleData(kit)
+
+	kit.RunLogStart("dummy", func(sc *task.StreamConfig) {})
+	kit.RunFullRestore(func(rc *task.RestoreConfig) {})
+	chk := func(err error) { require.ErrorContains(t, err, "BR:Stream:ErrStreamLogTaskExist") }
+	kit.WithChecker(chk, func() {
+		kit.RunFullRestore(func(rc *task.RestoreConfig) {
+			rc.Storage = kit.LocalURI("incr-legacy")
+		})
+	})
 }

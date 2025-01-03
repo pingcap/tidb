@@ -3,8 +3,10 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	RestoreImportFileSeconds       prometheus.Histogram
-	RestoreUploadSSTForPiTRSeconds prometheus.Histogram
+	RestoreImportFileSeconds           prometheus.Histogram
+	RestoreUploadSSTForPiTRSeconds     prometheus.Histogram
+	RestoreUploadSSTMetaForPiTRSeconds prometheus.Histogram
+
 	// RestoreTableCreatedCount counts how many tables created.
 	RestoreTableCreatedCount prometheus.Counter
 )
@@ -34,5 +36,14 @@ func InitBRMetrics() {
 		Help: "The time cost for uploading SST files for point-in-time recovery",
 
 		Buckets: prometheus.DefBuckets,
+	})
+
+	RestoreUploadSSTMetaForPiTRSeconds = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "tidb",
+		Subsystem: "br",
+		Name:      "restore_upload_sst_meta_for_pitr_seconds",
+
+		Help:    "The time cost for uploading SST metadata for point-in-time recovery",
+		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 	})
 }
