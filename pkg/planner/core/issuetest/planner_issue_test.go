@@ -202,3 +202,12 @@ func TestIssue58619(t *testing.T) {
 		`              └─Selection(Probe) 1.00 cop[tikv]  ge(test.tbl_4.col_16, "EmWPH5cZQK"), le(test.tbl_4.col_16, NULL)`,
 		`                └─TableRowIDScan 10000.00 cop[tikv] table:tbl_4 keep order:false, stats:pseudo`))
 }
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (c1 year(4), c2 int, key(c1));")
+	tk.MustExec("insert into t values(2001, 1);")
+	tk.MustQuery("explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;").Check(testkit.Rows())
+}

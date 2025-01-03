@@ -98,9 +98,8 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	if (!prop.IsSortItemEmpty() && p.RowCount > 1) || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
-	dual := PhysicalTableDual{
-		RowCount: p.RowCount,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+	p.RowCount = 0
+	dual := PhysicalTableDual{}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
