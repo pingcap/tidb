@@ -37,7 +37,11 @@ go_test(
     ],
     embed = [":owner"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 5,
+=======
+    shard_count = 9,
+>>>>>>> afdd5c2ecd5 (owner: fix data race on ownerManager.campaignCancel (#56362))
     deps = [
         "//pkg/ddl",
         "//pkg/infoschema",
