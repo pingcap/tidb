@@ -193,6 +193,12 @@ func initializeWorker(w *worker, etcdCli *clientv3.Client, newOwner func(string,
 	w.sesspool = sesspool
 	w.newOwner = newOwner
 	w.workloadTables = workloadTables
+
+	w.snapshotTicker = time.NewTicker(time.Second)
+	w.snapshotTicker.Stop()
+	w.samplingTicker = time.NewTicker(time.Second)
+	w.samplingTicker.Stop()
+
 	w.wg = util.NewWaitGroupEnhancedWrapper("workloadrepo", nil, false)
 }
 

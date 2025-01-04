@@ -196,9 +196,7 @@ func (w *worker) takeSnapshot(ctx context.Context, sess sessionctx.Context, send
 
 func (w *worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
-		w.Lock()
-		w.snapshotTicker = time.NewTicker(time.Duration(w.snapshotInterval) * time.Second)
-		w.Unlock()
+		w.resetSnapshotInterval(w.snapshotInterval)
 
 		_sessctx := w.getSessionWithRetry()
 		defer w.sesspool.Put(_sessctx)
@@ -275,9 +273,7 @@ func (w *worker) startSnapshot(_ctx context.Context) func() {
 }
 
 func (w *worker) resetSnapshotInterval(newRate int32) {
-	if w.snapshotTicker != nil {
-		w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
-	}
+	w.snapshotTicker.Reset(time.Duration(newRate) * time.Second)
 }
 
 func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
@@ -291,7 +287,9 @@ func (w *worker) changeSnapshotInterval(_ context.Context, d string) error {
 
 	if int32(n) != w.snapshotInterval {
 		w.snapshotInterval = int32(n)
-		w.resetSnapshotInterval(w.snapshotInterval)
+		if w.snapshotTicker != nil {
+			w.resetSnapshotInterval(w.snapshotInterval)
+		}
 	}
 
 	return nil
