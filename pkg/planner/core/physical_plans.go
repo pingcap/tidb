@@ -1063,15 +1063,17 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 
 	oldNumColumns := len(schema.Columns)
 	numExtraColumns := 0
-	for i := oldNumColumns - 1; i >= 0; i-- {
-		cid := schema.Columns[i].ID
-		// Move extra columns to the end.
-		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
-		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
-		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
-			break
+	if oldNumColumns > 1 {
+		for i := oldNumColumns - 1; i >= 0; i-- {
+			cid := schema.Columns[i].ID
+			// Move extra columns to the end.
+			// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
+			// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
+			if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
+				break
+			}
+			numExtraColumns++
 		}
-		numExtraColumns++
 	}
 
 	extraColumns := make([]*expression.Column, numExtraColumns)
