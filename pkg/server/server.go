@@ -48,6 +48,7 @@ import (
 	"unsafe"
 
 	"github.com/blacktear23/go-proxyprotocol"
+	"github.com/cloudwego/netpoll"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
@@ -122,6 +123,9 @@ type Server struct {
 	listener          net.Listener
 	socket            net.Listener
 	concurrentLimiter *util.TokenLimiter
+
+	netpollAccept chan netpoll.Connection
+	eventloop     netpoll.EventLoop
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -447,7 +451,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 3)
 	err := s.initTiDBListener()
 	if err != nil {
 		log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
@@ -457,6 +461,25 @@ func (s *Server) Run(dom *domain.Domain) error {
 	// To prevent misuse, set a flag to indicate that register new error will panic immediately.
 	// For regression of issue like https://github.com/pingcap/tidb/issues/28190
 	terror.RegisterFinish()
+
+	if strings.ToLower(os.Getenv("TIDB_SERVER_MODE")) == "netpoll" {
+		s.netpollAccept = make(chan netpoll.Connection, 1)
+		s.eventloop, err = netpoll.NewEventLoop(
+			nil,
+			netpoll.WithOnConnect(func(ctx context.Context, c netpoll.Connection) context.Context {
+				s.netpollAccept <- c
+				return context.Background()
+			}),
+		)
+		if err != nil {
+			log.Error("failed to create the server", zap.Error(err), zap.Stack("stack"))
+			return err
+		}
+		go func() {
+			errChan <- s.eventloop.Serve(s.listener)
+		}()
+	}
+
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
@@ -486,8 +509,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		errChan <- nil
 		return
 	}
+	var (
+		conn net.Conn
+		err  error
+	)
 	for {
-		conn, err := listener.Accept()
+		if s.netpollAccept != nil && !isUnixSocket {
+			conn, err = <-s.netpollAccept, nil
+		} else {
+			conn, err = listener.Accept()
+		}
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				if opErr.Err.Error() == "use of closed network connection" {
@@ -586,6 +617,9 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 func (s *Server) startShutdown() {
 	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
 	s.health.Store(false)
+	if s.eventloop != nil {
+		s.eventloop.Shutdown(context.Background())
+	}
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second

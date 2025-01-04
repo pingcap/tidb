@@ -42,6 +42,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/cloudwego/netpoll"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -54,11 +55,34 @@ import (
 
 const defaultWriterSize = 16 * 1024
 
+type bufferedWriter interface {
+	io.Writer
+	Reset(w io.Writer)
+	Flush() error
+}
+
+type netpollWriter struct{ netpoll.Connection }
+
+func (w *netpollWriter) Reset(_ io.Writer) {}
+func (w *netpollWriter) Flush() error      { return w.Writer().Flush() }
+
+func (w *netpollWriter) Write(data []byte) (n int, err error) {
+	if !w.IsActive() {
+		return 0, errors.New("connection is not active")
+	}
+	out, err := w.Writer().Malloc(len(data))
+	if err != nil {
+		return 0, err
+	}
+	copy(out, data)
+	return len(data), nil
+}
+
 // PacketIO is a helper to read and write data in packet format.
 // MySQL Packets: https://dev.mysql.com/doc/internals/en/mysql-packet.html
 type PacketIO struct {
 	bufReadConn      *util.BufferedReadConn
-	bufWriter        *bufio.Writer
+	bufWriter        bufferedWriter
 	compressedWriter *compressedWriter
 	compressedReader *compressedReader
 	readTimeout      time.Duration
@@ -70,6 +94,7 @@ type PacketIO struct {
 	zstdLevel            zstd.EncoderLevel
 	sequence             uint8
 	compressedSequence   uint8
+	netpollConn          netpoll.Connection
 }
 
 // NewPacketIO creates a new PacketIO with given net.Conn.
@@ -130,7 +155,13 @@ func (p *PacketIO) SetCompressionAlgorithm(ca int) {
 // SetBufferedReadConn sets the BufferedReadConn of PacketIO.
 func (p *PacketIO) SetBufferedReadConn(bufReadConn *util.BufferedReadConn) {
 	p.bufReadConn = bufReadConn
-	p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
+	if c, ok := bufReadConn.Conn.(netpoll.Connection); ok {
+		p.netpollConn = c
+		p.bufReadConn.DropBuffer()
+		p.bufWriter = &netpollWriter{c}
+	} else {
+		p.bufWriter = bufio.NewWriterSize(bufReadConn, defaultWriterSize)
+	}
 }
 
 // SetReadTimeout sets the read timeout of PacketIO.
@@ -142,8 +173,14 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 	var header [4]byte
 	r := io.NopCloser(p.bufReadConn)
 	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
+		if p.netpollConn == nil {
+			if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := p.netpollConn.SetReadTimeout(p.readTimeout); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
@@ -179,8 +216,14 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 
 	data := make([]byte, length)
 	if p.readTimeout > 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
-			return nil, err
+		if p.netpollConn == nil {
+			if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := p.netpollConn.SetReadTimeout(p.readTimeout); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if p.compressionAlgorithm == mysql.CompressionNone {
@@ -208,8 +251,14 @@ func (p *PacketIO) SetMaxAllowedPacket(maxAllowedPacket uint64) {
 func (p *PacketIO) ReadPacket() ([]byte, error) {
 	p.accumulatedLength = 0
 	if p.readTimeout == 0 {
-		if err := p.bufReadConn.SetReadDeadline(time.Time{}); err != nil {
-			return nil, errors.Trace(err)
+		if p.netpollConn == nil {
+			if err := p.bufReadConn.SetReadDeadline(time.Now().Add(p.readTimeout)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := p.netpollConn.SetReadTimeout(p.readTimeout); err != nil {
+				return nil, err
+			}
 		}
 	}
 	data, err := p.readOnePacket()

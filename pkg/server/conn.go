@@ -113,6 +113,8 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+
+	"github.com/cloudwego/netpoll"
 )
 
 const (
@@ -203,6 +205,8 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+
+	netpollConn netpoll.Connection
 }
 
 func (cc *clientConn) getCtx() *TiDBContext {
@@ -2455,6 +2459,10 @@ func (cc *clientConn) writeChunksWithFetchSize(ctx context.Context, rs resultset
 }
 
 func (cc *clientConn) setConn(conn net.Conn) {
+	if c, ok := conn.(netpoll.Connection); ok {
+		cc.netpollConn = c
+	}
+
 	cc.bufReadConn = util2.NewBufferedReadConn(conn)
 	if cc.pkt == nil {
 		cc.pkt = internal.NewPacketIO(cc.bufReadConn)

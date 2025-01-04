@@ -38,5 +38,13 @@ func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 
 // Read reads data from the connection.
 func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
+	if conn.rb == nil {
+		return conn.Conn.Read(b)
+	}
 	return conn.rb.Read(b)
+}
+
+// DropBuffer drops the buffer of the connection.
+func (conn *BufferedReadConn) DropBuffer() {
+	conn.rb = nil
 }
