@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -418,49 +417,11 @@ func newBindingFromStorage(sctx sessionctx.Context, row chunk.Row) (string, *Bin
 	return sqlDigest.String(), binding, err
 }
 
-func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
-	origVals := sctx.GetSessionVars().UsePlanBaselines
-	sctx.GetSessionVars().UsePlanBaselines = false
-
-	// Usually passing a sprintf to ExecuteInternal is not recommended, but in this case
-	// it is safe because ExecuteInternal does not permit MultiStatement execution. Thus,
-	// the statement won't be able to "break out" from EXPLAIN.
-	rs, err := exec(sctx, fmt.Sprintf("EXPLAIN FORMAT='hint' %s", sql))
-	sctx.GetSessionVars().UsePlanBaselines = origVals
-	if rs != nil {
-		defer func() {
-			// Audit log is collected in Close(), set InRestrictedSQL to avoid 'create sql binding' been recorded as 'explain'.
-			origin := sctx.GetSessionVars().InRestrictedSQL
-			sctx.GetSessionVars().InRestrictedSQL = true
-			terror.Call(rs.Close)
-			sctx.GetSessionVars().InRestrictedSQL = origin
-		}()
-	}
-	if err != nil {
-		return "", err
-	}
-	chk := rs.NewChunk(nil)
-	err = rs.Next(context.TODO(), chk)
-	if err != nil {
-		return "", err
-	}
-	return chk.GetRow(0).GetString(0), nil
-}
-
 // GenerateBindingSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
+func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
-	}
-	if !skipCheckIfHasParam {
-		paramChecker := &paramMarkerChecker{}
-		stmtNode.Accept(paramChecker)
-		// We need to evolve on current sql, but we cannot restore values for paramMarkers yet,
-		// so just ignore them now.
-		if paramChecker.hasParamMarker {
-			return ""
-		}
 	}
 	// We need to evolve plan based on the current sql, not the original sql which may have different parameters.
 	// So here we would remove the hint and inject the current best plan hint.
@@ -512,22 +473,6 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, skipCheckIfHasPa
 	}
 	bindingLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
-}
-
-type paramMarkerChecker struct {
-	hasParamMarker bool
-}
-
-func (e *paramMarkerChecker) Enter(in ast.Node) (ast.Node, bool) {
-	if _, ok := in.(*driver.ParamMarkerExpr); ok {
-		e.hasParamMarker = true
-		return in, true
-	}
-	return in, false
-}
-
-func (*paramMarkerChecker) Leave(in ast.Node) (ast.Node, bool) {
-	return in, true
 }
 
 func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
