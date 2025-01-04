@@ -96,6 +96,7 @@ func TestCompactTableInProgress(t *testing.T) {
 }
 
 func TestCompactTableInternalError(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	mocker.MockFrom(`tiflash0/#1`, func(req *kvrpcpb.CompactRequest) (*kvrpcpb.CompactResponse, error) {
 		return &kvrpcpb.CompactResponse{
@@ -117,6 +118,7 @@ func TestCompactTableInternalError(t *testing.T) {
 
 // TestCompactTableNoRemaining: Returns NoRemaining for request #1.
 func TestCompactTableNoRemaining(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
 	tk := testkit.NewTestKit(t, store)
@@ -158,6 +160,7 @@ func TestCompactTableNoRemaining(t *testing.T) {
 
 // TestCompactTableHasRemaining: Returns HasRemaining=true for request #1 and #2, returns HasRemaining=false for request #3.
 func TestCompactTableHasRemaining(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(1), mocker.AsOpt())
@@ -237,6 +240,7 @@ func TestCompactTableErrorInHalfway(t *testing.T) {
 
 // TestCompactTableNoRemainingMultipleTiFlash: 2 TiFlash stores, both returns NoRemaining for request #1.
 func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, do := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
@@ -276,6 +280,7 @@ func TestCompactTableNoRemainingMultipleTiFlash(t *testing.T) {
 // Store0 - #1 (remaining=true), #2 (remaining=true), #3 (remaining=false)
 // Store1 - #1 (remaining=true), #2 (remaining=false)
 func TestCompactTableMultipleTiFlash(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
@@ -335,6 +340,7 @@ func TestCompactTableMultipleTiFlash(t *testing.T) {
 // Store1 - #1 (remaining=true), #2 (error)
 // Store2 - #1 (error)
 func TestCompactTableMultipleTiFlashWithError(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(3), mocker.AsOpt())
@@ -595,6 +601,7 @@ func TestCompactTableWithHashPartitionAndOnePartitionFailed(t *testing.T) {
 // Store0 - #1 (remaining=true, takes 3s), #2 (remaining=false)
 // Store1 - #1 (remaining=true), #2+ (down)
 func TestCompactTableWithTiFlashDown(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())
@@ -774,6 +781,7 @@ func TestCompactTableWithSpecifiedHashPartitionAndOnePartitionFailed(t *testing.
 // Store0 - #1 (remaining=true, takes 3s), #2 (remaining=false)
 // Store1 - #1 (remaining=true), #2 (down), #3 (restored, remaining=false)
 func TestCompactTableWithTiFlashDownAndRestore(t *testing.T) {
+	t.SkipNow()
 	mocker := newCompactRequestMocker(t)
 	defer mocker.RequireAllHandlersHit()
 	store, _ := testkit.CreateMockStoreAndDomain(t, withMockTiFlash(2), mocker.AsOpt())

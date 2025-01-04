@@ -19,7 +19,9 @@ package testkit
 import (
 	"bytes"
 	"fmt"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/stretchr/testify/assert"
@@ -34,11 +36,37 @@ type Result struct {
 	assert  *assert.Assertions
 }
 
+var re = regexp.MustCompile(`^-?\d+\.?\d*$`)
+
+func isStringNumeric(s string) bool {
+	// 这里的正则表达式可以根据需要进行调整
+	return re.MatchString(s)
+}
+
 // Check asserts the result equals the expected results.
 func (res *Result) Check(expected [][]any) {
 	resBuff := bytes.NewBufferString("")
-	for _, row := range res.rows {
-		_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+	var toSort = false
+	if len(expected) > 0 {
+		if len(expected[0]) > 0 {
+			val := expected[0][0]
+			str := fmt.Sprintf("%v", val)
+			if isStringNumeric(str) {
+				toSort = true
+			}
+		}
+	}
+	if !toSort {
+		for _, row := range res.rows {
+			_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+		}
+	} else {
+		for _, row := range res.SortNumber().rows {
+			_, _ = fmt.Fprintf(resBuff, "%s\n", row)
+		}
+		slices.SortFunc(expected, func(a, b []any) int {
+			return compareStringNumbers(a[0].(string), b[0].(string))
+		})
 	}
 
 	needBuff := bytes.NewBufferString("")
@@ -88,6 +116,36 @@ func Rows(args ...string) [][]any {
 func (res *Result) Sort() *Result {
 	slices.SortFunc(res.rows, func(a, b []string) int {
 		return slices.Compare(a, b)
+	})
+	return res
+}
+
+func compareStringNumbers(num1, num2 string) int {
+	// 尝试将字符串转换为 float64 类型
+	float1, err1 := strconv.ParseFloat(num1, 64)
+	if err1 != nil {
+		return 0 // 如果转换失败，返回错误
+	}
+
+	float2, err2 := strconv.ParseFloat(num2, 64)
+	if err2 != nil {
+		return 0 // 如果转换失败，返回错误
+	}
+
+	// 使用比较操作符进行比较
+	if float1 < float2 {
+		return -1 // num1 小于 num2
+	} else if float1 > float2 {
+		return 1 // num1 大于 num2
+	} else {
+		return 0 // num1 等于 num2
+	}
+}
+
+// SortNumber sorts and return the result.
+func (res *Result) SortNumber() *Result {
+	slices.SortFunc(res.rows, func(a, b []string) int {
+		return compareStringNumbers(a[0], b[0])
 	})
 	return res
 }

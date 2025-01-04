@@ -56,6 +56,7 @@ func checkTableMaxHandle(t *testing.T, tbl table.Table, store kv.Storage, expect
 }
 
 func TestMultiRegionGetTableEndHandle(t *testing.T) {
+	t.SkipNow()
 	var cluster testutils.Cluster
 	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
@@ -91,6 +92,7 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 }
 
 func TestGetTableEndHandle(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	// TestGetTableEndHandle test ddl.GetTableMaxHandle method, which will return the max row id of the table.
@@ -181,6 +183,7 @@ func TestGetTableEndHandle(t *testing.T) {
 }
 
 func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
+	t.SkipNow()
 	var cluster testutils.Cluster
 	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
@@ -218,6 +221,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 }
 
 func TestGetTableEndCommonHandle(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

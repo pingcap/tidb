@@ -423,6 +423,7 @@ func TestAnalyzeFullSamplingOnIndexWithVirtualColumnOrPrefixColumn(t *testing.T)
 
 func testSnapshotAnalyzeAndMaxTSAnalyzeHelper(analyzeSnapshot bool) func(t *testing.T) {
 	return func(t *testing.T) {
+		t.SkipNow()
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
 

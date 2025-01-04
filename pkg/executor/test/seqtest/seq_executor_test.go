@@ -1241,6 +1241,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

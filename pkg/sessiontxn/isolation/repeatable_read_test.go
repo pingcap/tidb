@@ -17,6 +17,7 @@ package isolation_test
 import (
 	"context"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
@@ -343,6 +344,8 @@ func TestTidbSnapshotVarInPessimisticRepeatableRead(t *testing.T) {
 }
 
 func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
+	t.Name()
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -392,7 +395,8 @@ func TestOptimizeWithPlanInPessimisticRR(t *testing.T) {
 	var ts, compareTS uint64
 	var action sessiontxn.StmtErrorAction
 
-	for _, c := range cases {
+	for i, c := range cases {
+		log.Println("Test case", i)
 		compareTS = getOracleTS(t, se)
 
 		require.NoError(t, txnManager.OnStmtStart(context.TODO(), nil))

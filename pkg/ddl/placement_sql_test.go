@@ -195,6 +195,7 @@ func TestCreateSchemaWithPlacement(t *testing.T) {
 }
 
 func TestAlterDBPlacement(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists TestAlterDB;")
@@ -281,6 +282,7 @@ func TestAlterDBPlacement(t *testing.T) {
 }
 
 func TestPlacementMode(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

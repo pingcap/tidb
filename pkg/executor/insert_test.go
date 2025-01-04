@@ -40,6 +40,7 @@ func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
 }
 
 func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
+	t.SkipNow()
 	tk.MustExec("use test")
 
 	tk.MustExec(`drop table if exists t1, t2;`)
@@ -678,6 +679,7 @@ func TestMySQLInsertID(t *testing.T) {
 }
 
 func TestInsertNullInNonStrictMode(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

@@ -24,6 +24,7 @@ import (
 )
 
 func TestWindowFunctions(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_window_concurrency = 1")

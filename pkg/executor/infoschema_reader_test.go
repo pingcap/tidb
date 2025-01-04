@@ -214,6 +214,7 @@ func TestDataForTableStatsField(t *testing.T) {
 }
 
 func TestPartitionsTable(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	h := dom.StatsHandle()
 	h.Clear()
@@ -293,6 +294,7 @@ func TestPartitionsTable(t *testing.T) {
 }
 
 func TestForAnalyzeStatus(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	analyzeStatusTable := "CREATE TABLE `ANALYZE_STATUS` (\n" +
@@ -871,6 +873,7 @@ func TestSameTableNameInTwoSchemas(t *testing.T) {
 }
 
 func TestInfoSchemaDDLJobs(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

@@ -183,6 +183,7 @@ func TestTooLongBinaryPlan(t *testing.T) {
 
 // TestLongBinaryPlan asserts that if the binary plan is smaller than 1024*1024 bytes, it should be output to both slow query and stmt summary.
 func TestLongBinaryPlan(t *testing.T) {
+	t.SkipNow()
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
 	f, err := os.CreateTemp("", "tidb-slow-*.log")

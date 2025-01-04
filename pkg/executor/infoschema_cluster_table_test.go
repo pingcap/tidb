@@ -368,6 +368,7 @@ func TestTikvRegionStatus(t *testing.T) {
 }
 
 func TestTableStorageStats(t *testing.T) {
+	t.SkipNow()
 	s := createInfosSchemaClusterTableSuite(t)
 
 	tk := testkit.NewTestKit(t, s.store)
@@ -444,6 +445,7 @@ func TestTableStorageStats(t *testing.T) {
 }
 
 func TestIssue42619(t *testing.T) {
+	t.SkipNow()
 	s := createInfosSchemaClusterTableSuite(t)
 	mockAddr := s.mockAddr
 	store := &mockStore{

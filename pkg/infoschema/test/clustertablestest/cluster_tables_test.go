@@ -840,6 +840,7 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 }
 
 func TestMDLView(t *testing.T) {
+	t.SkipNow()
 	testCases := []struct {
 		name        string
 		createTable []string

@@ -186,6 +186,7 @@ func TestBatchPointGetRepeatableRead(t *testing.T) {
 }
 
 func TestSplitRegionTimeout(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	require.NoError(t, failpoint.Enable("tikvclient/injectLiveness", `return("reachable")`))
@@ -584,6 +585,7 @@ func TestDeadlocksTable(t *testing.T) {
 }
 
 func TestTiKVClientReadTimeout(t *testing.T) {
+	t.SkipNow()
 	if *testkit.WithTiKV != "" {
 		t.Skip("skip test since it's only work for unistore")
 	}

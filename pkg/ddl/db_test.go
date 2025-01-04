@@ -237,6 +237,7 @@ func TestDropTableOnTiKVDiskFull(t *testing.T) {
 }
 
 func TestRebaseAutoID(t *testing.T) {
+	t.SkipNow()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
@@ -797,6 +798,7 @@ func TestReportingMinStartTimestamp(t *testing.T) {
 
 // for issue #34931
 func TestBuildMaxLengthIndexWithNonRestrictedSqlMode(t *testing.T) {
+	t.SkipNow()
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)

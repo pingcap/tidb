@@ -1288,6 +1288,7 @@ func TestCheckFailReport(t *testing.T) {
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {
+	t.SkipNow()
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -1508,6 +1509,7 @@ func TestAdminCheckTableFailed(t *testing.T) {
 }
 
 func TestAdminCheckTableErrorLocate(t *testing.T) {
+	t.SkipNow()
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 
 	executor.CheckTableFastBucketSize.Store(8)

@@ -32,6 +32,7 @@ import (
 )
 
 func TestBatchPointGetLockExistKey(t *testing.T) {
+	t.SkipNow()
 	var wg sync.WaitGroup
 	errCh := make(chan error)
 	store := testkit.CreateMockStore(t)

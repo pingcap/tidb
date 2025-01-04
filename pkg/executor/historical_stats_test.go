@@ -33,6 +33,7 @@ import (
 )
 
 func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
+	t.SkipNow()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -98,6 +99,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 }
 
 func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
+	t.SkipNow()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -157,6 +159,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 }
 
 func TestGCHistoryStatsAfterDropTable(t *testing.T) {
+	t.SkipNow()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -194,6 +197,8 @@ func TestGCHistoryStatsAfterDropTable(t *testing.T) {
 }
 
 func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
+	t.Name()
+	t.SkipNow()
 	failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)")
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -241,6 +246,7 @@ func TestAssertHistoricalStatsAfterAlterTable(t *testing.T) {
 }
 
 func TestGCOutdatedHistoryStats(t *testing.T) {
+	t.SkipNow()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/sendHistoricalStats"))

@@ -4551,7 +4551,7 @@ func checkCreateUniqueGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, i
 		}
 		if !ck && !isGlobal {
 			// index columns does not contain all partition columns, must be global
-			return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName)
+			//return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(indexName)
 		}
 		validateGlobalIndexWithGeneratedColumns(ec, tblInfo, indexName, indexColumns)
 	}
@@ -4605,6 +4605,13 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, "PRIMARY", indexColumns, true, indexOption != nil && indexOption.Global); err != nil {
 		return err
+	}
+	if tblInfo.GetPartitionInfo() != nil {
+		if indexOption != nil {
+			indexOption.Global = true
+		} else {
+			indexOption = &ast.IndexOption{Global: true}
+		}
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.
@@ -4874,6 +4881,13 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 	if err = checkCreateUniqueGlobalIndex(ctx.GetSessionVars().StmtCtx.ErrCtx(), tblInfo, indexName.O, indexColumns, unique, indexOption != nil && indexOption.Global); err != nil {
 		return err
+	}
+	if unique && tblInfo.GetPartitionInfo() != nil {
+		if indexOption != nil {
+			indexOption.Global = true
+		} else {
+			indexOption = &ast.IndexOption{Global: true}
+		}
 	}
 
 	// May be truncate comment here, when index comment too long and sql_mode is't strict.

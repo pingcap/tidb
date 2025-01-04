@@ -1869,6 +1869,56 @@ func (d *Datum) convertToVectorFloat32(_ Context, target *FieldType) (ret Datum,
 			return ret, errors.Trace(err)
 		}
 		ret.SetVectorFloat32(v)
+	case KindInt64:
+		str := fmt.Sprintf("[%d]", d.GetInt64())
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(str); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
+	case KindUint64:
+		str := fmt.Sprintf("[%d]", d.GetUint64())
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(str); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
+	case KindFloat32:
+		str := fmt.Sprintf("[%f]", d.GetFloat32())
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(str); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
+	case KindFloat64:
+		str := fmt.Sprintf("[%f]", d.GetFloat64())
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(str); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
+	case KindMysqlDecimal:
+		str := fmt.Sprintf("[%s]", d.GetMysqlDecimal().String())
+		var v VectorFloat32
+		if v, err = ParseVectorFloat32(str); err != nil {
+			return ret, errors.Trace(err)
+		}
+		if err = v.CheckDimsFitColumn(target.GetFlen()); err != nil {
+			return ret, errors.Trace(err)
+		}
+		ret.SetVectorFloat32(v)
 	default:
 		return invalidConv(d, mysql.TypeTiDBVectorFloat32)
 	}

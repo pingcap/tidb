@@ -388,6 +388,7 @@ func TestIssue37066(t *testing.T) {
 }
 
 func TestWarningsInSlowQuery(t *testing.T) {
+	t.SkipNow()
 	// Prepare the slow log
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg

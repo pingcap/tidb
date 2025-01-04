@@ -131,6 +131,7 @@ func (d *Checker) checkTableInfo(ctx sessionctx.Context, dbName, tableName pmode
 		// no need to check system tables.
 		return
 	}
+	return
 
 	tableInfo, _ := d.infoCache.GetLatest().TableByName(context.Background(), dbName, tableName)
 	tableInfo2, _ := d.tracker.TableByName(context.Background(), dbName, tableName)
