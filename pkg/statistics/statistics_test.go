@@ -226,7 +226,7 @@ func SubTestColumnRange() func(*testing.T) {
 			StatsLoadedStatus: NewStatsFullLoadStatus(),
 		}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{{}},
@@ -295,7 +295,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.Equal(t, int64(100000), rowCount)
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
@@ -388,7 +388,7 @@ func SubTestIndexRanges() func(*testing.T) {
 		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.MinNotNullDatum()},

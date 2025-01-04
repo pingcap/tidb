@@ -66,7 +66,8 @@ var (
 type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
-	txn           wrapTxn    // mock global variable
+	txn           wrapTxn // mock global variable
+	dom           any
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -637,6 +638,16 @@ func (*Context) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup implements the sessionctx.Context interface
 func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
+}
+
+// BindDomain bind domain into ctx.
+func (c *Context) BindDomain(dom any) {
+	c.dom = dom
+}
+
+// GetDomain get domain from ctx.
+func (c *Context) GetDomain() any {
+	return c.dom
 }
 
 // NewContextDeprecated creates a new mocked sessionctx.Context.
