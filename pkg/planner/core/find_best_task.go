@@ -730,19 +730,17 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	}
 	lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
 	rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-	lhsTotalIndexFilters := lhsTotalEqual + len(lhs.path.IndexFilters)
-	rhsTotalIndexFilters := rhsTotalEqual + len(rhs.path.IndexFilters)
-	lhsMoreFilters := lhsTotalEqual > 0 && (lhsTotalEqual > rhsTotalEqual || (lhsTotalEqual == rhsTotalEqual && lhsTotalIndexFilters >= rhsTotalIndexFilters))
-	rhsMoreFilters := rhsTotalEqual > 0 && (rhsTotalEqual > lhsTotalEqual || (rhsTotalEqual == lhsTotalEqual && rhsTotalIndexFilters >= lhsTotalIndexFilters))
+	lhsMoreFilters := (lhsTotalEqual > rhsTotalEqual || (lhsTotalEqual == rhsTotalEqual && len(lhs.path.IndexFilters) >= len(rhs.path.IndexFilters)))
+	rhsMoreFilters := (rhsTotalEqual > lhsTotalEqual || (rhsTotalEqual == lhsTotalEqual && len(rhs.path.IndexFilters) >= len(lhs.path.IndexFilters)))
 
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
 		if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
 			(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
 			(!lhsHasStatistics || !rhsHasStatistics) { // At least one index doesn't have statistics
-			if lhsHasStatistics && lhsMoreFilters {
+			if lhsHasStatistics && lhsTotalEqual > 0 && lhsMoreFilters {
 				return 1
 			}
-			if rhsHasStatistics && rhsMoreFilters {
+			if rhsHasStatistics && rhsTotalEqual > 0 && rhsMoreFilters {
 				return -1
 			}
 		}
@@ -766,12 +764,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 			prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 			threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 			if threshold > 0 { // set it to 0 to disable this rule
-				if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold &&
-					(rhsCorrRatio < lhsCorrRatio || rhsMoreFilters) {
+				if rhsMoreFilters &&
+					(lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold || rhsCorrRatio < lhsCorrRatio) {
 					return -1
 				}
-				if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold &&
-					lhsCorrRatio < rhsCorrRatio || lhsMoreFilters {
+				if lhsMoreFilters &&
+					(rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold || lhsCorrRatio < rhsCorrRatio) {
 					return 1
 				}
 			}
