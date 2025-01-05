@@ -74,7 +74,7 @@ func crossEstimateTableRowCount(sctx planctx.PlanContext,
 		return 0, false, 0
 	}
 	col, corr := getMostCorrCol4Handle(path.TableFilters, dsStatisticTable, sctx.GetSessionVars().CorrelationThreshold)
-	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, path, path.TableFilters, col, corr, expectedCnt, desc)
+	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, dsStatisticTable, path, path.TableFilters, col, corr, expectedCnt, desc)
 }
 
 // AdjustRowCountForIndexScanByLimit will adjust the row count for table scan by limit.
@@ -126,12 +126,12 @@ func crossEstimateIndexRowCount(sctx planctx.PlanContext,
 	filters := make([]expression.Expression, 0, filtersLen)
 	filters = append(filters, path.TableFilters...)
 	filters = append(filters, path.IndexFilters...)
-	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, path, filters, col, corr, expectedCnt, desc)
+	return crossEstimateRowCount(sctx, dsStatsInfo, dsTableStats, dsStatisticTable, path, filters, col, corr, expectedCnt, desc)
 }
 
 // crossEstimateRowCount is the common logic of crossEstimateTableRowCount and crossEstimateIndexRowCount.
 func crossEstimateRowCount(sctx planctx.PlanContext,
-	dsStatsInfo, dsTableStats *property.StatsInfo,
+	dsStatsInfo, dsTableStats *property.StatsInfo, dsStatisticTable *statistics.Table,
 	path *util.AccessPath, conds []expression.Expression, col *expression.Column,
 	corr, expectedCnt float64, desc bool) (float64, bool, float64) {
 	// If the scan is not full range scan, we cannot use histogram of other columns for estimation, because
@@ -164,8 +164,9 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if isFull {
 		return path.CountAfterAccess, true, 0
 	}
+	idxHasStats := dsStatisticTable.ColAndIdxExistenceMap.HasAnalyzed(path.Index.ID, true)
 	var rangeCount float64
-	if idxExists {
+	if idxExists && idxHasStats {
 		rangeCount, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
