@@ -164,9 +164,15 @@ func crossEstimateRowCount(sctx planctx.PlanContext,
 	if isFull {
 		return path.CountAfterAccess, true, 0
 	}
-	idxHasStats := dsStatisticTable.ColAndIdxExistenceMap.HasAnalyzed(path.Index.ID, true)
+	idxHasStats := false
+	colHasStats := false
+	if dsStatisticTable != nil && dsStatisticTable.ColAndIdxExistenceMap != nil {
+		idxHasStats = dsStatisticTable.ColAndIdxExistenceMap.HasAnalyzed(idxID, true)
+		colHasStats = dsStatisticTable.ColAndIdxExistenceMap.HasAnalyzed(colUniqueID, false)
+	}
+
 	var rangeCount float64
-	if idxExists && idxHasStats {
+	if idxExists && (idxHasStats || !colHasStats) {
 		rangeCount, err = GetRowCountByIndexRanges(sctx, dsTableStats.HistColl, idxID, convertedRanges)
 	} else {
 		rangeCount, err = GetRowCountByColumnRanges(sctx, dsTableStats.HistColl, colUniqueID, convertedRanges)
