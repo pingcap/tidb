@@ -194,11 +194,15 @@ func getColumnRangeCounts(sctx planctx.PlanContext, colID int64, ranges []*range
 	var count float64
 	rangeCounts := make([]float64, len(ranges))
 	for i, ran := range ranges {
+		// Use index stats if index is valid, otherwise use column stats.
+		idxValid := false
 		if idxID >= 0 {
 			idxHist := histColl.GetIdx(idxID)
-			if statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
-				return nil, false
+			if !statistics.IndexStatsIsInvalid(sctx, idxHist, histColl, idxID) {
+				idxValid = true
 			}
+		}
+		if idxValid {
 			count, err = GetRowCountByIndexRanges(sctx, histColl, idxID, []*ranger.Range{ran})
 		} else {
 			colHist := histColl.GetCol(colID)

@@ -41,3 +41,5 @@ MODULE.bazel.lock
 genkeyword
 test_coverage
 coverage.dat
+
+.codegpt
