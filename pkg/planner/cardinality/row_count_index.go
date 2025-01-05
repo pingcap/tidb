@@ -216,23 +216,23 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 }
 
 // It uses the modifyCount to validate, and realtimeRowCount to adjust the influence of modifications on the table.
-func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, float64, error) {
+func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (totalCount float64, corrCount float64, err error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	totalCount, corrCount := float64(0), float64(0)
 	isSingleColIdx := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		var count float64
-		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
+		var lb, rb []byte
+		lb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
 		err = sc.HandleError(err)
 		if err != nil {
 			return 0, 0, err
 		}
-		rb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
+		rb, err = codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
 		err = sc.HandleError(err)
 		if err != nil {
 			return 0, 0, err
