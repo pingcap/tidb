@@ -84,6 +84,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 	e.SetMaxChunkSize(1)
 	e.Init(p)
 
+	if txn, err := b.ctx.Txn(false); err != nil {
+		b.err = err
+		return nil
+	} else if txn != nil && txn.Valid() && !txn.IsReadOnly() {
+		e.memBufferSnapshotGetter = txn.GetMemBuffer().SnapshotGetter()
+	}
 	e.snapshot, err = b.getSnapshot()
 	if err != nil {
 		b.err = err
@@ -135,23 +141,24 @@ type PointGetExecutor struct {
 	exec.BaseExecutor
 	indexUsageReporter *exec.IndexUsageReporter
 
-	tblInfo          *model.TableInfo
-	handle           kv.Handle
-	idxInfo          *model.IndexInfo
-	partitionDefIdx  *int
-	partitionNames   []pmodel.CIStr
-	idxKey           kv.Key
-	handleVal        []byte
-	idxVals          []types.Datum
-	txnScope         string
-	readReplicaScope string
-	isStaleness      bool
-	txn              kv.Transaction
-	snapshot         kv.Snapshot
-	done             bool
-	lock             bool
-	lockWaitTime     int64
-	rowDecoder       *rowcodec.ChunkDecoder
+	tblInfo                 *model.TableInfo
+	handle                  kv.Handle
+	idxInfo                 *model.IndexInfo
+	partitionDefIdx         *int
+	partitionNames          []pmodel.CIStr
+	idxKey                  kv.Key
+	handleVal               []byte
+	idxVals                 []types.Datum
+	txnScope                string
+	readReplicaScope        string
+	isStaleness             bool
+	txn                     kv.Transaction
+	memBufferSnapshotGetter kv.Getter
+	snapshot                kv.Snapshot
+	done                    bool
+	lock                    bool
+	lockWaitTime            int64
+	rowDecoder              *rowcodec.ChunkDecoder
 
 	columns []*model.ColumnInfo
 	// virtualColumnIndex records all the indices of virtual columns and sort them in definition
@@ -645,10 +652,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 		err error
 	)
 
-	if e.txn.Valid() && !e.txn.IsReadOnly() {
+	if e.memBufferSnapshotGetter != nil {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = e.txn.GetMemBuffer().Get(ctx, key)
+		val, err = e.memBufferSnapshotGetter.Get(ctx, key)
 		if err == nil {
 			return val, err
 		}

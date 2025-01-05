@@ -579,3 +579,50 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 	}
 	tk.MustExec("commit")
 }
+
+func TestMemDBRaceInUnionExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tables := 5
+	for i := 0; i < tables; i++ {
+		tk.MustExec(fmt.Sprintf("create table t%d(id int primary key, v int)", i))
+	}
+
+	tk.MustExec("insert into t0 values(1, 1), (2, 2), (3, 3), (4, 4)")
+	for i := 1; i < tables; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t%d select * from t0", i))
+	}
+
+	tk.MustExec("set tidb_pessimistic_txn_fair_locking=0")
+
+	// point get
+	for i := 0; i < 1001; i++ {
+		tk.MustExec("begin pessimistic")
+		dirty := i%2 == 0
+		if dirty {
+			tk.MustExec("insert into t0 values(5, 5)")
+		}
+		tk.MustQuery(`select * from t0 where id = 1 for update union
+select * from t1 where id = 1 for update union
+select * from t2 where id = 1 for update union
+select * from t3 where id = 1 for update union
+select * from t4 where id = 1 for update`)
+		tk.MustExec("rollback")
+	}
+
+	// batch point get
+	for i := 0; i < 1001; i++ {
+		tk.MustExec("begin pessimistic")
+		dirty := i%2 == 0
+		if dirty {
+			tk.MustExec("insert into t0 values(5, 5)")
+		}
+		tk.MustQuery(`select * from t0 where id in (1, 2, 3) for update union
+select * from t1 where id in (1, 2, 3) for update union
+select * from t2 where id in (1, 2, 3) for update union
+select * from t3 where id in (1, 2, 3) for update union
+select * from t4 where id in (1, 2, 3) for update`)
+		tk.MustExec("rollback")
+	}
+}

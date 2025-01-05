@@ -68,6 +68,7 @@ type BatchPointGetExec struct {
 	rowDecoder     *rowcodec.ChunkDecoder
 	keepOrder      bool
 	desc           bool
+	isTxnDirty     bool // when isTxnDirty is true, we need to read through MemBuffer.
 	batchGetter    kv.BatchGetter
 
 	columns []*model.ColumnInfo
@@ -111,7 +112,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
 		} else if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
-		} else {
+		} else if e.isTxnDirty {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
 		}
 	}
