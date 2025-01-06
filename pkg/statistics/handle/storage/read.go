@@ -305,7 +305,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
 	idx := table.GetIdx(histID)
-	flag := row.GetInt64(8)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 
 	for _, idxInfo := range tableInfo.Indices {
@@ -337,7 +336,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
 				StatsVer:   statsVer,
 				Info:       idxInfo,
-				Flag:       flag,
 				PhysicalID: table.PhysicalID,
 			}
 			if idx.IsAnalyzed() {
@@ -371,7 +369,6 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 				FMSketch:   fmSketch,
 				Info:       idxInfo,
 				StatsVer:   statsVer,
-				Flag:       flag,
 				PhysicalID: table.PhysicalID,
 			}
 			if statsVer != statistics.Version0 {
@@ -402,7 +399,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.GetCol(histID)
-	flag := row.GetInt64(8)
 
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
@@ -446,7 +442,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
 				StatsVer:   statsVer,
 			}
 			if col.StatsAvailable() {
@@ -482,7 +477,6 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 				TopN:       topN,
 				FMSketch:   fmSketch,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       flag,
 				StatsVer:   statsVer,
 			}
 			if col.StatsAvailable() {
@@ -749,7 +743,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hgMeta, lastAnalyzePos, statsVer, flag, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
+	hgMeta, lastAnalyzePos, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
@@ -776,7 +770,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
 		Info: idxInfo, StatsVer: statsVer,
-		Flag: flag, PhysicalID: idx.TableID,
+		PhysicalID:        idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 

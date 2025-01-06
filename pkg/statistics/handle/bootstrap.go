@@ -227,7 +227,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				TopN:       topN,
 				Info:       idxInfo,
 				StatsVer:   statsVer,
-				Flag:       row.GetInt64(10),
 				PhysicalID: tblID,
 			}
 			if statsVer != statistics.Version0 {
@@ -257,7 +256,6 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				PhysicalID: table.PhysicalID,
 				Info:       colInfo,
 				IsHandle:   tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				Flag:       row.GetInt64(10),
 				StatsVer:   statsVer,
 			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
