@@ -250,6 +250,7 @@ func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
 		}
 		schedulableTasks = append(schedulableTasks, task)
 	}
+	sm.logger.Info("get schedulable tasks", zap.Int("task-count", len(schedulableTasks)))
 	return schedulableTasks, nil
 }
 
@@ -261,8 +262,10 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		sm.logger.Warn("update used slot failed", zap.Error(err))
 		return err
 	}
+	sm.logger.Info("schedulableTasks cnt", zap.Int("task-count", len(schedulableTasks)))
 	for _, task := range schedulableTasks {
 		taskCnt := sm.getSchedulerCount()
+		sm.logger.Info("task scheduler count", zap.Int("count", taskCnt))
 		if taskCnt >= proto.MaxConcurrentTask {
 			break
 		}
