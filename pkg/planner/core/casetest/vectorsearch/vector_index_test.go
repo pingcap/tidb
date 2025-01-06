@@ -176,13 +176,12 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[0,0,0]') limit 1")
 	p1, d1 := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection                root         test.t.vec",
-		" └─TopN                    root         ?",
-		"   └─TableReader           root         ",
-		"     └─ExchangeSender      cop[tiflash] ",
-		"       └─TopN              cop[tiflash] ?",
-		"         └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"           └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
+		" TopN                    root         ?",
+		" └─TableReader           root         ",
+		"   └─ExchangeSender      cop[tiflash] ",
+		"     └─TopN              cop[tiflash] ?",
+		"       └─Projection      cop[tiflash] test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"         └─TableFullScan cop[tiflash] table:t, index:vector_index(vec), range:[?,?], keep order:false, annIndex:COSINE(vec..[?], limit:?)",
 	}, p1)
 
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
@@ -206,12 +205,11 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
 	p2, _ := getNormalizedPlan()
 	require.Equal(t, []string{
-		" Projection              root test.t.vec",
-		" └─TopN                  root ?",
-		"   └─TableReader         root ",
-		"     └─TopN              cop  ?",
-		"       └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
-		"         └─TableFullScan cop  table:t, range:[?,?], keep order:false",
+		" TopN                  root ?",
+		" └─TableReader         root ",
+		"   └─TopN              cop  ?",
+		"     └─Projection      cop  test.t.vec, vec_cosine_distance(test.t.vec, ?)",
+		"       └─TableFullScan cop  table:t, range:[?,?], keep order:false",
 	}, p2)
 	tbl.Meta().TiFlashReplica.Available = true
 	tk.MustExec("explain select * from t order by vec_cosine_distance(vec, '[1,2,3]') limit 3")
@@ -387,6 +385,35 @@ func TestVectorSearchWithPKForceTiKV(t *testing.T) {
 	tk := prepareVectorSearchWithPK(t)
 	tk.MustExec("set @@tidb_isolation_read_engines = 'tikv'")
 
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	suiteData := GetANNIndexSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+		})
+		if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+			tk.MustExec(tt)
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+			output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+	}
+}
+
+func TestVectorSearchHeavyFunction(t *testing.T) {
+	tk := prepareVectorSearchWithPK(t)
 	var input []string
 	var output []struct {
 		SQL  string
