@@ -147,7 +147,8 @@ func GetRewriteRulesMap(
 // GetRewriteRuleOfTable returns a rewrite rule from t_{oldID} to t_{newID}.
 func GetRewriteRuleOfTable(
 	oldTableID, newTableID int64,
-	restoreTimeStamp uint64,
+	startTs uint64,
+	restoreTs uint64,
 	indexIDs map[int64]int64,
 	getDetailRule bool,
 ) *RewriteRules {
@@ -155,22 +156,25 @@ func GetRewriteRuleOfTable(
 
 	if getDetailRule {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix:         tablecodec.GenTableRecordPrefix(oldTableID),
-			NewKeyPrefix:         tablecodec.GenTableRecordPrefix(newTableID),
-			IgnoreAfterTimestamp: restoreTimeStamp,
+			OldKeyPrefix:          tablecodec.GenTableRecordPrefix(oldTableID),
+			NewKeyPrefix:          tablecodec.GenTableRecordPrefix(newTableID),
+			IgnoreBeforeTimestamp: startTs,
+			IgnoreAfterTimestamp:  restoreTs,
 		})
 		for oldIndexID, newIndexID := range indexIDs {
 			dataRules = append(dataRules, &import_sstpb.RewriteRule{
-				OldKeyPrefix:         tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
-				NewKeyPrefix:         tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
-				IgnoreAfterTimestamp: restoreTimeStamp,
+				OldKeyPrefix:          tablecodec.EncodeTableIndexPrefix(oldTableID, oldIndexID),
+				NewKeyPrefix:          tablecodec.EncodeTableIndexPrefix(newTableID, newIndexID),
+				IgnoreBeforeTimestamp: startTs,
+				IgnoreAfterTimestamp:  restoreTs,
 			})
 		}
 	} else {
 		dataRules = append(dataRules, &import_sstpb.RewriteRule{
-			OldKeyPrefix:         tablecodec.EncodeTablePrefix(oldTableID),
-			NewKeyPrefix:         tablecodec.EncodeTablePrefix(newTableID),
-			IgnoreAfterTimestamp: restoreTimeStamp,
+			OldKeyPrefix:          tablecodec.EncodeTablePrefix(oldTableID),
+			NewKeyPrefix:          tablecodec.EncodeTablePrefix(newTableID),
+			IgnoreBeforeTimestamp: startTs,
+			IgnoreAfterTimestamp:  restoreTs,
 		})
 	}
 
