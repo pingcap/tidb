@@ -23,7 +23,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tmysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -333,7 +333,7 @@ func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName st
 	_, err := si.getExistingSchemas(ctx, sb.String())
 	if err != nil {
 		cause := errors.Cause(err)
-		if driverErr, ok := cause.(*dmysql.MySQLError); ok && driverErr.Number == tmysql.ErrNoSuchTable {
+		if driverErr, ok := cause.(*dmysql.MySQLError); ok && driverErr.Number == errno.ErrNoSuchTable {
 			return false, nil
 		}
 		return false, err
