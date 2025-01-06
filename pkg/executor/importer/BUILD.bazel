@@ -127,7 +127,6 @@ go_test(
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/core/base",

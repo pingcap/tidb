@@ -19,10 +19,11 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+
 	// make sure mock.MockInfoschema is initialized to make sure the test pass
 	_ "github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -123,7 +124,7 @@ func NewCopContextBase(
 	}
 
 	expColInfos, _, err := expression.ColumnInfos2ColumnsAndNames(exprCtx,
-		pmodel.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
+		ast.CIStr{} /* unused */, tblInfo.Name, colInfos, tblInfo)
 	if err != nil {
 		return nil, err
 	}

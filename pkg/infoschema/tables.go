@@ -41,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -384,7 +384,7 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
-		Name:         pmodel.NewCIStr(col.name),
+		Name:         ast.NewCIStr(col.name),
 		FieldType:    fieldType,
 		State:        model.StatePublic,
 		DefaultValue: col.deflt,
@@ -396,7 +396,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
 	primaryIndices := make([]*model.IndexInfo, 0, 1)
 	tblInfo := &model.TableInfo{
-		Name:    pmodel.NewCIStr(tableName),
+		Name:    ast.NewCIStr(tableName),
 		State:   model.StatePublic,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
@@ -411,12 +411,12 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.IsCommonHandle = true
 				tblInfo.CommonHandleVersion = 1
 				index := &model.IndexInfo{
-					Name:    pmodel.NewCIStr("primary"),
+					Name:    ast.NewCIStr("primary"),
 					State:   model.StatePublic,
 					Primary: true,
 					Unique:  true,
 					Columns: []*model.IndexColumn{
-						{Name: pmodel.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
+						{Name: ast.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
 				}
 				primaryIndices = append(primaryIndices, index)
 				tblInfo.Indices = primaryIndices
@@ -1826,7 +1826,7 @@ var tablePlanCache = []columnInfo{
 //
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
-func GetShardingInfo(dbInfo pmodel.CIStr, tableInfo *model.TableInfo) any {
+func GetShardingInfo(dbInfo ast.CIStr, tableInfo *model.TableInfo) any {
 	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}

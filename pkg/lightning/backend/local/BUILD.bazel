@@ -148,7 +148,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/stmtctx",
         "//pkg/store/pdtypes",

@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -181,11 +181,11 @@ func SyntaxWarn(err error) error {
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = ast.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = ast.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -450,7 +450,7 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence pmodel.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is infoschema.MetaOnlyInfoSchema, schema, sequence ast.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -512,27 +511,27 @@ func TestTablePartition(t *testing.T) {
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     pmodel.NewCIStr("p1"),
+			Name:     ast.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     pmodel.NewCIStr("p2"),
+			Name:     ast.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     pmodel.NewCIStr("p3"),
+			Name:     ast.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     pmodel.NewCIStr("p4"),
+			Name:     ast.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     pmodel.NewCIStr("p5"),
+			Name:     ast.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}

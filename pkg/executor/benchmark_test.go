@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -2073,7 +2072,7 @@ func BenchmarkPipelinedRowNumberWindowFunctionExecution(b *testing.B) {
 func BenchmarkCompleteInsertErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name:      pmodel.NewCIStr("a"),
+		Name:      ast.NewCIStr("a"),
 		FieldType: *types.NewFieldType(mysql.TypeBlob),
 	}
 	err := types.ErrWarnDataOutOfRange
@@ -2085,7 +2084,7 @@ func BenchmarkCompleteInsertErr(b *testing.B) {
 func BenchmarkCompleteLoadErr(b *testing.B) {
 	b.ReportAllocs()
 	col := &model.ColumnInfo{
-		Name: pmodel.NewCIStr("a"),
+		Name: ast.NewCIStr("a"),
 	}
 	err := types.ErrDataTooLong
 	for n := 0; n < b.N; n++ {

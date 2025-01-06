@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -896,23 +896,23 @@ type MultiSchemaInfo struct {
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
-	AddColumns    []model.CIStr `json:"-"`
-	DropColumns   []model.CIStr `json:"-"`
-	ModifyColumns []model.CIStr `json:"-"`
-	AddIndexes    []model.CIStr `json:"-"`
-	DropIndexes   []model.CIStr `json:"-"`
-	AlterIndexes  []model.CIStr `json:"-"`
+	AddColumns    []ast.CIStr `json:"-"`
+	DropColumns   []ast.CIStr `json:"-"`
+	ModifyColumns []ast.CIStr `json:"-"`
+	AddIndexes    []ast.CIStr `json:"-"`
+	DropIndexes   []ast.CIStr `json:"-"`
+	AlterIndexes  []ast.CIStr `json:"-"`
 
 	AddForeignKeys []AddForeignKeyInfo `json:"-"`
 
-	RelativeColumns []model.CIStr `json:"-"`
-	PositionColumns []model.CIStr `json:"-"`
+	RelativeColumns []ast.CIStr `json:"-"`
+	PositionColumns []ast.CIStr `json:"-"`
 }
 
 // AddForeignKeyInfo contains foreign key information.
 type AddForeignKeyInfo struct {
-	Name model.CIStr
-	Cols []model.CIStr
+	Name ast.CIStr
+	Cols []ast.CIStr
 }
 
 // NewMultiSchemaInfo new a MultiSchemaInfo.
