@@ -306,6 +306,9 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 		if !IsIndexWritable(idx) {
 			continue
 		}
+		if idx.Meta().IsTiFlashLocalIndex() {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			return idx
 		}
@@ -561,6 +564,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
+		if idx.Meta().IsTiFlashLocalIndex() {
+			continue
+		}
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -578,6 +584,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 	createIdxOpt := opt.GetCreateIdxOpt()
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
+			continue
+		}
+		if idx.Meta().IsTiFlashLocalIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -948,6 +957,9 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if !IsIndexWritable(v) {
 			continue
 		}
+		if v.Meta().IsTiFlashLocalIndex() {
+			continue
+		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
@@ -1230,6 +1242,9 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
 	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
+		if v.Meta().IsTiFlashLocalIndex() {
 			continue
 		}
 		var vals []types.Datum
