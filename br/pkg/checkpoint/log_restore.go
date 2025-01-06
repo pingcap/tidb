@@ -145,14 +145,15 @@ func AppendRangeForLogRestore(
 	})
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
+// LoadCheckpointDataForLogRestore loads the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
 func LoadCheckpointDataForLogRestore[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	fn func(K, V),
+	tableSuffix string,
 ) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, LogRestoreCheckpointDatabaseName, fn)
+	return selectCheckpointData(ctx, execCtx, LogRestoreCheckpointDatabaseName, fn, GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix))
 }
 
 type CheckpointMetadataForLogRestore struct {
@@ -168,9 +169,10 @@ type CheckpointMetadataForLogRestore struct {
 func LoadCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (*CheckpointMetadataForLogRestore, error) {
 	m := &CheckpointMetadataForLogRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
+	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), m)
 	return m, err
 }
 
@@ -178,20 +180,21 @@ func SaveCheckpointMetadataForLogRestore(
 	ctx context.Context,
 	se glue.Session,
 	meta *CheckpointMetadataForLogRestore,
+	tableSuffix string,
 ) error {
-	err := initCheckpointTable(ctx, se, LogRestoreCheckpointDatabaseName, []string{checkpointDataTableName})
+	err := initCheckpointTable(ctx, se, LogRestoreCheckpointDatabaseName, []string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix)})
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointMetaTableName, meta)
+	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointMetaTablePrefix, meta)
 }
 
 func ExistsLogRestoreCheckpointMetadata(
-	ctx context.Context,
 	dom *domain.Domain,
+	tableSuffix string,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix)))
 }
 
 // A progress type for snapshot + log restore.
@@ -232,9 +235,10 @@ type CheckpointProgress struct {
 func LoadCheckpointProgress(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (*CheckpointProgress, error) {
 	m := &CheckpointProgress{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, m)
+	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix), m)
 	return m, errors.Trace(err)
 }
 
@@ -242,16 +246,17 @@ func SaveCheckpointProgress(
 	ctx context.Context,
 	se glue.Session,
 	meta *CheckpointProgress,
+	tableSuffix string,
 ) error {
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointProgressTableName, meta)
+	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix), meta)
 }
 
 func ExistsCheckpointProgress(
-	ctx context.Context,
 	dom *domain.Domain,
+	tableSuffix string,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointProgressTableName))
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix)))
 }
 
 // CheckpointTaskInfo is unique information within the same cluster id. It represents the last
@@ -263,10 +268,11 @@ type CheckpointTaskInfoForLogRestore struct {
 	Progress RestoreProgress
 }
 
-func TryToGetCheckpointTaskInfo(
+func GetCheckpointTaskInfo(
 	ctx context.Context,
 	dom *domain.Domain,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (*CheckpointTaskInfoForLogRestore, error) {
 	var (
 		metadata *CheckpointMetadataForLogRestore
@@ -274,21 +280,21 @@ func TryToGetCheckpointTaskInfo(
 		err      error
 	)
 	// get the progress
-	if ExistsCheckpointProgress(ctx, dom) {
-		checkpointProgress, err := LoadCheckpointProgress(ctx, execCtx)
+	if ExistsCheckpointProgress(dom, tableSuffix) {
+		checkpointProgress, err := LoadCheckpointProgress(ctx, execCtx, tableSuffix)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		progress = checkpointProgress.Progress
 	}
 	// get the checkpoint metadata
-	if ExistsLogRestoreCheckpointMetadata(ctx, dom) {
-		metadata, err = LoadCheckpointMetadataForLogRestore(ctx, execCtx)
+	if ExistsLogRestoreCheckpointMetadata(dom, tableSuffix) {
+		metadata, err = LoadCheckpointMetadataForLogRestore(ctx, execCtx, tableSuffix)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
+	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(dom, SnapshotRestoreCheckpointDatabaseName, tableSuffix)
 
 	return &CheckpointTaskInfoForLogRestore{
 		Metadata:            metadata,
@@ -313,26 +319,31 @@ type CheckpointIngestIndexRepairSQLs struct {
 func LoadCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (*CheckpointIngestIndexRepairSQLs, error) {
 	m := &CheckpointIngestIndexRepairSQLs{}
-	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, m)
+	err := selectCheckpointMeta(ctx, execCtx, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointIngestTableNamePrefix, tableSuffix), m)
 	return m, errors.Trace(err)
 }
 
-func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
+func ExistsCheckpointIngestIndexRepairSQLs(dom *domain.Domain, tableSuffix string) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointIngestTableName))
+		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(GetCheckpointTableName(checkpointIngestTableNamePrefix, tableSuffix)))
 }
 
 func SaveCheckpointIngestIndexRepairSQLs(
 	ctx context.Context,
 	se glue.Session,
 	meta *CheckpointIngestIndexRepairSQLs,
+	tableSuffix string,
 ) error {
-	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, checkpointIngestTableName, meta)
+	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointIngestTableNamePrefix, tableSuffix), meta)
 }
 
-func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session) error {
+func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session, tableSuffix string) error {
 	return dropCheckpointTables(ctx, dom, se, LogRestoreCheckpointDatabaseName,
-		[]string{checkpointDataTableName, checkpointMetaTableName, checkpointProgressTableName, checkpointIngestTableName})
+		[]string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointIngestTableNamePrefix, tableSuffix)})
 }

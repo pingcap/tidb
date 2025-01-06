@@ -284,6 +284,9 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+
+	// CheckpointTableSuffix is the hash of this restore task to identify the checkpoint table
+	CheckpointTableSuffix string `json:"-" toml:"-"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.

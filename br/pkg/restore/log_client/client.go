@@ -208,7 +208,8 @@ type LogClient struct {
 	deleteRangeQueryWaitGroup sync.WaitGroup
 
 	// checkpoint information for log restore
-	useCheckpoint bool
+	useCheckpoint         bool
+	checkpointTableSuffix string
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -217,14 +218,16 @@ func NewRestoreClient(
 	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
+	checkpointTableSuffix string,
 ) *LogClient {
 	return &LogClient{
-		pdClient:           pdClient,
-		pdHTTPClient:       pdHTTPCli,
-		tlsConf:            tlsConf,
-		keepaliveConf:      keepaliveConf,
-		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
-		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
+		pdClient:              pdClient,
+		pdHTTPClient:          pdHTTPCli,
+		tlsConf:               tlsConf,
+		keepaliveConf:         keepaliveConf,
+		deleteRangeQuery:      make([]*stream.PreDelRangeQuery, 0),
+		deleteRangeQueryCh:    make(chan *stream.PreDelRangeQuery, 10),
+		checkpointTableSuffix: checkpointTableSuffix,
 	}
 }
 
@@ -454,18 +457,18 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 ) (map[string]struct{}, error) {
 	sstCheckpointSets := make(map[string]struct{})
 
-	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+	if checkpoint.ExistsSstRestoreCheckpoint(rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName, rc.checkpointTableSuffix) {
 		// we need to load the checkpoint data for the following restore
 		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
 		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
 			sstCheckpointSets[v.Name] = struct{}{}
-		})
+		}, rc.checkpointTableSuffix)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
-		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil, rc.checkpointTableSuffix)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -483,9 +486,9 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
-	if checkpoint.ExistsLogRestoreCheckpointMetadata(ctx, rc.dom) {
+	if checkpoint.ExistsLogRestoreCheckpointMetadata(rc.dom, rc.checkpointTableSuffix) {
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+		meta, err := checkpoint.LoadCheckpointMetadataForLogRestore(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor(), rc.checkpointTableSuffix)
 		if err != nil {
 			return "", errors.Trace(err)
 		}
@@ -509,7 +512,7 @@ func (rc *LogClient) InitCheckpointMetadataForLogRestore(
 		RewriteTS:         rc.currentTS,
 		GcRatio:           gcRatio,
 		TiFlashItems:      items,
-	}); err != nil {
+	}, rc.checkpointTableSuffix); err != nil {
 		return gcRatio, errors.Trace(err)
 	}
 
@@ -1524,7 +1527,7 @@ func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	return wrapper.WithSplit(ctx, compactedIter, strategy), nil
 }
 
-// WrapLogFilesIteratorWithSplit applies a splitting strategy to the log files iterator.
+// WrapLogFilesIterWithSplitHelper applies a splitting strategy to the log files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules.
 func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	ctx context.Context,
@@ -1539,7 +1542,7 @@ func (rc *LogClient) WrapLogFilesIterWithSplitHelper(
 	wrapper := restore.PipelineRestorerWrapper[*LogDataFileInfo]{
 		PipelineRegionsSplitter: split.NewPipelineRegionsSplitter(client, splitSize, splitKeys),
 	}
-	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn)
+	strategy, err := NewLogSplitStrategy(ctx, rc.useCheckpoint, execCtx, rules, updateStatsFn, rc.checkpointTableSuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1585,8 +1588,8 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 ) ([]checkpoint.CheckpointIngestIndexRepairSQL, bool, error) {
 	var sqls []checkpoint.CheckpointIngestIndexRepairSQL
 	if rc.useCheckpoint {
-		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, rc.dom) {
-			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor())
+		if checkpoint.ExistsCheckpointIngestIndexRepairSQLs(rc.dom, rc.checkpointTableSuffix) {
+			checkpointSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor(), rc.checkpointTableSuffix)
 			if err != nil {
 				return sqls, false, errors.Trace(err)
 			}
@@ -1653,7 +1656,7 @@ func (rc *LogClient) generateRepairIngestIndexSQLs(
 	if rc.useCheckpoint && len(sqls) > 0 {
 		if err := checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, rc.unsafeSession, &checkpoint.CheckpointIngestIndexRepairSQLs{
 			SQLs: sqls,
-		}); err != nil {
+		}, rc.checkpointTableSuffix); err != nil {
 			return sqls, false, errors.Trace(err)
 		}
 	}
@@ -1845,7 +1848,7 @@ func (rc *LogClient) saveIDMap(
 		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
 		if err := checkpoint.SaveCheckpointProgress(ctx, rc.unsafeSession, &checkpoint.CheckpointProgress{
 			Progress: checkpoint.InLogRestoreAndIdMapPersist,
-		}); err != nil {
+		}, rc.checkpointTableSuffix); err != nil {
 			return errors.Trace(err)
 		}
 	}

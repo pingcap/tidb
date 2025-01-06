@@ -89,10 +89,10 @@ func New(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
 	chk := &Chunk{
 		columns:  make([]*Column, 0, len(fields)),
 		capacity: min(capacity, maxChunkSize),
-		// set the default value of requiredRows to maxChunkSize to let chk.IsFull() behave
+		// set the default value of requiredRows to maxChunkSize to let chk.IsNotIncremental() behave
 		// like how we judge whether a chunk is full now, then the statement
 		// "chk.NumRows() < maxChunkSize"
-		// equals to "!chk.IsFull()".
+		// equals to "!chk.IsNotIncremental()".
 		requiredRows: maxChunkSize,
 	}
 

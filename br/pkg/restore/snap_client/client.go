@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
+	tablefilter "github.com/pingcap/tidb/pkg/util/table-filter"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -88,6 +89,7 @@ type SnapClient struct {
 	keepaliveConf       keepalive.ClientParameters
 	rateLimit           uint64
 	tlsConf             *tls.Config
+	filter              *tablefilter.Filter
 
 	switchCh chan struct{}
 
@@ -307,7 +309,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
-// restored for the first time, it will initialize the checkpoint metadata. Otherwrise,
+// restored for the first time, it will initialize the checkpoint metadata. Otherwise,
 // it will load checkpoint metadata and checkpoint ranges/checksum from the external
 // storage.
 func (rc *SnapClient) InitCheckpoint(
@@ -315,6 +317,7 @@ func (rc *SnapClient) InitCheckpoint(
 	g glue.Glue, store kv.Storage,
 	config *pdutil.ClusterConfig,
 	checkpointFirstRun bool,
+	checkpointTableSuffix string,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
@@ -322,7 +325,7 @@ func (rc *SnapClient) InitCheckpoint(
 	if !checkpointFirstRun {
 		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
+		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx, checkpointTableSuffix)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -359,12 +362,12 @@ func (rc *SnapClient) InitCheckpoint(
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
 			checkpointSet[v.RangeKey] = struct{}{}
-		})
+		}, checkpointTableSuffix)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
+		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx, checkpointTableSuffix)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -385,7 +388,7 @@ func (rc *SnapClient) InitCheckpoint(
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta, checkpointTableSuffix); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
@@ -987,7 +990,7 @@ func (rc *SnapClient) createTablesSingle(
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
 func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool) {
-	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
+	rc.fullClusterRestore = !explicitFilter && rc.IsNotIncremental()
 
 	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
 }
@@ -996,8 +999,8 @@ func (rc *SnapClient) IsFullClusterRestore() bool {
 	return rc.fullClusterRestore
 }
 
-// IsFull returns whether this backup is full.
-func (rc *SnapClient) IsFull() bool {
+// IsNotIncremental returns whether this backup is Incremental.
+func (rc *SnapClient) IsNotIncremental() bool {
 	failpoint.Inject("mock-incr-backup-data", func() {
 		failpoint.Return(false)
 	})
@@ -1012,7 +1015,7 @@ func (rc *SnapClient) IsIncremental() bool {
 
 // NeedCheckFreshCluster is every time. except restore from a checkpoint or user has not set filter argument.
 func (rc *SnapClient) NeedCheckFreshCluster(ExplicitFilter bool, firstRun bool) bool {
-	return rc.IsFull() && !ExplicitFilter && firstRun
+	return rc.IsNotIncremental() && !ExplicitFilter && firstRun
 }
 
 // EnableSkipCreateSQL sets switch of skip create schema and tables.

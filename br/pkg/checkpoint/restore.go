@@ -115,22 +115,24 @@ func AppendRangesForRestore(
 	})
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
+// LoadCheckpointDataForSstRestore loads the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
 func LoadCheckpointDataForSstRestore[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
 	fn func(K, V),
+	tableSuffix string,
 ) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, dbName, fn)
+	return selectCheckpointData(ctx, execCtx, dbName, fn, tableSuffix)
 }
 
 func LoadCheckpointChecksumForRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
-	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
+	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, tableSuffix)
 }
 
 type CheckpointMetadataForSnapshotRestore struct {
@@ -142,9 +144,10 @@ type CheckpointMetadataForSnapshotRestore struct {
 func LoadCheckpointMetadataForSnapshotRestore(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
+	tableSuffix string,
 ) (*CheckpointMetadataForSnapshotRestore, error) {
 	m := &CheckpointMetadataForSnapshotRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, checkpointMetaTableName, m)
+	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), m)
 	return m, err
 }
 
@@ -153,30 +156,34 @@ func SaveCheckpointMetadataForSstRestore(
 	se glue.Session,
 	dbName string,
 	meta *CheckpointMetadataForSnapshotRestore,
+	tableSuffix string,
 ) error {
 	err := initCheckpointTable(ctx, se, dbName,
-		[]string{checkpointDataTableName, checkpointChecksumTableName})
+		[]string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix)})
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if meta != nil {
-		return insertCheckpointMeta(ctx, se, dbName, checkpointMetaTableName, meta)
+		return insertCheckpointMeta(ctx, se, dbName, GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), meta)
 	}
 	return nil
 }
 
 func ExistsSstRestoreCheckpoint(
-	ctx context.Context,
 	dom *domain.Domain,
 	dbName string,
+	tableSuffix string,
 ) bool {
 	// we only check the existence of the checkpoint data table
 	// because the checkpoint metadata is not used for restore
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(checkpointDataTableName))
+		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix)))
 }
 
-func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string) error {
+func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string, tableSuffix string) error {
 	return dropCheckpointTables(ctx, dom, se, dbName,
-		[]string{checkpointDataTableName, checkpointChecksumTableName, checkpointMetaTableName})
+		[]string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix),
+			GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix)})
 }

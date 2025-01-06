@@ -52,12 +52,12 @@ const (
 	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 
 	// directory level table
-	checkpointDataTableName     string = "cpt_data"
-	checkpointChecksumTableName string = "cpt_checksum"
+	checkpointDataTableNamePrefix     string = "cpt_data"
+	checkpointChecksumTableNamePrefix string = "cpt_checksum"
 	// file level table
-	checkpointMetaTableName     string = "cpt_metadata"
-	checkpointProgressTableName string = "cpt_progress"
-	checkpointIngestTableName   string = "cpt_ingest"
+	checkpointMetaTablePrefix         string = "cpt_metadata"
+	checkpointProgressTableNamePrefix string = "cpt_progress"
+	checkpointIngestTableNamePrefix   string = "cpt_ingest"
 
 	// the primary key (uuid: uuid, segment_id:0) records the number of segment
 	createCheckpointTable string = `
@@ -145,7 +145,7 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 }
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
-	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
+	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableNamePrefix, data)
 	for i, sql := range sqls {
 		args := argss[i]
 		if err := s.se.ExecuteInternal(ctx, sql, args...); err != nil {
@@ -156,7 +156,7 @@ func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data [
 }
 
 func (s *tableCheckpointStorage) flushCheckpointChecksum(ctx context.Context, data []byte) error {
-	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointChecksumTableName, data)
+	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointChecksumTableNamePrefix, data)
 	for i, sql := range sqls {
 		args := argss[i]
 		if err := s.se.ExecuteInternal(ctx, sql, args...); err != nil {
@@ -227,10 +227,11 @@ func selectCheckpointData[K KeyType, V ValueType](
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
 	fn func(groupKey K, value V),
+	tableName string,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	checkpointDatas, err := mergeSelectCheckpoint(ctx, execCtx, dbName, checkpointDataTableName)
+	checkpointDatas, err := mergeSelectCheckpoint(ctx, execCtx, dbName, tableName)
 	if err != nil {
 		return pastDureTime, errors.Trace(err)
 	}
@@ -246,10 +247,11 @@ func selectCheckpointChecksum(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
+	tableSuffix string,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	var pastDureTime time.Duration = 0
 	checkpointChecksum := make(map[int64]*ChecksumItem)
-	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName, checkpointChecksumTableName)
+	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName, GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix))
 	if err != nil {
 		return checkpointChecksum, pastDureTime, errors.Trace(err)
 	}
