@@ -174,9 +174,8 @@ func (p *workerPool) run() {
 			p.workers--
 			p.lock.Unlock()
 			return
-		} else {
-			task, p.head = p.head, p.head.next
 		}
+		task, p.head = p.head, p.head.next
 		p.tasks--
 		p.lock.Unlock()
 
