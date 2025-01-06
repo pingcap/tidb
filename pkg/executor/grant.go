@@ -182,7 +182,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(extErr.Error())
 			}
 			authPluginImpl := extensions.GetAuthPlugins()[authPlugin]
-			pwd, ok := encodePassword(*user, authPluginImpl, defaultAuthPlugin)
+			pwd, ok := encodePasswordWithPlugin(*user, authPluginImpl, defaultAuthPlugin)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}

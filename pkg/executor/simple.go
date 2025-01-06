@@ -1184,7 +1184,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 			}
 		}
 
-		pwd, ok := encodePassword(*spec, pluginImpl, defaultAuthPlugin)
+		pwd, ok := encodePasswordWithPlugin(*spec, pluginImpl, defaultAuthPlugin)
 		if !ok {
 			return errors.Trace(exeerrors.ErrPasswordFormat)
 		}
@@ -1857,7 +1857,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			}
 			// we have assigned the currentAuthPlugin to spec.AuthOpt.AuthPlugin if the latter is empty, so keep the incomming argument defaultPlugin empty is ok.
-			pwd, ok := encodePassword(*spec, authPluginImpl, "")
+			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, "")
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
