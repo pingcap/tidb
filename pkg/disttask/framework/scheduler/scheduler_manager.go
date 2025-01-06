@@ -250,7 +250,6 @@ func (sm *Manager) getSchedulableTasks() ([]*proto.TaskBase, error) {
 		}
 		schedulableTasks = append(schedulableTasks, task)
 	}
-	sm.logger.Info("get schedulable tasks", zap.Int("task-count", len(schedulableTasks)))
 	return schedulableTasks, nil
 }
 
@@ -262,10 +261,8 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		sm.logger.Warn("update used slot failed", zap.Error(err))
 		return err
 	}
-	sm.logger.Info("schedulableTasks cnt", zap.Int("task-count", len(schedulableTasks)))
 	for _, task := range schedulableTasks {
 		taskCnt := sm.getSchedulerCount()
-		sm.logger.Info("task scheduler count", zap.Int("count", taskCnt))
 		if taskCnt >= proto.MaxConcurrentTask {
 			break
 		}
@@ -277,7 +274,6 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
 			if !ok {
 				// task of lower rank might be able to be scheduled.
-				sm.logger.Info("task can't be scheduled", zap.Int64("task-id", task.ID))
 				continue
 			}
 		// reverting/cancelling/pausing/modifying, we don't allocate slots for them.
