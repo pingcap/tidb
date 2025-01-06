@@ -890,7 +890,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		// context canceled
 		canceledCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		taskExecutor.checkBalanceSubtask(canceledCtx)
+		taskExecutor.checkBalanceSubtask(canceledCtx, nil)
 	})
 
 	t.Run("subtask scheduled away", func(t *testing.T) {
@@ -899,9 +899,8 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
 		runCtx, cancel := context.WithCancel(ctx)
-		taskExecutor.mu.subtaskCancel = cancel
 		require.NoError(t, runCtx.Err())
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, cancel)
 		require.ErrorIs(t, runCtx.Err(), context.Canceled)
 		require.True(t, ctrl.Satisfied())
 	})
@@ -914,7 +913,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockExtension.EXPECT().IsIdempotent(subtasks[0]).Return(false)
 		mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "tidb1",
 			subtasks[0].ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 
 		// if we failed to change state of non-idempotent subtask, will retry
@@ -931,7 +930,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockExtension.EXPECT().IsIdempotent(subtasks[0]).Return(false)
 		mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "tidb1",
 			subtasks[0].ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -946,7 +945,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		// used to break the loop
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 	})
 }

@@ -90,7 +90,6 @@ type BaseTaskExecutor struct {
 		sync.RWMutex
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelCauseFunc
-		subtaskCancel context.CancelFunc
 	}
 
 	stepExec   execute.StepExecutor
@@ -123,7 +122,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 //     `pending` state, to make sure subtasks can be balanced later when node scale out.
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
-func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
+func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCancelCtx context.CancelFunc) {
 	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
 	for {
@@ -144,7 +143,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			e.cancelSubtaskCtx()
+			subtaskCancelCtx()
 			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
@@ -427,14 +426,11 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
 		subtaskCtx, subtaskCancelCtx := context.WithCancel(e.stepCtx)
-		e.mu.Lock()
-		e.mu.subtaskCancel = subtaskCancelCtx
-		e.mu.Unlock()
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx)
+			e.checkBalanceSubtask(checkCtx, subtaskCancelCtx)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
@@ -497,14 +493,6 @@ func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 	defer e.mu.Unlock()
 	if e.mu.runtimeCancel != nil {
 		e.mu.runtimeCancel(cause)
-	}
-}
-
-func (e *BaseTaskExecutor) cancelSubtaskCtx() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.mu.subtaskCancel != nil {
-		e.mu.subtaskCancel()
 	}
 }
 
