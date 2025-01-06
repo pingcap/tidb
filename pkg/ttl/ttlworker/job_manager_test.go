@@ -203,19 +203,11 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
-<<<<<<< HEAD
-=======
-// ID returns the id of JobManager
-func (m *JobManager) ID() string {
-	return m.id
-}
-
 // CheckNotOwnJob is an exported version of checkNotOwnJob
 func (m *JobManager) CheckNotOwnJob() {
 	m.checkNotOwnJob()
 }
 
->>>>>>> 2a72e7f012b (ttl: set the job history status to `cancelled` if it's removed in GC and it's still running (#58539))
 // CheckFinishedJob is an exported version of checkFinishedJob
 func (m *JobManager) CheckFinishedJob(se session.Session) {
 	m.checkFinishedJob(se)
