@@ -843,7 +843,13 @@ func (w *worker) runOneJobStep(
 
 			var cancelStep context.CancelCauseFunc
 			jobCtx.stepCtx, cancelStep = context.WithCancelCause(jobCtx.ctx)
-			defer cancelStep(context.Canceled)
+			if rand.Intn(3) == 0 {
+				var cancel context.CancelFunc
+				jobCtx.stepCtx, cancel = context.WithTimeout(jobCtx.ctx, time.Second)
+				defer cancel()
+			} else {
+				defer cancelStep(context.Canceled)
+			}
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
