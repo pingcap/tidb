@@ -445,6 +445,8 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, er.names)
 		b.outerBlockExpand = append(b.outerBlockExpand, b.currentBlockExpand)
+		// set it to nil, otherwise, inner qb will use outer expand meta to rewrite expressions.
+		b.currentBlockExpand = nil
 		defer func() {
 			b.outerSchemas = b.outerSchemas[0 : len(b.outerSchemas)-1]
 			b.outerNames = b.outerNames[0 : len(b.outerNames)-1]
@@ -1483,7 +1485,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 
-		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp)
+		castFunction, err := expression.BuildCastFunctionWithCheck(er.sctx, arg, v.Tp, v.ExplicitCharSet)
 		if err != nil {
 			er.err = err
 			return retNode, false
@@ -1867,7 +1869,7 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 					if c.GetType().EvalType() == types.ETInt {
 						continue // no need to refine it
 					}
-					er.sctx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.String()))
+					er.sctx.SetSkipPlanCache(errors.NewNoStackErrorf("'%v' may be converted to INT", c.StringWithCtx(errors.RedactLogDisable)))
 					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
 						er.err = err
 						return
@@ -2395,6 +2397,16 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
+		return
+	} else if er.planCtx == nil && er.sourceTable != nil &&
+		(v.Table.L == "" || er.sourceTable.Name.L == v.Table.L) {
+		colInfo := er.sourceTable.FindPublicColumnByName(v.Name.L)
+		if colInfo == nil || colInfo.Hidden {
+			er.err = plannererrors.ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
+			return
+		}
+		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
+			&types.FieldName{ColName: v.Name})
 		return
 	}
 

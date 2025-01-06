@@ -1535,7 +1535,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		exprType := args[1-conIdx].GetType()
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
-			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].StringWithCtx(errors.RedactLogDisable))
 			ctx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -1545,7 +1545,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].StringWithCtx(errors.RedactLogDisable))
 			ctx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -1555,7 +1555,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 		// see https://github.com/pingcap/tidb/issues/38361 for more details
 		_, exprIsCon := args[1-conIdx].(*Constant)
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
-			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
+			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].StringWithCtx(errors.RedactLogDisable))
 			ctx.SetSkipPlanCache(reason)
 			return true
 		}

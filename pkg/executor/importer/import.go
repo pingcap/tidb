@@ -811,7 +811,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}

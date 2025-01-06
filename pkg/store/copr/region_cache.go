@@ -16,11 +16,10 @@ package copr
 
 import (
 	"bytes"
-	"math"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -28,6 +27,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -168,7 +168,7 @@ const UnspecifiedLimit = -1
 
 // SplitKeyRangesByLocationsWithBuckets splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are not empty if the region is split by bucket.
-func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int) ([]*LocationKeyRanges, error) {
+func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges *KeyRanges, limit int, killer *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
 	res := make([]*LocationKeyRanges, 0)
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
@@ -177,6 +177,19 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithBuckets(bo *Backoffer, ranges
 		loc, err := c.LocateKey(bo.TiKVBackoffer(), ranges.At(0).StartKey)
 		if err != nil {
 			return res, derr.ToTiDBErr(err)
+		}
+		failpoint.Inject("SplitRangesHangCausedKill", func(val failpoint.Value) {
+			if val.(bool) {
+				if killer != nil {
+					killer.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+				}
+			}
+		})
+		if killer != nil {
+			err = killer.HandleSignal()
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		isBreak := false
@@ -240,8 +253,8 @@ func (c *RegionCache) SplitKeyRangesByLocationsWithoutBuckets(bo *Backoffer, ran
 // it's equal to SplitKeyRangesByLocations.
 //
 // TODO(youjiali1995): Try to do it in one round and reduce allocations if bucket is not enabled.
-func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) ([]*LocationKeyRanges, error) {
-	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit)
+func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges, sqlkiller *sqlkiller.SQLKiller) ([]*LocationKeyRanges, error) {
+	locs, err := c.SplitKeyRangesByLocationsWithBuckets(bo, ranges, UnspecifiedLimit, sqlkiller)
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
@@ -270,57 +283,25 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 
 // BuildBatchTask fetches store and peer info for cop task, wrap it as `batchedCopTask`.
 func (c *RegionCache) BuildBatchTask(bo *Backoffer, req *kv.Request, task *copTask, replicaRead kv.ReplicaReadType) (*batchedCopTask, error) {
-	var (
-		rpcContext *tikv.RPCContext
-		err        error
-	)
-	if replicaRead == kv.ReplicaReadFollower {
-		followerStoreSeed := uint32(0)
-		leastEstWaitTime := time.Duration(math.MaxInt64)
-		var (
-			firstFollowerPeer *uint64
-			followerContext   *tikv.RPCContext
-		)
-		for {
-			followerContext, err = c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), followerStoreSeed)
-			if err != nil {
-				return nil, err
-			}
-			if firstFollowerPeer == nil {
-				firstFollowerPeer = &rpcContext.Peer.Id
-			} else if *firstFollowerPeer == rpcContext.Peer.Id {
-				break
-			}
-			estWaitTime := followerContext.Store.EstimatedWaitTime()
-			// the wait time of this follower is under given threshold, choose it.
-			if estWaitTime > req.StoreBusyThreshold {
-				continue
-			}
-			if rpcContext == nil {
-				rpcContext = followerContext
-			} else if estWaitTime < leastEstWaitTime {
-				leastEstWaitTime = estWaitTime
-				rpcContext = followerContext
-			}
-			followerStoreSeed++
-		}
-		// all replicas are busy, fallback to leader.
-		if rpcContext == nil {
-			replicaRead = kv.ReplicaReadLeader
-		}
+	if replicaRead != kv.ReplicaReadLeader {
+		return nil, nil
 	}
 
-	if replicaRead == kv.ReplicaReadLeader {
-		rpcContext, err = c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), 0)
-		if err != nil {
-			return nil, err
-		}
+	rpcContext, err := c.GetTiKVRPCContext(bo.TiKVBackoffer(), task.region, options.GetTiKVReplicaReadType(replicaRead), 0)
+	if err != nil {
+		return nil, err
 	}
 
 	// fallback to non-batch path
 	if rpcContext == nil {
 		return nil, nil
 	}
+
+	// when leader is busy, we don't batch the cop task to allow the load balance to work.
+	if rpcContext.Store.EstimatedWaitTime() > req.StoreBusyThreshold {
+		return nil, nil
+	}
+
 	return &batchedCopTask{
 		task: task,
 		region: coprocessor.RegionInfo{

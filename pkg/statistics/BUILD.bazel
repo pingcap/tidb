@@ -80,7 +80,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
-    shard_count = 37,
+    shard_count = 38,
     deps = [
         "//pkg/config",
         "//pkg/parser/ast",
@@ -88,7 +88,6 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/statistics/handle/autoanalyze/exec",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

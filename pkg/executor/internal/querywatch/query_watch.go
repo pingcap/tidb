@@ -116,7 +116,7 @@ func setWatchOption(ctx context.Context,
 func fromQueryWatchOptionList(ctx context.Context, sctx, newSctx sessionctx.Context, optionList []*ast.QueryWatchOption) (*resourcegroup.QuarantineRecord, error) {
 	record := &resourcegroup.QuarantineRecord{
 		Source:    resourcegroup.ManualSource,
-		StartTime: time.Now(),
+		StartTime: time.Now().UTC(),
 		EndTime:   resourcegroup.NullTime,
 	}
 	for _, op := range optionList {

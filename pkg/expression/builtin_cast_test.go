@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -654,7 +655,7 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetCharset(charset.CharsetBin)
 		args := []Expression{c.before}
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		stringFunc, err := newBaseBuiltinCastFunc4String(ctx, "", args, tp, false)
 		require.NoError(t, err)
 		switch i {
 		case 0:
@@ -741,7 +742,7 @@ func TestCastFuncSig(t *testing.T) {
 		tp := types.NewFieldType(mysql.TypeVarString)
 		tp.SetFlen(c.flen)
 		tp.SetCharset(charset.CharsetBin)
-		stringFunc, err := newBaseBuiltinFunc(ctx, "", args, tp)
+		stringFunc, err := newBaseBuiltinCastFunc4String(ctx, "", args, tp, false)
 		require.NoError(t, err)
 		switch i {
 		case 0:
@@ -1098,7 +1099,7 @@ func TestCastFuncSig(t *testing.T) {
 	// null case
 	args := []Expression{&Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}}
 	row := chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)})
-	bf, err := newBaseBuiltinFunc(ctx, "", args, types.NewFieldType(mysql.TypeVarString))
+	bf, err := newBaseBuiltinCastFunc4String(ctx, "", args, types.NewFieldType(mysql.TypeVarString), false)
 	require.NoError(t, err)
 	sig = &builtinCastRealAsStringSig{bf}
 	sRes, err := evalBuiltinFunc(sig, ctx, row.ToRow())
@@ -1446,7 +1447,7 @@ func TestWrapWithCastAsString(t *testing.T) {
 	}
 
 	expr := BuildCastFunction(ctx, &Constant{RetType: types.NewFieldType(mysql.TypeEnum)}, types.NewFieldType(mysql.TypeVarString))
-	require.NotContains(t, expr.String(), "to_binary")
+	require.NotContains(t, expr.StringWithCtx(errors.RedactLogDisable), "to_binary")
 }
 
 func TestWrapWithCastAsJSON(t *testing.T) {
@@ -1693,7 +1694,7 @@ func TestCastArrayFunc(t *testing.T) {
 		},
 	}
 	for _, tt := range tbl {
-		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
+		f, err := BuildCastFunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp, false)
 		if !tt.buildFuncSuccess {
 			require.Error(t, err, tt.input)
 			continue

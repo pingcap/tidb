@@ -17,6 +17,7 @@ package expression
 import (
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -263,13 +264,18 @@ func (gs GroupingSet) Clone() GroupingSet {
 
 // String is used to output a string which simply described current grouping set.
 func (gs GroupingSet) String() string {
+	return gs.StringWithCtx(errors.RedactLogDisable)
+}
+
+// StringWithCtx is used to output a string which simply described current grouping set.
+func (gs GroupingSet) StringWithCtx(redact string) string {
 	var str strings.Builder
 	str.WriteString("{")
 	for i, one := range gs {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(one.String())
+		str.WriteString(one.StringWithCtx(redact))
 	}
 	str.WriteString("}")
 	return str.String()
@@ -321,13 +327,18 @@ func (gss GroupingSets) AllSetsColIDs() *intset.FastIntSet {
 
 // String is used to output a string which simply described current grouping sets.
 func (gss GroupingSets) String() string {
+	return gss.StringWithCtx(errors.RedactLogDisable)
+}
+
+// StringWithCtx is used to output a string which simply described current grouping sets.
+func (gss GroupingSets) StringWithCtx(redact string) string {
 	var str strings.Builder
 	str.WriteString("[")
 	for i, gs := range gss {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(gs.String())
+		str.WriteString(gs.StringWithCtx(redact))
 	}
 	str.WriteString("]")
 	return str.String()
@@ -390,13 +401,18 @@ func (g GroupingExprs) Clone() GroupingExprs {
 
 // String is used to output a string which simply described current grouping expressions.
 func (g GroupingExprs) String() string {
+	return g.StringWithCtx(errors.RedactLogDisable)
+}
+
+// StringWithCtx is used to output a string which simply described current grouping expressions.
+func (g GroupingExprs) StringWithCtx(redact string) string {
 	var str strings.Builder
 	str.WriteString("<")
 	for i, one := range g {
 		if i != 0 {
 			str.WriteString(",")
 		}
-		str.WriteString(one.String())
+		str.WriteString(one.StringWithCtx(redact))
 	}
 	str.WriteString(">")
 	return str.String()

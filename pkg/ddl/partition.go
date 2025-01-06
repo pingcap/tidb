@@ -2927,7 +2927,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		// Assume we cannot have more than MaxUint64 rows, set the progress to 1/10 of that.
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.1 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.1 / float64(math.MaxUint64))
 		job.SchemaState = model.StateDeleteOnly
 		tblInfo.Partition.DDLState = model.StateDeleteOnly
 		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, true)
@@ -2982,7 +2982,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 
 		tblInfo.Partition.DDLState = model.StateWriteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.2 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.2 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
@@ -2990,7 +2990,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// so that new data will be updated in both old and new partitions when reorganizing.
 		job.SnapshotVer = 0
 		tblInfo.Partition.DDLState = model.StateWriteReorganization
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String()).Set(0.3 / float64(math.MaxUint64))
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, job.SchemaName, tblInfo.Name.String(), "").Set(0.3 / float64(math.MaxUint64))
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		job.SchemaState = model.StateWriteReorganization
 	case model.StateWriteReorganization:
@@ -3262,7 +3262,7 @@ func newReorgPartitionWorker(sessCtx sessionctx.Context, i int, t table.Physical
 		maxOffset = mathutil.Max[int](maxOffset, offset)
 	}
 	return &reorgPartitionWorker{
-		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo.SchemaName, t, jc, "reorg_partition_rate", false),
+		backfillCtx:       newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblReorgPartitionRate, false),
 		rowDecoder:        decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap),
 		rowMap:            make(map[int64]types.Datum, len(decodeColMap)),
 		writeColOffsetMap: writeColOffsetMap,

@@ -42,6 +42,10 @@ const (
 	PseudoRowCount = 10000
 )
 
+// AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
+// Exported for testing.
+var AutoAnalyzeMinCnt int64 = 1000
+
 var (
 	// Below functions are used to solve cycle import problem.
 	// Note: all functions below will be removed after finishing moving all estimation functions into the cardinality package.
@@ -549,6 +553,19 @@ func (t *Table) IsAnalyzed() bool {
 	return t.LastAnalyzeVersion > 0
 }
 
+// IsEligibleForAnalysis checks whether the table is eligible for analysis.
+func (t *Table) IsEligibleForAnalysis() bool {
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze.
+	//    Pseudo statistics can be created by the optimizer, so we need to double check it.
+	// 2. If the table is too small, we don't want to waste time to analyze it.
+	//    Leave the opportunity to other bigger tables.
+	if t == nil || t.Pseudo || t.RealtimeCount < AutoAnalyzeMinCnt {
+		return false
+	}
+
+	return true
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
@@ -596,7 +613,11 @@ func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCn
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := idxStats.TotalRowCount() / analyzeRowCount
+	idxTotalRowCount := idxStats.TotalRowCount()
+	if idxTotalRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := idxTotalRowCount / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 
@@ -623,7 +644,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 }
 
 // ColumnIsLoadNeeded checks whether the column needs trigger the async/sync load.
-// The Column should be visible in the table and really has analyzed statistics in the stroage.
+// The Column should be visible in the table and really has analyzed statistics in the storage.
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we have it in memory. The second bool is whether this column has stats in the system table or not.

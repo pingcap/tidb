@@ -127,12 +127,12 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
 			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
 				ctx.AppendWarning(warnErr)
 				return false
 			}
@@ -277,7 +277,15 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CoalesceDuration,
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
+			tipb.ScalarFuncSig_CaseWhenDuration,
+			tipb.ScalarFuncSig_LTJson,
+			tipb.ScalarFuncSig_LEJson,
+			tipb.ScalarFuncSig_GTJson,
+			tipb.ScalarFuncSig_GEJson,
+			tipb.ScalarFuncSig_EQJson,
+			tipb.ScalarFuncSig_NEJson,
+			tipb.ScalarFuncSig_JsonIsNull,
+			tipb.ScalarFuncSig_InJson:
 			return false
 		}
 		return true

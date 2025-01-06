@@ -455,8 +455,10 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			if substituted {
 				flag := v.RetType.GetFlag()
 				var e Expression
+				var err error
 				if v.FuncName.L == ast.Cast {
-					e = BuildCastFunction(ctx, newArg, v.RetType)
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, v.Function.IsExplicitCharset())
+					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
 					e = v.Clone()
@@ -1812,7 +1814,7 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 		// so we trim the \" prefix and suffix here.
 		strs[i] = strings.TrimSuffix(
 			strings.TrimPrefix(
-				strconv.Quote(cond.String()),
+				strconv.Quote(cond.StringWithCtx(errors.RedactLogDisable)),
 				quote),
 			quote)
 	}

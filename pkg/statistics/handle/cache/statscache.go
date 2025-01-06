@@ -144,8 +144,8 @@ func (s *StatsCacheImpl) getLastVersion() uint64 {
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
-	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * s.statsHandle.Lease())
+	// We can read the stats if the diff between commit time and version is less than five lease.
+	offset := util.DurationToTS(5 * s.statsHandle.Lease()) // 5 lease is 15s.
 	if s.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -239,7 +239,14 @@ func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 	distribution := make([]int64, 5)
+	uneligibleAnalyze := 0
 	for _, tbl := range s.Values() {
+		distribution[4]++ // total table count
+		isEligibleForAnalysis := tbl.IsEligibleForAnalysis()
+		if !isEligibleForAnalysis {
+			uneligibleAnalyze++
+			continue
+		}
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -253,9 +260,9 @@ func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
 		} else {
 			distribution[3]++
 		}
-		distribution[4]++
 	}
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
+	handle_metrics.StatsHealthyGauges[5].Set(float64(uneligibleAnalyze))
 }

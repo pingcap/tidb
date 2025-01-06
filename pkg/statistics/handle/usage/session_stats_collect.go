@@ -38,7 +38,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 
 	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 	batchInsertSize = 10
@@ -68,7 +68,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)

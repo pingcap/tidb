@@ -96,7 +96,7 @@ func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.
 		return nil
 	}
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
+		"values %s on duplicate key update tot_col_size = GREATEST(0, tot_col_size + values(tot_col_size))", strings.Join(values, ","))
 	_, _, err := statsutil.ExecRows(sctx, sql)
 	return errors.Trace(err)
 }

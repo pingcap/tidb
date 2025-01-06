@@ -61,7 +61,7 @@ c1	c2	c1	c2
 explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 on t.c1 = t1.c1 and t.c1 != 1 order by t1.c1;
 id	estRows	task	access object	operator info
 Sort	10000.00	root		executor__merge_join.t1.c1
-└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:[ne(executor__merge_join.t.c1, 1)]
+└─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
   ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
   │ └─TableReader	6656.67	root		data:Selection
   │   └─Selection	6656.67	cop[tikv]		ne(executor__merge_join.t1.c1, 1), not(isnull(executor__merge_join.t1.c1))
@@ -338,7 +338,7 @@ explain format = 'brief' select /*+ TIDB_SMJ(t) */ * from t left outer join t1 o
 id	estRows	task	access object	operator info
 Sort	10000.00	root		executor__merge_join.t1.c1
 └─Shuffle	10000.00	root		execution info: concurrency:4, data sources:[TableReader TableReader]
-  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:[ne(executor__merge_join.t.c1, 1)]
+  └─MergeJoin	10000.00	root		left outer join, left key:executor__merge_join.t.c1, right key:executor__merge_join.t1.c1, left cond:ne(executor__merge_join.t.c1, 1)
     ├─Sort(Build)	6656.67	root		executor__merge_join.t1.c1
     │ └─ShuffleReceiver	6656.67	root		
     │   └─TableReader	6656.67	root		data:Selection

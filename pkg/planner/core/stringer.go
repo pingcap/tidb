@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -116,8 +117,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 			str = "LeftHashJoin{" + strings.Join(children, "->") + "}"
 		}
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+			l := eq.GetArgs()[0].StringWithCtx(perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *PhysicalMergeJoin:
@@ -145,8 +146,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		}
 		str = id + "{" + strings.Join(children, "->") + "}"
 		for i := range x.LeftJoinKeys {
-			l := x.LeftJoinKeys[i].String()
-			r := x.RightJoinKeys[i].String()
+			l := x.LeftJoinKeys[i].StringWithCtx(perrors.RedactLogDisable)
+			r := x.RightJoinKeys[i].StringWithCtx(perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalApply, *PhysicalApply:
@@ -186,8 +187,8 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		str = "Join{" + strings.Join(children, "->") + "}"
 		idxs = idxs[:last]
 		for _, eq := range x.EqualConditions {
-			l := eq.GetArgs()[0].String()
-			r := eq.GetArgs()[1].String()
+			l := eq.GetArgs()[0].StringWithCtx(perrors.RedactLogDisable)
+			r := eq.GetArgs()[1].StringWithCtx(perrors.RedactLogDisable)
 			str += fmt.Sprintf("(%s,%s)", l, r)
 		}
 	case *LogicalUnionAll, *PhysicalUnionAll, *LogicalPartitionUnionAll:
@@ -240,7 +241,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 	case *LogicalAggregation:
 		str = "Aggr("
 		for i, aggFunc := range x.AggFuncs {
-			str += aggFunc.String()
+			str += aggFunc.StringWithCtx(perrors.RedactLogDisable)
 			if i != len(x.AggFuncs)-1 {
 				str += ","
 			}
@@ -308,7 +309,7 @@ func toString(in Plan, strs []string, idxs []int) ([]string, []int) {
 		for _, col := range x.ColTasks {
 			var colNames []string
 			if col.HandleCols != nil {
-				colNames = append(colNames, col.HandleCols.String())
+				colNames = append(colNames, col.HandleCols.StringWithCtx(perrors.RedactLogDisable))
 			}
 			for _, c := range col.ColsInfo {
 				colNames = append(colNames, c.Name.O)

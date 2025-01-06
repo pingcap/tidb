@@ -20,9 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -1505,7 +1508,7 @@ func TestAddPartitioning(t *testing.T) {
 	)
 }
 
-func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
+func findEvent(eventCh <-chan *statsutil.DDLEvent, eventType model.ActionType) *statsutil.DDLEvent {
 	// Find the target event.
 	for {
 		event := <-eventCh
@@ -1513,4 +1516,30 @@ func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.
 			return event
 		}
 	}
+}
+
+func TestExchangePartition(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	var wg util.WaitGroupWrapper
+	for i := 0; i < 20; i++ {
+		tk1 := testkit.NewTestKit(t, store)
+		wg.Run(func() {
+			tk1.MustExec("begin")
+			ddl.UpdateStatsWithCountDeltaAndModifyCountDeltaForTest(tk1.Session(), tbl.Meta().ID, 10, 10)
+			tk1.MustExec("commit")
+		})
+	}
+	wg.Wait()
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(tk.Session(), tbl.Meta().ID)
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, int64(200), count)
+	require.Equal(t, int64(200), modifyCount)
 }

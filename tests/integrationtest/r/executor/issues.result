@@ -868,3 +868,9 @@ set @@tidb_max_chunk_size = default;
 select tan(9021874879467600608071521900001091070693729763119983979);
 tan(9021874879467600608071521900001091070693729763119983979)
 8.068627196084492
+CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
+insert into test_55837 values(0,1725292800),(0,1725292800);
+select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;
+result
+2024-09-03 00:00:00
+2024-09-03 00:00:00

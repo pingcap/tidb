@@ -22,7 +22,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -523,32 +522,114 @@ func getLineIndex(offset offset, index int) int {
 	return fileLine
 }
 
-// kvSplitRegex: it was just for split "field: value field: value..."
-var kvSplitRegex = regexp.MustCompile(`\w+: `)
+// findMatchedRightBracket returns the rightBracket index which matchs line[leftBracketIdx]
+// leftBracketIdx should be valid string index for line
+// Returns -1 if invalid inputs are given
+func findMatchedRightBracket(line string, leftBracketIdx int) int {
+	leftBracket := line[leftBracketIdx]
+	rightBracket := byte('}')
+	if leftBracket == '[' {
+		rightBracket = ']'
+	} else if leftBracket != '{' {
+		return -1
+	}
+	lineLength := len(line)
+	current := leftBracketIdx
+	leftBracketCnt := 0
+	for current < lineLength {
+		b := line[current]
+		if b == leftBracket {
+			leftBracketCnt++
+			current++
+		} else if b == rightBracket {
+			leftBracketCnt--
+			if leftBracketCnt > 0 {
+				current++
+			} else if leftBracketCnt == 0 {
+				if current+1 < lineLength && line[current+1] != ' ' {
+					return -1
+				}
+				return current
+			} else {
+				return -1
+			}
+		} else {
+			current++
+		}
+	}
+	return -1
+}
+
+func isLetterOrNumeric(b byte) bool {
+	return ('A' <= b && b <= 'Z') || ('a' <= b && b <= 'z') || ('0' <= b && b <= '9')
+}
 
 // splitByColon split a line like "field: value field: value..."
+// Note:
+// 1. field string's first character can only be ASCII letters or digits, and can't contain ':'
+// 2. value string may be surrounded by brackets, allowed brackets includes "[]" and "{}",  like {key: value,{key: value}}
+// "[]" can only be nested inside "[]"; "{}" can only be nested inside "{}"
+// 3. value string can't contain ' ' character unless it is inside brackets
 func splitByColon(line string) (fields []string, values []string) {
-	matches := kvSplitRegex.FindAllStringIndex(line, -1)
-	fields = make([]string, 0, len(matches))
-	values = make([]string, 0, len(matches))
+	fields = make([]string, 0, 1)
+	values = make([]string, 0, 1)
 
-	beg := 0
-	end := 0
-	for _, match := range matches {
-		// trim ": "
-		fields = append(fields, line[match[0]:match[1]-2])
-
-		end = match[0]
-		if beg != 0 {
-			// trim " "
-			values = append(values, line[beg:end-1])
+	lineLength := len(line)
+	parseKey := true
+	start := 0
+	errMsg := ""
+	for current := 0; current < lineLength; {
+		if parseKey {
+			// Find key start
+			for current < lineLength && !isLetterOrNumeric(line[current]) {
+				current++
+			}
+			start = current
+			if current >= lineLength {
+				break
+			}
+			for current < lineLength && line[current] != ':' {
+				current++
+			}
+			fields = append(fields, line[start:current])
+			parseKey = false
+			current += 2 // bypass ": "
+			if current >= lineLength {
+				// last empty value
+				values = append(values, "")
+			}
+		} else {
+			start = current
+			if current < lineLength && (line[current] == '{' || line[current] == '[') {
+				rBraceIdx := findMatchedRightBracket(line, current)
+				if rBraceIdx == -1 {
+					errMsg = "Braces matched error"
+					break
+				}
+				current = rBraceIdx + 1
+			} else {
+				for current < lineLength && line[current] != ' ' {
+					current++
+				}
+				// Meet empty value cases: "Key: Key:"
+				if current > 0 && line[current-1] == ':' {
+					values = append(values, "")
+					current = start
+					parseKey = true
+					continue
+				}
+			}
+			values = append(values, line[start:min(current, len(line))])
+			parseKey = true
 		}
-		beg = match[1]
 	}
-
-	if end != len(line) {
-		// " " does not exist in the end
-		values = append(values, line[beg:])
+	if len(errMsg) > 0 {
+		logutil.BgLogger().Warn("slow query parse slow log error", zap.String("Error", errMsg), zap.String("Log", line))
+		return nil, nil
+	}
+	if len(fields) != len(values) {
+		logutil.BgLogger().Warn("slow query parse slow log error", zap.Int("field_count", len(fields)), zap.Int("value_count", len(values)), zap.String("Log", line))
+		return nil, nil
 	}
 	return fields, values
 }

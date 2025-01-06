@@ -71,12 +71,28 @@ func TestNonPreparedPlanCachePlanString(t *testing.T) {
 		require.NoError(t, err)
 		return plannercore.ToString(p)
 	}
-
+	defer func() {
+		tk.MustExec("set session tidb_redact_log=MARKER")
+	}()
 	require.Equal(t, planString("select a from t where a < 1"), "IndexReader(Index(t.a)[[-inf,1)])")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select a from t where a < 10"), "IndexReader(Index(t.a)[[-inf,10)])") // range 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	require.Equal(t, planString("select * from t where b < 1"), "TableReader(Table(t)->Sel([lt(test.t.b, 1)]))")
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
+	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec("set session tidb_redact_log=ON")
 	require.Equal(t, planString("select * from t where b < 10"), "TableReader(Table(t)->Sel([lt(test.t.b, 10)]))") // filter 1 -> 10
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
@@ -258,12 +274,22 @@ func TestIssue38269(t *testing.T) {
 	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_redact_log=MARKER")
 	tk.MustExec("execute stmt1 using @d, @e, @f")
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
-	require.Contains(t, rows[6][4], "range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, 40, 50, 60)]")
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
+		"IndexJoin_12 37.46 root  inner join, inner:IndexLookUp_11, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+		"├─TableReader_24(Build) 9990.00 root  data:Selection_23",
+		"│ └─Selection_23 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+		"│   └─TableFullScan_22 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		"└─IndexLookUp_11(Probe) 37.46 root  ",
+		"  ├─Selection_10(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
+		"  │ └─IndexRangeScan_8 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan_9(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
 }
 
 func TestIssue38533(t *testing.T) {
@@ -1852,8 +1878,11 @@ func TestIndexRange(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 
-	tk.MustExec(`CREATE TABLE posts (id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY)`)
-	tk.MustExec(`INSERT INTO posts (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
+	tk.MustExec(`CREATE TABLE t0 (id bigint NOT NULL AUTO_INCREMENT PRIMARY KEY)`)
+	tk.MustExec(`CREATE TABLE t1(c0 FLOAT ZEROFILL, PRIMARY KEY(c0));`)
+	tk.MustExec(`INSERT INTO t0 (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11);`)
+	tk.MustExec("INSERT INTO t1(c0) VALUES (1);")
 	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
-	tk.MustQuery(`SELECT posts.* FROM posts WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+	tk.MustQuery(`SELECT t0.* FROM t0 WHERE (id = 1 or id = 9223372036854775808);`).Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT t1.c0 FROM t1 WHERE t1.c0!=BIN(-1);").Check(testkit.Rows("1"))
 }

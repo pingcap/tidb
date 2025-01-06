@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -383,13 +384,52 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			label = metrics.LblAddIndex
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), getIndexNamesFromJobArgs(reorgInfo)).Set(progress * 100)
 	case model.ActionModifyColumn:
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		colName := ""
+		modifyInfo := &modifyingColInfo{pos: &ast.ColumnPosition{}}
+		err := reorgInfo.Job.DecodeArgs(&modifyInfo.newCol, &modifyInfo.oldColName, modifyInfo.pos, &modifyInfo.modifyColumnTp,
+			&modifyInfo.updatedAutoRandomBits, &modifyInfo.changingCol, &modifyInfo.changingIdxs, &modifyInfo.removedIdxs)
+		if err == nil {
+			colName = modifyInfo.oldColName.O
+		}
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String()).Set(progress * 100)
+		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
+}
+
+func getIndexNamesFromJobArgs(reorgInfo *reorgInfo) string {
+	var err error
+	var idxNames strings.Builder
+	unique := make([]bool, 1)
+	global := make([]bool, 1)
+	indexNames := make([]model.CIStr, 1)
+	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
+	indexOption := make([]*ast.IndexOption, 1)
+	var sqlMode mysql.SQLMode
+	var warnings []string
+	hiddenCols := make([][]*model.ColumnInfo, 1)
+
+	if reorgInfo.Type == model.ActionAddPrimaryKey {
+		// Notice: sqlMode and warnings is used to support non-strict mode.
+		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &sqlMode, &warnings, &global[0])
+	} else if reorgInfo.Type == model.ActionAddIndex {
+		err = reorgInfo.Job.DecodeArgs(&unique[0], &indexNames[0], &indexPartSpecifications[0], &indexOption[0], &hiddenCols[0], &global[0])
+		if err != nil {
+			err = reorgInfo.Job.DecodeArgs(&unique, &indexNames, &indexPartSpecifications, &indexOption, &hiddenCols, &global)
+		}
+	}
+	if err == nil {
+		for i, idxName := range indexNames {
+			if i > 0 {
+				idxNames.WriteString("+")
+			}
+			idxNames.WriteString(idxName.O)
+		}
+	}
+	return idxNames.String()
 }
 
 func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {

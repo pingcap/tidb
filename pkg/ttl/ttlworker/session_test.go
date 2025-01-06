@@ -125,18 +125,28 @@ type mockSessionPool struct {
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession
+	inuse       atomic.Int64
 }
 
 func (p *mockSessionPool) Get() (pools.Resource, error) {
 	se := *(p.se)
 	p.lastSession = &se
+	p.lastSession.pool = p
+	p.inuse.Add(1)
 	return p.lastSession, nil
 }
 
-func (p *mockSessionPool) Put(pools.Resource) {}
+func (p *mockSessionPool) Put(pools.Resource) {
+	p.inuse.Add(-1)
+}
+
+func (p *mockSessionPool) AssertNoSessionInUse() {
+	require.Equal(p.t, int64(0), p.inuse.Load())
+}
 
 func newMockSessionPool(t *testing.T, tbl ...*cache.PhysicalTable) *mockSessionPool {
 	return &mockSessionPool{
+		t:  t,
 		se: newMockSession(t, tbl...),
 	}
 }
@@ -152,6 +162,8 @@ type mockSession struct {
 	resetTimeZoneCalls int
 	closed             bool
 	commitErr          error
+	killed             chan struct{}
+	pool               *mockSessionPool
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -165,6 +177,7 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 		t:                 t,
 		sessionInfoSchema: newMockInfoSchema(tbls...),
 		sessionVars:       sessVars,
+		killed:            make(chan struct{}),
 	}
 }
 
@@ -221,8 +234,16 @@ func (s *mockSession) GlobalTimeZone(_ context.Context) (*time.Location, error) 
 	return time.Local, nil
 }
 
+// KillStmt kills the current statement execution
+func (s *mockSession) KillStmt() {
+	close(s.killed)
+}
+
 func (s *mockSession) Close() {
 	s.closed = true
+	if s.pool != nil {
+		s.pool.Put(s)
+	}
 }
 
 func (s *mockSession) Now() time.Time {

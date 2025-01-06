@@ -36,6 +36,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/paging",
         "//pkg/util/size",
+        "//pkg/util/sqlkiller",
         "//pkg/util/tiflash",
         "//pkg/util/tiflashcompute",
         "//pkg/util/tracing",
@@ -82,7 +83,7 @@ go_test(
     embed = [":copr"],
     flaky = True,
     race = "on",
-    shard_count = 30,
+    shard_count = 31,
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/backoff",

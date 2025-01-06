@@ -75,6 +75,43 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+func MakeStoreBasedErr(storeID uint64, err error) *StoreBasedErr {
+	return &StoreBasedErr{storeID: storeID, err: err}
+}
+
+type StoreBasedErr struct {
+	storeID uint64
+	err     error
+}
+
+func (e *StoreBasedErr) Error() string {
+	return fmt.Sprintf("Store ID '%d': %v", e.storeID, e.err.Error())
+}
+
+func (e *StoreBasedErr) Unwrap() error {
+	return e.err
+}
+
+func (e *StoreBasedErr) Cause() error {
+	return e.Unwrap()
+}
+
+// Errors implements errors.ErrorGroup.
+// For now `WalkDeep` cannot walk "subtree"s like:
+/* 1 - 2 - 5
+ *   |
+ *   + 3 - 4
+ */
+// It stops after walking `1` and then gave up.
+// This is a bug: see https://github.com/pingcap/errors/issues/72
+// We manually make this a multierr to workaround this...
+func (e *StoreBasedErr) Errors() []error {
+	if errs, ok := e.err.(errors.ErrorGroup); ok {
+		return errs.Errors()
+	}
+	return nil
+}
+
 const (
 	// backupFineGrainedMaxBackoff is 1 hour.
 	// given it begins the fine-grained backup, there must be some problems in the cluster.
@@ -1270,6 +1307,13 @@ func (bc *Client) handleFineGrained(
 	storeID := targetPeer.GetStoreId()
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
+
+	// inject a disconnect failpoint
+	failpoint.Inject("disconnect", func(_ failpoint.Value) {
+		logutil.CL(ctx).Warn("This is a injected disconnection error")
+		err = berrors.ErrFailedToConnect
+	})
+
 	if err != nil {
 		if berrors.Is(err, berrors.ErrFailedToConnect) {
 			// When the leader store is died,

@@ -69,7 +69,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 	}
 
 	files := backupMeta.Files
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 
 	if len(files) == 0 {
