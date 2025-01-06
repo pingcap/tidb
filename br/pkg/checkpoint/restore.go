@@ -181,8 +181,8 @@ func ExistsSstRestoreCheckpoint(
 		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix)))
 }
 
-func RemoveCheckpointDataForSstRestore(ctx context.Context, dom *domain.Domain, se glue.Session, dbName string, tableSuffix string) error {
-	return dropCheckpointTables(ctx, dom, se, dbName,
+func RemoveCheckpointDataForSstRestore(ctx context.Context, se glue.Session, dbName string, tableSuffix string) error {
+	return dropCheckpointTables(ctx, se, dbName,
 		[]string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix),
 			GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix),
 			GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix)})

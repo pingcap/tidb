@@ -794,7 +794,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 	// build checkpoint table suffix if not exist
 	if cfg.CheckpointTableSuffix == "" {
-		cfg.CheckpointTableSuffix = getCheckpointTableSuffix(cfg.RestoreConfig, cmdName)
+		cfg.CheckpointTableSuffix = getCheckpointTableSuffix(cfg, cmdName)
 	}
 
 	if client.IsRawKvMode() {
@@ -1645,16 +1645,16 @@ func cleanupCheckpoints(c context.Context, mgr *conn.Mgr, g glue.Glue, isStreamR
 
 	if isStreamRestore {
 		log.Info("start to remove checkpoint data for PITR restore")
-		err = checkpoint.RemoveCheckpointDataForLogRestore(c, mgr.GetDomain(), se, checkpointTableSuffix)
+		err = checkpoint.RemoveCheckpointDataForLogRestore(c, se, checkpointTableSuffix)
 		if err != nil {
 			log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 		}
-		err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, checkpointTableSuffix)
+		err = checkpoint.RemoveCheckpointDataForSstRestore(c, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, checkpointTableSuffix)
 		if err != nil {
 			log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 		}
 	}
-	err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName, checkpointTableSuffix)
+	err = checkpoint.RemoveCheckpointDataForSstRestore(c, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, checkpointTableSuffix)
 	if err != nil {
 		log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 	}

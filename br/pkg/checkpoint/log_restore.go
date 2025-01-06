@@ -259,7 +259,7 @@ func ExistsCheckpointProgress(
 		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix)))
 }
 
-// CheckpointTaskInfo is unique information within the same cluster id. It represents the last
+// CheckpointTaskInfoForLogRestore is unique information within the same cluster id. It represents the last
 // restore task executed for this cluster.
 type CheckpointTaskInfoForLogRestore struct {
 	Metadata            *CheckpointMetadataForLogRestore
@@ -340,8 +340,8 @@ func SaveCheckpointIngestIndexRepairSQLs(
 	return insertCheckpointMeta(ctx, se, LogRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointIngestTableNamePrefix, tableSuffix), meta)
 }
 
-func RemoveCheckpointDataForLogRestore(ctx context.Context, dom *domain.Domain, se glue.Session, tableSuffix string) error {
-	return dropCheckpointTables(ctx, dom, se, LogRestoreCheckpointDatabaseName,
+func RemoveCheckpointDataForLogRestore(ctx context.Context, se glue.Session, tableSuffix string) error {
+	return dropCheckpointTables(ctx, se, LogRestoreCheckpointDatabaseName,
 		[]string{GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix),
 			GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix),
 			GetCheckpointTableName(checkpointProgressTableNamePrefix, tableSuffix),

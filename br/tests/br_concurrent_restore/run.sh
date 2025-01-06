@@ -17,64 +17,89 @@
 set -eu
 DB="$TEST_NAME"
 
-# Create test databases and tables
+# Create more test databases and store checksums
 echo "Creating test databases and tables..."
-run_sql "CREATE DATABASE ${DB}_1;"
-run_sql "CREATE DATABASE ${DB}_2;"
-
-# Create tables in first database
-run_sql "CREATE TABLE ${DB}_1.table1 (id INT PRIMARY KEY, name VARCHAR(50));"
-run_sql "CREATE TABLE ${DB}_1.table2 (id INT PRIMARY KEY, value INT);"
-run_sql "CREATE TABLE ${DB}_1.table3 (id INT PRIMARY KEY, data TEXT);"
-
-# Create tables in second database
-run_sql "CREATE TABLE ${DB}_2.table1 (id INT PRIMARY KEY, name VARCHAR(50));"
-run_sql "CREATE TABLE ${DB}_2.table2 (id INT PRIMARY KEY, value INT);"
-run_sql "CREATE TABLE ${DB}_2.table3 (id INT PRIMARY KEY, data TEXT);"
-
-# Insert test data
-echo "Inserting test data..."
-for i in $(seq 1 10); do
-    run_sql "INSERT INTO ${DB}_1.table1 VALUES ($i, 'name_$i');"
-    run_sql "INSERT INTO ${DB}_1.table2 VALUES ($i, $i);"
-    run_sql "INSERT INTO ${DB}_1.table3 VALUES ($i, 'data_$i');"
+for i in $(seq 1 5); do
+    run_sql "CREATE DATABASE ${DB}_${i};"
     
-    run_sql "INSERT INTO ${DB}_2.table1 VALUES ($i, 'name_$i');"
-    run_sql "INSERT INTO ${DB}_2.table2 VALUES ($i, $i);"
-    run_sql "INSERT INTO ${DB}_2.table3 VALUES ($i, 'data_$i');"
+    # Create tables in each database
+    run_sql "CREATE TABLE ${DB}_${i}.table1 (id INT PRIMARY KEY, name VARCHAR(50));"
+    run_sql "CREATE TABLE ${DB}_${i}.table2 (id INT PRIMARY KEY, value INT);"
+    run_sql "CREATE TABLE ${DB}_${i}.table3 (id INT PRIMARY KEY, data TEXT);"
+    
+    # Insert test data
+    echo "Inserting test data into database ${i}..."
+    for j in $(seq 1 10); do
+        run_sql "INSERT INTO ${DB}_${i}.table1 VALUES ($j, 'name_$j');"
+        run_sql "INSERT INTO ${DB}_${i}.table2 VALUES ($j, $j);"
+        run_sql "INSERT INTO ${DB}_${i}.table3 VALUES ($j, 'data_$j');"
+    done
+
+    # Store checksums for each table
+    for table in "table1" "table2" "table3"; do
+        checksum=$(run_sql "ADMIN CHECKSUM TABLE ${DB}_${i}.${table};" | awk 'NR==2 {print $3}')
+        eval "checksum_${DB}_${i}_${table}=$checksum"
+    done
 done
 
-# Backup both databases
+# Backup all databases
 echo "Backing up databases..."
 run_br backup full -s "local://$TEST_DIR/backup"
 
 # Drop all databases
-run_sql "DROP DATABASE ${DB}_1;"
-run_sql "DROP DATABASE ${DB}_2;"
+for i in $(seq 1 5); do
+    run_sql "DROP DATABASE ${DB}_${i};"
+done
 
 # Attempt concurrent restores with different filters
 echo "Attempting concurrent restores..."
 
-# Start first restore in background (should fail or block)
-run_br restore full -f "${DB}_1.*" -s "local://$TEST_DIR/backup" --pd $PD_ADDR &
-RESTORE1_PID=$!
+# Start multiple restores in background
+RESTORE_PIDS=""
+for i in $(seq 1 5); do
+    run_br restore full -f "${DB}_${i}.*" -s "local://$TEST_DIR/backup" --pd $PD_ADDR &
+    RESTORE_PIDS="$RESTORE_PIDS $!"
+done
 
-# Start second restore immediately after (should fail or block)
-run_br restore full -f "${DB}_2.*" -s "local://$TEST_DIR/backup" --pd $PD_ADDR &
-RESTORE2_PID=$!
+# Wait for all restores and check results
+FAILED_COUNT=0
+for pid in $RESTORE_PIDS; do
+    if ! wait $pid; then
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+    fi
+done
 
-# Wait for both restores
-wait $RESTORE1_PID || RESTORE1_FAILED=1
-wait $RESTORE2_PID || RESTORE2_FAILED=1
-
-# Check results
-if [ -z "${RESTORE1_FAILED:-}" ] && [ -z "${RESTORE2_FAILED:-}" ]; then
-    echo "TEST FAILED: Both restores succeeded when they should have conflicted"
+# Validate results - all restores should succeed
+if [ $FAILED_COUNT -ne 0 ]; then
+    echo "TEST FAILED: $FAILED_COUNT restore(s) failed, expected all to succeed"
     exit 1
 fi
 
-# Clean up
-run_sql "DROP DATABASE IF EXISTS ${DB}_1;"
-run_sql "DROP DATABASE IF EXISTS ${DB}_2;"
+# Verify data integrity by comparing checksums
+echo "Verifying data integrity..."
+for i in $(seq 1 5); do
+    if ! run_sql "USE ${DB}_${i};" 2>/dev/null; then
+        echo "TEST FAILED: Database ${DB}_${i} was not restored"
+        exit 1
+    fi
+    
+    # Compare checksums for all tables
+    for table in "table1" "table2" "table3"; do
+        new_checksum=$(run_sql "ADMIN CHECKSUM TABLE ${DB}_${i}.${table};" | awk 'NR==2 {print $3}')
+        eval "original_checksum=\$checksum_${DB}_${i}_${table}"
+        
+        if [ "$new_checksum" != "$original_checksum" ]; then
+            echo "TEST FAILED: Checksum mismatch for ${DB}_${i}.${table}"
+            echo "Original: $original_checksum"
+            echo "After restore: $new_checksum"
+            exit 1
+        fi
+    done
+done
 
-echo "Test completed successfully - demonstrated that concurrent restores are not supported" 
+# Clean up
+for i in $(seq 1 5); do
+    run_sql "DROP DATABASE IF EXISTS ${DB}_${i};"
+done
+
+echo "Concurrent restore test completed successfully"

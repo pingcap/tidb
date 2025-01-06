@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 type checkpointStorage interface {
@@ -325,7 +323,6 @@ func selectCheckpointMeta(
 
 func dropCheckpointTables(
 	ctx context.Context,
-	dom *domain.Domain,
 	se glue.Session,
 	dbName string, tableNames []string,
 ) error {
@@ -334,18 +331,6 @@ func dropCheckpointTables(
 			return errors.Trace(err)
 		}
 	}
-	// check if any user table is created in the checkpoint database
-	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, pmodel.NewCIStr(dbName))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(tables) > 0 {
-		log.Warn("user tables in the checkpoint database, skip drop the database",
-			zap.String("db", dbName), zap.String("table", tables[0].Name.L))
-		return nil
-	}
-	if err := se.ExecuteInternal(ctx, "DROP DATABASE %n;", dbName); err != nil {
-		return errors.Trace(err)
-	}
+	// don't remove checkpoint db as other restore might still be using it
 	return nil
 }
