@@ -100,11 +100,7 @@ go_test(
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/mock",
-<<<<<<< HEAD
-=======
         "//pkg/util/sqlexec",
-        "//pkg/util/timeutil",
->>>>>>> 7ac73e9161b (ttl: fix the timezone issue and panic in the caller of `getSession` (#58166))
         "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
