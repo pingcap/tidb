@@ -1768,7 +1768,6 @@ func mustParseTime(layout string, str string) time.Time {
 	return time
 }
 
-// ValidateCloudStorageURI makes validation for tidb_cloud_storage_uri.
 func validateCloudStorageURI(ctx context.Context, uri string) error {
 	b, err := storage.ParseBackend(uri, nil)
 	if err != nil {

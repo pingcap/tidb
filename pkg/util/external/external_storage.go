@@ -129,6 +129,8 @@ func (w *externalStorageWrapper) Rename(ctx context.Context, oldFileName, newFil
 
 // URI will call `storage.URI`.
 func (w *externalStorageWrapper) URI() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.storage != nil {
 		return w.storage.URI()
 	}
