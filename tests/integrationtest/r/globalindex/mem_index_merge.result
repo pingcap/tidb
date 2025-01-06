@@ -157,25 +157,23 @@ a	b	c	d
 ## for indexMerge union in txn with order by limit
 explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
 id	estRows	task	access object	operator info
-Projection_8	1.00	root		globalindex__mem_index_merge.tpk2.a, globalindex__mem_index_merge.tpk2.b, globalindex__mem_index_merge.tpk2.c, globalindex__mem_index_merge.tpk2.d
-└─Limit_15	1.00	root		offset:0, count:1
-  └─UnionScan_22	1.00	root		or(eq(globalindex__mem_index_merge.tpk2.a, 1), eq(globalindex__mem_index_merge.tpk2.b, 4))
-    └─IndexMerge_27	1.00	root	partition:all	type: union
-      ├─IndexRangeScan_23(Build)	0.91	cop[tikv]	table:tpk2, index:uidx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
-      ├─IndexRangeScan_25(Build)	0.91	cop[tikv]	table:tpk2, index:idx_bc(b, c)	range:[4,4], keep order:true, stats:pseudo
-      └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:tpk2	keep order:false, stats:pseudo
+Limit_15	1.00	root		offset:0, count:1
+└─UnionScan_22	1.00	root		or(eq(globalindex__mem_index_merge.tpk2.a, 1), eq(globalindex__mem_index_merge.tpk2.b, 4))
+  └─IndexMerge_27	1.00	root	partition:all	type: union
+    ├─IndexRangeScan_23(Build)	0.91	cop[tikv]	table:tpk2, index:uidx_ac(a, c)	range:[1,1], keep order:true, stats:pseudo
+    ├─IndexRangeScan_25(Build)	0.91	cop[tikv]	table:tpk2, index:idx_bc(b, c)	range:[4,4], keep order:true, stats:pseudo
+    └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:tpk2	keep order:false, stats:pseudo
 select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c limit 1;
 a	b	c	d
 1	2	1	1
 explain select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 id	estRows	task	access object	operator info
-Projection_8	1.00	root		globalindex__mem_index_merge.tpk2.a, globalindex__mem_index_merge.tpk2.b, globalindex__mem_index_merge.tpk2.c, globalindex__mem_index_merge.tpk2.d
-└─Limit_15	1.00	root		offset:0, count:1
-  └─UnionScan_22	1.00	root		or(eq(globalindex__mem_index_merge.tpk2.a, 1), eq(globalindex__mem_index_merge.tpk2.b, 4))
-    └─IndexMerge_27	1.00	root	partition:all	type: union
-      ├─IndexRangeScan_23(Build)	0.91	cop[tikv]	table:tpk2, index:uidx_ac(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
-      ├─IndexRangeScan_25(Build)	0.91	cop[tikv]	table:tpk2, index:idx_bc(b, c)	range:[4,4], keep order:true, desc, stats:pseudo
-      └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:tpk2	keep order:false, stats:pseudo
+Limit_15	1.00	root		offset:0, count:1
+└─UnionScan_22	1.00	root		or(eq(globalindex__mem_index_merge.tpk2.a, 1), eq(globalindex__mem_index_merge.tpk2.b, 4))
+  └─IndexMerge_27	1.00	root	partition:all	type: union
+    ├─IndexRangeScan_23(Build)	0.91	cop[tikv]	table:tpk2, index:uidx_ac(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
+    ├─IndexRangeScan_25(Build)	0.91	cop[tikv]	table:tpk2, index:idx_bc(b, c)	range:[4,4], keep order:true, desc, stats:pseudo
+    └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:tpk2	keep order:false, stats:pseudo
 select /*+ use_index_merge(tpk2, uidx_ac, idx_bc) */ * from tpk2 where a = 1 or b = 4 order by c desc limit 1;
 a	b	c	d
 2	4	2	2

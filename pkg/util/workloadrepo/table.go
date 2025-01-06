@@ -145,6 +145,7 @@ func (w *worker) createAllTables(ctx context.Context) error {
 	return createAllPartitions(ctx, sess, is)
 }
 
+// checkTablesExists will check if all tables are created and if the work is bootstrapped.
 func (w *worker) checkTablesExists(ctx context.Context) bool {
 	_sessctx := w.getSessionWithRetry()
 	sess := _sessctx.(sessionctx.Context)

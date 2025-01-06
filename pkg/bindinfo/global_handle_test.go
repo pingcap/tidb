@@ -97,11 +97,10 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	updateTime0 := rows0[0][1]
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
+	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'invalid_binding', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
 		bindinfo.Manual + "', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
 	tk.MustExec("admin reload bindings;")
 
 	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
@@ -748,7 +747,7 @@ func TestErrorBind(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustGetErrMsg("create global binding for select * from t using select * from t", "[schema:1146]Table 'test.t' doesn't exist")
+	tk.MustContainErrMsg("create global binding for select * xxx", "You have an error in your SQL syntax")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t(i int, s varchar(20))")

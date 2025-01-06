@@ -806,7 +806,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 		BuildWorker:           buildWorker,
 	}
 
-	childrenUsedSchema := markChildrenUsedColsForTest(testCase.ctx, e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
+	childrenUsedSchema := markChildrenUsedColsForTest(e.Schema(), e.Children(0).Schema(), e.Children(1).Schema())
 	defaultValues := make([]types.Datum, e.BuildWorker.BuildSideExec.Schema().Len())
 	lhsTypes, rhsTypes := exec.RetTypes(innerExec), exec.RetTypes(outerExec)
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -835,7 +835,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 
 // markChildrenUsedColsForTest compares each child with the output schema, and mark
 // each column of the child is used by output or not.
-func markChildrenUsedColsForTest(ctx sessionctx.Context, outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
+func markChildrenUsedColsForTest(outputSchema *expression.Schema, childSchemas ...*expression.Schema) (childrenUsed [][]int) {
 	childrenUsed = make([][]int, 0, len(childSchemas))
 	markedOffsets := make(map[int]int)
 	for originalIdx, col := range outputSchema.Columns {
@@ -1849,6 +1849,140 @@ func BenchmarkLimitExec(b *testing.B) {
 		cas.UsingInlineProjection = inlineProjection
 		b.Run(fmt.Sprintf("%v", cas), func(b *testing.B) {
 			benchmarkLimitExec(b, cas)
+		})
+	}
+}
+
+type topNTestCase struct {
+	rows                  int
+	offset                int
+	count                 int
+	orderByIdx            []int
+	usingInlineProjection bool
+	columnIdxsUsedByChild []bool
+	ctx                   sessionctx.Context
+}
+
+func (tc topNTestCase) columns() []*expression.Column {
+	return []*expression.Column{
+		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
+		{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)},
+	}
+}
+
+func (tc topNTestCase) String() string {
+	return fmt.Sprintf("(rows:%v, offset:%v, count:%v, orderByIdx:%v, inline_projection:%v)",
+		tc.rows, tc.offset, tc.count, tc.orderByIdx, tc.usingInlineProjection)
+}
+
+func defaultTopNTestCase() *topNTestCase {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	return &topNTestCase{
+		rows:                  100000,
+		offset:                0,
+		count:                 10,
+		orderByIdx:            []int{0},
+		usingInlineProjection: false,
+		columnIdxsUsedByChild: []bool{false, true, false},
+		ctx:                   ctx,
+	}
+}
+
+func benchmarkTopNExec(b *testing.B, cas *topNTestCase) {
+	opt := testutil.MockDataSourceParameters{
+		DataSchema: expression.NewSchema(cas.columns()...),
+		Rows:       cas.rows,
+		Ctx:        cas.ctx,
+	}
+	dataSource := testutil.BuildMockDataSource(opt)
+	executorSort := sortexec.SortExec{
+		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 4, dataSource),
+		ByItems:      make([]*util.ByItems, 0, len(cas.orderByIdx)),
+		ExecSchema:   dataSource.Schema(),
+	}
+	for _, idx := range cas.orderByIdx {
+		executorSort.ByItems = append(executorSort.ByItems, &util.ByItems{Expr: cas.columns()[idx]})
+	}
+
+	executor := &sortexec.TopNExec{
+		SortExec: executorSort,
+		Limit: &core.PhysicalLimit{
+			Count:  uint64(cas.count),
+			Offset: uint64(cas.offset),
+		},
+	}
+
+	executor.ExecSchema = dataSource.Schema().Clone()
+
+	var exe exec.Executor
+	if cas.usingInlineProjection {
+		if len(cas.columnIdxsUsedByChild) > 0 {
+			executor.ColumnIdxsUsedByChild = make([]int, 0, len(cas.columnIdxsUsedByChild))
+			for i, used := range cas.columnIdxsUsedByChild {
+				if used {
+					executor.ColumnIdxsUsedByChild = append(executor.ColumnIdxsUsedByChild, i)
+				}
+			}
+		}
+		exe = executor
+	} else {
+		columns := cas.columns()
+		usedCols := make([]*expression.Column, 0, len(columns))
+		exprs := make([]expression.Expression, 0, len(columns))
+		for i, used := range cas.columnIdxsUsedByChild {
+			if used {
+				usedCols = append(usedCols, columns[i])
+				exprs = append(exprs, columns[i])
+			}
+		}
+		proj := &ProjectionExec{
+			BaseExecutorV2: exec.NewBaseExecutorV2(cas.ctx.GetSessionVars(), expression.NewSchema(usedCols...), 0, executor),
+			numWorkers:     1,
+			evaluatorSuit:  expression.NewEvaluatorSuite(exprs, false),
+		}
+		exe = proj
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		tmpCtx := context.Background()
+		chk := exec.NewFirstChunk(exe)
+		dataSource.PrepareChunks()
+
+		b.StartTimer()
+		if err := exe.Open(tmpCtx); err != nil {
+			b.Fatal(err)
+		}
+		for {
+			if err := exe.Next(tmpCtx, chk); err != nil {
+				b.Fatal(err)
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+		}
+
+		if err := exe.Close(); err != nil {
+			b.Fatal(err)
+		}
+		b.StopTimer()
+	}
+}
+
+func BenchmarkTopNExec(b *testing.B) {
+	b.ReportAllocs()
+	usingInlineProjection := []bool{false, true}
+
+	for _, inlineProjection := range usingInlineProjection {
+		cas := defaultTopNTestCase()
+		cas.usingInlineProjection = inlineProjection
+		b.Run(fmt.Sprintf("TopNExec InlineProjection:%v", inlineProjection), func(b *testing.B) {
+			benchmarkTopNExec(b, cas)
 		})
 	}
 }

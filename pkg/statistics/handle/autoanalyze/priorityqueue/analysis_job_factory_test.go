@@ -37,7 +37,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Unanalyzed table",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 			},
 			autoAnalyzeRatio: 0.5,
@@ -46,7 +46,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Analyzed table with change percentage above threshold",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 60, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 60, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -56,7 +56,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Analyzed table with change percentage below threshold",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 40, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 40, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -66,7 +66,7 @@ func TestCalculateChangePercentage(t *testing.T) {
 		{
 			name: "Auto analyze ratio set to 0",
 			tblStats: &statistics.Table{
-				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, 100, 60, nil, nil),
+				HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, 100, 60, nil, nil),
 				ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(1, 1),
 				LastAnalyzeVersion:    1,
 			},
@@ -160,7 +160,7 @@ func TestCheckIndexesNeedAnalyze(t *testing.T) {
 				},
 			},
 			tblStats: &statistics.Table{
-				HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 0, 0, map[int64]*statistics.Column{
+				HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 0, 0, map[int64]*statistics.Column{
 					1: {
 						StatsVer: 2,
 					},
@@ -250,7 +250,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			},
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -269,7 +269,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -312,7 +312,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			},
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -331,7 +331,7 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 					LastAnalyzeVersion:    lastUpdateTs,
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
-					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
+					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
 						1: {
 							StatsVer: 2,
 							Histogram: statistics.Histogram{
@@ -418,11 +418,11 @@ func TestCheckNewlyAddedIndexesNeedAnalyzeForPartitionedTable(t *testing.T) {
 	}
 	partitionStats := map[priorityqueue.PartitionIDAndName]*statistics.Table{
 		priorityqueue.NewPartitionIDAndName("p0", 1): {
-			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
+			HistColl:              *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{}),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(0, 0),
 		},
 		priorityqueue.NewPartitionIDAndName("p1", 2): {
-			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
+			HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, nil, map[int64]*statistics.Index{
 				2: {
 					StatsVer: 2,
 				},

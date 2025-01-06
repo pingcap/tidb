@@ -66,6 +66,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -438,18 +439,14 @@ func checkPartitionReplica(replicaCount uint64, addingDefinitions []model.Partit
 	}
 	for _, pDef := range addingDefinitions {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
-		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+		regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 		if err != nil {
 			return needWait, errors.Trace(err)
 		}
 		// For every region in the partition, if it has some corresponding peers and
 		// no pending peers, that means the replication has completed.
 		for _, region := range regions {
-			regionState, err := pdCli.GetRegionByID(ctx, region.Meta.Id)
-			if err != nil {
-				return needWait, errors.Trace(err)
-			}
-			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, regionState.Meta.Peers)
+			tiflashPeerAtLeastOne := checkTiFlashPeerStoreAtLeastOne(stores, region.Meta.Peers)
 			failpoint.Inject("ForceTiflashNotAvailable", func(v failpoint.Value) {
 				tiflashPeerAtLeastOne = v.(bool)
 			})
