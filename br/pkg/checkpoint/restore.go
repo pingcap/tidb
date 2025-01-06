@@ -147,7 +147,8 @@ func LoadCheckpointMetadataForSnapshotRestore(
 	tableSuffix string,
 ) (*CheckpointMetadataForSnapshotRestore, error) {
 	m := &CheckpointMetadataForSnapshotRestore{}
-	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName, GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), m)
+	err := selectCheckpointMeta(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName,
+		GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), m)
 	return m, err
 }
 
@@ -165,7 +166,8 @@ func SaveCheckpointMetadataForSstRestore(
 		return errors.Trace(err)
 	}
 	if meta != nil {
-		return insertCheckpointMeta(ctx, se, dbName, GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), meta)
+		return insertCheckpointMeta(ctx, se, dbName,
+			GetCheckpointTableName(checkpointMetaTablePrefix, tableSuffix), meta)
 	}
 	return nil
 }
@@ -177,8 +179,8 @@ func ExistsSstRestoreCheckpoint(
 ) bool {
 	// we only check the existence of the checkpoint data table
 	// because the checkpoint metadata is not used for restore
-	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(dbName), pmodel.NewCIStr(GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix)))
+	return dom.InfoSchema().TableExists(pmodel.NewCIStr(dbName),
+		pmodel.NewCIStr(GetCheckpointTableName(checkpointDataTableNamePrefix, tableSuffix)))
 }
 
 func RemoveCheckpointDataForSstRestore(ctx context.Context, se glue.Session, dbName string, tableSuffix string) error {
