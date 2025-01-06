@@ -81,7 +81,7 @@ check_contains 's: 5291'
 # test local backend
 run_lightning --config "$CUR/greek.toml" -d "$CUR/greek" 2>&1 | grep -q "Unknown character set: 'greek'"
 # check TiDB does not receive the DDL
-check_not_contains "greek" $TEST_DIR/tidb.log
+check_not_contains "CHARSET=greek" $TEST_DIR/tidb.log
 run_sql 'DROP DATABASE IF EXISTS charsets;'
 run_sql 'CREATE DATABASE charsets;'
 run_sql 'CREATE TABLE charsets.greek (c VARCHAR(20) PRIMARY KEY);'

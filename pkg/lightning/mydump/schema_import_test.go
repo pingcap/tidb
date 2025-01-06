@@ -22,8 +22,10 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -101,18 +103,27 @@ func TestSchemaImporter(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("table: get existing schema err", func(t *testing.T) {
+	t.Run("table: no schema file for the table", func(t *testing.T) {
 		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test02'").
-			WillReturnError(errors.New("non retryable error"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test02`.`t`").
+			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 		dbMetas := []*MDDatabaseMeta{
 			{Name: "test01"},
 			{Name: "test02", Tables: []*MDTableMeta{{DB: "test02", Name: "t"}}},
 		}
-		require.ErrorContains(t, importer.Run(ctx, dbMetas), "non retryable error")
+		require.ErrorContains(t, importer.Run(ctx, dbMetas), "schema not found")
+		require.NoError(t, mock.ExpectationsWereMet())
+
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
+				AddRow("test01").AddRow("test02").AddRow("test03").
+				AddRow("test04").AddRow("test05"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test02`.`t`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t", "CREATE TABLE `t` (a int);"))
+		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -121,8 +132,10 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test01'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("t1"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
+			WillReturnError(&dmysql.MySQLError{Number: tmysql.ErrNoSuchTable})
 		fileName := "t2-invalid-schema.sql"
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), []byte("CREATE table t2 whatever;"), 0o644))
 		dbMetas := []*MDDatabaseMeta{
@@ -140,8 +153,10 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).
 				AddRow("test01").AddRow("test02").AddRow("test03").
 				AddRow("test04").AddRow("test05"))
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test01'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("t1").AddRow("t2"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`t1`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
+		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("T2", "CREATE TABLE `t2` (a int);"))
 		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
 		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
@@ -163,8 +178,6 @@ func TestSchemaImporter(t *testing.T) {
 				{DB: "test01", Name: "t2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameT2}}},
 			}},
 		}
-		mock.ExpectQuery("TABLES WHERE TABLE_SCHEMA = 'test01'").
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}))
 		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
 			WillReturnError(errors.New("non retryable create table error"))
 		require.ErrorContains(t, importer2.Run(ctx, dbMetas), "non retryable create table error")
@@ -247,8 +260,6 @@ func TestSchemaImporterManyTables(t *testing.T) {
 		dbMeta := &MDDatabaseMeta{Name: dbName, Tables: make([]*MDTableMeta, 0, 100)}
 		mock.ExpectExec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`", dbName)).
 			WillReturnResult(sqlmock.NewResult(0, 0))
-		mock.ExpectQuery(fmt.Sprintf("TABLES WHERE TABLE_SCHEMA = '%s'", dbName)).
-			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}))
 		for j := 0; j < 50; j++ {
 			tblName := fmt.Sprintf("t%03d", j)
 			fileName := fmt.Sprintf("%s.%s-schema.sql", dbName, tblName)
