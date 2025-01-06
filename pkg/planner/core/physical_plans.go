@@ -1196,7 +1196,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	physicalop.BasePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems     []*util.ByItems
 	PartitionBy []property.SortItem
@@ -1214,11 +1214,11 @@ func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
 	cloned.SetSCtx(newCtx)
-	base, err := lt.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
+	base, err := lt.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.BasePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())

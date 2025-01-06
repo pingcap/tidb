@@ -116,9 +116,6 @@ type Manager interface {
 
 	// GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
 	GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error)
-
-	// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
-	GetAuthPlugin(ctx context.Context, user, host string) (string, error)
 }
 
 const key keyType = 0

@@ -65,6 +65,9 @@ type TopNExec struct {
 	isSpillTriggeredInStage2ForTest bool
 
 	Concurrency int
+
+	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
+	ColumnIdxsUsedByChild []int
 }
 
 // Open implements the Executor Open interface.
@@ -240,7 +243,12 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			if !ok || row.err != nil {
 				return row.err
 			}
-			req.AppendRow(row.row)
+			// Be careful, if inline projection occurs.
+			// TopN's schema may be not match child executor's output columns.
+			// We should extract only the required columns from child's executor.
+			// Do not do it on `loadChunksUntilTotalLimit` or `processChildChk`,
+			// cauz it may destroy the correctness of executor's `keyColumns`.
+			req.AppendRowsByColIdxs([]chunk.Row{row.row}, e.ColumnIdxsUsedByChild)
 		}
 	}
 	return nil

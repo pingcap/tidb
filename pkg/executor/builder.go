@@ -2491,11 +2491,27 @@ func (b *executorBuilder) buildTopN(v *plannercore.PhysicalTopN) exec.Executor {
 		ExecSchema:   v.Schema(),
 	}
 	executor_metrics.ExecutorCounterTopNExec.Inc()
-	return &sortexec.TopNExec{
+	t := &sortexec.TopNExec{
 		SortExec:    sortExec,
 		Limit:       &plannercore.PhysicalLimit{Count: v.Count, Offset: v.Offset},
 		Concurrency: b.ctx.GetSessionVars().Concurrency.ExecutorConcurrency,
 	}
+	columnIdxsUsedByChild, columnMissing := retrieveColumnIdxsUsedByChild(v.Schema(), v.Children()[0].Schema())
+	if columnIdxsUsedByChild != nil && columnMissing {
+		// In the expected cases colMissing will never happen.
+		// However, suppose that childSchema contains generatedCol and is cloned by selfSchema.
+		// Then childSchema.generatedCol.UniqueID will not be equal to selfSchema.generatedCol.UniqueID.
+		// In this case, colMissing occurs, but it is not wrong.
+		// So here we cancel the inline projection, take all of columns from child.
+		// If the inline projection directly generates some error causes colMissing,
+		// notice that the error feedback given would be inaccurate.
+		columnIdxsUsedByChild = nil
+		// TODO: If there is valid verification logic, please uncomment the following code
+		// b.err = errors.Annotate(ErrBuildExecutor, "Inline projection occurs when `buildTopN` exectutor, columns should not missing in the child schema")
+		// return nil
+	}
+	t.ColumnIdxsUsedByChild = columnIdxsUsedByChild
+	return t
 }
 
 func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor {
@@ -3179,6 +3195,32 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		}
 	}
 	return e
+}
+
+// retrieveColumnIdxsUsedByChild retrieve column indices map from child physical plan schema columns.
+//
+//	E.g. columnIdxsUsedByChild = [2, 3, 1] means child[col2, col3, col1] -> parent[col0, col1, col2].
+//	`columnMissing` indicates whether one or more columns in `selfSchema` are not found in `childSchema`.
+//	And `-1` in `columnIdxsUsedByChild` indicates the column not found.
+//	If columnIdxsUsedByChild == nil, means selfSchema and childSchema are equal.
+func retrieveColumnIdxsUsedByChild(selfSchema *expression.Schema, childSchema *expression.Schema) ([]int, bool) {
+	equalSchema := (selfSchema.Len() == childSchema.Len())
+	columnMissing := false
+	columnIdxsUsedByChild := make([]int, 0, selfSchema.Len())
+	for selfIdx, selfCol := range selfSchema.Columns {
+		colIdxInChild := childSchema.ColumnIndex(selfCol)
+		if !columnMissing && colIdxInChild == -1 {
+			columnMissing = true
+		}
+		if equalSchema && selfIdx != colIdxInChild {
+			equalSchema = false
+		}
+		columnIdxsUsedByChild = append(columnIdxsUsedByChild, colIdxInChild)
+	}
+	if equalSchema {
+		columnIdxsUsedByChild = nil
+	}
+	return columnIdxsUsedByChild, columnMissing
 }
 
 // markChildrenUsedCols compares each child with the output schema, and mark

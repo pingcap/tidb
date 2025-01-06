@@ -12,13 +12,12 @@ KEY 19dc3c2d (57fd8d09)
 ) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
 explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where `aa311c3c`.`b80b3746` = 3 or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
 id	estRows	task	access object	operator info
-Projection_7	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac
-└─TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-  └─IndexMerge_17	95.00	root		type: union
-    ├─IndexRangeScan_13(Build)	10.00	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
-    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
-    └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
-      └─TableRowIDScan_15	3330.01	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+└─IndexMerge_17	95.00	root		type: union
+  ├─IndexRangeScan_13(Build)	10.00	cop[tikv]	table:aa311c3c, index:464b386e(b80b3746)	range:[3,3], keep order:false, stats:pseudo
+  ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
+  └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+    └─TableRowIDScan_15	3330.01	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
 CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
 INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
@@ -111,15 +110,14 @@ create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239
 insert into tbl_39 values (1994),(1995),(1996),(1997);
 explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 id	estRows	task	access object	operator info
-Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
-└─Limit_15	382.00	root		offset:0, count:382
-  └─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
-    └─IndexMerge_29	382.00	root		type: union
-      ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
-      │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
-      ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
-      │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
-      └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
+Limit_15	382.00	root		offset:0, count:382
+└─UnionScan_23	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+  └─IndexMerge_29	382.00	root		type: union
+    ├─Selection_25(Build)	0.05	cop[tikv]		not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))
+    │ └─IndexRangeScan_24	0.14	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], keep order:true, stats:pseudo
+    ├─Selection_27(Build)	458.26	cop[tikv]		or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))
+    │ └─IndexRangeScan_26	477.36	cop[tikv]	table:tbl_39, index:idx_223(col_239)	range:(1996,+inf], keep order:true, stats:pseudo
+    └─TableRowIDScan_28(Probe)	382.00	cop[tikv]	table:tbl_39	keep order:false, stats:pseudo
 select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
 col_239
 1994

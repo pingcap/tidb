@@ -155,6 +155,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
+	if err != nil {
+		return err
+	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
@@ -169,10 +173,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			// It is required for compatibility with 5.7 but removed from 8.0
 			// since it results in a massive security issue:
 			// spelling errors will create users with no passwords.
-			authPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultAuthPlugin)
-			if err != nil {
-				return err
-			}
+			authPlugin := defaultAuthPlugin
 			if user.AuthOpt != nil && user.AuthOpt.AuthPlugin != "" {
 				authPlugin = user.AuthOpt.AuthPlugin
 			}
@@ -181,7 +182,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 				return exeerrors.ErrPluginIsNotLoaded.GenWithStackByArgs(extErr.Error())
 			}
 			authPluginImpl := extensions.GetAuthPlugins()[authPlugin]
-			pwd, ok := encodePassword(user, authPluginImpl)
+			pwd, ok := encodePasswordWithPlugin(*user, authPluginImpl, defaultAuthPlugin)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
