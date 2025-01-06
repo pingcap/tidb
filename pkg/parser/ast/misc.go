@@ -1523,61 +1523,6 @@ func (n *UserSpec) SecurityString() string {
 	return n.User.String()
 }
 
-// EncodedPassword returns the encoded password (which is the real data mysql.user).
-// The boolean value indicates input's password format is legal or not.
-func (n *UserSpec) EncodedPassword() (string, bool) {
-	if n.AuthOpt == nil {
-		return "", true
-	}
-
-	opt := n.AuthOpt
-	if opt.ByAuthString {
-		switch opt.AuthPlugin {
-		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
-		case mysql.AuthSocket:
-			return "", true
-		default:
-			return auth.EncodePassword(opt.AuthString), true
-		}
-	}
-
-	// store the LDAP dn directly in the password field
-	switch opt.AuthPlugin {
-	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
-		// TODO: validate the HashString to be a `dn` for LDAP
-		// It seems fine to not validate here, and LDAP server will give an error when the client'll try to login this user.
-		// The percona server implementation doesn't have a validation for this HashString.
-		// However, returning an error for obvious wrong format is more friendly.
-		return opt.HashString, true
-	}
-
-	// In case we have 'IDENTIFIED WITH <plugin>' but no 'BY <password>' to set an empty password.
-	if opt.HashString == "" {
-		return opt.HashString, true
-	}
-
-	// Not a legal password string.
-	switch opt.AuthPlugin {
-	case mysql.AuthCachingSha2Password:
-		if len(opt.HashString) != mysql.SHAPWDHashLen {
-			return "", false
-		}
-	case mysql.AuthTiDBSM3Password:
-		if len(opt.HashString) != mysql.SM3PWDHashLen {
-			return "", false
-		}
-	case "", mysql.AuthNativePassword:
-		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
-			return "", false
-		}
-	case mysql.AuthSocket:
-	default:
-		return "", false
-	}
-	return opt.HashString, true
-}
-
 type AuthTokenOrTLSOption struct {
 	Type  AuthTokenOrTLSOptionType
 	Value string
