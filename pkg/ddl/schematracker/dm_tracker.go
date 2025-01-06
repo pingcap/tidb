@@ -959,7 +959,7 @@ func (d *SchemaTracker) AlterTable(ctx context.Context, sctx sessionctx.Context,
 			newIdent := ast.Ident{Schema: spec.NewTable.Schema, Name: spec.NewTable.Name}
 			err = d.renameTable(sctx, []ast.Ident{ident}, []ast.Ident{newIdent}, true)
 		case ast.AlterTableOption:
-			for _, opt := range spec.Options {
+			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 				case ast.TableOptionAutoIncrement:

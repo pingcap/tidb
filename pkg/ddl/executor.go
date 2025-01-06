@@ -877,19 +877,19 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 	// Handle explicit collation and charset for the object
 	if len(charsetOpts) > 0 {
 		if charsetOpts[0].Chs != "" {
-			_, err := charset.GetCharsetInfo(charsetOpts[0].Chs)
+			info, err := charset.GetCharsetInfo(charsetOpts[0].Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			chs = charsetOpts[0].Chs
+			chs = info.Name
 		}
 
 		if charsetOpts[0].Col != "" {
-			coll = charsetOpts[0].Col
-			collation, err := collate.GetCollationByName(coll)
+			collation, err := collate.GetCollationByName(charsetOpts[0].Col)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
+			coll = collation.Name
 
 			if chs == "" {
 				chs = collation.CharsetName
@@ -915,15 +915,15 @@ func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl st
 			//
 			// 2. If no charset is set explicitly, set the collation.
 			if collation.CharsetName == chs || chs == "" {
-				coll = charsetOpts[1].Col
+				coll = collation.Name
 			}
 		}
 		if charsetOpts[1].Chs != "" && chs == "" {
-			chs = charsetOpts[1].Chs
-			_, err := charset.GetCharsetInfo(chs)
+			info, err := charset.GetCharsetInfo(charsetOpts[1].Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
+			chs = info.Name
 		}
 	}
 
@@ -1863,7 +1863,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
-			for _, opt := range spec.Options {
+			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
 					if opt.UintValue > variable.MaxShardRowIDBits {
