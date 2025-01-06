@@ -177,12 +177,3 @@ func TestIssue58476(t *testing.T) {
 			`      ├─TableRangeScan(Build) 3333.33 cop[tikv] table:t3 range:(0,+inf], keep order:false, stats:pseudo`,
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
-
-func TestIssueABC(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));")
-	tk.MustExec(`insert into t values ("B", "b");`)
-	tk.MustQuery("select * from t where 2 between a and \"c\";").Check(testkit.Rows())
-}
