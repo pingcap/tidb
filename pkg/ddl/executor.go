@@ -1597,12 +1597,16 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset (chs) and collation (coll) in options.
+// Use ResolveCharsetCollation() on the result to resolve implicit charset and collation.
 func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll string, err error) {
 	var collChs string
 	for _, opt := range options {
+		// we set the charset to the last option. example:
+		// `alter table t collate utf8mb4_general_ci charset utf8mb4 collate utf8mb4_bin`
+		// the charset will be utf8mb4, collate will be utf8mb4_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			chs = opt.StrValue
+			chs = strings.ToLower(opt.StrValue)
 			if collChs != "" && collChs != chs {
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(collChs, chs)
 			}
@@ -1622,7 +1626,7 @@ func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll st
 				}
 				collChs = collation.CharsetName
 			}
-			coll = opt.StrValue
+			coll = strings.ToLower(opt.StrValue)
 		}
 	}
 	return
@@ -1886,7 +1890,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options[i:])
 					if err != nil {
 						return err
 					}

@@ -422,6 +422,11 @@ func TestGetCharsetAndCollateInTableOption(t *testing.T) {
 			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
 			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
 		}},
+		{"utf8mb4", "utf8mb4_bin", false, []*ast.TableOption{
+			// Test for case insensitive comparison
+			{Tp: ast.TableOptionCharset, StrValue: "Utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "uTf8mb4_bin"},
+		}},
 	}
 
 	for _, tc := range cases {
