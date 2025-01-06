@@ -491,6 +491,13 @@ CREATE USER 'default_sha2_role'@'%' IDENTIFIED WITH 'caching_sha2_password' AS '
 select plugin from mysql.user where user = 'default_sha2_role';
 plugin
 caching_sha2_password
+drop user default_sha2_user;
+drop user native_plugin_user;
+create user default_sha2_user identified by '1234';
+create user native_plugin_user identified with 'mysql_native_password' by '1234';
+select count(distinct authentication_string) from mysql.user where user = 'default_sha2_user' or user = 'native_plugin_user';
+count(distinct authentication_string)
+2
 alter user default_sha2_user identified with 'tidb_sm3_password';
 show create user default_sha2_user;
 CREATE USER for default_sha2_user@%
@@ -510,9 +517,9 @@ select plugin from mysql.user where user = 'default_sha2_user';
 plugin
 mysql_native_password
 alter user default_sha2_user identified with 'caching_sha2_password';
-select plugin from mysql.user where user = 'default_sha2_user';
-plugin
-caching_sha2_password
+select plugin, length(authentication_string) from mysql.user where user = 'default_sha2_user';
+plugin	length(authentication_string)
+caching_sha2_password	0
 set sql_mode = '';
 select @@sql_mode;
 @@sql_mode
