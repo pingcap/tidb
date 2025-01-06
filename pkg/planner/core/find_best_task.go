@@ -734,29 +734,30 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	rhsMoreFilters := (rhsTotalEqual > lhsTotalEqual || (rhsTotalEqual == lhsTotalEqual && len(rhs.path.IndexFilters) >= len(lhs.path.IndexFilters)))
 
 	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
-			(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
-			(!lhsHasStatistics || !rhsHasStatistics) { // At least one index doesn't have statistics
-			if lhsHasStatistics && lhsTotalEqual > 0 && lhsMoreFilters {
+		if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() { // Not a table scan
+			if (lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+				(!lhsHasStatistics || !rhsHasStatistics) { // At least one index doesn't have statistics
+				if lhsHasStatistics && lhsTotalEqual > 0 && lhsMoreFilters {
+					return 1
+				}
+				if rhsHasStatistics && rhsTotalEqual > 0 && rhsMoreFilters {
+					return -1
+				}
+			}
+
+			lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+			if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
+				lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+				rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+			}
+			if lhsMoreFilters && lhsCorrRatio < rhsCorrRatio {
 				return 1
 			}
-			if rhsHasStatistics && rhsTotalEqual > 0 && rhsMoreFilters {
+			if rhsMoreFilters && rhsCorrRatio < lhsCorrRatio {
 				return -1
 			}
 		}
 
-		lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
-		if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
-			lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
-			rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
-		}
-
-		if lhsMoreFilters && lhsCorrRatio < rhsCorrRatio {
-			return 1
-		}
-		if rhsMoreFilters && rhsCorrRatio < lhsCorrRatio {
-			return -1
-		}
 		// This rule is empirical but not always correct.
 		// If x's range row count is significantly lower than y's, for example, 1000 times, we think x is better.
 		if lhs.path.CorrCountAfterAccess > 100 && rhs.path.CorrCountAfterAccess > 100 && // to prevent some extreme cases, e.g. 0.01 : 10
