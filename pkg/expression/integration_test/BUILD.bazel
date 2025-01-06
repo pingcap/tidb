@@ -12,6 +12,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/domain/infosync",
         "//pkg/errno",
         "//pkg/expression",
         "//pkg/kv",
