@@ -151,6 +151,19 @@ func (c *pitrCollector) close() error {
 	return nil
 }
 
+func (C *pitrCollector) verifyCompatibilityFor(fileset *restore.BackupFileSet) error {
+	if len(fileset.RewriteRules.NewKeyspace) > 0 {
+		return errors.Annotate(berrors.ErrUnsupportedOperation, "keyspace rewriting isn't supported when log backup enabled")
+	}
+	for i, r := range fileset.RewriteRules.Data {
+		if r.NewTimestamp > 0 {
+			return errors.Annotatef(berrors.ErrUnsupportedOperation,
+				"rewrite rule #%d: rewrite timestamp isn't supported when log backup enabled", i)
+		}
+	}
+	return nil
+}
+
 func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBackupFileSet) (func() error, error) {
 	if !c.enabled {
 		return nil, nil
@@ -164,6 +177,10 @@ func (c *pitrCollector) onBatch(ctx context.Context, fileSets restore.BatchBacku
 	eg, ectx := errgroup.WithContext(ctx)
 	fileCount := 0
 	for _, fileSet := range fileSets {
+		if err := c.verifyCompatibilityFor(&fileSet); err != nil {
+			return nil, err
+		}
+
 		for _, file := range fileSet.SSTFiles {
 			file := file
 			fileCount += 1
@@ -281,13 +298,18 @@ func (c *pitrCollector) putRewriteRule(_ context.Context, oldID int64, newID int
 	return err
 }
 
+// doPersistExtraBackupMeta writes the current content of extra backup meta to the external storage.
+// This isn't goroutine-safe. Please don't call it concurrently.
 func (c *pitrCollector) doPersistExtraBackupMeta(ctx context.Context) (err error) {
 	var bs []byte
 	begin := time.Now()
 	c.doWithExtraBackupMetaLock(func() {
 		msg := c.extraBackupMeta.genMsg()
 		// Here, after generating a snapshot of the current message then we can continue.
-		// It is no need to blocking appending.
+		// This requires only a single active writer at anytime.
+		// (i.e. concurrent call to `doPersistExtraBackupMeta` may cause data race.)
+		// If there are many writers, the writer gets a stale snapshot may overwrite
+		// the latest persisted file.
 		bs, err = msg.Marshal()
 	})
 

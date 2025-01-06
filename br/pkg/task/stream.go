@@ -1192,8 +1192,11 @@ func checkConflictingLogBackup(ctx context.Context, cfg *RestoreConfig, etcdCLI 
 func checkTaskCompat(cfg *RestoreConfig, task streamhelper.Task) error {
 	baseErr := errors.Errorf("log backup task is running: %s, and isn't compatible with your restore."+
 		"You may check the extra information to get rid of this. If that doesn't work, you may "+
-		"stop the task before restore, and after PITR operation finished, "+
+		"stop the task before restore, and after the restore operation finished, "+
 		"create log-backup task again and create a full backup on this cluster.", task.Info.Name)
+	if len(cfg.FullBackupStorage) > 0 {
+		return errors.Annotate(baseErr, "you want to do point in time restore, which isn't compatible with an enabled log backup task yet")
+	}
 	if !cfg.UserFiltered() {
 		return errors.Annotate(baseErr,
 			"you want to restore a whole cluster, you may use `-f` or `restore table|database` to "+
