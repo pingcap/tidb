@@ -108,17 +108,10 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				return errors.Trace(err)
 			}
 			if updated {
-				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
-			}
-			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
-				delete(deltaMap, id)
-				return errors.Trace(err)
-			}
-			if updated {
+				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count)
 				delete(deltaMap, id)
 			} else {
 				m := deltaMap[id]
-				m.ColSize = nil
 				deltaMap[id] = m
 			}
 		}
@@ -303,10 +296,10 @@ func (s *SessionStatsItem) Delete() {
 }
 
 // Update will updates the delta and count for one table id.
-func (s *SessionStatsItem) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+func (s *SessionStatsItem) Update(id int64, delta int64, count int64) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.Update(id, delta, count, colSize)
+	s.mapper.Update(id, delta, count)
 }
 
 // ClearForTest clears the mapper for test.
@@ -453,10 +446,10 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 }
 
 // Update updates the delta of the table.
-func (m *TableDelta) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+func (m *TableDelta) Update(id int64, delta int64, count int64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	UpdateTableDeltaMap(m.delta, id, delta, count, colSize)
+	UpdateTableDeltaMap(m.delta, id, delta, count)
 }
 
 // Merge merges the deltaMap into the TableDelta.
@@ -467,23 +460,15 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
+		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count)
 	}
 }
 
 // UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
+func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
-	if item.ColSize == nil {
-		item.ColSize = make(map[int64]int64)
-	}
-	if colSize != nil {
-		for key, val := range *colSize {
-			item.ColSize[key] += val
-		}
-	}
 	m[id] = item
 }
 

@@ -910,7 +910,7 @@ func (s *session) updateStatsDeltaToCollector() {
 	if s.statsCollector != nil && mapper != nil {
 		for _, item := range mapper {
 			if item.TableID > 0 {
-				s.statsCollector.Update(item.TableID, item.Delta, item.Count, &item.ColSize)
+				s.statsCollector.Update(item.TableID, item.Delta, item.Count)
 			}
 		}
 	}

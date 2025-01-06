@@ -22,7 +22,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
@@ -218,7 +217,6 @@ type UpdateRecordOption interface {
 // RemoveRecordOpt contains the options will be used when removing a record.
 type RemoveRecordOpt struct {
 	indexesLayoutOffset IndexesLayout
-	columnSize          *ColumnsSizeHelper
 }
 
 // HasIndexesLayout returns whether the RemoveRecordOpt has indexes layout.
@@ -236,11 +234,6 @@ func (opt *RemoveRecordOpt) GetIndexLayout(indexID int64) IndexRowLayoutOption {
 	return opt.indexesLayoutOffset[indexID]
 }
 
-// GetColumnSizeOpt returns the ColumnSizeOption of the RemoveRecordOpt.
-func (opt *RemoveRecordOpt) GetColumnSizeOpt() *ColumnsSizeHelper {
-	return opt.columnSize
-}
-
 // NewRemoveRecordOpt creates a new RemoveRecordOpt with options.
 func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 	opt := &RemoveRecordOpt{}
@@ -253,17 +246,6 @@ func NewRemoveRecordOpt(opts ...RemoveRecordOption) *RemoveRecordOpt {
 // RemoveRecordOption is defined for the RemoveRecord() method of the Table interface.
 type RemoveRecordOption interface {
 	applyRemoveRecordOpt(*RemoveRecordOpt)
-}
-
-// ExtraPartialRowOption is the combined one of IndexesLayout and ColumnSizeOption.
-type ExtraPartialRowOption struct {
-	IndexesRowLayout  IndexesLayout
-	ColumnsSizeHelper *ColumnsSizeHelper
-}
-
-func (e *ExtraPartialRowOption) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
-	opt.indexesLayoutOffset = e.IndexesRowLayout
-	opt.columnSize = e.ColumnsSizeHelper
 }
 
 // IndexRowLayoutOption is the option for index row layout.
@@ -282,21 +264,8 @@ func (idx IndexesLayout) GetIndexLayout(idxID int64) IndexRowLayoutOption {
 	return idx[idxID]
 }
 
-// ColumnsSizeHelper records the column size information.
-// We're updating the total column size and total row size used in table statistics when doing DML.
-// If the column is pruned when doing DML, we can't get the accurate size of the column. So we need the estimated avg size.
-//   - If the column is not pruned, we can calculate its acurate size by the real data.
-//   - Otherwise, we use the estimated avg size given by table statistics and field type information.
-type ColumnsSizeHelper struct {
-	// NotPruned is a bitset to record the columns that are not pruned.
-	// The ith bit is 1 means the ith public column is not pruned.
-	NotPruned *bitset.BitSet
-	// If the column is pruned, we use the estimated avg size. They are stored by their ordinal in the table.
-	// The ith element is the estimated size of the ith pruned public column.
-	AvgSizes []float64
-	// If the column is not pruned, we use the accurate size. They are stored by their ordinal in the pruned row.
-	// The ith element is the position of the ith public column in the pruned row.
-	PublicColsLayout []int
+func (idx IndexesLayout) applyRemoveRecordOpt(opt *RemoveRecordOpt) {
+	opt.indexesLayoutOffset = idx
 }
 
 // CommonMutateOptFunc is a function to provide common options for mutating a table.

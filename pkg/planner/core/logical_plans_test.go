@@ -2538,7 +2538,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
-				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+				if colsLayout.IndexesRowLayout == nil {
 					sb.Reset()
 					fmt.Fprintf(&sb, "no column-pruning happened")
 					innerRet = append(innerRet, sb.String())
