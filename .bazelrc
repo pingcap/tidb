@@ -1,4 +1,3 @@
-startup --host_jvm_args=-Xmx4g
 startup --unlimit_coredumps
 dump: --http_connector_attempts=2
 dump: --http_connector_retry_max_timeout=5s
