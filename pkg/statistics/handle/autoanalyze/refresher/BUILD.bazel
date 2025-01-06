@@ -41,6 +41,7 @@ go_test(
         "//pkg/sessionctx/sysproctrack",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",

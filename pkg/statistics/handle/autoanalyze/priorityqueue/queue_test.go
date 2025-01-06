@@ -68,8 +68,11 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	handle := dom.StatsHandle()
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("create table t2 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -78,7 +81,6 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	}()
 
 	ctx := context.Background()
-	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 
@@ -123,7 +125,9 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("create table t2 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -177,7 +181,9 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	if partitioned {
 		tk.MustExec("use test")
 		tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		statstestutil.HandleNextDDLEventWithTxn(handle)
 		tk.MustExec("create table t2 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+		statstestutil.HandleNextDDLEventWithTxn(handle)
 		// Because we don't handle the DDL events in unit tests by default,
 		// we need to use this way to make sure the stats record for the global table is created.
 		// Insert some rows into the tables.
@@ -191,7 +197,9 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	} else {
 		tk.MustExec("use test")
 		tk.MustExec("create table t1 (a int)")
+		statstestutil.HandleNextDDLEventWithTxn(handle)
 		tk.MustExec("create table t2 (a int)")
+		statstestutil.HandleNextDDLEventWithTxn(handle)
 	}
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1), (2)")
@@ -278,7 +286,9 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("create table t2 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -363,6 +373,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 	tk.MustExec("create database example_schema")
 	tk.MustExec("use example_schema")
 	tk.MustExec("create table example_table (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	initJobs(tk)
 	insertMultipleFinishedJobs(tk, "example_table", "")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -415,7 +426,9 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("create table t2 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -474,6 +487,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
@@ -534,6 +548,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20))")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("set global tidb_partition_prune_mode = 'static'")
 	statistics.AutoAnalyzeMinCnt = 0
@@ -618,6 +633,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(handle)
 	tk.MustExec("insert into t1 values (1)")
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
