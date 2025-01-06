@@ -199,7 +199,7 @@ func (sm *SlotManager) adjustEligibleNodes(eligibleNodes []string, concurrency i
 
 func (sm *SlotManager) updateCapacity(cpuCount int) {
 	old := sm.capacity.Load()
-	cpuCount = cpuCount * 100
+	cpuCount = cpuCount * 1000
 	if cpuCount > 0 && cpuCount != int(old) {
 		sm.capacity.Store(int32(cpuCount))
 		if old == 0 {
