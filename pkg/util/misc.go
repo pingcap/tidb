@@ -692,3 +692,25 @@ func createTLSCertificates(certpath string, keypath string, rsaKeySize int) erro
 	// use RSA and unspecified signature algorithm
 	return CreateCertificates(certpath, keypath, rsaKeySize, x509.RSA, x509.UnknownSignatureAlgorithm)
 }
+<<<<<<< HEAD
+=======
+
+// GetTypeFlagsForInsert gets the type flags for insert statement.
+func GetTypeFlagsForInsert(baseFlags types.Flags, sqlMode mysql.SQLMode, ignoreErr bool) types.Flags {
+	strictSQLMode := sqlMode.HasStrictMode()
+	// see comments in ResetContextOfStmt for WithAllowNegativeToUnsigned part.
+	return baseFlags.
+		WithTruncateAsWarning(!strictSQLMode || ignoreErr).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasNoZeroInDateMode() ||
+			!sqlMode.HasNoZeroDateMode() || !strictSQLMode || ignoreErr ||
+			sqlMode.HasAllowInvalidDatesMode()).
+		WithAllowNegativeToUnsigned(false)
+}
+
+// GetTypeFlagsForImportInto gets the type flags for import into statement which
+// has the same flags as normal `INSERT INTO xxx`.
+func GetTypeFlagsForImportInto(baseFlags types.Flags, sqlMode mysql.SQLMode) types.Flags {
+	return GetTypeFlagsForInsert(baseFlags, sqlMode, false)
+}
+>>>>>>> 4f78f12f347 (importinto/lightning: fix negative value cast to upper bound in non strict sql mode (#58641))
