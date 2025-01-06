@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -60,6 +61,101 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
+
+func TestVectorLong(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	genVec := func(d int, startValue int) string {
+		vb := strings.Builder{}
+		vb.WriteString("[")
+		value := startValue
+		for i := 0; i < d; i++ {
+			if i > 0 {
+				vb.WriteString(",")
+			}
+			vb.WriteString(strconv.FormatInt(int64(value), 10))
+			value += 100
+		}
+		vb.WriteString("]")
+		return vb.String()
+	}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	runWorkload := func() {
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 200)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows("1 " + genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`delete from t1 where vec > '%s'`, genVec(16383, 50)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows())
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (1, '%s')`, genVec(16383, 100)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (2, '%s')`, genVec(16383, 200)))
+		tk.MustExec(fmt.Sprintf(`insert into t1 values (3, '%s')`, genVec(16383, 300)))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"1",
+		))
+		tk.MustExec(fmt.Sprintf(`update t1 set vec = '%s' where id = 1`, genVec(16383, 500)))
+		tk.MustQuery(`select * from t1 order by id`).Check(testkit.Rows(
+			"1 "+genVec(16383, 500),
+			"2 "+genVec(16383, 200),
+			"3 "+genVec(16383, 300),
+		))
+		tk.MustQuery(fmt.Sprintf(`select id from t1 order by vec_l2_distance(vec, '%s') limit 2`, genVec(16383, 180))).Check(testkit.Rows(
+			"2",
+			"3",
+		))
+	}
+
+	tk.MustExec("use test")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table t1")
+
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383),
+			VECTOR INDEX ((vec_cosine_distance(vec)))
+		)
+	`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			id int primary key,
+			vec vector(16383)
+		)
+	`)
+	tk.MustExec(`alter table t1 set tiflash replica 1`)
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+	tk.MustExec(`alter table t1 add VECTOR INDEX ((vec_cosine_distance(vec)))`)
+	runWorkload()
+	tk.MustExec("drop table if exists t1")
+}
 
 func TestVectorDefaultValue(t *testing.T) {
 	store := testkit.CreateMockStore(t)
