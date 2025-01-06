@@ -439,29 +439,9 @@ func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID
 // updateHeartBeat updates the heartbeat for all tasks with current instance as owner
 func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, now time.Time) {
 	for _, task := range m.runningTasks {
-<<<<<<< HEAD
-		state := &cache.TTLTaskState{
-			TotalRows:   task.statistics.TotalRows.Load(),
-			SuccessRows: task.statistics.SuccessRows.Load(),
-			ErrorRows:   task.statistics.ErrorRows.Load(),
-		}
-		if task.result != nil && task.result.err != nil {
-			state.ScanTaskErr = task.result.err.Error()
-		}
-
-		intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-		sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
-		if err != nil {
-			return err
-		}
-		_, err = se.ExecuteSQL(ctx, sql, args...)
-		if err != nil {
-			return errors.Wrapf(err, "execute sql: %s", sql)
-=======
 		err := m.updateHeartBeatForTask(ctx, se, now, task)
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to update task heart beat", zap.Error(err), zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
->>>>>>> 0392cdda767 (ttl: fix the issue that one task losing heartbeat will block other tasks (#57919))
 		}
 	}
 }
@@ -477,7 +457,7 @@ func (m *taskManager) updateHeartBeatForTask(ctx context.Context, se session.Ses
 	}
 
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state, m.id)
+	sql, args, err := updateTTLTaskHeartBeatSQL(task.JobID, task.ScanID, now, state)
 	if err != nil {
 		return err
 	}
