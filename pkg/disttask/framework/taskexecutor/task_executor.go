@@ -90,6 +90,7 @@ type BaseTaskExecutor struct {
 		sync.RWMutex
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
 		runtimeCancel context.CancelCauseFunc
+		subtaskCancel context.CancelFunc
 	}
 
 	stepExec   execute.StepExecutor
@@ -143,7 +144,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			e.Cancel()
+			e.cancelSubtaskCtx()
 			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
@@ -425,23 +426,28 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
+		subtaskCtx, subtaskCancelCtx := context.WithCancel(e.stepCtx)
+		e.mu.Lock()
+		e.mu.subtaskCancel = subtaskCancelCtx
+		e.mu.Unlock()
 
 		var wg util.WaitGroupWrapper
-		checkCtx, checkCancel := context.WithCancel(e.stepCtx)
+		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
 			wg.RunWithLog(func() {
-				e.updateSubtaskSummaryLoop(checkCtx, e.stepCtx, e.stepExec)
+				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
 			})
 		}
 		defer func() {
 			checkCancel()
+			subtaskCancelCtx()
 			wg.Wait()
 		}()
-		return e.stepExec.RunSubtask(e.stepCtx, subtask)
+		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)
@@ -491,6 +497,14 @@ func (e *BaseTaskExecutor) cancelRunStepWith(cause error) {
 	defer e.mu.Unlock()
 	if e.mu.runtimeCancel != nil {
 		e.mu.runtimeCancel(cause)
+	}
+}
+
+func (e *BaseTaskExecutor) cancelSubtaskCtx() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.mu.subtaskCancel != nil {
+		e.mu.subtaskCancel()
 	}
 }
 

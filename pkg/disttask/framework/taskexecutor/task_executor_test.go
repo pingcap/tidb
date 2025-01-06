@@ -326,6 +326,19 @@ func TestTaskExecutorRun(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		})
+		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+		// keep running next subtask
+		nextSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
+			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
+		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
+			unfinishedNormalSubtaskStates...).Return(nextSubtask, nil)
+		e.stepExecutor.EXPECT().GetStep().Return(proto.StepOne)
+		e.taskTable.EXPECT().StartSubtask(gomock.Any(), nextSubtask.ID, "id").Return(nil)
+		e.stepExecutor.EXPECT().RunSubtask(gomock.Any(), nextSubtask).Return(nil)
+		e.taskTable.EXPECT().FinishSubtask(gomock.Any(), "id", nextSubtask.ID, gomock.Any()).Return(nil)
+		// exit
+		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.succeedTask1, nil)
 		e.stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 		e.taskExecutor.Run()
 		require.True(t, e.ctrl.Satisfied())
@@ -886,7 +899,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
 		runCtx, cancel := context.WithCancel(ctx)
-		taskExecutor.cancel = cancel
+		taskExecutor.mu.subtaskCancel = cancel
 		require.NoError(t, runCtx.Err())
 		taskExecutor.checkBalanceSubtask(ctx)
 		require.ErrorIs(t, runCtx.Err(), context.Canceled)
