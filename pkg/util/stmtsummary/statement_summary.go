@@ -1116,6 +1116,7 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 }
 
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
 type StmtNetworkTrafficSummary struct {
 	UnpackedBytesSentKVTotal          int64 `json:"unpacked_bytes_send_kv_total"`
 	UnpackedBytesReceivedKVTotal      int64 `json:"unpacked_bytes_received_kv_total"`
@@ -1127,6 +1128,7 @@ type StmtNetworkTrafficSummary struct {
 	UnpackedBytesReceivedMPPCrossZone int64 `json:"unpacked_bytes_received_mpp_cross_zone"`
 }
 
+// Merge merges the value of 2 network traffic summary records.
 func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
 	if other == nil {
 		return

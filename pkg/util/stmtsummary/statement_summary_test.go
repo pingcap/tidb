@@ -415,6 +415,7 @@ func TestAddStatement(t *testing.T) {
 				UnpackedBytesSentMPPTotal:     1,
 				UnpackedBytesReceivedMPPTotal: 300,
 			},
+		},
 		LazyInfo: &mockLazyInfo{
 			originalSQL: "original_sql3",
 			plan:        "",
@@ -728,6 +729,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				UnpackedBytesReceivedKVCrossZone: 1,
 				UnpackedBytesSentKVCrossZone:     100,
 			},
+		},
 		LazyInfo: &mockLazyInfo{
 			originalSQL: "original_sql1",
 			plan:        "",
