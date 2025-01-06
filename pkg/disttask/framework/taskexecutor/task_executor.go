@@ -122,7 +122,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 //     `pending` state, to make sure subtasks can be balanced later when node scale out.
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
-func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCancelCtx context.CancelFunc) {
+func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCancel context.CancelFunc) {
 	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
 	for {
@@ -143,7 +143,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCance
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			subtaskCancelCtx()
+			subtaskCtxCancel()
 			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
@@ -425,12 +425,12 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
-		subtaskCtx, subtaskCancelCtx := context.WithCancel(e.stepCtx)
+		subtaskCtx, subtaskCtxCancel := context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx, subtaskCancelCtx)
+			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
@@ -440,8 +440,8 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		}
 		defer func() {
 			checkCancel()
-			subtaskCancelCtx()
 			wg.Wait()
+			subtaskCtxCancel()
 		}()
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
