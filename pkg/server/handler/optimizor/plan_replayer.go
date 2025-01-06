@@ -101,17 +101,17 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	}
 	if exist {
 		//nolint: gosec
-		fileReader, err := storage.Open(ctx, path, nil)
+		file, err := storage.Open(ctx, path, nil)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		content, err := io.ReadAll(fileReader)
+		content, err := io.ReadAll(file)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		err = fileReader.Close()
+		err = file.Close()
 		if err != nil {
 			handler.WriteError(w, err)
 			return
@@ -254,15 +254,15 @@ func handlePlanReplayerCaptureFile(ctx context.Context, content []byte, path str
 	}
 	//nolint: gosec
 	storage := external.GetExternalStorage()
-	fileReader, err := storage.Open(ctx, newPath, nil)
+	file, err := storage.Open(ctx, newPath, nil)
 	if err != nil {
 		return nil, err
 	}
-	content, err = io.ReadAll(fileReader)
+	content, err = io.ReadAll(file)
 	if err != nil {
 		return nil, err
 	}
-	err = fileReader.Close()
+	err = file.Close()
 	if err != nil {
 		return nil, err
 	}

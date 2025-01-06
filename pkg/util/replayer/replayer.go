@@ -42,11 +42,11 @@ func GeneratePlanReplayerFile(ctx context.Context, isCapture, isContinuesCapture
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
+	zf, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	wrapper := external.NewExternalFileWriterWrap(ctx, writer)
+	wrapper := external.NewExternalFileWriterWrap(ctx, zf)
 	return wrapper, fileName, err
 }
 
