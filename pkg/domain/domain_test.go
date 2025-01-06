@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -89,7 +90,7 @@ func TestInfo(t *testing.T) {
 		ddl.WithStore(s),
 		ddl.WithInfoCache(dom.infoCache),
 		ddl.WithLease(ddlLease),
-		ddl.WithSchemaLoader(dom),
+		ddl.WithSchemaLoader(dom.SchemaLoader()),
 	)
 	ddl.DisableTiFlashPoll(dom.ddl)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockReplaceDDL", `return(true)`))
@@ -152,7 +153,7 @@ func TestInfo(t *testing.T) {
 	}
 	ctx := mock.NewContext()
 	require.NoError(t, dom.ddlExecutor.CreateSchema(ctx, stmt))
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	require.Equal(t, int64(1), dom.InfoSchema().SchemaMetaVersion())
 
 	// Test for RemoveServerInfo.

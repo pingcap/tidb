@@ -367,7 +367,8 @@ type ddlCtx struct {
 	}
 }
 
-// SchemaLoader is used to reload info schema, the only impl is domain currently.
+// SchemaLoader is used to reload info schema, the only impl is a wrap on domain currently.
+// Works by notifing the domain reload loop and waiting for the result.
 type SchemaLoader interface {
 	Reload() error
 }

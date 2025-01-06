@@ -297,7 +297,7 @@ func TestResourceGroupBasic(t *testing.T) {
 func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name string) *model.ResourceGroupInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	g, _ := dom.InfoSchema().ResourceGroupByName(pmodel.NewCIStr(name))
 	return g

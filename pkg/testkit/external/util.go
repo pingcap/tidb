@@ -32,7 +32,7 @@ import (
 func GetTableByName(t *testing.T, tk *testkit.TestKit, db, table string) table.Table {
 	dom := domain.GetDomain(tk.Session())
 	// Make sure the table schema is the new schema.
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	return tbl

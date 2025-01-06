@@ -285,7 +285,7 @@ func TestDAGPlanBuilderUnionScan(t *testing.T) {
 		stmt, err := p.ParseOneStmt(tt, "", "")
 		require.NoError(t, err, comment)
 		dom := domain.GetDomain(tk.Session())
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 		nodeW := resolve.NewNodeW(stmt)
 		plan, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)

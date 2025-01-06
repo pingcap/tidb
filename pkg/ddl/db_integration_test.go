@@ -1715,7 +1715,7 @@ func TestChangingDBCharset(t *testing.T) {
 
 		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
-		err := dom.Reload()
+		err := dom.SchemaLoader().Reload()
 		require.NoError(t, err)
 		dbInfo, ok := dom.InfoSchema().SchemaByName(pmodel.NewCIStr(dbName))
 		require.Equal(t, true, ok)

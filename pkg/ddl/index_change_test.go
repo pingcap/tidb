@@ -61,7 +61,7 @@ func TestIndexChange(t *testing.T) {
 		jobID.Store(job.ID)
 		ctx1 := testNewContext(t, store)
 		prevState = job.SchemaState
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		switch job.SchemaState {
@@ -103,7 +103,7 @@ func TestIndexChange(t *testing.T) {
 		}
 		prevState = job.SchemaState
 		var err error
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 		tbl, exist := dom.InfoSchema().TableByID(context.Background(), job.TableID)
 		require.True(t, exist)
 		ctx1 := testNewContext(t, store)

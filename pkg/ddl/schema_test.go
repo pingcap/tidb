@@ -304,7 +304,7 @@ func TestSchemaWaitJob(t *testing.T) {
 		ddl.WithStore(store),
 		ddl.WithInfoCache(domain.InfoCache()),
 		ddl.WithLease(testLease),
-		ddl.WithSchemaLoader(domain),
+		ddl.WithSchemaLoader(domain.SchemaLoader()),
 	)
 	det2 := de2.(ddl.ExecutorForTest)
 	err := d2.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {

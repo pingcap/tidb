@@ -192,7 +192,7 @@ func TestInfoSchemaForTiFlashReplica(t *testing.T) {
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica.Available = true
 	updateTableMeta(t, store, tbl.Meta().DBID, tbl.Meta())
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 	tk.MustQuery("select TABLE_SCHEMA,TABLE_NAME,REPLICA_COUNT,LOCATION_LABELS,AVAILABLE,PROGRESS from information_schema.tiflash_replica").Check(testkit.Rows("test t 2 a,b 1 0"))
 }
 

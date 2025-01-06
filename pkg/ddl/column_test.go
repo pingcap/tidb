@@ -50,7 +50,7 @@ func testCreateColumn(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context,
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
@@ -73,7 +73,7 @@ func testCreateColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
@@ -92,7 +92,7 @@ func testDropColumnInternal(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Co
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
@@ -106,7 +106,7 @@ func testDropTable(tk *testkit.TestKit, t *testing.T, dbName, tblName string, do
 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	_, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tblName))
 	require.Error(t, err)
 	return id
@@ -123,7 +123,7 @@ func testCreateIndex(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
@@ -148,7 +148,7 @@ func testDropColumns(tk *testkit.TestKit, t *testing.T, ctx sessionctx.Context, 
 	idi, _ := strconv.Atoi(tk.MustQuery("admin show ddl jobs 1;").Rows()[0][0].(string))
 	id := int64(idi)
 	v := getSchemaVer(t, ctx)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tblInfo, exist := dom.InfoSchema().TableByID(context.Background(), tblID)
 	require.True(t, exist)
 	checkHistoryJobArgs(t, ctx, id, &historyJobArgs{ver: v, tbl: tblInfo.Meta()})
@@ -888,7 +888,7 @@ func TestDropColumns(t *testing.T) {
 }
 
 func testGetTable(t *testing.T, dom *domain.Domain, tableID int64) table.Table {
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	tbl, exist := dom.InfoSchema().TableByID(context.Background(), tableID)
 	require.True(t, exist)
 	return tbl

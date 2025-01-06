@@ -253,3 +253,18 @@ func TestGeneralDDLWithQuery(t *testing.T) {
 	close(beforeRunCh)
 	wg.Wait()
 }
+
+func TestDomainReloadThreadSafe(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			for j := 0; j < 3; j++ {
+				dom.SchemaLoader().Reload()
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+}

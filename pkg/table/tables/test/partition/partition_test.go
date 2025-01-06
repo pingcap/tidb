@@ -417,7 +417,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		}
 		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 	}
 	waitFor("t", "write only", 4)
 	tk3.MustExec(`BEGIN`)
@@ -529,7 +529,7 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 		}
 		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 	}
 	waitFor("nt", "write only", 4)
 
@@ -641,7 +641,7 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 		}
 		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 	}
 	waitFor("nt", "write only", 4)
 
@@ -701,7 +701,7 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		}
 		dom := domain.GetDomain(tk.Session())
 		// Make sure the table schema is the new schema.
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 	}
 	waitFor(4, "delete only")
 	tk3.MustExec(`BEGIN`)
@@ -3324,7 +3324,7 @@ func TestAlterTablePartitionRollback(t *testing.T) {
 		}
 		dom := domain.GetDomain(tk5.Session())
 		// Make sure the table schema is the new schema.
-		require.NoError(t, dom.Reload())
+		require.NoError(t, dom.SchemaLoader().Reload())
 	}
 
 	testFunc := func(states []string) {

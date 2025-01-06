@@ -47,7 +47,7 @@ func restartWorkers(t *testing.T, store kv.Storage, d *domain.Domain) {
 		ddl.WithStore(d.Store()),
 		ddl.WithInfoCache(d.InfoCache()),
 		ddl.WithLease(d.GetSchemaLease()),
-		ddl.WithSchemaLoader(d),
+		ddl.WithSchemaLoader(d.SchemaLoader()),
 	)
 	d.SetDDL(newDDL, newDDLExecutor)
 	err = newDDL.Start(ddl.Normal, pools.NewResourcePool(func() (pools.Resource, error) {

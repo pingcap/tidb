@@ -389,7 +389,7 @@ func testGetPolicyByIDFromMeta(t *testing.T, store kv.Storage, policyID int64) *
 func testGetPolicyByNameFromIS(t *testing.T, ctx sessionctx.Context, policy string) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	po, ok := dom.InfoSchema().PolicyByName(pmodel.NewCIStr(policy))
 	require.Equal(t, true, ok)
@@ -965,7 +965,7 @@ func TestDropPlacementPolicyInUse(t *testing.T) {
 func testGetPolicyByName(t *testing.T, ctx sessionctx.Context, name string, mustExist bool) *model.PolicyInfo {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	po, ok := dom.InfoSchema().PolicyByName(pmodel.NewCIStr(name))
 	if mustExist {
@@ -1118,7 +1118,7 @@ func TestAlterTablePartitionWithPlacementPolicy(t *testing.T) {
 func testGetPartitionDefinitionsByName(t *testing.T, ctx sessionctx.Context, db string, table string, ptName string) model.PartitionDefinition {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(table))
 	require.NoError(t, err)
@@ -1968,7 +1968,7 @@ func TestTruncateTablePartitionWithPlacement(t *testing.T) {
 		" PARTITION `p1` VALUES LESS THAN (1000) /*T![placement] PLACEMENT POLICY=`p2` */,\n" +
 		" PARTITION `p2` VALUES LESS THAN (10000) /*T![placement] PLACEMENT POLICY=`p3` */,\n" +
 		" PARTITION `p3` VALUES LESS THAN (100000))"))
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 	checkExistTableBundlesInPD(t, dom, "test", "tp")
 	checkWaitingGCPartitionBundlesInPD(t, dom, checkOldPartitions)
 

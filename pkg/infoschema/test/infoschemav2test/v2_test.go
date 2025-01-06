@@ -246,7 +246,7 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	dom.Reload() // need this to trigger infoschema rebuild to reset capacity
+	dom.SchemaLoader().Reload() // need this to trigger infoschema rebuild to reset capacity
 	is := dom.InfoSchema()
 	ok, raw := infoschema.IsV2(is)
 	if ok {
@@ -437,7 +437,7 @@ func TestIssue54926(t *testing.T) {
 
 	tk2.MustExec("create table test.t (id int primary key)")
 	tk.MustExec("set @@global.tidb_schema_cache_size = 1073741824")
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 
 	// test set txn as of will flush/mutex tidb_snapshot
 	tk.MustExec(fmt.Sprintf(`set @@tidb_snapshot="%s"`, time1.Format("2006-1-2 15:04:05.000")))
@@ -593,11 +593,11 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	require.LessOrEqual(t, schemaTS3, schemaTS4)
 
 	// Reload several times
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	schemaTS5 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.Equal(t, uint64(math.MaxUint64), schemaTS5)
 
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	schemaTS6 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.Equal(t, uint64(math.MaxUint64), schemaTS6)
 

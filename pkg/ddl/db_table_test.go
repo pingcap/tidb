@@ -477,7 +477,7 @@ func TestTableLocksLostCommit(t *testing.T) {
 func checkTableLock(t *testing.T, tk *testkit.TestKit, dbName, tableName string, lockTp pmodel.TableLockType) {
 	tb := external.GetTableByName(t, tk, dbName, tableName)
 	dom := domain.GetDomain(tk.Session())
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	if lockTp != pmodel.TableLockNone {
 		require.NotNil(t, tb.Meta().Lock)

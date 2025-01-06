@@ -53,7 +53,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	par := parser.New()
 	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	// Make sure the table schema is the new schema.
-	err := domain.Reload()
+	err := domain.SchemaLoader().Reload()
 	require.NoError(t, err)
 	is := domain.InfoSchema()
 	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}

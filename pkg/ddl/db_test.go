@@ -679,7 +679,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	tk.MustExec("create table test.t(a int)")
 
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	schemaVer := dom.InfoSchema().SchemaMetaVersion()
 	ver, err := store.CurrentVersion(kv.GlobalTxnScope)
@@ -691,7 +691,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
 
-	err = dom.Reload()
+	err = dom.SchemaLoader().Reload()
 	require.Error(t, err)
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)
 	require.Equal(t, domain.ResultSucc, res)
@@ -704,7 +704,7 @@ func TestSchemaValidator(t *testing.T) {
 	require.Equal(t, domain.ResultUnknown, res)
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
-	err = dom.Reload()
+	err = dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 
 	_, res = dom.SchemaValidator.Check(ts, schemaVer, nil, true)

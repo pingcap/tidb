@@ -145,6 +145,7 @@ func NewMockDomain() *Domain {
 type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
+	notifyReloadCh  chan *schemaReloadMsg
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
@@ -763,9 +764,8 @@ func getFlashbackStartTSFromErrorMsg(err error) uint64 {
 	return version
 }
 
-// Reload reloads InfoSchema.
-// It's public in order to do the test.
-func (do *Domain) Reload() error {
+// reload reloads InfoSchema. Not thread-safe.
+func (do *Domain) reload() error {
 	failpoint.Inject("ErrorMockReloadFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(errors.New("mock reload failed"))
@@ -1140,13 +1140,17 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 			failpoint.Inject("disableOnTickReload", func() {
 				failpoint.Continue()
 			})
-			err := do.Reload()
+			err := do.reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
 			do.deferFn.check()
+		case msg := <-do.notifyReloadCh:
+			err := do.reload()
+			msg.err = err
+			msg.wg.Done()
 		case _, ok := <-syncer.GlobalVersionCh():
-			err := do.Reload()
+			err := do.reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
 			}
@@ -1213,7 +1217,7 @@ func (do *Domain) mustRestartSyncer(ctx context.Context) error {
 // it returns false when it is successful, returns true when the domain is closed.
 func (do *Domain) mustReload() (exitLoop bool) {
 	for {
-		err := do.Reload()
+		err := do.reload()
 		if err == nil {
 			logutil.BgLogger().Info("mustReload succeed")
 			return false
@@ -1320,8 +1324,9 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
+		store:          store,
+		exit:           make(chan struct{}),
+		notifyReloadCh: make(chan *schemaReloadMsg),
 		sysSessionPool: util.NewSessionPool(
 			capacity, factory,
 			func(r pools.Resource) {
@@ -1421,7 +1426,7 @@ func (do *Domain) Init(
 		ddl.WithAutoIDClient(do.autoidClient),
 		ddl.WithInfoCache(do.infoCache),
 		ddl.WithLease(do.schemaLease),
-		ddl.WithSchemaLoader(do),
+		ddl.WithSchemaLoader(do.SchemaLoader()),
 		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
@@ -1484,7 +1489,7 @@ func (do *Domain) Init(
 
 	startReloadTime := time.Now()
 	// step 3: domain reload the infoSchema.
-	err = do.Reload()
+	err = do.reload()
 	if err != nil {
 		return err
 	}
@@ -1494,12 +1499,32 @@ func (do *Domain) Init(
 	// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
 	if sub > (do.schemaLease / 2) {
 		logutil.BgLogger().Warn("loading schema and starting ddl take a long time, we do a new reload", zap.Duration("take time", sub))
-		err = do.Reload()
+		err = do.reload()
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type schemaReloadMsg struct {
+	wg  sync.WaitGroup
+	err error
+}
+
+type schemaLoader chan *schemaReloadMsg
+
+// Reload notify the domain to reload the schema.
+func (ch schemaLoader) Reload() error {
+	var msg schemaReloadMsg
+	msg.wg.Add(1)
+	ch <- &msg
+	msg.wg.Wait()
+	return msg.err
+}
+
+func (do *Domain) SchemaLoader() schemaLoader {
+	return do.notifyReloadCh
 }
 
 // Start starts the domain. After start, DDLs can be executed using session, see

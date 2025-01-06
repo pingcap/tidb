@@ -150,7 +150,7 @@ func TestLoadSchemaFailed(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
 	}()
-	require.Error(t, domain.GetDomain(tk.Session()).Reload())
+	require.Error(t, domain.GetDomain(tk.Session()).SchemaLoader().Reload())
 
 	lease := domain.GetDomain(tk.Session()).GetSchemaLease()
 	time.Sleep(lease * 2)

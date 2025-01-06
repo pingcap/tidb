@@ -956,7 +956,7 @@ func TestDropIndexNeededInForeignKey(t *testing.T) {
 }
 
 func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableInfo {
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
@@ -967,7 +967,7 @@ func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableI
 }
 
 func getTableInfoReferredForeignKeys(t *testing.T, dom *domain.Domain, db, tb string) []*model.ReferredFKInfo {
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	return dom.InfoSchema().GetTableReferredForeignKeys(db, tb)
 }

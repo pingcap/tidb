@@ -852,7 +852,7 @@ func TestTableLocksDisable(t *testing.T) {
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 LOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 	tbl := external.GetTableByName(t, tk, "test", "t1")
 	dom := domain.GetDomain(tk.Session())
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 	require.Nil(t, tbl.Meta().Lock)
 	tk.MustExec("unlock tables")
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
