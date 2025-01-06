@@ -277,6 +277,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
 			if !ok {
 				// task of lower rank might be able to be scheduled.
+				sm.logger.Info("task can't be scheduled", zap.Int64("task-id", task.ID))
 				continue
 			}
 		// reverting/cancelling/pausing/modifying, we don't allocate slots for them.
