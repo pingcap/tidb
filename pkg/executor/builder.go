@@ -2117,7 +2117,7 @@ func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.
 	base.SetInitCap(0)
 	e := &TableDualExec{
 		BaseExecutorV2: base,
-		numDualRows:    0,
+		numDualRows:    1,
 	}
 	return e
 }
