@@ -730,32 +730,31 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *
 	}
 	lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
 	rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
-	lhsMoreFilters := (lhsTotalEqual > rhsTotalEqual || (lhsTotalEqual == rhsTotalEqual && len(lhs.path.IndexFilters) >= len(rhs.path.IndexFilters)))
-	rhsMoreFilters := (rhsTotalEqual > lhsTotalEqual || (rhsTotalEqual == lhsTotalEqual && len(rhs.path.IndexFilters) >= len(lhs.path.IndexFilters)))
+	lhsMoreFilters := (lhsTotalEqual > rhsTotalEqual || (lhsTotalEqual > 0 && lhsTotalEqual == rhsTotalEqual && len(lhs.path.IndexFilters) >= len(rhs.path.IndexFilters)))
+	rhsMoreFilters := (rhsTotalEqual > lhsTotalEqual || (rhsTotalEqual > 0 && rhsTotalEqual == lhsTotalEqual && len(rhs.path.IndexFilters) >= len(lhs.path.IndexFilters)))
 
-	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 {
-		if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() { // Not a table scan
-			if (lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
-				(!lhsHasStatistics || !rhsHasStatistics) { // At least one index doesn't have statistics
-				if lhsHasStatistics && lhsTotalEqual > 0 && lhsMoreFilters {
-					return 1
-				}
-				if rhsHasStatistics && rhsTotalEqual > 0 && rhsMoreFilters {
-					return -1
-				}
-			}
-
-			lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
-			if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
-				lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
-				rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
-			}
-			if lhsMoreFilters && lhsCorrRatio < rhsCorrRatio {
+	if len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 &&
+		!lhs.path.IsTablePath() && !rhs.path.IsTablePath() { // Not a table scan
+		if (lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+			(!lhsHasStatistics || !rhsHasStatistics) { // At least one index doesn't have statistics
+			if lhsHasStatistics && lhsTotalEqual > 0 && lhsMoreFilters {
 				return 1
 			}
-			if rhsMoreFilters && rhsCorrRatio < lhsCorrRatio {
+			if rhsHasStatistics && rhsTotalEqual > 0 && rhsMoreFilters {
 				return -1
 			}
+		}
+
+		lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+		if lhs.path.CorrCountAfterAccess > 0 || rhs.path.CorrCountAfterAccess > 0 {
+			lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+			rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+		}
+		if lhsMoreFilters && lhsCorrRatio < rhsCorrRatio {
+			return 1
+		}
+		if rhsMoreFilters && rhsCorrRatio < lhsCorrRatio {
+			return -1
 		}
 
 		// This rule is empirical but not always correct.
