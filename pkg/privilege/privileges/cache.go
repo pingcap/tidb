@@ -921,7 +921,7 @@ func (p *immutable) decodeUserTableRow(row chunk.Row, fs []*resolve.ResultField)
 	defaultAuthPlugin := ""
 	if p.globalVars != nil {
 		val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
-		if err != nil {
+		if err == nil {
 			defaultAuthPlugin = val
 		}
 	}
@@ -1887,6 +1887,11 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 		}
 	}
 	return ret
+}
+
+// SetGlobalVarsAccessor is only used for test.
+func (p *MySQLPrivilege) SetGlobalVarsAccessor(globalVars variable.GlobalVarAccessor) {
+	p.globalVars = globalVars
 }
 
 // Handle wraps MySQLPrivilege providing thread safe access.
