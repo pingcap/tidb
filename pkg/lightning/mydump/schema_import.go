@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"strings"
 
+	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -117,7 +119,7 @@ func (si *SchemaImporter) importDatabases(ctx context.Context, dbMetas []*MDData
 			p.SetSQLMode(si.sqlMode)
 			for dbMeta := range ch {
 				sqlStr := dbMeta.GetSchema(egCtx, si.store)
-				if err2 := si.runJob(egCtx, p, &schemaJob{
+				if err2 := si.runCommonJob(egCtx, p, &schemaJob{
 					dbName:   dbMeta.Name,
 					stmtType: schemaCreateDatabase,
 					sqlStr:   sqlStr,
@@ -158,11 +160,25 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 			p := parser.New()
 			p.SetSQLMode(si.sqlMode)
 			for tableMeta := range ch {
+				if tableMeta.SchemaFile.FileMeta.Path == "" {
+					exist, err := si.isTableExist(egCtx, tableMeta.DB, tableMeta.Name)
+					if err != nil {
+						return err
+					}
+					if exist {
+						// we already has this table in TiDB.
+						// we should skip ddl job and let SchemaValid check.
+						si.logger.Info("table already exists in downstream, skip",
+							zap.String("db", tableMeta.DB), zap.String("table", tableMeta.Name))
+						continue
+					}
+					return common.ErrSchemaNotExists.GenWithStackByArgs(tableMeta.DB, tableMeta.Name)
+				}
 				sqlStr, err := tableMeta.GetSchema(egCtx, si.store)
 				if err != nil {
 					return err
 				}
-				if err = si.runJob(egCtx, p, &schemaJob{
+				if err = si.runCreateTableJob(egCtx, p, &schemaJob{
 					dbName:   tableMeta.DB,
 					tblName:  tableMeta.Name,
 					stmtType: schemaCreateTable,
@@ -180,24 +196,8 @@ func (si *SchemaImporter) importTables(ctx context.Context, dbMetas []*MDDatabas
 			if len(dbMeta.Tables) == 0 {
 				continue
 			}
-			tables, err := si.getExistingTables(egCtx, dbMeta.Name)
-			if err != nil {
-				return err
-			}
 			for i := range dbMeta.Tables {
 				tblMeta := dbMeta.Tables[i]
-				if tables.Exist(strings.ToLower(tblMeta.Name)) {
-					// we already has this table in TiDB.
-					// we should skip ddl job and let SchemaValid check.
-					si.logger.Info("table already exists in downstream, skip",
-						zap.String("db", dbMeta.Name),
-						zap.String("table", tblMeta.Name),
-					)
-					continue
-				} else if tblMeta.SchemaFile.FileMeta.Path == "" {
-					return common.ErrSchemaNotExists.GenWithStackByArgs(dbMeta.Name, tblMeta.Name)
-				}
-
 				select {
 				case ch <- tblMeta:
 				case <-egCtx.Done():
@@ -243,7 +243,7 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 					zap.String("view-name", viewMeta.Name))
 				continue
 			}
-			if err = si.runJob(ctx, p, &schemaJob{
+			if err = si.runCommonJob(ctx, p, &schemaJob{
 				dbName:   dbMeta.Name,
 				tblName:  viewMeta.Name,
 				stmtType: schemaCreateView,
@@ -256,11 +256,36 @@ func (si *SchemaImporter) importViews(ctx context.Context, dbMetas []*MDDatabase
 	return nil
 }
 
-func (si *SchemaImporter) runJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
+func (si *SchemaImporter) runCreateTableJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
+	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
+	if err != nil {
+		// if the schema supplied by the user is un-parsable by TiDB, we allow
+		// user to create the table by themselves, then import data.
+		exist, err2 := si.isTableExist(ctx, job.dbName, job.tblName)
+		if err2 != nil {
+			return err2
+		}
+		if exist {
+			// we already has this table in TiDB.
+			// we should skip ddl job and let SchemaValid check.
+			si.logger.Info("table already exists in downstream, skip",
+				zap.String("db", job.dbName), zap.String("table", job.tblName))
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return si.runJob(ctx, job, stmts)
+}
+
+func (si *SchemaImporter) runCommonJob(ctx context.Context, p *parser.Parser, job *schemaJob) error {
 	stmts, err := createIfNotExistsStmt(p, job.sqlStr, job.dbName, job.tblName)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	return si.runJob(ctx, job, stmts)
+}
+
+func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []string) error {
 	conn, err := si.db.Conn(ctx)
 	if err != nil {
 		return err
@@ -290,11 +315,32 @@ func (si *SchemaImporter) getExistingDatabases(ctx context.Context) (set.StringS
 	return si.getExistingSchemas(ctx, `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA`)
 }
 
-// the result contains views too, but as table and view share the same name space, it's ok.
-func (si *SchemaImporter) getExistingTables(ctx context.Context, dbName string) (set.StringSet, error) {
+// isTableExist checks whether the table exists in the downstream database, it
+// works for view too.
+// info schema V2 only store one copy of schema object in memory, so read/write
+// need to lock, if we read too much and takes too long, it affects write, i.e.
+// schema reloading during DDL execution, we can mitigate this by using
+// finer-grained lock, but we cannot avoid it completely with current strategy.
+// that's why we don't check table existence in batch by
+// 'select table_name information_schema.tables where schema=xxx', and uses a
+// 'show create table' to check table by table instead.
+// 'select table_name information_schema.tables where schema=xxx and table_name=xxx'
+// should be fine too, but that depends on how memory table is implemented, so we
+// stick to 'show create table' for now.
+func (si *SchemaImporter) isTableExist(ctx context.Context, dbName, tableName string) (bool, error) {
 	sb := new(strings.Builder)
-	sqlescape.MustFormatSQL(sb, `SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = %?`, dbName)
-	return si.getExistingSchemas(ctx, sb.String())
+	sqlescape.MustFormatSQL(sb, `SHOW CREATE TABLE %n.%n`, dbName, tableName)
+	_, err := si.getExistingSchemas(ctx, sb.String())
+	if err != nil {
+		cause := errors.Cause(err)
+		if driverErr, ok := cause.(*dmysql.MySQLError); ok && driverErr.Number == errno.ErrNoSuchTable {
+			return false, nil
+		}
+		return false, err
+	}
+	// show create table always return the table if no error, so no need to check
+	// the result row count.
+	return true, nil
 }
 
 func (si *SchemaImporter) getExistingViews(ctx context.Context, dbName string) (set.StringSet, error) {
