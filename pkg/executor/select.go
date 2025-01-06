@@ -600,8 +600,8 @@ type TableDualExec struct {
 	exec.BaseExecutorV2
 
 	// numDualRows can only be 0 or 1.
-	numDualRows int
-	numReturned int
+	containsDualRows bool
+	numReturned      int
 }
 
 // Open implements the Executor Open interface.
@@ -613,17 +613,16 @@ func (e *TableDualExec) Open(context.Context) error {
 // Next implements the Executor Next interface.
 func (e *TableDualExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	if e.numReturned >= e.numDualRows {
-		return nil
-	}
-	if e.Schema().Len() == 0 {
-		req.SetNumVirtualRows(1)
-	} else {
-		for i := range e.Schema().Columns {
-			req.AppendNull(i)
+	if e.numReturned == 0 && e.containsDualRows {
+		if e.Schema().Len() == 0 {
+			req.SetNumVirtualRows(1)
+		} else {
+			for i := range e.Schema().Columns {
+				req.AppendNull(i)
+			}
 		}
+		e.numReturned = 1
 	}
-	e.numReturned = e.numDualRows
 	return nil
 }
 

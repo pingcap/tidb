@@ -2408,6 +2408,8 @@ func (p *PhysicalMaxOneRow) MemoryUsage() (sum int64) {
 // PhysicalTableDual is the physical operator of dual.
 type PhysicalTableDual struct {
 	physicalSchemaProducer
+
+	ContainsDualRows bool
 	// names is used for OutputNames() method. Dual may be inited when building point get plan.
 	// So it needs to hold names for itself.
 	names []*types.FieldName

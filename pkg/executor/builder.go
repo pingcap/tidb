@@ -2114,10 +2114,9 @@ func (b *executorBuilder) buildProjection(v *plannercore.PhysicalProjection) exe
 
 func (b *executorBuilder) buildTableDual(v *plannercore.PhysicalTableDual) exec.Executor {
 	base := exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID())
-	base.SetInitCap(0)
 	e := &TableDualExec{
-		BaseExecutorV2: base,
-		numDualRows:    1,
+		BaseExecutorV2:   base,
+		containsDualRows: v.ContainsDualRows,
 	}
 	return e
 }
@@ -5300,7 +5299,6 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// No matching partitions
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), plan.Schema(), plan.ID()),
-			numDualRows:    0,
 		}
 	}
 
