@@ -15,8 +15,9 @@
 
 package parser
 
+import __yyfmt__ "fmt"
+
 import (
-	__yyfmt__ "fmt"
 	"math"
 	"strconv"
 
