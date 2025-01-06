@@ -154,6 +154,19 @@ func SelectWithRuntimeStats(ctx context.Context, dctx *distsqlctx.DistSQLContext
 	return sr, nil
 }
 
+func ExtractExtraChunks(result SelectResult) []*tipb.Chunk {
+	if selectResult, ok := result.(*selectResult); ok {
+		chks := selectResult.extraChunks
+		selectResult.extraChunks = nil
+		if selectResult.selectResp != nil && len(selectResult.selectResp.ExtraChunks) > 0 {
+			chks = append(chks, selectResult.selectResp.ExtraChunks...)
+			selectResult.selectResp.ExtraChunks = nil
+		}
+		return chks
+	}
+	return nil
+}
+
 // Analyze do a analyze request.
 func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, dctx *distsqlctx.DistSQLContext) (SelectResult, error) {
