@@ -3742,11 +3742,11 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	tk.MustExec(`create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 3`)
 	ctx := tk.Session()
 	dom := domain.GetDomain(ctx)
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 	schemaVersion := dom.InfoSchema().SchemaMetaVersion()
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
 	tk.MustExec(`alter table t truncate partition p1`)
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 	// Without global index, truncate partition could be a single state change
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 	tk.MustExec(`drop table t`)
@@ -3754,6 +3754,6 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	schemaVersion = dom.InfoSchema().SchemaMetaVersion()
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
 	tk.MustExec(`alter table t truncate partition p1`)
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }

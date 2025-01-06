@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net"
 	"runtime"
-	"sync"
 	"testing"
 	"time"
 

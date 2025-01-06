@@ -98,7 +98,7 @@ func TestReturnValues(t *testing.T) {
 
 func mustExecDDL(tk *testkit.TestKit, t *testing.T, sql string, dom *domain.Domain) {
 	tk.MustExec(sql)
-	require.NoError(t, dom.Reload())
+	require.NoError(t, dom.SchemaLoader().Reload())
 }
 
 func TestMemCacheReadLock(t *testing.T) {

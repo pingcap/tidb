@@ -836,8 +836,8 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 	tkNO.MustExec(`use test`)
 
 	tkDDLOwner.MustExec(createSQL)
-	domOwner.Reload()
-	domNonOwner.Reload()
+	domOwner.SchemaLoader().Reload()
+	domNonOwner.SchemaLoader().Reload()
 
 	originalPartitions := make([]int64, 0, 2)
 	originalIndexIDs := make([]int64, 0, 1)
@@ -894,7 +894,7 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 				logutil.BgLogger().Info("XXXXXXXXXXX release hook")
 				break
 			}
-			domOwner.Reload()
+			domOwner.SchemaLoader().Reload()
 			if domNonOwner.InfoSchema().SchemaMetaVersion() == domOwner.InfoSchema().SchemaMetaVersion() {
 				// looping over reorganize data/indexes
 				logutil.BgLogger().Info("XXXXXXXXXXX Schema Version has not changed")
@@ -904,11 +904,11 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 			break
 		}
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
-		domOwner.Reload()
+		domOwner.SchemaLoader().Reload()
 		require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
 		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
 		loopFn(tkO, tkNO)
-		domNonOwner.Reload()
+		domNonOwner.SchemaLoader().Reload()
 		if !releaseHook {
 			// Alter done!
 			break

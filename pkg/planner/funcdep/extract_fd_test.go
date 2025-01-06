@@ -35,7 +35,7 @@ import (
 func testGetIS(t *testing.T, ctx sessionctx.Context) infoschema.InfoSchema {
 	dom := domain.GetDomain(ctx)
 	// Make sure the table schema is the new schema.
-	err := dom.Reload()
+	err := dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 	return dom.InfoSchema()
 }

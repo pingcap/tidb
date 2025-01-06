@@ -547,7 +547,7 @@ func TestShardRowIDBits(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, err)
-	err = dom.Reload()
+	err = dom.SchemaLoader().Reload()
 	require.NoError(t, err)
 
 	tk.MustExec("insert auto(b) values (1), (3), (5)")
@@ -936,7 +936,7 @@ func forceFullReload(t *testing.T, store kv.Storage, dom *domain.Domain) {
 	tk.MustExec("create database if not exists test")
 	tk.MustExec("create table test.forcereload(id int)")
 	tk.MustExec("drop table test.forcereload")
-	dom.Reload()
+	dom.SchemaLoader().Reload()
 
 	domain.LoadSchemaDiffVersionGapThreshold = prev
 }
