@@ -206,6 +206,7 @@ func TestIssue50080(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
+
 	tk.MustExec("CREATE TABLE `test` (`ecif_party_no` varchar(20) DEFAULT NULL,`busi_cust_no` varchar(20) DEFAULT NULL,`busi_series_cd` varchar(2) DEFAULT NULL,`org_belong` varchar(15) DEFAULT NULL,`party_no` varchar(20) DEFAULT NULL,`rela_status_cd` varchar(2) DEFAULT NULL,`rela_status_desc` varchar(20) DEFAULT NULL,`created_by` varchar(100) DEFAULT 'ecifdata',`created_date` datetime DEFAULT CURRENT_TIMESTAMP,`updated_by` varchar(100) DEFAULT 'ecifdata',`updated_date` datetime DEFAULT CURRENT_TIMESTAMP,`id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),KEY `IX_CUST_RELA_DATE` (`updated_date`),KEY `IX_TPCNR_BCN` (`busi_cust_no`),KEY `IX_TPCNR_EPN` (`ecif_party_no`),KEY `IX_TPCNR_PAN` (`party_no`),PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */);")
 	require.NoError(t, loadTableStats("test.json", dom))
 	tk.MustQuery("explain select * from test where updated_date > '2023-12-31 23:59:00' and updated_date<'2023-12-31 23:59:59';").Check(testkit.Rows(
@@ -221,4 +222,13 @@ func TestIssue50080(t *testing.T) {
 		"TableReader_7 237.21 root  data:Selection_6",
 		"└─Selection_6 237.21 cop[tikv]  gt(test.test.updated_date, 2023-12-31 23:59:00.000000), lt(test.test.updated_date, 2024-01-01 00:00:01.000000)",
 		"  └─TableFullScan_5 859718933.00 cop[tikv] table:test keep order:false"))
+
+	tk.MustExec("CREATE TABLE test_datetime_index (id INT PRIMARY KEY AUTO_INCREMENT,event_time DATETIME NOT NULL,INDEX idx_event_time (event_time));")
+	tk.MustExec(" INSERT INTO test_datetime_index (event_time) VALUES ('2023-12-31 23:59:59' ), ('2023-12-31 23:59:29' ), ('2023-12-31 23:55:00' ), ('2023-12-31 14:45:00' ), ('2023-12-31 08:00:00' );")
+	tk.MustExec("analyze table test_datetime_index all columns;")
+	tk.MustQuery("explain select * from test_datetime_index where event_time > '2023-12-31 23:50:00' and event_time<'2024-01-01 00:00:00'").
+		Check(testkit.Rows(
+			"IndexReader_6 3.00 root  index:IndexRangeScan_5",
+			"└─IndexRangeScan_5 3.00 cop[tikv] table:test_datetime_index, index:idx_event_time(event_time) range:(2023-12-31 23:50:00,2024-01-01 00:00:00), keep order:false",
+		))
 }
