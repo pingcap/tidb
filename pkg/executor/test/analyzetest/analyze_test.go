@@ -1146,6 +1146,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("create table t (a int, b int, c int primary key)")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1189,7 +1190,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 					"test t  c 0 2 1"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
 				testkit.Rows("0 1 6 1 8 2 1",
-					"0 2 0 0 8 0 0", // column b is not analyzed
+					"0 2 0 0 0 0 0", // column b is not analyzed
 					"0 3 9 0 9 2 1",
 				))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
@@ -1213,6 +1214,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1260,7 +1262,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 					"test t  idx_b_d 1 (1, 1) 3",
 					"test t  idx_b_d 1 (4, 5) 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 1 0 0 9 0 0", // column a is not analyzed
+				testkit.Rows("0 1 0 0 0 0 0", // column a is not analyzed
 					"0 2 5 0 9 2 1",
 					"0 3 4 1 8 2 -0.07",
 					"0 4 5 0 9 2 1",
@@ -1289,6 +1291,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1336,7 +1339,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 					"test t  d 0 1 1",
 					"test t  d 0 2 1"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 1 0 0 9 0 0", // column a is not analyzed
+				testkit.Rows("0 1 0 0 0 0 0", // column a is not analyzed
 					"0 2 9 0 9 2 1",
 					"0 3 4 1 8 2 -0.07",
 					"0 4 9 0 9 2 1",
@@ -1366,6 +1369,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1462,15 +1466,16 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
-				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, a
+				testkit.Rows(fmt.Sprintf("%d 0 1 12 1 19 2 0", tblID), // global, aA
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID),   // global, b, not analyzed
 					fmt.Sprintf("%d 0 3 14 0 20 2 0", tblID), // global, c
 					fmt.Sprintf("%d 1 1 14 0 0 2 0", tblID),  // global, idx
 					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),    // p0, a
-					fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),    // p0, b, not analyzed
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", p0ID),    // p0, b, not analyzed
 					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),    // p0, c
 					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),    // p0, idx
 					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID),   // p1, a
-					fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID),   // p1, b, not analyzed
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", p1ID),    // p1, b, not analyzed
 					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID),   // p1, c
 					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID),   // p1, idx
 				))
@@ -1490,12 +1495,14 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 			require.NoError(t, err)
+			tblID := tbl.Meta().ID
 			defs := tbl.Meta().Partition.Definitions
 			p0ID := defs[0].ID
 			p1ID := defs[1].ID
@@ -1570,12 +1577,16 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 					"test t p1 idx 1 1 6 1 11 12 0"))
 
 			tk.MustQuery("select table_id, is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms order by table_id, is_index, hist_id asc").Check(
-				testkit.Rows(fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID), // p0, a
-					fmt.Sprintf("%d 0 2 0 0 8 0 0", p0ID),  // p0, b, not analyzed
+				testkit.Rows(fmt.Sprintf("%d 0 1 0 0 0 0 0", tblID), // global, a, not analyzed
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", tblID), // global, b, not analyzed
+					fmt.Sprintf("%d 0 3 0 0 0 0 0", tblID), // global, c, not analyzed
+					fmt.Sprintf("%d 1 1 0 0 0 0 0", tblID), // global, idx, not analyzed
+					fmt.Sprintf("%d 0 1 5 1 8 2 1", p0ID),  // p0, a
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", p0ID),  // p0, b, not analyzed
 					fmt.Sprintf("%d 0 3 6 0 9 2 1", p0ID),  // p0, c
 					fmt.Sprintf("%d 1 1 6 0 9 2 0", p0ID),  // p0, idx
 					fmt.Sprintf("%d 0 1 7 0 11 2 1", p1ID), // p1, a
-					fmt.Sprintf("%d 0 2 0 0 11 0 0", p1ID), // p1, b, not analyzed
+					fmt.Sprintf("%d 0 2 0 0 0 0 0", p1ID),  // p1, b, not analyzed
 					fmt.Sprintf("%d 0 3 8 0 11 2 1", p1ID), // p1, c
 					fmt.Sprintf("%d 1 1 8 0 11 2 0", p1ID), // p1, idx
 				))
@@ -1595,6 +1606,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("set @@tidb_enable_extended_stats = on")
 			tk.MustExec("create table t (a int, b int, c int)")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
 			tk.MustExec("insert into t values (5,1,1), (4,2,2), (3,3,3), (2,4,4), (1,5,5)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -1637,7 +1649,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 					"test t  c 0 1 1",
 					"test t  c 0 2 1"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 1 0 0 5 0 0", // column a is not analyzed
+				testkit.Rows("0 1 0 0 0 0 0", // column a is not analyzed
 					"0 2 5 0 5 2 1",
 					"0 3 5 0 5 2 1",
 				))
@@ -1665,6 +1677,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("drop table if exists t")
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
+			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
 			require.NoError(t, h.DumpStatsDeltaToKV(true))
 
@@ -1781,7 +1794,7 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 					"test t  b 0 1 3",
 					"test t  b 0 2 2"))
 			tk.MustQuery(fmt.Sprintf("select is_index, hist_id, distinct_count, null_count, tot_col_size, stats_ver, truncate(correlation,2) from mysql.stats_histograms where table_id = %d", tblID)).Sort().Check(
-				testkit.Rows("0 1 4 0 8 2 1", // tot_col_size of column a is updated to 8 by DumpStatsDeltaToKV
+				testkit.Rows("0 1 4 0 6 2 1",
 					"0 2 5 0 8 2 0.76"))
 			tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 't'").Sort().Check(
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -86,27 +85,6 @@ func UpdateStatsMeta(
 		cache.TableRowStatsCache.Invalidate(id)
 	}
 	return err
-}
-
-// DumpTableStatColSizeToKV dumps the column size stats to storage.
-func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.TableDelta) error {
-	if len(delta.ColSize) == 0 {
-		return nil
-	}
-	values := make([]string, 0, len(delta.ColSize))
-	for histID, deltaColSize := range delta.ColSize {
-		if deltaColSize == 0 {
-			continue
-		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
-	}
-	if len(values) == 0 {
-		return nil
-	}
-	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = GREATEST(0, tot_col_size + values(tot_col_size))", strings.Join(values, ","))
-	_, _, err := statsutil.ExecRows(sctx, sql)
-	return errors.Trace(err)
 }
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
