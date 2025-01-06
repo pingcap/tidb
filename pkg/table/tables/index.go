@@ -264,6 +264,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
 			}
+			// during some step of add-index, such as in write-reorg state, this
+			// key is THE temp index key.
 			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
 				return nil, err

@@ -47,7 +47,7 @@ func (w *MyWorker[T, R]) HandleTask(task int64Task, _ func(struct{})) {
 }
 
 func (w *MyWorker[T, R]) Close() {
-	logutil.BgLogger().Info("Close worker", zap.Any("id", w.id))
+	logutil.BgLogger().Info("Close worker", zap.Int("id", w.id))
 }
 
 func createMyWorker() Worker[int64Task, struct{}] {

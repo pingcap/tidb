@@ -177,6 +177,11 @@ type AlterDDLJob struct {
 	Options []*AlterDDLJobOpt
 }
 
+// WorkloadRepoCreate is the plan of admin create workload snapshot.
+type WorkloadRepoCreate struct {
+	baseSchemaProducer
+}
+
 // ReloadExprPushdownBlacklist reloads the data from expr_pushdown_blacklist table.
 type ReloadExprPushdownBlacklist struct {
 	baseSchemaProducer
@@ -290,8 +295,6 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpEvolveBindings is used to evolve plan binding.
-	OpEvolveBindings
 	// OpReloadBindings is used to reload plan binding.
 	OpReloadBindings
 	// OpSetBindingStatus is used to set binding status.

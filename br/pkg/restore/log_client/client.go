@@ -152,6 +152,7 @@ func NewSstRestoreManager(
 	storeCount uint,
 	createCheckpointSessionFn func() (glue.Session, error),
 ) (*SstRestoreManager, error) {
+	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 	// This poolSize is similar to full restore, as both workflows are comparable.
 	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
 	poolSize := concurrencyPerStore * 32 * storeCount
@@ -166,14 +167,12 @@ func NewSstRestoreManager(
 		return nil, errors.Trace(err)
 	}
 	if se != nil {
-		checkpointRunner, err := checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
+		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		s.checkpointRunner = checkpointRunner
 	}
-	// TODO implement checkpoint
-	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, nil)
+	s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
 	return s, nil
 }
 
@@ -182,14 +181,13 @@ type LogClient struct {
 	logRestoreManager *LogRestoreManager
 	sstRestoreManager *SstRestoreManager
 
-	cipher              *backuppb.CipherInfo
-	pdClient            pd.Client
-	pdHTTPClient        pdhttp.Client
-	clusterID           uint64
-	dom                 *domain.Domain
-	tlsConf             *tls.Config
-	keepaliveConf       keepalive.ClientParameters
-	concurrencyPerStore uint
+	cipher        *backuppb.CipherInfo
+	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
+	clusterID     uint64
+	dom           *domain.Domain
+	tlsConf       *tls.Config
+	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     storage.ExternalStorage
@@ -263,6 +261,7 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 	// Collect all items from the iterator in advance to avoid blocking during restoration.
 	// This approach ensures that we have all necessary data ready for processing,
 	// preventing any potential delays caused by waiting for the iterator to yield more items.
+	start := time.Now()
 	for r := compactionsIter.TryNext(ctx); !r.Finished; r = compactionsIter.TryNext(ctx) {
 		if r.Err != nil {
 			return r.Err
@@ -293,6 +292,13 @@ func (rc *LogClient) RestoreCompactedSstFiles(
 		if switchErr != nil {
 			log.Warn("[Compacted SST Restore] Failed to switch back to normal mode after restoration.", zap.Error(switchErr))
 		}
+	}()
+
+	log.Info("[Compacted SST Restore] Start to restore SST files",
+		zap.Int("sst-file-count", len(backupFileSets)), zap.Duration("iterate-take", time.Since(start)))
+	start = time.Now()
+	defer func() {
+		log.Info("[Compacted SST Restore] Restore SST files finished", zap.Duration("restore-take", time.Since(start)))
 	}()
 
 	// To optimize performance and minimize cross-region downloads,
@@ -346,6 +352,10 @@ func (rc *LogClient) SetCurrentTS(ts uint64) error {
 	}
 	rc.currentTS = ts
 	return nil
+}
+
+func (rc *LogClient) CurrentTS() uint64 {
+	return rc.currentTS
 }
 
 // GetClusterID gets the cluster id from down-stream cluster.
@@ -422,7 +432,7 @@ func (rc *LogClient) InitClients(
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
-		snapclient.RewriteModeKeyspace, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
+		snapclient.RewriteModeKeyspace, stores, concurrencyPerStore, createCallBacks, closeCallBacks,
 	)
 	snapFileImporter, err := snapclient.NewSnapFileImporter(
 		ctx, rc.dom.Store().GetCodec().GetAPIVersion(), snapclient.TiDBCompcated, opt)
@@ -442,9 +452,24 @@ func (rc *LogClient) InitClients(
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	ctx context.Context,
 ) (map[string]struct{}, error) {
-	// get sst checkpoint to skip repeated files
 	sstCheckpointSets := make(map[string]struct{})
-	// TODO initial checkpoint
+
+	if checkpoint.ExistsSstRestoreCheckpoint(ctx, rc.dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName) {
+		// we need to load the checkpoint data for the following restore
+		execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+		_, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.CustomSSTRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+			sstCheckpointSets[v.Name] = struct{}{}
+		})
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	} else {
+		// initialize the checkpoint metadata since it is the first time to restore.
+		err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.unsafeSession, checkpoint.CustomSSTRestoreCheckpointDatabaseName, nil)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
 	return sstCheckpointSets, nil
 }
 
@@ -885,22 +910,22 @@ type FullBackupStorageConfig struct {
 	Opts    *storage.ExternalStorageOptions
 }
 
-type InitSchemaConfig struct {
+type BuildTableMappingManagerConfig struct {
 	// required
-	IsNewTask   bool
-	TableFilter filter.Filter
+	CurrentIdMapSaved bool
+	TableFilter       filter.Filter
 
 	// optional
-	TiFlashRecorder   *tiflashrec.TiFlashRecorder
 	FullBackupStorage *FullBackupStorageConfig
+	CipherInfo        *backuppb.CipherInfo
+	Files             []*backuppb.DataFileInfo
 }
 
 const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
 
 func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	ctx context.Context,
-	cfg *InitSchemaConfig,
-	cipherInfo *backuppb.CipherInfo,
+	cfg *BuildTableMappingManagerConfig,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
 	if cfg.FullBackupStorage == nil {
@@ -915,7 +940,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter, cipherInfo)
+	fullBackupTables, err := initFullBackupTables(ctx, s, cfg.TableFilter, cfg.CipherInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -953,25 +978,24 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 	return dbReplaces, nil
 }
 
-// InitSchemasReplaceForDDL gets schemas information Mapping from old schemas to new schemas.
-// It is used to rewrite meta kv-event.
-func (rc *LogClient) InitSchemasReplaceForDDL(
+// BuildTableMappingManager builds the table mapping manager. It reads the full backup storage to get the full backup
+// table info to initialize the manager, or it reads the id map from previous task,
+// or it loads the saved mapping from last time of run of the same task.
+func (rc *LogClient) BuildTableMappingManager(
 	ctx context.Context,
-	cfg *InitSchemaConfig,
-	cipherInfo *backuppb.CipherInfo,
-) (*stream.SchemasReplace, error) {
+	cfg *BuildTableMappingManagerConfig,
+) (*stream.TableMappingManager, error) {
 	var (
 		err    error
 		dbMaps []*backuppb.PitrDBMap
 		// the id map doesn't need to construct only when it is not the first execution
 		needConstructIdMap bool
-
-		dbReplaces map[stream.UpstreamID]*stream.DBReplace
+		dbReplaces         map[stream.UpstreamID]*stream.DBReplace
 	)
 
-	// not new task, load schemas map from external storage
-	if !cfg.IsNewTask {
-		log.Info("try to load pitr id maps")
+	// this is a retry, id map saved last time, load it from external storage
+	if cfg.CurrentIdMapSaved {
+		log.Info("try to load previously saved pitr id maps")
 		needConstructIdMap = false
 		dbMaps, err = rc.initSchemasMap(ctx, rc.restoreTS)
 		if err != nil {
@@ -1003,16 +1027,16 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 	if len(dbMaps) <= 0 {
 		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
 		needConstructIdMap = true
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg, cipherInfo)
+		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		dbReplaces = stream.FromSchemaMaps(dbMaps)
+		dbReplaces = stream.FromDBMapProto(dbMaps)
 	}
 
 	for oldDBID, dbReplace := range dbReplaces {
-		log.Info("replace info", func() []zapcore.Field {
+		log.Info("base replace info", func() []zapcore.Field {
 			fields := make([]zapcore.Field, 0, (len(dbReplace.TableMap)+1)*3)
 			fields = append(fields,
 				zap.String("dbName", dbReplace.Name),
@@ -1028,10 +1052,16 @@ func (rc *LogClient) InitSchemasReplaceForDDL(
 		}()...)
 	}
 
-	rp := stream.NewSchemasReplace(
-		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.RecordDeleteRange)
-	return rp, nil
+	tableMappingManager := stream.NewTableMappingManager(dbReplaces, rc.GenGlobalID)
+
+	// not loaded from previously saved, need to iter meta kv and build and save the map
+	if needConstructIdMap {
+		if err = rc.IterMetaKVToBuildAndSaveIdMap(ctx, tableMappingManager, cfg.Files); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+
+	return tableMappingManager, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
@@ -1047,8 +1077,8 @@ func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
 	return files
 }
 
-// RestoreMetaKVFiles tries to restore files about meta kv-event from stream-backup.
-func (rc *LogClient) RestoreMetaKVFiles(
+// RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
+func (rc *LogClient) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
 	files []*backuppb.DataFileInfo,
 	schemasReplace *stream.SchemasReplace,
@@ -1079,29 +1109,10 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
-
 	log.Info("start to restore meta files",
 		zap.Int("total files", len(files)),
 		zap.Int("default files", len(filesInDefaultCF)),
 		zap.Int("write files", len(filesInWriteCF)))
-
-	if schemasReplace.NeedConstructIdMap() {
-		// Preconstruct the map and save it into external storage.
-		if err := rc.PreConstructAndSaveIDMap(
-			ctx,
-			filesInWriteCF,
-			filesInDefaultCF,
-			schemasReplace,
-		); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := RestoreMetaKVFilesWithBatchMethod(
@@ -1123,31 +1134,84 @@ func (rc *LogClient) RestoreMetaKVFiles(
 	return nil
 }
 
-// PreConstructAndSaveIDMap constructs id mapping and save it.
-func (rc *LogClient) PreConstructAndSaveIDMap(
+// IterMetaKVToBuildAndSaveIdMap iterates meta kv and builds id mapping and saves it to storage.
+func (rc *LogClient) IterMetaKVToBuildAndSaveIdMap(
 	ctx context.Context,
-	fsInWriteCF, fsInDefaultCF []*backuppb.DataFileInfo,
-	sr *stream.SchemasReplace,
+	tableMappingManager *stream.TableMappingManager,
+	files []*backuppb.DataFileInfo,
 ) error {
-	sr.SetPreConstructMapStatus()
+	filesInDefaultCF := make([]*backuppb.DataFileInfo, 0, len(files))
+	// need to look at write cf for "short value", which inlines the actual values without redirecting to default cf
+	filesInWriteCF := make([]*backuppb.DataFileInfo, 0, len(files))
 
-	if err := rc.constructIDMap(ctx, fsInWriteCF, sr); err != nil {
+	for _, f := range files {
+		if f.Type == backuppb.FileType_Delete {
+			// it should not happen
+			// only do some preventive checks here.
+			log.Warn("internal error: detected delete file of meta key, skip it", zap.Any("file", f))
+			continue
+		}
+		if f.Cf == stream.WriteCF {
+			filesInWriteCF = append(filesInWriteCF, f)
+			continue
+		}
+		if f.Cf == stream.DefaultCF {
+			filesInDefaultCF = append(filesInDefaultCF, f)
+		}
+	}
+
+	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
+	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
+
+	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
+	})
+
+	log.Info("start to iterate meta kv and build id map",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)))
+
+	// build the map and save it into external storage.
+	if err := rc.buildAndSaveIDMap(
+		ctx,
+		filesInDefaultCF,
+		filesInWriteCF,
+		tableMappingManager,
+	); err != nil {
 		return errors.Trace(err)
 	}
-	if err := rc.constructIDMap(ctx, fsInDefaultCF, sr); err != nil {
+	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
+	})
+	return nil
+}
+
+// buildAndSaveIDMap build id mapping and save it.
+func (rc *LogClient) buildAndSaveIDMap(
+	ctx context.Context,
+	fsInDefaultCF []*backuppb.DataFileInfo,
+	fsInWriteCF []*backuppb.DataFileInfo,
+	tableMappingManager *stream.TableMappingManager,
+) error {
+	if err := rc.iterAndBuildIDMap(ctx, fsInWriteCF, tableMappingManager); err != nil {
 		return errors.Trace(err)
 	}
 
-	if err := rc.saveIDMap(ctx, sr); err != nil {
+	if err := rc.iterAndBuildIDMap(ctx, fsInDefaultCF, tableMappingManager); err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := rc.saveIDMap(ctx, tableMappingManager); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (rc *LogClient) constructIDMap(
+func (rc *LogClient) iterAndBuildIDMap(
 	ctx context.Context,
 	fs []*backuppb.DataFileInfo,
-	sr *stream.SchemasReplace,
+	tableMappingManager *stream.TableMappingManager,
 ) error {
 	for _, f := range fs {
 		entries, _, err := rc.ReadAllEntries(ctx, f, math.MaxUint64)
@@ -1156,7 +1220,7 @@ func (rc *LogClient) constructIDMap(
 		}
 
 		for _, entry := range entries {
-			if _, err := sr.RewriteKvEntry(&entry.E, f.GetCf()); err != nil {
+			if err := tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, f.GetCf()); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -1197,8 +1261,6 @@ func RestoreMetaKVFilesWithBatchMethod(
 		defaultKvEntries = make([]*KvEntryWithTS, 0)
 		writeKvEntries   = make([]*KvEntryWithTS, 0)
 	)
-	// Set restoreKV to SchemaReplace.
-	schemasReplace.SetRestoreKVStatus()
 
 	for i, f := range defaultFiles {
 		if i == 0 {
@@ -1301,11 +1363,9 @@ func (rc *LogClient) RestoreBatchMetaKVFiles(
 		return nextKvEntries, errors.Trace(err)
 	}
 
-	if schemasReplace.IsRestoreKVStatus() {
-		updateStats(kvCount, size)
-		for i := 0; i < len(files); i++ {
-			progressInc()
-		}
+	updateStats(kvCount, size)
+	for i := 0; i < len(files); i++ {
+		progressInc()
 	}
 	return nextKvEntries, nil
 }
@@ -1756,9 +1816,9 @@ const PITRIdMapBlockSize int = 524288
 // saveIDMap saves the id mapping information.
 func (rc *LogClient) saveIDMap(
 	ctx context.Context,
-	sr *stream.SchemasReplace,
+	manager *stream.TableMappingManager,
 ) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: sr.TidySchemaMaps()}
+	backupmeta := &backuppb.BackupMeta{DbMaps: manager.ToProto()}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)

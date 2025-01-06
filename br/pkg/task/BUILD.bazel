@@ -155,6 +155,7 @@ go_test(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//keepalive",
     ],
 )

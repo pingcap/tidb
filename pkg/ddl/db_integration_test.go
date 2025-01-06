@@ -53,7 +53,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -384,7 +383,7 @@ func TestUpdateMultipleTable(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateWriteOnly {
 			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
 			tk2.MustQuery("select * from t1").Check(testkit.Rows("8 1", "8 2"))
@@ -523,11 +522,10 @@ func TestChangingTableCharset(t *testing.T) {
 	tblInfo.Charset = ""
 	tblInfo.Collate = ""
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		ctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), ctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := ctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 
@@ -769,11 +767,10 @@ func TestCaseInsensitiveCharsetAndCollate(t *testing.T) {
 	tblInfo.Charset = "UTF8MB4"
 
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 		require.True(t, ok)
@@ -1437,11 +1434,10 @@ func TestTreatOldVersionUTF8AsUTF8MB4(t *testing.T) {
 	tblInfo.Version = model.TableInfoVersion0
 	tblInfo.Columns[0].Version = model.ColumnInfoVersion0
 	updateTableInfo := func(tblInfo *model.TableInfo) {
-		mockCtx := mock.NewContext()
-		mockCtx.Store = store
-		err := sessiontxn.NewTxn(context.Background(), mockCtx)
+		sctx := testkit.NewSession(t, store)
+		err := sessiontxn.NewTxn(context.Background(), sctx)
 		require.NoError(t, err)
-		txn, err := mockCtx.Txn(true)
+		txn, err := sctx.Txn(true)
 		require.NoError(t, err)
 		mt := meta.NewMutator(txn)
 		require.True(t, ok)
@@ -3108,7 +3104,7 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 		config.StoreGlobalConfig(originCfg)
 	}()
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex {
 			return
 		}

@@ -15,6 +15,7 @@
 package stmtsummary
 
 import (
+	"bytes"
 	"container/list"
 	"fmt"
 	"strings"
@@ -30,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -76,19 +77,15 @@ func TestAddStatement(t *testing.T) {
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
-	samplePlan, _, _ := stmtExecInfo1.PlanGenerator()
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
+	samplePlan, _, _ := stmtExecInfo1.LazyInfo.GetEncodedPlan()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Lock()
 	expectedSummaryElement := stmtSummaryByDigestElement{
 		beginTime: now + 60,
 		endTime:   now + 1860,
 		stmtSummaryStats: stmtSummaryStats{
-			sampleSQL:            stmtExecInfo1.OriginalSQL.String(),
+			sampleSQL:            stmtExecInfo1.LazyInfo.GetOriginalSQL(),
 			samplePlan:           samplePlan,
 			indexNames:           stmtExecInfo1.StmtCtx.IndexNames,
 			execCount:            1,
@@ -186,29 +183,23 @@ func TestAddStatement(t *testing.T) {
 	// greater than that of the first statement.
 	stmtExecInfo2 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql2"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user2",
 		TotalLatency:   20000,
 		ParseLatency:   200,
 		CompileLatency: 2000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       20,
-			AvgProcessTime:    2000,
-			P90ProcessTime:    20000,
 			MaxProcessAddress: "200",
 			MaxProcessTime:    25000,
 			TotProcessTime:    40000,
-			AvgWaitTime:       200,
-			P90WaitTime:       2000,
 			MaxWaitAddress:    "201",
 			MaxWaitTime:       2500,
 			TotWaitTime:       40000,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  180,
 			RequestCount: 20,
 			CommitDetail: &util.CommitDetails{
@@ -267,6 +258,13 @@ func TestAddStatement(t *testing.T) {
 			},
 		},
 		ResourceGroupName: "rg1",
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql2",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
+		},
 	}
 	stmtExecInfo2.StmtCtx.AddAffectedRows(200)
 	expectedSummaryElement.execCount++
@@ -340,29 +338,23 @@ func TestAddStatement(t *testing.T) {
 	// less than that of the first statement.
 	stmtExecInfo3 := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql3"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user3",
 		TotalLatency:   1000,
 		ParseLatency:   50,
 		CompileLatency: 500,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       2,
-			AvgProcessTime:    100,
-			P90ProcessTime:    300,
 			MaxProcessAddress: "300",
 			MaxProcessTime:    350,
 			TotProcessTime:    200,
-			AvgWaitTime:       20,
-			P90WaitTime:       200,
 			MaxWaitAddress:    "301",
 			MaxWaitTime:       250,
 			TotWaitTime:       40,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  18,
 			RequestCount: 2,
 			CommitDetail: &util.CommitDetails{
@@ -423,6 +415,12 @@ func TestAddStatement(t *testing.T) {
 				UnpackedBytesSentMPPTotal:     1,
 				UnpackedBytesReceivedMPPTotal: 300,
 			},
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql3",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
 		},
 	}
 	stmtExecInfo3.StmtCtx.AddAffectedRows(20000)
@@ -471,12 +469,8 @@ func TestAddStatement(t *testing.T) {
 	stmtExecInfo4 := stmtExecInfo1
 	stmtExecInfo4.SchemaName = "schema2"
 	stmtExecInfo4.ExecDetail.CommitDetail = nil
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo4.SchemaName,
-		digest:            stmtExecInfo4.Digest,
-		planDigest:        stmtExecInfo4.PlanDigest,
-		resourceGroupName: stmtExecInfo4.ResourceGroupName,
-	}
+	key = &StmtDigestKey{}
+	key.Init(stmtExecInfo4.SchemaName, stmtExecInfo4.Digest, "", stmtExecInfo4.PlanDigest, stmtExecInfo4.ResourceGroupName)
 	ssMap.AddStatement(stmtExecInfo4)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
@@ -485,12 +479,8 @@ func TestAddStatement(t *testing.T) {
 	// Fifth statement has a different digest.
 	stmtExecInfo5 := stmtExecInfo1
 	stmtExecInfo5.Digest = "digest2"
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo5.SchemaName,
-		digest:            stmtExecInfo5.Digest,
-		planDigest:        stmtExecInfo4.PlanDigest,
-		resourceGroupName: stmtExecInfo5.ResourceGroupName,
-	}
+	key = &StmtDigestKey{}
+	key.Init(stmtExecInfo5.SchemaName, stmtExecInfo5.Digest, "", stmtExecInfo5.PlanDigest, stmtExecInfo5.ResourceGroupName)
 	ssMap.AddStatement(stmtExecInfo5)
 	require.Equal(t, 3, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
@@ -499,12 +489,8 @@ func TestAddStatement(t *testing.T) {
 	// Sixth statement has a different plan digest.
 	stmtExecInfo6 := stmtExecInfo1
 	stmtExecInfo6.PlanDigest = "plan_digest2"
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo6.SchemaName,
-		digest:            stmtExecInfo6.Digest,
-		planDigest:        stmtExecInfo6.PlanDigest,
-		resourceGroupName: stmtExecInfo6.ResourceGroupName,
-	}
+	key = &StmtDigestKey{}
+	key.Init(stmtExecInfo6.SchemaName, stmtExecInfo6.Digest, "", stmtExecInfo6.PlanDigest, stmtExecInfo6.ResourceGroupName)
 	ssMap.AddStatement(stmtExecInfo6)
 	require.Equal(t, 4, ssMap.summaryMap.Size())
 	_, ok = ssMap.summaryMap.Get(key)
@@ -513,25 +499,27 @@ func TestAddStatement(t *testing.T) {
 	// Test for plan too large
 	stmtExecInfo7 := stmtExecInfo1
 	stmtExecInfo7.PlanDigest = "plan_digest7"
-	stmtExecInfo7.PlanGenerator = func() (string, string, any) {
-		buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
-		for i := range buf {
-			buf[i] = 'a'
-		}
-		return string(buf), "", nil
+	buf := make([]byte, MaxEncodedPlanSizeInBytes+1)
+	for i := range buf {
+		buf[i] = 'a'
 	}
-	key = &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo7.SchemaName,
-		digest:            stmtExecInfo7.Digest,
-		planDigest:        stmtExecInfo7.PlanDigest,
-		resourceGroupName: stmtExecInfo7.ResourceGroupName,
+	stmtExecInfo7.LazyInfo = &mockLazyInfo{
+		originalSQL: stmtExecInfo1.LazyInfo.GetOriginalSQL(),
+		plan:        string(buf),
+		hintStr:     "",
+		binPlan:     "",
+		planDigest:  "",
 	}
+	key = &StmtDigestKey{}
+	key.Init(stmtExecInfo7.SchemaName, stmtExecInfo7.Digest, "", stmtExecInfo7.PlanDigest, stmtExecInfo7.ResourceGroupName)
 	ssMap.AddStatement(stmtExecInfo7)
 	require.Equal(t, 5, ssMap.summaryMap.Size())
 	v, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 	stmt := v.(*stmtSummaryByDigest)
-	require.Equal(t, key.digest, stmt.digest)
+	require.True(t, bytes.Contains(key.Hash(), hack.Slice(stmt.schemaName)))
+	require.True(t, bytes.Contains(key.Hash(), hack.Slice(stmt.digest)))
+	require.True(t, bytes.Contains(key.Hash(), hack.Slice(stmt.planDigest)))
 	e := stmt.history.Back()
 	ssElement := e.Value.(*stmtSummaryByDigestElement)
 	require.Equal(t, plancodec.PlanDiscardedEncoded, ssElement.samplePlan)
@@ -662,29 +650,23 @@ func generateAnyExecInfo() *StmtExecInfo {
 
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
-		OriginalSQL:    stringutil.StringerStr("original_sql1"),
 		NormalizedSQL:  "normalized_sql",
 		Digest:         "digest",
 		PlanDigest:     "plan_digest",
-		PlanGenerator:  emptyPlanGenerator,
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksDetails{
+		CopTasks: &execdetails.CopTasksSummary{
 			NumCopTasks:       10,
-			AvgProcessTime:    1000,
-			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
 			TotProcessTime:    10000,
-			AvgWaitTime:       100,
-			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 			TotWaitTime:       1000,
 		},
-		ExecDetail: &execdetails.ExecDetails{
+		ExecDetail: execdetails.ExecDetails{
 			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
@@ -746,10 +728,40 @@ func generateAnyExecInfo() *StmtExecInfo {
 				UnpackedBytesReceivedKVCrossZone: 1,
 				UnpackedBytesSentKVCrossZone:     100,
 			},
+		LazyInfo: &mockLazyInfo{
+			originalSQL: "original_sql1",
+			plan:        "",
+			hintStr:     "",
+			binPlan:     "",
+			planDigest:  "",
 		},
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
+}
+
+type mockLazyInfo struct {
+	originalSQL string
+	plan        string
+	hintStr     string
+	binPlan     string
+	planDigest  string
+}
+
+func (a *mockLazyInfo) GetOriginalSQL() string {
+	return a.originalSQL
+}
+
+func (a *mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
+	return a.plan, a.hintStr, nil
+}
+
+func (a *mockLazyInfo) GetBinaryPlan() string {
+	return a.binPlan
+}
+
+func (a *mockLazyInfo) GetPlanDigest() string {
+	return a.planDigest
 }
 
 func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryReader {
@@ -911,7 +923,7 @@ func TestToDatum(t *testing.T) {
 		stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, stmtExecInfo1.ExecDetail.CommitDetail.TxnRetry, 0, 0, 1,
 		fmt.Sprintf("%s:1", boTxnLockName), stmtExecInfo1.MemMax, stmtExecInfo1.MemMax, stmtExecInfo1.DiskMax, stmtExecInfo1.DiskMax,
 		0, 0, 0, 0, 0, 0, 0, 0, stmtExecInfo1.StmtCtx.AffectedRows(),
-		f, f, 0, 0, 0, stmtExecInfo1.OriginalSQL, stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
+		f, f, 0, 0, 0, stmtExecInfo1.LazyInfo.GetOriginalSQL(), stmtExecInfo1.PrevSQL, "plan_digest", "", stmtExecInfo1.RUDetail.RRU(), stmtExecInfo1.RUDetail.RRU(),
 		stmtExecInfo1.RUDetail.WRU(), stmtExecInfo1.RUDetail.WRU(), int64(stmtExecInfo1.RUDetail.RUWaitDuration()), int64(stmtExecInfo1.RUDetail.RUWaitDuration()),
 		stmtExecInfo1.ResourceGroupName, int64(stmtExecInfo1.CPUUsages.TidbCPUTime), int64(stmtExecInfo1.CPUUsages.TikvCPUTime)}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -1037,12 +1049,9 @@ func TestMaxStmtCount(t *testing.T) {
 
 	// LRU cache should work.
 	for i := loops - 10; i < loops; i++ {
-		key := &stmtSummaryByDigestKey{
-			schemaName:        stmtExecInfo1.SchemaName,
-			digest:            fmt.Sprintf("digest%d", i),
-			planDigest:        stmtExecInfo1.PlanDigest,
-			resourceGroupName: stmtExecInfo1.ResourceGroupName,
-		}
+		key := &StmtDigestKey{}
+		key.Init(stmtExecInfo1.SchemaName, fmt.Sprintf("digest%d", i), "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
+		key.Hash()
 		_, ok := sm.Get(key)
 		require.True(t, ok)
 	}
@@ -1080,17 +1089,12 @@ func TestMaxSQLLength(t *testing.T) {
 	str := strings.Repeat("a", length)
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = stringutil.StringerStr(str)
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = str
 	stmtExecInfo1.NormalizedSQL = str
 	ssMap.AddStatement(stmtExecInfo1)
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		prevDigest:        stmtExecInfo1.PrevSQLDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 
@@ -1180,7 +1184,7 @@ func TestDisableStmtSummary(t *testing.T) {
 	ssMap.beginTimeForCurInterval = now + 60
 
 	stmtExecInfo2 := stmtExecInfo1
-	stmtExecInfo2.OriginalSQL = stringutil.StringerStr("original_sql2")
+	stmtExecInfo2.LazyInfo.(*mockLazyInfo).originalSQL = "original_sql2"
 	stmtExecInfo2.NormalizedSQL = "normalized_sql2"
 	stmtExecInfo2.Digest = "digest2"
 	ssMap.AddStatement(stmtExecInfo2)
@@ -1254,7 +1258,7 @@ func TestGetMoreThanCntBindableStmt(t *testing.T) {
 	ssMap := newStmtSummaryByDigestMap()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.OriginalSQL = stringutil.StringerStr("insert 1")
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
 	stmtExecInfo1.NormalizedSQL = "insert ?"
 	stmtExecInfo1.StmtCtx.StmtType = "Insert"
 	ssMap.AddStatement(stmtExecInfo1)
@@ -1293,12 +1297,8 @@ func TestRefreshCurrentSummary(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now + 10
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 	ssMap.AddStatement(stmtExecInfo1)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
@@ -1344,12 +1344,8 @@ func TestSummaryHistory(t *testing.T) {
 	}()
 
 	stmtExecInfo1 := generateAnyExecInfo()
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 	for i := range 11 {
 		ssMap.beginTimeForCurInterval = now + int64(i+1)*10
 		ssMap.AddStatement(stmtExecInfo1)
@@ -1417,13 +1413,8 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo1.PrevSQL = "prevSQL"
 	stmtExecInfo1.PrevSQLDigest = "prevSQLDigest"
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		prevDigest:        stmtExecInfo1.PrevSQLDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, stmtExecInfo1.PrevSQLDigest, stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	_, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1436,9 +1427,9 @@ func TestPrevSQL(t *testing.T) {
 	stmtExecInfo2 := stmtExecInfo1
 	stmtExecInfo2.PrevSQL = "prevSQL1"
 	stmtExecInfo2.PrevSQLDigest = "prevSQLDigest1"
-	key.prevDigest = stmtExecInfo2.PrevSQLDigest
 	ssMap.AddStatement(stmtExecInfo2)
 	require.Equal(t, 2, ssMap.summaryMap.Size())
+	key.Init(stmtExecInfo2.SchemaName, stmtExecInfo2.Digest, stmtExecInfo2.PrevSQLDigest, stmtExecInfo2.PlanDigest, stmtExecInfo2.ResourceGroupName)
 	_, ok = ssMap.summaryMap.Get(key)
 	require.True(t, ok)
 }
@@ -1450,12 +1441,8 @@ func TestEndTime(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        stmtExecInfo1.PlanDigest,
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", stmtExecInfo1.PlanDigest, stmtExecInfo1.ResourceGroupName)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)
@@ -1498,14 +1485,10 @@ func TestPointGet(t *testing.T) {
 
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.PlanDigest = ""
-	stmtExecInfo1.PlanDigestGen = fakePlanDigestGenerator
+	stmtExecInfo1.LazyInfo.(*mockLazyInfo).plan = fakePlanDigestGenerator()
 	ssMap.AddStatement(stmtExecInfo1)
-	key := &stmtSummaryByDigestKey{
-		schemaName:        stmtExecInfo1.SchemaName,
-		digest:            stmtExecInfo1.Digest,
-		planDigest:        "",
-		resourceGroupName: stmtExecInfo1.ResourceGroupName,
-	}
+	key := &StmtDigestKey{}
+	key.Init(stmtExecInfo1.SchemaName, stmtExecInfo1.Digest, "", "", stmtExecInfo1.ResourceGroupName)
 	require.Equal(t, 1, ssMap.summaryMap.Size())
 	value, ok := ssMap.summaryMap.Get(key)
 	require.True(t, ok)

@@ -361,7 +361,7 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 	testSemiJoin(t, true, true, true)   // Right side build with other condition
 }
 
-func TestSemiSpill(t *testing.T) {
+func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
 	var leftCols = []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
@@ -418,13 +418,13 @@ func TestSemiSpill(t *testing.T) {
 }
 
 func TestSemiJoinProbeBasic(t *testing.T) {
-	testLeftOuterSemiOrSemiJoinProbeBasic(t, false)
+	testLeftOuterSemiOrSemiJoinProbeBasic(t, false, false)
 }
 
 func TestSemiJoinProbeAllJoinKeys(t *testing.T) {
-	testLeftOuterSemiJoinProbeAllJoinKeys(t, false)
+	testLeftOuterSemiJoinProbeAllJoinKeys(t, false, false)
 }
 
 func TestSemiJoinProbeWithSel(t *testing.T) {
-	testLeftOuterSemiJoinProbeWithSel(t, false)
+	testLeftOuterSemiJoinProbeWithSel(t, false, false)
 }

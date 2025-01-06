@@ -941,6 +941,13 @@ type InfoSchemaTiDBIndexUsageExtractor struct {
 	predIdxNamesInited bool
 }
 
+// IndexUsageIndexInfo is the necessary index info for information_schema.tidb_index_usage. It only includes the index name
+// and ID in lower case.
+type IndexUsageIndexInfo struct {
+	Name string
+	ID   int64
+}
+
 // NewInfoSchemaTiDBIndexUsageExtractor creates a new InfoSchemaTiDBIndexUsageExtractor.
 func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 	e := &InfoSchemaTiDBIndexUsageExtractor{}
@@ -957,7 +964,7 @@ func NewInfoSchemaTiDBIndexUsageExtractor() *InfoSchemaTiDBIndexUsageExtractor {
 // If no index found in predicate, it return all indexes.
 func (e *InfoSchemaTiDBIndexUsageExtractor) ListIndexes(
 	tbl *model.TableInfo,
-) []*model.IndexInfo {
+) []IndexUsageIndexInfo {
 	ec := e.extractableColumns
 	if !e.predIdxNamesInited {
 		e.predIdxNames = set.NewStringSet()
@@ -970,23 +977,31 @@ func (e *InfoSchemaTiDBIndexUsageExtractor) ListIndexes(
 	predCol := e.predIdxNames
 	regexp := e.GetBase().colsRegexp[ec.indexName]
 
+	indexes := make([]IndexUsageIndexInfo, 0, len(tbl.Indices))
+	// Append the int primary key. The clustered index is already included in the `tbl.Indices`, but the int primary key is not.
+	if tbl.PKIsHandle {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: primaryKeyName, ID: 0})
+	}
+	for _, index := range tbl.Indices {
+		indexes = append(indexes, IndexUsageIndexInfo{Name: index.Name.L, ID: index.ID})
+	}
 	if len(predCol) == 0 && len(regexp) == 0 {
-		return tbl.Indices
+		return indexes
 	}
 
-	indexes := make([]*model.IndexInfo, 0, len(predCol))
+	retIndexes := make([]IndexUsageIndexInfo, 0, len(indexes))
 ForLoop:
-	for _, index := range tbl.Indices {
-		if len(predCol) > 0 && !predCol.Exist(index.Name.L) {
+	for _, index := range indexes {
+		if len(predCol) > 0 && !predCol.Exist(index.Name) {
 			continue
 		}
 		for _, re := range regexp {
-			if !re.DoMatch(index.Name.L) {
+			if !re.DoMatch(index.Name) {
 				continue ForLoop
 			}
 		}
-		indexes = append(indexes, index)
+		retIndexes = append(retIndexes, IndexUsageIndexInfo{Name: index.Name, ID: index.ID})
 	}
 
-	return indexes
+	return retIndexes
 }

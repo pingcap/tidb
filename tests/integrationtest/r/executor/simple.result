@@ -153,6 +153,9 @@ create user test_all;
 set default role all to test_all;
 drop user if exists 'testflush'@'localhost';
 CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';
+SHOW GRANTS FOR 'testflush'@'localhost';
+Grants for testflush@localhost
+GRANT USAGE ON *.* TO 'testflush'@'localhost'
 UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost";
 SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost";
 Error 1142 (42000): SELECT command denied to user 'testflush'@'localhost' for table 'user'
@@ -257,7 +260,7 @@ ALTER USER CURRENT_USER IDENTIFIED BY 'zzz';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk';
 ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
 ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F';" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'" 
 drop table if exists t;
 do 1, @a:=1;
 select @a;

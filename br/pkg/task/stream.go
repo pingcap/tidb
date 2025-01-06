@@ -919,6 +919,8 @@ func RunStreamResume(
 func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *StreamConfig) error {
 	ctx, cancel := context.WithCancel(c)
 	defer cancel()
+	log.Info("starting", zap.String("cmd", cmdName))
+
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
@@ -941,8 +943,44 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
+	if cfg.AdvancerCfg.OwnershipCycleInterval > 0 {
+		err = advancerd.ForceToBeOwner(ctx)
+		if err != nil {
+			return err
+		}
+		log.Info("command line advancer forced to be the owner")
+		go runOwnershipCycle(ctx, advancerd, cfg.AdvancerCfg.OwnershipCycleInterval, true)
+	}
 	loop()
 	return nil
+}
+
+// runOwnershipCycle handles the periodic cycling of ownership for the advancer
+func runOwnershipCycle(ctx context.Context, advancerd *daemon.OwnerDaemon, cycleDuration time.Duration, isOwner bool) {
+	ticker := time.NewTicker(cycleDuration)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !isOwner {
+				// try to become owner
+				if err := advancerd.ForceToBeOwner(ctx); err != nil {
+					log.Error("command line advancer failed to force ownership", zap.Error(err))
+					continue
+				}
+				log.Info("command line advancer forced to be the owner")
+				isOwner = true
+			} else {
+				// retire from being owner
+				advancerd.RetireIfOwner()
+				log.Info("command line advancer retired from being owner")
+				isOwner = false
+			}
+		}
+	}
 }
 
 func checkConfigForStatus(pd []string) error {
@@ -1321,6 +1359,9 @@ func restoreStream(
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
+	restoreCfg := tweakLocalConfForRestore()
+	defer restoreCfg()
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan(
 			"restoreStream",
@@ -1419,21 +1460,31 @@ func restoreStream(
 		return errors.Trace(err)
 	}
 	// load the id maps only when the checkpoint mode is used and not the first execution
-	newTask := true
+	currentIdMapSaved := false
 	if taskInfo != nil && taskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersist {
-		newTask = false
+		currentIdMapSaved = true
 	}
+
+	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
+	if err != nil {
+		return err
+	}
+
 	// get the schemas ID replace information.
 	// since targeted full backup storage, need to use the full backup cipher
-	schemasReplace, err := client.InitSchemasReplaceForDDL(ctx, &logclient.InitSchemaConfig{
-		IsNewTask:         newTask,
+	tableMappingManager, err := client.BuildTableMappingManager(ctx, &logclient.BuildTableMappingManagerConfig{
+		CurrentIdMapSaved: currentIdMapSaved,
 		TableFilter:       cfg.TableFilter,
-		TiFlashRecorder:   cfg.tiflashRecorder,
 		FullBackupStorage: fullBackupStorage,
-	}, &cfg.Config.CipherInfo)
+		CipherInfo:        &cfg.Config.CipherInfo,
+		Files:             ddlFiles,
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DbReplaceMap, cfg.tiflashRecorder,
+		client.CurrentTS(), cfg.TableFilter, client.RecordDeleteRange)
 	schemasReplace.AfterTableRewritten = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -1452,14 +1503,11 @@ func restoreStream(
 		totalKVCount += kvCount
 		totalSize += size
 	}
-	ddlFiles, err := client.LoadDDLFilesAndCountDMLFiles(ctx)
-	if err != nil {
-		return err
-	}
+
 	pm := g.StartProgress(ctx, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress)
 	if err = withProgress(pm, func(p glue.Progress) error {
 		client.RunGCRowsLoader(ctx)
-		return client.RestoreMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
+		return client.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles, schemasReplace, updateStats, p.Inc)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}

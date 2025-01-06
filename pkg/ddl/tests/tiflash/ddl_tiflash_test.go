@@ -54,7 +54,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
 	"go.uber.org/zap"
 )
 
@@ -1412,7 +1412,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	// Note that the mock TiFlash does not have any data or regions, so the wait for regions being available will fail
 	done := false
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then increase the count to skip retry
 			if job.ErrorCount > 0 {
@@ -1424,7 +1424,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 	tk.MustContainErrMsg(`alter table ddltiflash reorganize partition p0 into (partition p0 values less than (500000), partition p500k values less than (1000000))`, "[ddl] add partition wait for tiflash replica to complete")
 
 	done = false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if !done && job.Type == model.ActionReorganizePartition && job.SchemaState == model.StateDeleteOnly {
 			// Let it fail once (to check that code path) then mock the regions into the partitions
 			if job.ErrorCount > 0 {
@@ -1437,7 +1437,7 @@ func TestTiFlashReorgPartition(t *testing.T) {
 				stores, _ := pdCli.GetAllStores(ctx)
 				for _, pDef := range args.PartInfo.Definitions {
 					startKey, endKey := tablecodec.GetTableHandleKeyRange(pDef.ID)
-					regions, _ := pdCli.BatchScanRegions(ctx, []pd.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
+					regions, _ := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1)
 					for i := range regions {
 						// similar as storeHasEngineTiFlashLabel
 						for _, store := range stores {

@@ -46,7 +46,6 @@ func GetCommonStepExecutor(ctrl *gomock.Controller, step proto.Step, runSubtaskF
 	executor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	executor.EXPECT().GetStep().Return(step).AnyTimes()
 	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	return executor
 }
@@ -87,8 +86,8 @@ func registerTaskType(t testing.TB, taskType proto.TaskType, schedulerExt schedu
 	})
 
 	taskexecutor.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, task, param)
 			s.Extension = executorExt
 			return s
 		},

@@ -327,7 +327,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
-		selfSchema.Keys = childSchema[0].Clone().Keys
+		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
@@ -343,13 +343,13 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].Keys {
+			for _, key := range childSchema[0].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
 					lOk = true
 					break
 				}
 			}
-			for _, key := range childSchema[1].Keys {
+			for _, key := range childSchema[1].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
 					rOk = true
 					break
@@ -360,10 +360,10 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// another side's unique key information will all be reserved.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
 		if lOk && p.JoinType != LeftOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[1].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[1].PKOrUK...)
 		}
 		if rOk && p.JoinType != RightOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[0].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[0].PKOrUK...)
 		}
 	}
 }
@@ -496,10 +496,10 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema) (*property.StatsInfo, error) {
 	if p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), nil
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
@@ -529,7 +529,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			p.StatsInfo().ColNDVs[id] = c
 		}
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), nil
 	}
 	count := p.EqualCondOutCnt
@@ -549,7 +549,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		RowCount: count,
 		ColNDVs:  colNDVs,
 	})
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 	return p.StatsInfo(), nil
 }
 
@@ -1190,14 +1190,15 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 	return nil
 }
 
-func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+// logical join group ndv is just to output the corresponding child's groupNDV is asked previously and only outer side is cared.
+func (p *LogicalJoin) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
 	outerIdx := int(-1)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		outerIdx = 0
 	} else if p.JoinType == RightOuterJoin {
 		outerIdx = 1
 	}
-	if outerIdx >= 0 && len(colGroups) > 0 {
+	if outerIdx >= 0 {
 		return childStats[outerIdx].GroupNDVs
 	}
 	return nil
@@ -1259,8 +1260,9 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					if binop.FuncName.L == ast.EQ {
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+					switch binop.FuncName.L {
+					case ast.EQ, ast.NullEQ:
+						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
 					}

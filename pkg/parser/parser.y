@@ -6597,6 +6597,8 @@ IndexOptionList:
 				opt1.PrimaryKeyTp = opt2.PrimaryKeyTp
 			} else if opt2.Global {
 				opt1.Global = true
+			} else if opt2.SplitOpt != nil {
+				opt1.SplitOpt = opt2.SplitOpt
 			}
 			$$ = opt1
 		}
@@ -6651,6 +6653,20 @@ IndexOption:
 	{
 		$$ = &ast.IndexOption{
 			Global: false,
+		}
+	}
+|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+    {
+		$$ = &ast.IndexOption{
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+	{
+		$$ = &ast.IndexOption{
+			SplitOpt:  &ast.SplitOption{
+				Num:   $3.(int64),
+			},
 		}
 	}
 
@@ -11222,6 +11238,10 @@ AdminStmt:
 			Tables: []*ast.TableName{$4.(*ast.TableName)},
 			Index:  string($5),
 		}
+	}
+|	"ADMIN" "CREATE" "WORKLOAD" "SNAPSHOT"
+	{
+		$$ = &ast.AdminStmt{Tp: ast.AdminWorkloadRepoCreate}
 	}
 |	"ADMIN" "CLEANUP" "INDEX" TableName Identifier
 	{

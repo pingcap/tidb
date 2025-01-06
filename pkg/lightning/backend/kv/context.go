@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -48,11 +49,7 @@ type litExprContext struct {
 
 // NewExpressionContext creates a new `*ExprContext` for lightning import.
 func newLitExprContext(sqlMode mysql.SQLMode, sysVars map[string]string, timestamp int64) (*litExprContext, error) {
-	flags := types.DefaultStmtFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
-		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode() ||
-			!sqlMode.HasNoZeroInDateMode() || !sqlMode.HasNoZeroDateMode())
+	flags := util.GetTypeFlagsForImportInto(types.DefaultStmtFlags, sqlMode)
 
 	errLevels := stmtctx.DefaultStmtErrLevels
 	errLevels[errctx.ErrGroupTruncate] = errctx.ResolveErrLevel(flags.IgnoreTruncateErr(), flags.TruncateAsWarning())

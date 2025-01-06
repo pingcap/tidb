@@ -30,6 +30,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_goleak//:goleak",
