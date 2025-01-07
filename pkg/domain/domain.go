@@ -1523,6 +1523,7 @@ func (ch schemaLoader) Reload() error {
 	return msg.err
 }
 
+// SchemaLoader returns the schema loader which has a Reload method.
 func (do *Domain) SchemaLoader() schemaLoader {
 	return do.notifyReloadCh
 }
