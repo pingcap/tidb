@@ -21,7 +21,6 @@ import (
 	"math"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -312,9 +311,12 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 =======
 
 	finalPlan := postOptimize(ctx, sctx, physical)
+<<<<<<< HEAD
 >>>>>>> 65d63163cf (.)
 
 	finalPlan := postOptimize(ctx, sctx, physical)
+=======
+>>>>>>> cf4b8c7765 (.)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
