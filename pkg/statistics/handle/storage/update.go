@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
