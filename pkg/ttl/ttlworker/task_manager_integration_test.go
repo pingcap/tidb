@@ -431,7 +431,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	pool := wrapPoolForTest(dom.SysSessionPool())
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 128")
