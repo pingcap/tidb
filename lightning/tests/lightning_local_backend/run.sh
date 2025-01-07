@@ -143,4 +143,16 @@ for ckpt in mysql file; do
     --config=$CUR/$ckpt.toml >$TEST_DIR/lightning_ctl.output 2>&1
   grep -Fq "No table has lost intermediate files according to given config" $TEST_DIR/lightning_ctl.output
 done
+run_lightning_ctl \
+  --backend local \
+  --enable-checkpoint=1 \
+  --checkpoint-dump $TEST_DIR \
+  --config=$CUR/mysql.toml >$TEST_DIR/lightning_ctl.output 2>&1
+# --checkpoint-dump option in lightning-ctl will dump checkpoint table as csv files to $TEST_DIR
+for file in engines.csv chunks.csv tables.csv; do
+  if [ ! -f "$TEST_DIR/$file" ]; then
+    echo "$file does not exist in $TEST_DIR"
+    exit 1
+  fi
+done
 rm -r $TEST_DIR/$TEST_NAME.sorted

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -116,6 +117,9 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
 		eligibleNodes, subtasks[0].Concurrency)
+	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
+		adjustedNodes = []string{}
+	})
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.

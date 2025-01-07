@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -92,7 +91,7 @@ func TestGetTimeValue(t *testing.T) {
 		{ast.NewValueExpr("2012-12-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), "2012-12-12 00:00:00"},
 		{ast.NewValueExpr(int64(0), "", ""), "0000-00-00 00:00:00"},
 		{ast.NewValueExpr(nil, "", ""), nil},
-		{&ast.FuncCallExpr{FnName: model.NewCIStr(ast.CurrentTimestamp)}, strings.ToUpper(ast.CurrentTimestamp)},
+		{&ast.FuncCallExpr{FnName: ast.NewCIStr(ast.CurrentTimestamp)}, strings.ToUpper(ast.CurrentTimestamp)},
 		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(0))}, "0000-00-00 00:00:00"},
 	}
 
@@ -115,7 +114,7 @@ func TestGetTimeValue(t *testing.T) {
 		{"2012-13-12 00:00:00"},
 		{ast.NewValueExpr("2012-13-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4)},
 		{ast.NewValueExpr(int64(1), "", "")},
-		{&ast.FuncCallExpr{FnName: model.NewCIStr("xxx")}},
+		{&ast.FuncCallExpr{FnName: ast.NewCIStr("xxx")}},
 		// {&ast.UnaryOperationExpr{Op: opcode.Minus, V: ast.NewValueExpr(int64(1))}},
 	}
 
@@ -131,7 +130,7 @@ func TestIsCurrentTimestampExpr(t *testing.T) {
 		if i != 0 {
 			args = []ast.ExprNode{&driver.ValueExpr{Datum: types.NewIntDatum(i)}}
 		}
-		return &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
+		return &ast.FuncCallExpr{FnName: ast.NewCIStr("CURRENT_TIMESTAMP"), Args: args}
 	}
 
 	v := IsValidCurrentTimestampExpr(ast.NewValueExpr("abc", charset.CharsetUTF8MB4, charset.CollationUTF8MB4), nil)

@@ -123,7 +123,7 @@ func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*exp
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
 	return utilfuncp.DeriveStats4LogicalIndexScan(is, selfSchema)
 }
 

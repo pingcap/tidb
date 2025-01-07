@@ -77,11 +77,10 @@ Projection	3333.33	root		planner__core__casetest__rule__rule_result_reorder.t.b
   └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
 explain FORMAT='brief' select b from t where a>0 limit 1;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__casetest__rule__rule_result_reorder.t.b
-└─Limit	1.00	root		offset:0, count:1
-  └─TableReader	1.00	root		data:Limit
-    └─Limit	1.00	cop[tikv]		offset:0, count:1
-      └─TableRangeScan	1.00	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
+Limit	1.00	root		offset:0, count:1
+└─TableReader	1.00	root		data:Limit
+  └─Limit	1.00	cop[tikv]		offset:0, count:1
+    └─TableRangeScan	1.00	cop[tikv]	table:t	range:(0,+inf], keep order:true, stats:pseudo
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t;
 create table t (a int primary key, b int, c int, key(b));

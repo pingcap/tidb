@@ -172,6 +172,12 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+.PHONY: ut-long
+ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut --long --race || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
 .PHONY: gotest_in_verify_ci
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -297,9 +303,9 @@ failpoint-disable: tools/bin/failpoint-ctl
 	@$(FAILPOINT_DISABLE)
 
 .PHONY: tools/bin/ut
-tools/bin/ut: tools/check/ut.go
+tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
-	$(GO) build -o ../bin/ut ut.go
+	$(GO) build -o ../bin/ut ut.go longtests.go
 
 .PHONY: tools/bin/xprog
 tools/bin/xprog: tools/check/xprog/xprog.go

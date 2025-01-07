@@ -15,35 +15,37 @@
 package bindinfo
 
 import (
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
-func bindingNoDBDigest(t *testing.T, b Binding) string {
+func bindingNoDBDigest(t *testing.T, b *Binding) string {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(b.BindSQL, b.Charset, b.Collation)
 	require.NoError(t, err)
-	_, noDBDigest := norm.NormalizeStmtForBinding(stmt, norm.WithoutDB(true))
+	_, noDBDigest := NormalizeStmtForBinding(stmt, WithoutDB(true))
 	return noDBDigest
 }
 
 func TestCrossDBBindingCache(t *testing.T) {
-	fbc := newBindCache(nil).(*bindingCache)
-	b1 := Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
+	fbc := newBindCache().(*bindingCache)
+	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
-	b2 := Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
-	b3 := Binding{BindSQL: "SELECT * FROM db2.t3", SQLDigest: "b3"}
+	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
+	b3 := &Binding{BindSQL: "SELECT * FROM db2.t3", SQLDigest: "b3"}
 	fDigest3 := bindingNoDBDigest(t, b3)
 
 	// add 3 bindings and b1 and b2 have the same noDBDigest
-	require.NoError(t, fbc.SetBinding(b1.SQLDigest, []Binding{b1}))
-	require.NoError(t, fbc.SetBinding(b2.SQLDigest, []Binding{b2}))
-	require.NoError(t, fbc.SetBinding(b3.SQLDigest, []Binding{b3}))
+	require.NoError(t, fbc.SetBinding(b1.SQLDigest, b1))
+	require.NoError(t, fbc.SetBinding(b2.SQLDigest, b2))
+	require.NoError(t, fbc.SetBinding(b3.SQLDigest, b3))
 	require.Equal(t, len(fbc.digestBiMap.(*digestBiMapImpl).noDBDigest2SQLDigest), 2) // b1 and b2 have the same noDBDigest
 	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest1)), 2)
 	require.Equal(t, len(fbc.digestBiMap.NoDBDigest2SQLDigest(fDigest3)), 1)
@@ -70,24 +72,24 @@ func TestCrossDBBindingCache(t *testing.T) {
 }
 
 func TestBindCache(t *testing.T) {
-	bindings := Bindings{{BindSQL: "SELECT * FROM t1"}}
-	kvSize := int(bindings.size())
+	binding := &Binding{BindSQL: "SELECT * FROM t1"}
+	kvSize := int(binding.size())
 	defer func(v int64) {
 		variable.MemQuotaBindingCache.Store(v)
 	}(variable.MemQuotaBindingCache.Load())
 	variable.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
-	bindCache := newBindCache(nil)
+	bindCache := newBindCache()
 	defer bindCache.Close()
 
-	err := bindCache.SetBinding("digest1", bindings)
+	err := bindCache.SetBinding("digest1", binding)
 	require.Nil(t, err)
 	require.NotNil(t, bindCache.GetBinding("digest1"))
 
-	err = bindCache.SetBinding("digest2", bindings)
+	err = bindCache.SetBinding("digest2", binding)
 	require.Nil(t, err)
 	require.NotNil(t, bindCache.GetBinding("digest2"))
 
-	err = bindCache.SetBinding("digest3", bindings)
+	err = bindCache.SetBinding("digest3", binding)
 	require.Nil(t, err)
 	require.NotNil(t, bindCache.GetBinding("digest3"))
 
@@ -100,4 +102,55 @@ func TestBindCache(t *testing.T) {
 		}
 		return hit == 2
 	}, time.Second*5, time.Millisecond*100)
+}
+
+func getTableName(n []*ast.TableName) []string {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		v.Restore(restoreCtx)
+		result = append(result, sb.String())
+	}
+	return result
+}
+
+func TestExtractTableName(t *testing.T) {
+	tc := []struct {
+		sql    string
+		tables []string
+	}{
+		{
+			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
+			[]string{"t1", "t1"},
+		},
+		{
+			"select * from t",
+			[]string{"t"},
+		},
+		{
+			"select * from t1, t2, t3;",
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2);",
+			[]string{"t1", "t2"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select a,b,c,d,* from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t2", "t3"},
+		},
+	}
+	for _, tt := range tc {
+		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
+		rs := CollectTableNames(stmt)
+		result := getTableName(rs)
+		require.Equal(t, tt.tables, result)
+	}
 }

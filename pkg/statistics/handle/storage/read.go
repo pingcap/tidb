@@ -520,7 +520,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
-		histColl := *statistics.NewHistColl(tableID, true, 0, 0, 4, 4)
+		histColl := *statistics.NewHistColl(tableID, 0, 0, 4, 4)
 		table = &statistics.Table{
 			HistColl:              histColl,
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),

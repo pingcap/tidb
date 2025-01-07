@@ -12,14 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package logutil
+package main
 
-import (
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
-)
-
-// BindLogger with category "sql-bind" is used to log statistic related messages.
-func BindLogger() *zap.Logger {
-	return logutil.BgLogger().With(zap.String("category", "sql-bind"))
+var longTests = map[string][]string{
+	"pkg/ttl/ttlworker": {
+		"TestParallelLockNewJob",
+		"TestParallelLockNewTask",
+		"TestJobManagerWithFault",
+	},
 }
+
+var longTestWorkerCount = 2

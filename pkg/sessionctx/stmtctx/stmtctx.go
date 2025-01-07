@@ -245,6 +245,8 @@ type StatementContext struct {
 	PrevLastInsertID uint64
 	// LastInsertID is the auto-generated ID in the current statement.
 	LastInsertID uint64
+	// LastInsertIDSet is true if the LastInsertId was set
+	LastInsertIDSet bool
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
@@ -434,6 +436,9 @@ type StatementContext struct {
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
+
+	// OperatorNum is used to record the number of operators in the current logical plan.
+	OperatorNum uint64
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

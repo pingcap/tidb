@@ -92,7 +92,6 @@ go_library(
     deps = [
         "//br/pkg/storage",
         "//pkg/bindinfo",
-        "//pkg/bindinfo/norm",
         "//pkg/config",
         "//pkg/distsql",
         "//pkg/domain",
@@ -115,7 +114,6 @@ go_library(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/parser/terror",
@@ -282,7 +280,6 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner",

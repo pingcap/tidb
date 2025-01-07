@@ -21,6 +21,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	litstorage "github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -189,7 +190,19 @@ func (m *Manager) handleTasksLoop() {
 	}
 }
 
+// we handle tasks by their rank which is defined by Task.Compare.
+// Manager will make sure tasks with high ranking are run before tasks with low ranking,
+// when there are not enough slots, we might preempt the tasks with low ranking,
+// i.e. to cancel their task executor directly, so it's possible some subtask of
+// those tasks are half done, they have to rerun when the task is scheduled again.
+// when there is no enough slots to run a task even after considers preemption,
+// tasks with low ranking can run.
 func (m *Manager) handleTasks() {
+	// we don't query task in 'modifying' state, if it's prev-state is 'pending'
+	// or 'paused', then they are not executable, if it's 'running', it should be
+	// queried out soon as 'modifying' is a fast process.
+	// it's possible that after we create task executor for a 'running' task, it
+	// enters 'modifying', as slots are allocated already, that's ok.
 	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)
@@ -225,15 +238,25 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.TaskBase)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower rank if current task is waiting tasks free.
+			m.logger.Info("need to preempt tasks of low ranking", zap.Stringer("task", task.TaskBase),
+				zap.Stringers("preemptedTasks", tasksNeedFree))
+			// do not handle the tasks with low ranking if current task is waiting
+			// other tasks to free slots to make sure the order of running.
 			break
 		}
 
 		if !canAlloc {
+			// try to run tasks of low ranking
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.startTaskExecutor(task.TaskBase)
+		failpoint.InjectCall("beforeCallStartTaskExecutor", task.TaskBase)
+		if !m.startTaskExecutor(task.TaskBase) {
+			// we break to make sure the order of running.
+			// it's possible some other low ranking tasks alloc more slots at
+			// runtime, in this case we should try preempt them in next iteration.
+			break
+		}
 	}
 }
 
@@ -294,7 +317,7 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		m.logger.Info("cancelTasks", zap.Int64("task-id", task.ID))
+		m.logger.Info("cancel task executor", zap.Int64("task-id", task.ID))
 		if executor, ok := m.mu.taskExecutors[task.ID]; ok {
 			executor.Cancel()
 		}
@@ -302,31 +325,47 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.TaskBase) {
 }
 
 // startTaskExecutor handles a runnable task.
-func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
+func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) (executorStarted bool) {
 	// TODO: remove it when we can create task executor with task base.
 	task, err := m.taskTable.GetTaskByID(m.ctx, taskBase.ID)
 	if err != nil {
 		m.logger.Error("get task failed", zap.Int64("task-id", taskBase.ID), zap.Error(err))
-		return
+		return false
 	}
-	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
+	if !m.slotManager.alloc(&task.TaskBase) {
+		m.logger.Info("alloc slots failed, maybe other task executor alloc more slots at runtime",
+			zap.Int64("task-id", taskBase.ID), zap.Int("concurrency", taskBase.Concurrency),
+			zap.Int("remaining-slots", m.slotManager.availableSlots()))
+		return false
+	}
+	defer func() {
+		// free the slot if executor not started.
+		if !executorStarted {
+			m.slotManager.free(task.ID)
+		}
+	}()
+
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
 		m.failSubtask(err, task.ID, nil)
-		return
+		return false
 	}
-	executor := factory(m.ctx, m.id, task, m.taskTable)
+	executor := factory(m.ctx, task, Param{
+		taskTable: m.taskTable,
+		slotMgr:   m.slotManager,
+		nodeRc:    m.getNodeResource(),
+		execID:    m.id,
+	})
 	err = executor.Init(m.ctx)
 	if err != nil {
 		m.failSubtask(err, task.ID, executor)
-		return
+		return false
 	}
 	m.addTaskExecutor(executor)
-	m.slotManager.alloc(&task.TaskBase)
-	resource := m.getStepResource(task.Concurrency)
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID),
-		zap.Stringer("type", task.Type), zap.Int("remaining-slots", m.slotManager.availableSlots()))
+		zap.Stringer("type", task.Type), zap.Int("concurrency", task.Concurrency),
+		zap.Int("remaining-slots", m.slotManager.availableSlots()))
 	m.executorWG.RunWithLog(func() {
 		defer func() {
 			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID),
@@ -335,16 +374,13 @@ func (m *Manager) startTaskExecutor(taskBase *proto.TaskBase) {
 			m.delTaskExecutor(executor)
 			executor.Close()
 		}()
-		executor.Run(resource)
+		executor.Run()
 	})
+	return true
 }
 
-func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
-	return &proto.StepResource{
-		CPU: proto.NewAllocatable(int64(concurrency)),
-		// same proportion as CPU
-		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(m.totalCPU) * float64(m.totalMem))),
-	}
+func (m *Manager) getNodeResource() *NodeResource {
+	return NewNodeResource(m.totalCPU, m.totalMem)
 }
 
 func (m *Manager) addTaskExecutor(executor TaskExecutor) {
@@ -398,4 +434,28 @@ func (m *Manager) runWithRetry(fn func() error, msg string) error {
 		m.logger.Warn(msg, zap.Error(err1))
 	}
 	return err1
+}
+
+// NodeResource is the resource of the node.
+// exported for test.
+type NodeResource struct {
+	totalCPU int
+	totalMem int64
+}
+
+// NewNodeResource creates a new NodeResource.
+// exported for test.
+func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
+	return &NodeResource{
+		totalCPU: totalCPU,
+		totalMem: totalMem,
+	}
+}
+
+func (nr *NodeResource) getStepResource(concurrency int) *proto.StepResource {
+	return &proto.StepResource{
+		CPU: proto.NewAllocatable(int64(concurrency)),
+		// same proportion as CPU
+		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(nr.totalCPU) * float64(nr.totalMem))),
+	}
 }

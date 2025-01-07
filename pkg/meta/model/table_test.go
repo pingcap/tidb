@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
@@ -62,7 +62,7 @@ func TestMoveColumnInfo(t *testing.T) {
 
 	tbl := &TableInfo{
 		ID:      1,
-		Name:    model.NewCIStr("t"),
+		Name:    ast.NewCIStr("t"),
 		Columns: []*ColumnInfo{c0, c1, c2, c3, c4},
 		Indices: []*IndexInfo{i0, i1, i2, i3, i4},
 	}
@@ -89,7 +89,7 @@ func TestMoveColumnInfo(t *testing.T) {
 func TestModelBasic(t *testing.T) {
 	column := &ColumnInfo{
 		ID:           1,
-		Name:         model.NewCIStr("c"),
+		Name:         ast.NewCIStr("c"),
 		Offset:       0,
 		DefaultValue: 0,
 		FieldType:    *types.NewFieldType(0),
@@ -98,11 +98,11 @@ func TestModelBasic(t *testing.T) {
 	column.AddFlag(mysql.PriKeyFlag)
 
 	index := &IndexInfo{
-		Name:  model.NewCIStr("key"),
-		Table: model.NewCIStr("t"),
+		Name:  ast.NewCIStr("key"),
+		Table: ast.NewCIStr("t"),
 		Columns: []*IndexColumn{
 			{
-				Name:   model.NewCIStr("c"),
+				Name:   ast.NewCIStr("c"),
 				Offset: 0,
 				Length: 10,
 			}},
@@ -111,8 +111,8 @@ func TestModelBasic(t *testing.T) {
 	}
 
 	fk := &FKInfo{
-		RefCols: []model.CIStr{model.NewCIStr("a")},
-		Cols:    []model.CIStr{model.NewCIStr("a")},
+		RefCols: []ast.CIStr{ast.NewCIStr("a")},
+		Cols:    []ast.CIStr{ast.NewCIStr("a")},
 	}
 
 	seq := &SequenceInfo{
@@ -123,7 +123,7 @@ func TestModelBasic(t *testing.T) {
 
 	table := &TableInfo{
 		ID:          1,
-		Name:        model.NewCIStr("t"),
+		Name:        ast.NewCIStr("t"),
 		Charset:     "utf8",
 		Collate:     "utf8_bin",
 		Columns:     []*ColumnInfo{column},
@@ -134,13 +134,13 @@ func TestModelBasic(t *testing.T) {
 
 	table2 := &TableInfo{
 		ID:       2,
-		Name:     model.NewCIStr("s"),
+		Name:     ast.NewCIStr("s"),
 		Sequence: seq,
 	}
 
 	dbInfo := &DBInfo{
 		ID:      1,
-		Name:    model.NewCIStr("test"),
+		Name:    ast.NewCIStr("test"),
 		Charset: "utf8",
 		Collate: "utf8_bin",
 	}
@@ -150,15 +150,15 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, dbInfo, n)
 
 	pkName := table.GetPkName()
-	require.Equal(t, model.NewCIStr("c"), pkName)
+	require.Equal(t, ast.NewCIStr("c"), pkName)
 	newColumn := table.GetPkColInfo()
 	require.Equal(t, true, newColumn.Hidden)
 	require.Equal(t, column, newColumn)
 	inIdx := table.ColumnIsInIndex(column)
 	require.Equal(t, true, inIdx)
-	tp := model.IndexTypeBtree
+	tp := ast.IndexTypeBtree
 	require.Equal(t, "BTREE", tp.String())
-	tp = model.IndexTypeHash
+	tp = ast.IndexTypeHash
 	require.Equal(t, "HASH", tp.String())
 	tp = 1e5
 	require.Equal(t, "", tp.String())
@@ -171,11 +171,11 @@ func TestModelBasic(t *testing.T) {
 	// Corner cases
 	column.ToggleFlag(mysql.PriKeyFlag)
 	pkName = table.GetPkName()
-	require.Equal(t, model.NewCIStr(""), pkName)
+	require.Equal(t, ast.NewCIStr(""), pkName)
 	newColumn = table.GetPkColInfo()
 	require.Nil(t, newColumn)
 	anCol := &ColumnInfo{
-		Name: model.NewCIStr("d"),
+		Name: ast.NewCIStr("d"),
 	}
 	exIdx := table.ColumnIsInIndex(anCol)
 	require.Equal(t, false, exIdx)
@@ -193,14 +193,14 @@ func TestModelBasic(t *testing.T) {
 
 func TestTTLInfoClone(t *testing.T) {
 	ttlInfo := &TTLInfo{
-		ColumnName:       model.NewCIStr("test"),
+		ColumnName:       ast.NewCIStr("test"),
 		IntervalExprStr:  "test_expr",
 		IntervalTimeUnit: 5,
 		Enable:           true,
 	}
 
 	clonedTTLInfo := ttlInfo.Clone()
-	clonedTTLInfo.ColumnName = model.NewCIStr("test_2")
+	clonedTTLInfo.ColumnName = ast.NewCIStr("test_2")
 	clonedTTLInfo.IntervalExprStr = "test_expr_2"
 	clonedTTLInfo.IntervalTimeUnit = 9
 	clonedTTLInfo.Enable = false
@@ -226,12 +226,12 @@ func TestTTLJobInterval(t *testing.T) {
 
 func TestClearReorgIntermediateInfo(t *testing.T) {
 	ptInfo := &PartitionInfo{}
-	ptInfo.DDLType = model.PartitionTypeHash
+	ptInfo.DDLType = ast.PartitionTypeHash
 	ptInfo.DDLExpr = "Test DDL Expr"
 	ptInfo.NewTableID = 1111
 
 	ptInfo.ClearReorgIntermediateInfo()
-	require.Equal(t, model.PartitionTypeNone, ptInfo.DDLType)
+	require.Equal(t, ast.PartitionTypeNone, ptInfo.DDLType)
 	require.Equal(t, "", ptInfo.DDLExpr)
 	require.Equal(t, true, ptInfo.DDLColumns == nil)
 	require.Equal(t, int64(0), ptInfo.NewTableID)

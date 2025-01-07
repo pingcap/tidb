@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -75,6 +76,7 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
 		return err

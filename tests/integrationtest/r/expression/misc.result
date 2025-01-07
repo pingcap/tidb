@@ -119,8 +119,7 @@ OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR 
 OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
 OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
 OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
-OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
-OR Variable_name = 'license' OR Variable_name = 'init_connect';
+OR Variable_name = 'sql_mode' OR Variable_name = 'license' OR Variable_name = 'init_connect';
 Variable_name	Value
 character_set_client	utf8mb4
 character_set_connection	utf8mb4
@@ -133,8 +132,6 @@ lower_case_table_names	2
 max_allowed_packet	67108864
 net_buffer_length	16384
 net_write_timeout	60
-query_cache_size	1048576
-query_cache_type	OFF
 sql_mode	ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
 system_time_zone	Asia/Shanghai
 time_zone	Asia/Shanghai
@@ -257,12 +254,32 @@ innodb_default_row_format	dynamic
 SHOW VARIABLES LIKE 'character_set_server';
 Variable_name	Value
 character_set_server	utf8mb4
+SHOW VARIABLES LIKE 'innodb_additional_mem_pool_size';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_checksums';
+Variable_name	Value
 SHOW VARIABLES LIKE 'innodb_file_format';
 Variable_name	Value
-innodb_file_format	Barracuda
+SHOW VARIABLES LIKE 'innodb_file_format_check';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_file_format_max';
+Variable_name	Value
 SHOW VARIABLES LIKE 'innodb_large_prefix';
 Variable_name	Value
-innodb_large_prefix	ON
+SHOW VARIABLES LIKE 'innodb_locks_unsafe_for_binlog';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_log_checksum_algorithm';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_mirrored_log_groups';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_stats_sample_pages';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_support_xa';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_undo_logs';
+Variable_name	Value
+SHOW VARIABLES LIKE 'innodb_use_sys_malloc';
+Variable_name	Value
 drop table if exists t;
 create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";

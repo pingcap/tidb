@@ -14792,7 +14792,7 @@
             },
             {
               "editorMode": "code",
-              "expr": "rate(tidb_ddl_handle_job_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]) / rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])",
+              "expr": "sum(rate(tidb_ddl_handle_job_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type) / sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (type)",
               "hide": false,
               "legendFormat": "{{type}} -avg",
               "range": true,

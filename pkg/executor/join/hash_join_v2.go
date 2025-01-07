@@ -58,14 +58,6 @@ var (
 	HashJoinV2Strings = []string{DisableHashJoinV2, EnableHashJoinV2}
 )
 
-// IsHashJoinV2Supported return true if hash join v2 is supported in current env
-func IsHashJoinV2Supported() bool {
-	// sizeOfUintptr should always equal to sizeOfUnsafePointer, because according to golang's doc,
-	// a Pointer can be converted to an uintptr. Add this check here in case in the future go runtime
-	// change this
-	return !heapObjectsCanMove() && sizeOfUintptr >= sizeOfUnsafePointer
-}
-
 type hashTableContext struct {
 	// rowTables is used during split partition stage, each buildWorker has
 	// its own rowTable

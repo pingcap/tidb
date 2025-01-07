@@ -130,11 +130,12 @@ Projection	10000.00	root		eq(explain_easy.t1.c2, explain_easy.t2.c2)->Column#11
 └─Apply	10000.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	10000.00	root		data:TableFullScan
   │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	10000.00	root		explain_easy.t2.c1, explain_easy.t2.c2
-    └─IndexLookUp	10000.00	root		limit embedded(offset:0, count:1)
-      ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
-      │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(explain_easy.t1.c1, explain_easy.t2.c1)], keep order:true, stats:pseudo
-      └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection(Probe)	10000.00	root		explain_easy.t2.c2
+    └─Projection	10000.00	root		explain_easy.t2.c1, explain_easy.t2.c2
+      └─IndexLookUp	10000.00	root		limit embedded(offset:0, count:1)
+        ├─Limit(Build)	10000.00	cop[tikv]		offset:0, count:1
+        │ └─IndexRangeScan	10000.00	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(explain_easy.t1.c1, explain_easy.t2.c1)], keep order:true, stats:pseudo
+        └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'brief' select * from t1 order by c1 desc limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1

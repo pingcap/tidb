@@ -15,6 +15,8 @@
 package memo
 
 import (
+	"unsafe"
+
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -146,6 +148,23 @@ func (e *GroupExpression) SetAbandoned() {
 	e.abandoned = true
 }
 
+// mergeTo will migrate the src GE state to dst GE and remove src GE from its group.
+func (e *GroupExpression) mergeTo(target *GroupExpression) {
+	e.GetGroup().Delete(e)
+	// rule mask | OR
+	target.mask.InPlaceUnion(e.mask)
+	// clear parentGE refs work
+	for _, childG := range e.Inputs {
+		childG.removeParentGEs(e)
+	}
+	e.Inputs = e.Inputs[:0]
+	e.group = nil
+}
+
+func (e *GroupExpression) addr() unsafe.Pointer {
+	return unsafe.Pointer(e)
+}
+
 // DeriveLogicalProp derive the new group's logical property from a specific GE.
 // DeriveLogicalProp is not called with recursive, because we only examine and
 // init new group from bottom-up, so we can sure that this new group's children
@@ -167,19 +186,18 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	//  todo: functional dependency
 	tmpSchema := e.LogicalPlan.Schema()
 	tmpStats := e.LogicalPlan.StatsInfo()
-	// only for those new created logical op from XForm, we should rebuild their stats;
-	// in memo init phase, all logical ops has maintained their stats already, just use them.
-	if tmpStats == nil {
-		skipDeriveStats := false
-		failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
-			skipDeriveStats = val.(bool)
-		})
-		if !skipDeriveStats {
-			// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
-			tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema, nil)
-			if err != nil {
-				return err
-			}
+	// the leaves node may have already had their stats in join reorder est phase, while
+	// their group ndv signal is passed in CollectPredicateColumnsPoint which is applied
+	// behind join reorder rule, we should build their group ndv again (implied in DeriveStats).
+	skipDeriveStats := false
+	failpoint.Inject("MockPlanSkipMemoDeriveStats", func(val failpoint.Value) {
+		skipDeriveStats = val.(bool)
+	})
+	if !skipDeriveStats {
+		// here can only derive the basic stats from bottom up, we can't pass any colGroups required by parents.
+		tmpStats, err = e.LogicalPlan.DeriveStats(childStats, tmpSchema, childSchema)
+		if err != nil {
+			return err
 		}
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema

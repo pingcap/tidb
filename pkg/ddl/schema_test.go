@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -81,7 +81,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 // testTableInfo creates a test table with num int columns and with no index.
 func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, error) {
 	tblInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 	genIDs, err := genGlobalIDs(store, 1)
 
@@ -93,7 +93,7 @@ func testTableInfo(store kv.Storage, name string, num int) (*model.TableInfo, er
 	cols := make([]*model.ColumnInfo, num)
 	for i := range cols {
 		col := &model.ColumnInfo{
-			Name:         pmodel.NewCIStr(fmt.Sprintf("c%d", i+1)),
+			Name:         ast.NewCIStr(fmt.Sprintf("c%d", i+1)),
 			Offset:       i,
 			DefaultValue: i + 1,
 			State:        model.StatePublic,
@@ -124,7 +124,7 @@ func genGlobalIDs(store kv.Storage, count int) ([]int64, error) {
 
 func testSchemaInfo(store kv.Storage, name string) (*model.DBInfo, error) {
 	dbInfo := &model.DBInfo{
-		Name: pmodel.NewCIStr(name),
+		Name: ast.NewCIStr(name),
 	}
 
 	genIDs, err := genGlobalIDs(store, 1)
