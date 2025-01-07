@@ -997,8 +997,9 @@ func (m *dupeDetector) processRemoteDupTask(
 			}
 			return nil
 		}
-		if log.IsContextCanceledError(err) {
-			return errors.Trace(err)
+		if err2 := ctx.Err(); err2 != nil {
+			// stop retry when user cancel the context
+			return errors.Trace(err2)
 		}
 		if !madeProgress {
 			_, isRegionErr := errors.Cause(err).(regionError)

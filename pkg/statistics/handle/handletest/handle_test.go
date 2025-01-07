@@ -232,17 +232,9 @@ func TestLoadHist(t *testing.T) {
 	newStatsTbl := h.GetTableStats(tableInfo)
 	// The stats table is updated.
 	require.False(t, oldStatsTbl == newStatsTbl)
-	// Only the TotColSize of histograms is updated.
+	// TotColSize of histograms is not changed.
 	oldStatsTbl.ForEachColumnImmutable(func(id int64, hist *statistics.Column) bool {
-		require.Less(t, hist.TotColSize, newStatsTbl.GetCol(id).TotColSize)
-
-		temp := hist.TotColSize
-		hist.TotColSize = newStatsTbl.GetCol(id).TotColSize
-		require.True(t, statistics.HistogramEqual(&hist.Histogram, &newStatsTbl.GetCol(id).Histogram, false))
-		hist.TotColSize = temp
-
-		require.True(t, hist.CMSketch.Equal(newStatsTbl.GetCol(id).CMSketch))
-		require.Equal(t, newStatsTbl.GetCol(id).Info, hist.Info)
+		require.Equal(t, hist.TotColSize, newStatsTbl.GetCol(id).TotColSize)
 		return false
 	})
 	// Add column c3, we only update c3.
@@ -1149,6 +1141,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	h := do.StatsHandle()
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
+	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("insert into t values(1, 2)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")

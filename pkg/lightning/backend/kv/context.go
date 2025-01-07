@@ -15,9 +15,7 @@
 package kv
 
 import (
-	"maps"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -119,11 +117,6 @@ type litTableMutateContext struct {
 	reservedRowIDAlloc    stmtctx.ReservedRowIDAlloc
 	enableMutationChecker bool
 	assertionLevel        variable.AssertionLevel
-	tableDelta            struct {
-		sync.Mutex
-		// tblID -> (colID -> deltaSize)
-		m map[int64]map[int64]int64
-	}
 }
 
 // AlternativeAllocators implements the `table.MutateContext` interface.
@@ -185,25 +178,9 @@ func (ctx *litTableMutateContext) GetStatisticsSupport() (tblctx.StatisticsSuppo
 }
 
 // UpdatePhysicalTableDelta implements the `table.StatisticsSupport` interface.
-func (ctx *litTableMutateContext) UpdatePhysicalTableDelta(
-	physicalTableID int64, _ int64,
-	_ int64, cols variable.DeltaCols,
+func (*litTableMutateContext) UpdatePhysicalTableDelta(
+	_, _, _ int64,
 ) {
-	ctx.tableDelta.Lock()
-	defer ctx.tableDelta.Unlock()
-	if ctx.tableDelta.m == nil {
-		ctx.tableDelta.m = make(map[int64]map[int64]int64)
-	}
-	tableMap := ctx.tableDelta.m
-	colSize := tableMap[physicalTableID]
-	tableMap[physicalTableID] = cols.UpdateColSizeMap(colSize)
-}
-
-// GetColumnSize returns the colum size map (colID -> deltaSize) for the given table ID.
-func (ctx *litTableMutateContext) GetColumnSize(tblID int64) (ret map[int64]int64) {
-	ctx.tableDelta.Lock()
-	defer ctx.tableDelta.Unlock()
-	return maps.Clone(ctx.tableDelta.m[tblID])
 }
 
 // GetCachedTableSupport implements the `table.MutateContext` interface.
