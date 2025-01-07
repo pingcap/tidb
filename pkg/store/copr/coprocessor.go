@@ -733,7 +733,6 @@ type liteCopIteratorWorker struct {
 	// ctx contains some info(such as rpc interceptor(WithSQLKvExecCounterInterceptor)), it is used for handle cop task later.
 	ctx              context.Context
 	worker           *copIteratorWorker
-	respCh           chan *copResponse
 	batchCopRespList []*copResponse
 	tryCopLiteWorker *atomic2.Uint32
 }
@@ -1110,13 +1109,21 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
-		var err error
-		resp, err = it.liteWorker.liteHandleTakes(ctx, it)
-		if err != nil || resp == nil {
+		resp = it.liteWorker.liteSendReq(ctx, it)
+		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
+		it.liteWorker.tryCopLiteWorker.Store(0)
+		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 {
+			// if there are remain tasks to be processed, we need to run worker concurrently to avoid blocking.
+			// see more detail in https://github.com/pingcap/tidb/issues/58658 and TestDMLWithLiteCopWorker.
+			it.liteWorker.runWorkerConcurrently(it)
+			it.liteWorker = nil
+		}
+		if resp == nil {
 			it.actionOnExceed.close()
-			return nil, err
+			return nil, nil
 		}
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
+		memTrackerConsumeResp(it.memTracker, resp)
 	} else if it.respChan != nil {
 		// Get next fetched resp from chan
 		resp, ok, closed = it.recvFromRespCh(ctx, it.respChan)
@@ -1166,7 +1173,7 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	return resp, nil
 }
 
-func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIterator) (resp *copResponse, err error) {
+func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator) (resp *copResponse) {
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -1177,75 +1184,59 @@ func (w *liteCopIteratorWorker) liteHandleTakes(ctx context.Context, it *copIter
 		}
 	}()
 
+	worker := w.worker
 	if len(w.batchCopRespList) > 0 {
 		resp = w.batchCopRespList[0]
 		w.batchCopRespList = w.batchCopRespList[1:]
-		memTrackerConsumeResp(it.memTracker, resp)
-		return resp, nil
+		return resp
 	}
-	if len(it.tasks) == 0 {
-		return nil, nil
-	}
-	if w.respCh == nil {
-		resp, err = w.liteSendReq(it)
+	backoffermap := make(map[uint64]*Backoffer)
+	for len(it.tasks) > 0 {
+		curTask := it.tasks[0]
+		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
-			w.worker.checkRespOOM(resp)
-			return resp, nil
+			worker.checkRespOOM(resp)
+			return resp
 		}
-		if len(it.tasks) > 0 {
-			w.respCh = make(chan *copResponse, 2)
-			go w.sendRemainTasks(it.tasks)
+
+		if result != nil && len(result.remains) > 0 {
+			it.tasks = append(result.remains, it.tasks[1:]...)
+		} else {
+			it.tasks = it.tasks[1:]
 		}
-		memTrackerConsumeResp(it.memTracker, resp)
-		return resp, nil
+		if result != nil {
+			if result.resp != nil {
+				w.batchCopRespList = result.batchRespList
+				return result.resp
+			}
+			if len(result.batchRespList) > 0 {
+				resp = result.batchRespList[0]
+				w.batchCopRespList = result.batchRespList[1:]
+				return resp
+			}
+		}
 	}
-	resp, ok, closed := it.recvFromRespCh(ctx, w.respCh)
-	if !ok || closed {
-		it.actionOnExceed.close()
-		return nil, errors.Trace(ctx.Err())
-	}
-	return resp, nil
+	return nil
 }
 
-func (w *liteCopIteratorWorker) liteSendReq(it *copIterator) (resp *copResponse, err error) {
-	worker := w.worker
-	curTask := it.tasks[0]
-	backoffermap := make(map[uint64]*Backoffer)
-	bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
-	result, err := worker.handleTaskOnce(bo, curTask)
-	if err != nil {
-		return nil, err
-	}
+func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	taskCh := make(chan *copTask, 1)
+	worker := it.liteWorker.worker
+	worker.taskCh = taskCh
+	it.wg.Add(1)
+	go worker.run(it.liteWorker.ctx)
 
-	if result != nil && len(result.remains) > 0 {
-		it.tasks = append(result.remains, it.tasks[1:]...)
-	} else {
-		it.tasks = it.tasks[1:]
+	taskSender := &copIteratorTaskSender{
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
+		sendRate: it.sendRate,
 	}
-	if len(it.tasks) == 0 {
-		// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-		w.tryCopLiteWorker.Store(0)
-	}
-	if result != nil {
-		if result.resp != nil {
-			w.batchCopRespList = result.batchRespList
-			return result.resp, nil
-		}
-		if len(result.batchRespList) > 0 {
-			resp = result.batchRespList[0]
-			w.batchCopRespList = result.batchRespList[1:]
-			return resp, nil
-		}
-	}
-	return nil, nil
-}
-
-func (w *liteCopIteratorWorker) sendRemainTasks(tasks []*copTask) {
-	for i := range tasks {
-		w.worker.handleTask(w.ctx, tasks[i], w.respCh)
-	}
-	close(w.respCh)
+	taskSender.respChan = it.respChan
+	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
