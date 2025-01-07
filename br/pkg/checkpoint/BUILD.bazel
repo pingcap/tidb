@@ -43,12 +43,15 @@ go_library(
 go_test(
     name = "checkpoint_test",
     timeout = "short",
-    srcs = ["checkpoint_test.go"],
+    srcs = [
+        "checkpoint_test.go",
+        "name_test.go",
+    ],
+    embed = [":checkpoint"],
     flaky = True,
     race = "on",
     shard_count = 9,
     deps = [
-        ":checkpoint",
         "//br/pkg/gluetidb",
         "//br/pkg/pdutil",
         "//br/pkg/storage",
