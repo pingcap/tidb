@@ -84,6 +84,7 @@ type Table struct {
 
 // ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+// We use this map to decide the stats status of a column/index. So it should be fully initialized before we check whether a column/index is analyzed or not.
 type ColAndIdxExistenceMap struct {
 	checked     bool
 	colAnalyzed map[int64]bool
@@ -125,6 +126,16 @@ func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	}
 	analyzed, ok := m.colAnalyzed[id]
 	return ok && analyzed
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.idxAnalyzed[id]
+		return ok
+	}
+	_, ok := m.colAnalyzed[id]
+	return ok
 }
 
 // InsertCol inserts a column with its meta into the map.
@@ -819,16 +830,18 @@ func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool
 	if t.Pseudo {
 		return nil, false, false
 	}
-	// when we use non-lite init stats, it cannot init the stats for common columns.
-	// so we need to force to load the stats.
+	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 	col, ok := t.columns[id]
 	if !ok {
-		return nil, true, true
+		// If The column have no stats object in memory. We need to check it by existence map.
+		// If existence map says it even has no unitialized record in storage, we don't need to do anything. => Has=false, HasAnalyzed=false
+		// If existence map says it has analyzed stats, we need to load it from storage. => Has=true, HasAnalyzed=true
+		// If existence map says it has no analyzed stats but have a uninitialized record in storage, we need to also create a fake object. => Has=true, HasAnalyzed=false
+		return nil, t.ColAndIdxExistenceMap.Has(id, false), hasAnalyzed
 	}
-	hasAnalyzed := t.ColAndIdxExistenceMap.HasAnalyzed(id, false)
 
 	// If it's not analyzed yet.
-	// The real check condition: !ok && !hashAnalyzed.
+	// The real check condition: !ok && !hashAnalyzed.(Has must be true since we've have the memory object so we should have the storage object)
 	// After this check, we will always have ok && hasAnalyzed.
 	if !hasAnalyzed {
 		return nil, false, false

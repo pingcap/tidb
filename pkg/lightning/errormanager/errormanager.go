@@ -52,17 +52,18 @@ const (
 		CREATE SCHEMA IF NOT EXISTS %s;
 	`
 
-	syntaxErrorTableName = "syntax_error_v1"
-	typeErrorTableName   = "type_error_v1"
+	syntaxErrorTableName = "syntax_error_v2"
+	typeErrorTableName   = "type_error_v2"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName = "conflict_error_v3"
+	ConflictErrorTableName = "conflict_error_v4"
 	// DupRecordTableName is the table name to record duplicate data that displayed to user.
-	DupRecordTableName = "conflict_records"
+	DupRecordTableName = "conflict_records_v2"
 	// ConflictViewName is the view name for presenting the union information of ConflictErrorTable and DupRecordTable.
 	ConflictViewName = "conflict_view"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
+			id 	    	bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -75,6 +76,7 @@ const (
 
 	createTypeErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + typeErrorTableName + ` (
+			id		    bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -87,6 +89,7 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -107,6 +110,7 @@ const (
 
 	createDupRecordTableName = `
 		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -166,17 +170,17 @@ const (
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle
+		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, raw_value
+		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type <> 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `

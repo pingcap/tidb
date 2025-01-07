@@ -20,6 +20,7 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -122,6 +123,9 @@ type Data struct {
 	//     TTLInfo, TiFlashReplica
 	// PlacementPolicyRef, Partition might be added later, and also ForeignKeys, TableLock etc
 	tableInfoResident *btree.BTreeG[tableInfoItem]
+
+	// the minimum ts of the recent used infoschema
+	recentMinTS atomic.Uint64
 }
 
 type tableInfoItem struct {
@@ -608,6 +612,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return
 	}
 
+	is.keepAlive()
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
 		return nil, false
@@ -769,8 +774,8 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
+	is.keepAlive()
 	start := time.Now()
-
 	var h tableByNameHelper
 	h.end = tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}
 	h.schemaVersion = is.infoSchema.schemaMetaVersion
@@ -819,6 +824,22 @@ func (is *infoschemaV2) TableInfoByID(id int64) (*model.TableInfo, bool) {
 	return getTableInfo(tbl), ok
 }
 
+// keepAlive prevents the "GC life time is shorter than transaction duration" error on infoschema v2.
+// It works by collecting the min TS of the during infoschem v2 API calls, and
+// reports the min TS to info.InfoSyncer.
+func (is *infoschemaV2) keepAlive() {
+	for {
+		v := is.Data.recentMinTS.Load()
+		if v <= is.ts {
+			break
+		}
+		succ := is.Data.recentMinTS.CompareAndSwap(v, is.ts)
+		if succ {
+			break
+		}
+	}
+}
+
 // SchemaTableInfos implements MetaOnlyInfoSchema.
 func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
@@ -834,6 +855,7 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CISt
 		return nil, nil // something wrong?
 	}
 
+	is.keepAlive()
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {

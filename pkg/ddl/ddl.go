@@ -588,18 +588,26 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 		return nil
 	}
 
-	ch := jobCtx.oldDDLCtx.ddlEventCh
-	if ch != nil {
-	forLoop:
-		for i := 0; i < 10; i++ {
-			select {
-			case ch <- e:
-				break forLoop
-			default:
-				time.Sleep(time.Microsecond * 10)
+	// In test environments, we use a channel-based approach to handle DDL events.
+	// This maintains compatibility with existing test cases that expect events to be delivered through channels.
+	// In production, DDL events are handled by the notifier system instead.
+	if intest.InTest {
+		ch := jobCtx.oldDDLCtx.ddlEventCh
+		if ch != nil {
+		forLoop:
+			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
+			// Since most unit tests don't consume events, we make a few attempts and then give up rather
+			// than blocking the DDL job forever on a full channel.
+			for i := 0; i < 10; i++ {
+				select {
+				case ch <- e:
+					break forLoop
+				default:
+					time.Sleep(time.Microsecond * 10)
+				}
 			}
+			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 		}
-		logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 	}
 
 	intest.Assert(jobCtx.eventPublishStore != nil, "eventPublishStore should not be nil")
@@ -1005,6 +1013,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	failpoint.InjectCall("afterDDLCloseCancel")
 	d.wg.Wait()
 	// when run with real-tikv, the lifecycle of ownerManager is managed by globalOwnerManager,
 	// when run with uni-store BreakCampaignLoop is same as Close.
