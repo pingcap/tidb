@@ -436,12 +436,7 @@ func (s *jobScheduler) loadAndDeliverJobs(se *sess.Session) error {
 			continue
 		}
 
-<<<<<<< HEAD
-		s.deliveryJob(wk, targetPool, &job)
-
-=======
 		s.deliveryJob(wk, targetPool, model.NewJobW(&job, jobBinary))
->>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495))
 		if s.generalDDLWorkerPool.available() == 0 && s.reorgWorkerPool.available() == 0 {
 			break
 		}
@@ -555,13 +550,8 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *model.TraceInfo) *jo
 
 // transitOneJobStepAndWaitSync runs one step of the DDL job, persist it and
 // waits for other TiDB node to synchronize.
-<<<<<<< HEAD
-func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, job *model.Job) error {
-	failpoint.InjectCall("beforeRunOneJobStep")
-=======
 func (s *jobScheduler) transitOneJobStepAndWaitSync(wk *worker, jobCtx *jobContext, jobW *model.JobW) error {
-	failpoint.InjectCall("beforeTransitOneJobStepAndWaitSync")
->>>>>>> 46aa33bb9d2 (ddl: fix job state overridden when concurrent updates don't overlap in time range (#58495))
+	failpoint.InjectCall("beforeRunOneJobStep")
 	ownerID := s.ownerManager.ID()
 	// suppose we failed to sync version last time, we need to check and sync it
 	// before run to maintain the 2-version invariant.
