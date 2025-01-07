@@ -30,10 +30,10 @@ type Cascades struct {
 }
 
 // NewCascades return a new cascades obj for logical alternative searching.
-func NewCascades(ctx base2.PlanContext, lp base2.LogicalPlan) (*Cascades, error) {
+func NewCascades(lp base2.LogicalPlan) (*Cascades, error) {
 	cas := &Cascades{
 		logic: lp,
-		ctx:   NewContext(ctx),
+		ctx:   NewContext(lp.SCtx()),
 	}
 	ge, err := cas.ctx.GetMemo().Init(lp)
 	intest.Assert(err == nil)
@@ -46,13 +46,18 @@ func NewCascades(ctx base2.PlanContext, lp base2.LogicalPlan) (*Cascades, error)
 }
 
 // Execute run the yams search flow inside, returns error if it happened.
-func (y *Cascades) Execute() error {
-	return y.ctx.GetScheduler().ExecuteTasks()
+func (c *Cascades) Execute() error {
+	return c.ctx.GetScheduler().ExecuteTasks()
 }
 
 // Destroy clean and reset basic elements inside.
-func (y *Cascades) Destroy() {
-	y.ctx.Destroy()
+func (c *Cascades) Destroy() {
+	c.ctx.Destroy()
+}
+
+// GetMemo returns the memo structure inside cascades.
+func (c *Cascades) GetMemo() *memo.Memo {
+	return c.ctx.GetMemo()
 }
 
 // Context includes all the context stuff when go through memo optimizing.
@@ -69,32 +74,32 @@ type Context struct {
 func NewContext(pctx base2.PlanContext) *Context {
 	return &Context{
 		pctx: pctx,
-		// memo pool management.
-		mm: memo.NewMemo(),
+		// memo init with capacity.
+		mm: memo.NewMemo(pctx.GetSessionVars().StmtCtx.OperatorNum),
 		// task pool management.
 		scheduler: task.NewSimpleTaskScheduler(),
 	}
 }
 
 // Destroy the memo context, which will clean the resource allocated during this phase.
-func (m *Context) Destroy() {
+func (c *Context) Destroy() {
 	// when a memo optimizing phase is done for a session,
 	// we should put the stack and memo back to the pool management for reuse.
-	m.mm.Destroy()
-	m.scheduler.Destroy()
+	c.mm.Destroy()
+	c.scheduler.Destroy()
 }
 
 // GetScheduler return the stack inside this memo context.
-func (mc *Context) GetScheduler() base.Scheduler {
-	return mc.scheduler
+func (c *Context) GetScheduler() base.Scheduler {
+	return c.scheduler
 }
 
 // PushTask puts a task into the stack structure inside.
-func (mc *Context) PushTask(task base.Task) {
-	mc.scheduler.PushTask(task)
+func (c *Context) PushTask(task base.Task) {
+	c.scheduler.PushTask(task)
 }
 
 // GetMemo returns the basic memo structure.
-func (mc *Context) GetMemo() *memo.Memo {
-	return mc.mm
+func (c *Context) GetMemo() *memo.Memo {
+	return c.mm
 }

@@ -282,14 +282,15 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	var cas *cascades.Cascades
-	if cas, err = cascades.NewCascades(sctx, logic); err == nil {
+	if cas, err = cascades.NewCascades(logic); err == nil {
 		defer cas.Destroy()
 		err = cas.Execute()
 	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
-
+	cas.GetMemo().
+	physical, cost, err := physicalOptimize(, &planCounter)
 	physical, cost, err := physicalOptimize(logic, &planCounter)
 	if err != nil {
 		return nil, nil, 0, err
