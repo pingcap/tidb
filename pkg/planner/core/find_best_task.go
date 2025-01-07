@@ -45,7 +45,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -711,45 +710,58 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
+func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableInfo *model.TableInfo, prop *property.PhysicalProperty, lhs, rhs *candidatePath, preferRange bool) (int, bool) {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0, false
 	}
 	idxMissingStats := false
-	// If one index has statistics and the other does not, choose the index with statistics if it
-	// has the same or higher number of equal/IN predicates.
-	lhsHasStatistics := statsTbl.Pseudo
+	lhsHasStatistics := false
 	if statsTbl != nil && lhs.path.Index != nil {
 		lhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(lhs.path.Index.ID, true)
 		if !lhsHasStatistics {
 			idxMissingStats = true
 		}
 	}
-	rhsHasStatistics := statsTbl.Pseudo
+	rhsHasStatistics := false
 	if statsTbl != nil && rhs.path.Index != nil {
 		rhsHasStatistics = statsTbl.ColAndIdxExistenceMap.HasAnalyzed(rhs.path.Index.ID, true)
 		if !rhsHasStatistics {
 			idxMissingStats = true
 		}
 	}
-	if (!lhs.path.IsTablePath() || !rhs.path.IsTablePath()) && // Not a table scan
+	lhsLimitedScan := !lhs.path.IsTablePath() || (lhs.path.IsTablePath() && lhs.path.IsFullTableRange(tableInfo))
+	rhsLimitedScan := !rhs.path.IsTablePath() || (rhs.path.IsTablePath() && rhs.path.IsFullTableRange(tableInfo))
+	// First set of rules apply to situations where an index doesn't have statistics
+	if (lhsLimitedScan || rhsLimitedScan) && // Not a full table scan
 		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
-		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
+		idxMissingStats && // At least one index doesn't have statistics
 		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
 		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
 		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
 		if lhsTotalEqual > 0 || rhsTotalEqual > 0 {
-			if !lhs.path.IsTablePath() && lhsHasStatistics && lhsTotalEqual >= rhsTotalEqual {
+			// If one index has statistics and the other does not, choose the index with statistics if it
+			// has the same or higher number of equal/IN predicates.
+			// This is to limit a new index being chosen until it's statistics are collected if we cannot determine
+			// that it is "potentially" more selective.
+			if lhsLimitedScan && lhsHasStatistics && lhsTotalEqual >= rhsTotalEqual {
 				return 1, idxMissingStats
 			}
-			if !rhs.path.IsTablePath() && rhsHasStatistics && rhsTotalEqual >= lhsTotalEqual {
+			if rhsLimitedScan && rhsHasStatistics && rhsTotalEqual >= lhsTotalEqual {
 				return -1, idxMissingStats
 			}
 			if preferRange {
-				if (!lhsHasStatistics && rhs.path.IsTablePath()) || (!rhsHasStatistics && lhs.path.IsTablePath()) {
-					return 0, idxMissingStats
+				// keep an index without statistics if the other side isn't a "selective" single scan
+				if !lhsHasStatistics && lhsTotalEqual > rhsTotalEqual &&
+					(lhsTotalEqual > 1 || (lhs.path.EqOrInCondCount+len(lhs.path.IndexFilters)) >= len(lhs.path.Index.Columns)) &&
+					!(rhsLimitedScan && rhs.path.IsSingleScan) {
+					return 1, idxMissingStats
+				}
+				if !rhsHasStatistics && rhsTotalEqual > lhsTotalEqual &&
+					(rhsTotalEqual > 1 || (rhs.path.EqOrInCondCount+len(rhs.path.IndexFilters)) >= len(rhs.path.Index.Columns)) &&
+					!(lhsLimitedScan && lhs.path.IsSingleScan) {
+					return -1, idxMissingStats
 				}
 			}
 		}
@@ -1181,7 +1193,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 			var result int
-			result, idxMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, prop, candidates[i], currentCandidate, preferRange)
+			result, idxMissingStats = compareCandidates(ds.SCtx(), ds.StatisticTable, ds.TableInfo, prop, candidates[i], currentCandidate, preferRange)
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
@@ -1215,13 +1227,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
-			var unsignedIntHandle bool
-			if c.path.IsIntHandlePath && ds.TableInfo.PKIsHandle {
-				if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-					unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-				}
-			}
-			if !ranger.HasFullRange(c.path.Ranges, unsignedIntHandle) {
+			if !c.path.IsFullTableRange(ds.TableInfo) {
 				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
 				indexFilters := c.path.EqCondCount > 0 || c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
