@@ -78,14 +78,28 @@ func (w *worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 	return nil
 }
 
+func queryMaxSnapID(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
+	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", WorkloadSchema, histSnapshotsTable)
+	rs, err := runQuery(ctx, sctx, query)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) > 0 {
+		if rs[0].IsNull(0) {
+			return 0, nil
+		}
+		return rs[0].GetUint64(0), nil
+	}
+	return 0, errors.New("no rows returned when querying max snap id")
+}
+
 func (w *worker) getSnapID(ctx context.Context) (uint64, error) {
 	snapIDStr, err := w.etcdGet(ctx, snapIDKey)
 	if err != nil {
 		return 0, err
 	}
 	if snapIDStr == "" {
-		// return zero when the key does not exist
-		return 0, nil
+		return 0, errKeyNotFound
 	}
 	return strconv.ParseUint(snapIDStr, 10, 64)
 }
@@ -141,7 +155,16 @@ func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 	var snapID uint64
 	var err error
 	for range snapshotRetries {
+		isEmpty := false
 		snapID, err = w.getSnapID(ctx)
+		// Sometimes, a new etcd cluster without persisted snap_id may be used,
+		// e.g. serverless TiDB or manually cleaned PD.
+		// In such case, we can query the maximum snap_id in the table,
+		//  and try to recover that snap_id directly by a etcd transaction.
+		if stderrors.Is(err, errKeyNotFound) {
+			snapID, err = queryMaxSnapID(ctx, sess)
+			isEmpty = true
+		}
 		if err != nil {
 			err = fmt.Errorf("cannot get current snapid: %w", err)
 			continue
@@ -159,7 +182,7 @@ func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 			continue
 		}
 
-		if snapID == 0 {
+		if isEmpty {
 			err = w.etcdCreate(ctx, snapIDKey, strconv.FormatUint(snapID+1, 10))
 		} else {
 			err = w.etcdCAS(ctx, snapIDKey, strconv.FormatUint(snapID, 10), strconv.FormatUint(snapID+1, 10))
