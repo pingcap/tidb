@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"strings"
 	"sync"
 	"unsafe"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
