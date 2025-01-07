@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -125,8 +125,8 @@ func lockTable(tbInfo *model.TableInfo, idx int, args *model.LockTablesArgs) err
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
-	if (tbInfo.Lock.Tp == pmodel.TableLockRead && args.LockTables[idx].Tp == pmodel.TableLockRead) ||
-		(tbInfo.Lock.Tp == pmodel.TableLockReadOnly && args.LockTables[idx].Tp == pmodel.TableLockReadOnly) {
+	if (tbInfo.Lock.Tp == ast.TableLockRead && args.LockTables[idx].Tp == ast.TableLockRead) ||
+		(tbInfo.Lock.Tp == ast.TableLockReadOnly && args.LockTables[idx].Tp == ast.TableLockReadOnly) {
 		sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, args.SessionInfo)
 		// repeat lock.
 		if sessionIndex >= 0 {
@@ -142,15 +142,15 @@ func lockTable(tbInfo *model.TableInfo, idx int, args *model.LockTablesArgs) err
 }
 
 // checkTableLocked uses to check whether table was locked.
-func checkTableLocked(tbInfo *model.TableInfo, lockTp pmodel.TableLockType, sessionInfo model.SessionInfo) error {
+func checkTableLocked(tbInfo *model.TableInfo, lockTp ast.TableLockType, sessionInfo model.SessionInfo) error {
 	if !tbInfo.IsLocked() {
 		return nil
 	}
 	if tbInfo.Lock.State == model.TableLockStatePreLock {
 		return nil
 	}
-	if (tbInfo.Lock.Tp == pmodel.TableLockRead && lockTp == pmodel.TableLockRead) ||
-		(tbInfo.Lock.Tp == pmodel.TableLockReadOnly && lockTp == pmodel.TableLockReadOnly) {
+	if (tbInfo.Lock.Tp == ast.TableLockRead && lockTp == ast.TableLockRead) ||
+		(tbInfo.Lock.Tp == ast.TableLockReadOnly && lockTp == ast.TableLockReadOnly) {
 		return nil
 	}
 	sessionIndex := findSessionInfoIndex(tbInfo.Lock.Sessions, sessionInfo)
@@ -160,7 +160,7 @@ func checkTableLocked(tbInfo *model.TableInfo, lockTp pmodel.TableLockType, sess
 			return nil
 		}
 		// If no other session locked this table, and it is not a read only lock (session unrelated).
-		if len(tbInfo.Lock.Sessions) == 1 && tbInfo.Lock.Tp != pmodel.TableLockReadOnly {
+		if len(tbInfo.Lock.Sessions) == 1 && tbInfo.Lock.Tp != ast.TableLockReadOnly {
 			return nil
 		}
 	}

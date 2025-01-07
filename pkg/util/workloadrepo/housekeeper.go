@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -41,7 +41,7 @@ func calcNextTick(now time.Time) time.Duration {
 func createAllPartitions(ctx context.Context, sess sessionctx.Context, is infoschema.InfoSchema) error {
 	sb := &strings.Builder{}
 	for _, tbl := range workloadTables {
-		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
+		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 		if err != nil {
 			logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			return err
@@ -74,7 +74,7 @@ func (w *worker) dropOldPartitions(ctx context.Context, sess sessionctx.Context,
 
 	sb := &strings.Builder{}
 	for _, tbl := range workloadTables {
-		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tbl.destTable))
+		tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tbl.destTable))
 		if err != nil {
 			logutil.BgLogger().Info("workload repository cannot get table", zap.String("tbl", tbl.destTable), zap.NamedError("err", err))
 			continue

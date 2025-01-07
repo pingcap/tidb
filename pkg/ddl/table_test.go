@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -47,8 +46,8 @@ func testRenameTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID, oldSchemaID int64,
-	oldSchemaName pmodel.CIStr,
-	newSchemaName pmodel.CIStr,
+	oldSchemaName ast.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -81,8 +80,8 @@ func testRenameTable(
 
 func testRenameTables(t *testing.T, ctx sessionctx.Context, d ddl.ExecutorForTest,
 	oldSchemaIDs, newSchemaIDs []int64,
-	newTableNames []pmodel.CIStr, oldTableIDs []int64,
-	oldSchemaNames, oldTableNames []pmodel.CIStr) *model.Job {
+	newTableNames []ast.CIStr, oldTableIDs []int64,
+	oldSchemaNames, oldTableNames []ast.CIStr) *model.Job {
 	job := &model.Job{
 		Version:    model.GetJobVerInUse(),
 		Type:       model.ActionRenameTables,
@@ -114,9 +113,9 @@ func testLockTable(
 	d ddl.ExecutorForTest,
 	uuid string,
 	newSchemaID int64,
-	schemaName pmodel.CIStr,
+	schemaName ast.CIStr,
 	tblInfo *model.TableInfo,
-	lockTp pmodel.TableLockType,
+	lockTp ast.TableLockType,
 ) *model.Job {
 	args := &model.LockTablesArgs{
 		LockTables: []model.TableLockTpInfo{{SchemaID: newSchemaID, TableID: tblInfo.ID, Tp: lockTp}},
@@ -144,7 +143,7 @@ func testLockTable(
 	return job
 }
 
-func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp pmodel.TableLockType) {
+func checkTableLockedTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, serverID string, sessionID uint64, lockTp ast.TableLockType) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMutator(txn)
@@ -271,10 +270,10 @@ func TestTable(t *testing.T) {
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
 
-	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, pmodel.TableLockWrite)
+	job = testLockTable(t, ctx, de, d.GetID(), dbInfo1.ID, dbInfo1.Name, tblInfo, ast.TableLockWrite)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
 	testCheckJobDone(t, store, job.ID, true)
-	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, pmodel.TableLockWrite)
+	checkTableLockedTest(t, store, dbInfo1, tblInfo, d.GetID(), ctx.GetSessionVars().ConnectionID, ast.TableLockWrite)
 	// for alter cache table
 	job = testAlterCacheTable(t, ctx, de, dbInfo1.ID, dbInfo1.Name, tblInfo)
 	testCheckTableState(t, store, dbInfo1, tblInfo, model.StatePublic)
@@ -402,7 +401,7 @@ func testAlterCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName pmodel.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -429,7 +428,7 @@ func testAlterNoCacheTable(
 	ctx sessionctx.Context,
 	d ddl.ExecutorForTest,
 	newSchemaID int64,
-	newSchemaName pmodel.CIStr,
+	newSchemaName ast.CIStr,
 	tblInfo *model.TableInfo,
 ) *model.Job {
 	job := &model.Job{
@@ -478,10 +477,10 @@ func TestRenameTables(t *testing.T) {
 	job := testRenameTables(t, ctx, de,
 		[]int64{dbInfo.ID, dbInfo.ID},
 		[]int64{dbInfo.ID, dbInfo.ID},
-		[]pmodel.CIStr{newTblInfos[0].Name, newTblInfos[1].Name},
+		[]ast.CIStr{newTblInfos[0].Name, newTblInfos[1].Name},
 		[]int64{tblInfos[0].ID, tblInfos[1].ID},
-		[]pmodel.CIStr{dbInfo.Name, dbInfo.Name},
-		[]pmodel.CIStr{tblInfos[0].Name, tblInfos[1].Name})
+		[]ast.CIStr{dbInfo.Name, dbInfo.Name},
+		[]ast.CIStr{tblInfos[0].Name, tblInfos[1].Name})
 
 	historyJob, err := ddl.GetHistoryJobByID(testkit.NewTestKit(t, store).Session(), job.ID)
 	require.NoError(t, err)
@@ -510,7 +509,7 @@ func TestCreateTables(t *testing.T) {
 		args.Tables = append(args.Tables, &model.CreateTableArgs{
 			TableInfo: &model.TableInfo{
 				ID:   genIDs[i],
-				Name: pmodel.NewCIStr(fmt.Sprintf("s%d", i+1)),
+				Name: ast.NewCIStr(fmt.Sprintf("s%d", i+1)),
 			},
 		})
 	}
@@ -779,7 +778,7 @@ func TestDropTableAccessibleInInfoSchema(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionDropTable && job.TableName == "t" {
 			if job.SchemaState == model.StateDeleteOnly || job.SchemaState == model.StateWriteOnly {
-				_, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+				_, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 				errs = append(errs, err)
 			}
 		}

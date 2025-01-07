@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/slice"
@@ -31,7 +31,7 @@ import (
 
 func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) (string, error) {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
-	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
 		return "", err
 	}
@@ -59,7 +59,7 @@ func buildCreateQuery(ctx context.Context, sess sessionctx.Context, rt *reposito
 
 func buildInsertQuery(ctx context.Context, sess sessionctx.Context, rt *repositoryTable) error {
 	is := sessiontxn.GetTxnManager(sess).GetTxnInfoSchema()
-	tbl, err := is.TableByName(ctx, model.NewCIStr(rt.schema), model.NewCIStr(rt.table))
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(rt.schema), ast.NewCIStr(rt.table))
 	if err != nil {
 		return err
 	}
@@ -159,11 +159,11 @@ func (w *worker) checkTablesExists(ctx context.Context) bool {
 
 func checkTableExistsByIS(ctx context.Context, is infoschema.InfoSchema, tblName string, now time.Time) bool {
 	if now == zeroTime {
-		return is.TableExists(workloadSchemaCIStr, model.NewCIStr(tblName))
+		return is.TableExists(workloadSchemaCIStr, ast.NewCIStr(tblName))
 	}
 
 	// check for partitions, too
-	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, model.NewCIStr(tblName))
+	tbSchema, err := is.TableByName(ctx, workloadSchemaCIStr, ast.NewCIStr(tblName))
 	if err != nil {
 		return false
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -567,7 +567,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error {
-	table, err := is.TableByName(context.Background(), pmodel.NewCIStr(jsonTbl.DatabaseName), pmodel.NewCIStr(jsonTbl.TableName))
+	table, err := is.TableByName(context.Background(), ast.NewCIStr(jsonTbl.DatabaseName), ast.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,7 +47,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
@@ -71,7 +71,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
 	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
 	tk.MustExec("analyze table t all columns;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
 	require.Equal(t, 19, size)

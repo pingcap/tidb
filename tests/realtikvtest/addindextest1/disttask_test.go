@@ -391,3 +391,48 @@ func TestAddIndexDistLockAcquireFailed(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/owner/mockAcquireDistLockFailed", "1*return(true)")
 	tk.MustExec("alter table t add index idx(b);")
 }
+
+func TestAddIndexScheduleAway(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	var jobID atomic.Int64
+	// Acquire the job ID.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionAddIndex {
+			jobID.Store(job.ID)
+		}
+	})
+	// Do not balance subtasks automatically.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockNoEnoughSlots", "return")
+	afterCancel := make(chan struct{})
+	// Capture the cancel operation from checkBalanceLoop.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterCancelSubtaskExec", func() {
+		close(afterCancel)
+	})
+	var once sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func() {
+		once.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			updateExecID := fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = 'other' where task_key in 
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+			<-afterCancel
+			updateExecID = fmt.Sprintf(`
+				update mysql.tidb_background_subtask set exec_id = ':4000' where task_key in 
+					(select id from mysql.tidb_global_task where task_key like '%%%d')`, jobID.Load())
+			tk1.MustExec(updateExecID)
+		})
+	})
+	tk.MustExec("alter table t add index idx(b);")
+	require.NotEqual(t, int64(0), jobID.Load())
+}

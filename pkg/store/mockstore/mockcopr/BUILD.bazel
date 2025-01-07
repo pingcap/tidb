@@ -61,7 +61,7 @@ go_test(
     deps = [
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/store/mockstore/mockstorage",
         "//pkg/tablecodec",

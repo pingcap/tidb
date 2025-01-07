@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -188,7 +188,7 @@ func (r *RUStatsWriter) fetchResourceGroupStats(ctx context.Context) ([]meta.Gro
 	infos := r.InfoCache.GetLatest()
 	res := make([]meta.GroupRUStats, 0, len(groups))
 	for _, g := range groups {
-		groupInfo, exists := infos.ResourceGroupByName(model.NewCIStr(g.Name))
+		groupInfo, exists := infos.ResourceGroupByName(ast.NewCIStr(g.Name))
 		if !exists {
 			continue
 		}

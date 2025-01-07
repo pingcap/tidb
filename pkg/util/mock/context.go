@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -519,8 +518,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
-	return false, pmodel.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, ast.TableLockType) {
+	return false, ast.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.

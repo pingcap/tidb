@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -540,7 +539,7 @@ type CompactTableStmt struct {
 	stmtNode
 
 	Table          *TableName
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	ReplicaKind    CompactReplicaKind
 }
 
@@ -1954,7 +1953,7 @@ func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
 // AlterRangeStmt modifies range configuration.
 type AlterRangeStmt struct {
 	stmtNode
-	RangeName       model.CIStr
+	RangeName       CIStr
 	PlacementOption *PlacementOption
 }
 
@@ -3833,8 +3832,8 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
-	Schema model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Name   CIStr
 }
 
 // String implements fmt.Stringer interface.
@@ -3865,7 +3864,7 @@ type TableOptimizerHint struct {
 	// HintName is the name or alias of the table(s) which the hint will affect.
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
-	HintName model.CIStr
+	HintName CIStr
 	// HintData is the payload of the hint. The actual type of this field
 	// is defined differently as according `HintName`. Define as following:
 	//
@@ -3883,9 +3882,9 @@ type TableOptimizerHint struct {
 	// - NTH_PLAN            => int64
 	HintData interface{}
 	// QBName is the default effective query block of this hint.
-	QBName  model.CIStr
+	QBName  CIStr
 	Tables  []HintTable
-	Indexes []model.CIStr
+	Indexes []CIStr
 }
 
 // HintTimeRange is the payload of `TIME_RANGE` hint
@@ -3902,10 +3901,10 @@ type HintSetVar struct {
 
 // HintTable is table in the hint. It may have query block info.
 type HintTable struct {
-	DBName        model.CIStr
-	TableName     model.CIStr
-	QBName        model.CIStr
-	PartitionList []model.CIStr
+	DBName        CIStr
+	TableName     CIStr
+	QBName        CIStr
+	PartitionList []CIStr
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -3999,11 +3998,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("FALSE")
 		}
 	case "query_type":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 	case "memory_quota":
 		ctx.WritePlainf("%d MB", n.HintData.(int64)/1024/1024)
 	case "read_from_storage":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 		for i, table := range n.Tables {
 			if i == 0 {
 				ctx.WritePlain("[")
@@ -4062,7 +4061,7 @@ var NewBitLiteral func(string) (interface{}, error)
 // SetResourceGroupStmt is a statement to set the resource group name for current session.
 type SetResourceGroupStmt struct {
 	stmtNode
-	Name model.CIStr
+	Name CIStr
 }
 
 func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4333,7 +4332,7 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 
 // QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
 type QueryWatchResourceGroupOption struct {
-	GroupNameStr  model.CIStr
+	GroupNameStr  CIStr
 	GroupNameExpr ExprNode
 }
 
@@ -4352,7 +4351,7 @@ func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
 // QueryWatchTextOption is used for parsing the query watch text option.
 type QueryWatchTextOption struct {
 	node
-	Type          model.RunawayWatchType
+	Type          RunawayWatchType
 	PatternExpr   ExprNode
 	TypeSpecified bool
 }
@@ -4365,9 +4364,9 @@ func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" TO ")
 	} else {
 		switch n.Type {
-		case model.WatchSimilar:
+		case WatchSimilar:
 			ctx.WriteKeyWord("SQL DIGEST ")
-		case model.WatchPlan:
+		case WatchPlan:
 			ctx.WriteKeyWord("PLAN DIGEST ")
 		}
 	}

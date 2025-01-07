@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -293,24 +292,24 @@ func NewPartitionExprBuildCtx() expression.BuildContext {
 	)
 }
 
-func newPartitionExpr(tblInfo *model.TableInfo, tp pmodel.PartitionType, expr string, partCols []pmodel.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
+func newPartitionExpr(tblInfo *model.TableInfo, tp ast.PartitionType, expr string, partCols []ast.CIStr, defs []model.PartitionDefinition) (*PartitionExpr, error) {
 	ctx := NewPartitionExprBuildCtx()
-	dbName := pmodel.NewCIStr(ctx.GetEvalCtx().CurrentDB())
+	dbName := ast.NewCIStr(ctx.GetEvalCtx().CurrentDB())
 	columns, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, dbName, tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil, err
 	}
 	switch tp {
-	case pmodel.PartitionTypeNone:
+	case ast.PartitionTypeNone:
 		// Nothing to do
 		return nil, nil
-	case pmodel.PartitionTypeRange:
+	case ast.PartitionTypeRange:
 		return generateRangePartitionExpr(ctx, expr, partCols, defs, columns, names)
-	case pmodel.PartitionTypeHash:
+	case ast.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, expr, columns, names)
-	case pmodel.PartitionTypeKey:
+	case ast.PartitionTypeKey:
 		return generateKeyPartitionExpr(ctx, expr, partCols, columns, names)
-	case pmodel.PartitionTypeList:
+	case ast.PartitionTypeList:
 		return generateListPartitionExpr(ctx, tblInfo, expr, partCols, defs, columns, names)
 	}
 	panic("cannot reach here")
@@ -715,7 +714,7 @@ func fixOldVersionPartitionInfo(sctx expression.BuildContext, str string) (int64
 	return ret, true
 }
 
-func rangePartitionExprStrings(cols []pmodel.CIStr, expr string) []string {
+func rangePartitionExprStrings(cols []ast.CIStr, expr string) []string {
 	var s []string
 	if len(cols) > 0 {
 		s = make([]string, 0, len(cols))
@@ -728,7 +727,7 @@ func rangePartitionExprStrings(cols []pmodel.CIStr, expr string) []string {
 	return s
 }
 
-func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr,
+func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	ret := &PartitionExpr{
 		ForKeyPruning: &ForKeyPruning{},
@@ -743,7 +742,7 @@ func generateKeyPartitionExpr(ctx expression.BuildContext, expr string, partCols
 	return ret, nil
 }
 
-func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr,
+func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCols []ast.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	p := parser.New()
@@ -833,7 +832,7 @@ func findIdxByColUniqueID(cols []*expression.Column, col *expression.Column) int
 	return -1
 }
 
-func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []pmodel.CIStr, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
+func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partCols []ast.CIStr, columns []*expression.Column, names types.NameSlice) (expression.Expression, []*expression.Column, []int, error) {
 	var cols []*expression.Column
 	var partExpr expression.Expression
 	if len(partCols) == 0 {
@@ -867,7 +866,7 @@ func extractPartitionExprColumns(ctx expression.BuildContext, expr string, partC
 	return partExpr, deDupCols, offset, nil
 }
 
-func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.TableInfo, expr string, partCols []pmodel.CIStr,
+func generateListPartitionExpr(ctx expression.BuildContext, tblInfo *model.TableInfo, expr string, partCols []ast.CIStr,
 	defs []model.PartitionDefinition, columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
 	// The caller should assure partition info is not nil.
 	partExpr, exprCols, offset, err := extractPartitionExprColumns(ctx, expr, partCols, columns, names)
@@ -944,7 +943,7 @@ func (lp *ForListPruning) buildListPruner(ctx expression.BuildContext, exprStr s
 }
 
 func (lp *ForListPruning) buildListColumnsPruner(ctx expression.BuildContext,
-	tblInfo *model.TableInfo, partCols []pmodel.CIStr, defs []model.PartitionDefinition,
+	tblInfo *model.TableInfo, partCols []ast.CIStr, defs []model.PartitionDefinition,
 	columns []*expression.Column, names types.NameSlice) error {
 	schema := expression.NewSchema(columns...)
 	p := parser.New()
@@ -1377,13 +1376,13 @@ func (t *partitionedTable) GetPartitionColumnIDs() []int64 {
 	return colIDs
 }
 
-func (t *partitionedTable) GetPartitionColumnNames() []pmodel.CIStr {
+func (t *partitionedTable) GetPartitionColumnNames() []ast.CIStr {
 	pi := t.Meta().Partition
 	if len(pi.Columns) > 0 {
 		return pi.Columns
 	}
 	colIDs := t.GetPartitionColumnIDs()
-	colNames := make([]pmodel.CIStr, 0, len(colIDs))
+	colNames := make([]ast.CIStr, 0, len(colIDs))
 	for _, colID := range colIDs {
 		for _, col := range t.Cols() {
 			if col.ID == colID {
@@ -1412,11 +1411,11 @@ func (t *partitionedTable) CheckForExchangePartition(ctx expression.EvalContext,
 }
 
 // locatePartitionCommon returns the partition idx of the input record.
-func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp pmodel.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, error) {
+func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp ast.PartitionType, partitionExpr *PartitionExpr, num uint64, columnsPartitioned bool, r []types.Datum) (int, error) {
 	var err error
 	var idx int
 	switch tp {
-	case pmodel.PartitionTypeRange:
+	case ast.PartitionTypeRange:
 		if columnsPartitioned {
 			idx, err = t.locateRangeColumnPartition(ctx, partitionExpr, r)
 		} else {
@@ -1435,18 +1434,18 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 				return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 			}
 		}
-	case pmodel.PartitionTypeHash:
+	case ast.PartitionTypeHash:
 		// Note that only LIST and RANGE supports REORGANIZE PARTITION
 		idx, err = t.locateHashPartition(ctx, partitionExpr, num, r)
-	case pmodel.PartitionTypeKey:
+	case ast.PartitionTypeKey:
 		idx, err = partitionExpr.LocateKeyPartition(num, r)
-	case pmodel.PartitionTypeList:
+	case ast.PartitionTypeList:
 		idx, err = partitionExpr.locateListPartition(ctx, r)
 		pi := t.Meta().Partition
 		if idx != pi.GetOverlappingDroppingPartitionIdx(idx) {
 			return idx, table.ErrNoPartitionForGivenValue.GenWithStackByArgs(fmt.Sprintf("matching a partition being dropped, '%s'", pi.Definitions[idx].Name.String()))
 		}
-	case pmodel.PartitionTypeNone:
+	case ast.PartitionTypeNone:
 		idx = 0
 	}
 	if err != nil {
