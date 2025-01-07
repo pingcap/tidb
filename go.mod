@@ -87,7 +87,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20240318064555-6bd07397691f
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20241120071417-b5b7843d9037
+	github.com/pingcap/kvproto v0.0.0-20250102071301-c35d2b410115
 	github.com/pingcap/log v1.1.1-0.20241212030209-7e3ff8601a2a
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -158,6 +158,7 @@ require (
 	github.com/cockroachdb/errors v1.11.1 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/getsentry/sentry-go v0.27.0 // indirect
+	github.com/ghodss/yaml v1.0.0 // indirect
 	github.com/goccy/go-reflect v1.2.0 // indirect
 	github.com/google/flatbuffers v2.0.8+incompatible // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
