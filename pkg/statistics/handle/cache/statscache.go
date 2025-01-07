@@ -197,10 +197,9 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		}
 		var tbl *statistics.Table
 		// If the column/index stats has not been updated, we can reuse the old table stats.
-		// Only need to update the count and modify count and the column sizes.
+		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsFullUpdateVersion >= latestHistUpdateVersion {
 			tbl = oldTbl.Copy()
-			err = s.statsHandle.UpdateColSizeFromStroage(tbl)
 			if err != nil {
 				statslogutil.StatsLogger().Error(
 					"error occurred when read table stats",
