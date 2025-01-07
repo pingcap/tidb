@@ -19,42 +19,42 @@ select @@global.tidb_max_delta_schema_count;
 @@global.tidb_max_delta_schema_count
 2048
 set @@global.tidb_max_delta_schema_count= default;
-SELECT @@query_cache_type;
-@@query_cache_type
-OFF
-SHOW VARIABLES LIKE 'query_cache_type';
+SELECT @@innodb_buffer_pool_size;
+@@innodb_buffer_pool_size
+4294967296
+SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
 Variable_name	Value
-query_cache_type	OFF
-SET query_cache_type=2;
-SELECT @@query_cache_type;
-@@query_cache_type
-DEMAND
+innodb_buffer_pool_size	4294967296
+SET GLOBAL innodb_buffer_pool_size=134217728;
+SELECT @@innodb_buffer_pool_size;
+@@innodb_buffer_pool_size
+134217728
 SET GLOBAL tidb_enable_noop_variables = OFF;
 SELECT @@global.tidb_enable_noop_variables;
 @@global.tidb_enable_noop_variables
 OFF
-SELECT @@query_cache_type;
-@@query_cache_type
-DEMAND
+SELECT @@innodb_buffer_pool_size;
+@@innodb_buffer_pool_size
+134217728
 SHOW WARNINGS;
 Level	Code	Message
-Warning	8145	variable query_cache_type has no effect in TiDB
-SHOW VARIABLES LIKE 'query_cache_type';
+Warning	8145	variable innodb_buffer_pool_size has no effect in TiDB
+SHOW VARIABLES LIKE 'innodb_buffer_pool_size';
 Variable_name	Value
-SET query_cache_type = OFF;
+SET GLOBAL innodb_buffer_pool_size = 805306368;
 SHOW WARNINGS;
 Level	Code	Message
-Warning	8144	setting query_cache_type has no effect in TiDB
-SELECT @@query_cache_type;
-@@query_cache_type
-OFF
+Warning	8144	setting innodb_buffer_pool_size has no effect in TiDB
+SELECT @@innodb_buffer_pool_size;
+@@innodb_buffer_pool_size
+805306368
 SET GLOBAL tidb_enable_noop_variables = 2;
 Error 1231 (42000): Variable 'tidb_enable_noop_variables' can't be set to the value of '2'
 SET GLOBAL tidb_enable_noop_variables = 'warn';
 Error 1231 (42000): Variable 'tidb_enable_noop_variables' can't be set to the value of 'warn'
 SET GLOBAL tidb_enable_noop_variables = ON;
 SET GLOBAL tidb_enable_noop_variables = default;
-SET query_cache_type = default;
+SET GLOBAL innodb_buffer_pool_size = default;
 show VARIABLES like 'character_set_%';
 Variable_name	Value
 character_set_client	utf8mb4

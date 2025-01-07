@@ -44,15 +44,15 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.e = 1 order by t.d limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->Limit)->Limit"
       },
       {
         "SQL": "select c from t order by t.a limit 1",
-        "Best": "TableReader(Table(t)->Limit)->Limit->Projection"
+        "Best": "TableReader(Table(t)->Limit)->Limit"
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
-        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection->Projection"
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection"
       },
       {
         "SQL": "select c from t  limit 1",
@@ -92,11 +92,11 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.a > 1 order by t.d limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit)->Limit->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1,1]]->Sel([gt(test.t.a, 1)])->Limit)->Limit"
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)->Projection"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
@@ -451,7 +451,7 @@
       },
       {
         "SQL": "delete from t where b < 1 order by d limit 1",
-        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Projection->Delete",
+        "Best": "TableReader(Table(t)->Sel([lt(test.t.b, 1)])->TopN([test.t.d],0,1))->TopN([test.t.d],0,1)->Delete",
         "Hints": "use_index(@`del_1` `test`.`t` ), no_order_index(@`del_1` `test`.`t` `primary`), limit_to_cop(@`del_1`)"
       },
       {
@@ -626,7 +626,7 @@
       },
       {
         "SQL": "select count(*) from t group by g order by g limit 10",
-        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit"
       },
       {
         "SQL": "select count(*) from t group by g limit 10",
@@ -638,11 +638,11 @@
       },
       {
         "SQL": "select count(*) from t group by g order by g desc limit 1",
-        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit->Projection"
+        "Best": "IndexReader(Index(t.g)[[NULL,+inf]]->StreamAgg)->StreamAgg->Limit"
       },
       {
         "SQL": "select count(*) from t group by b order by b limit 10",
-        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)->Projection"
+        "Best": "TableReader(Table(t)->HashAgg)->HashAgg->TopN([test.t.b],0,10)"
       },
       {
         "SQL": "select count(*) from t group by b order by b",
@@ -658,11 +658,11 @@
       },
       {
         "SQL": "select /*+ tidb_inlj(a,b) */ sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.g > 60 group by a.g order by a.g limit 1",
-        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,NULL]]->Sel([gt(test.t.g, 60)]))}(test.t.g,test.t.g)->Projection->StreamAgg->Limit->Projection"
+        "Best": "IndexJoin{IndexReader(Index(t.g)[(60,+inf]])->IndexReader(Index(t.g)[[NULL,NULL]]->Sel([gt(test.t.g, 60)]))}(test.t.g,test.t.g)->Projection->StreamAgg->Limit"
       },
       {
         "SQL": "select sum(a.g), sum(b.g) from t a join t b on a.g = b.g and a.a>5 group by a.g order by a.g limit 1",
-        "Best": "MergeInnerJoin{IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.t.a, 5)]))->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.g,test.t.g)->Projection->StreamAgg->Limit->Projection"
+        "Best": "MergeInnerJoin{IndexReader(Index(t.g)[[NULL,+inf]]->Sel([gt(test.t.a, 5)]))->IndexReader(Index(t.g)[[NULL,+inf]])}(test.t.g,test.t.g)->Projection->StreamAgg->Limit"
       },
       {
         "SQL": "select sum(d) from t",

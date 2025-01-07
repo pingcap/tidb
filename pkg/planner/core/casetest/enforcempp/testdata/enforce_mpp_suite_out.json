@@ -649,11 +649,11 @@
       {
         "SQL": "explain select a from t where t.a not in (select a from s where t.a<1); -- 9. non left join has left conditions",
         "Plan": [
-          "MergeJoin_10 8000.00 root  anti semi join, left side:TableReader_23, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
-          "├─TableReader_26(Build) 10000.00 root  data:TableFullScan_25",
-          "│ └─TableFullScan_25 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
-          "└─TableReader_23(Probe) 10000.00 root  data:TableFullScan_22",
-          "  └─TableFullScan_22 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
+          "MergeJoin_10 8000.00 root  anti semi join, left side:TableReader_24, left key:test.t.a, right key:test.s.a, left cond:lt(test.t.a, 1)",
+          "├─TableReader_27(Build) 10000.00 root  data:TableFullScan_26",
+          "│ └─TableFullScan_26 10000.00 cop[tikv] table:s keep order:true, stats:pseudo",
+          "└─TableReader_24(Probe) 10000.00 root  data:TableFullScan_23",
+          "  └─TableFullScan_23 10000.00 cop[tikv] table:t keep order:true, stats:pseudo"
         ],
         "Warn": [
           "MPP mode may be blocked because there is a join that is not `left join` but has left conditions, which is not supported by mpp now, see github.com/pingcap/tidb/issues/26090 for more information.",
@@ -1654,6 +1654,38 @@
           "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(s@sel_2) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 9. anti semi join, one join key + other condition + hint",
+        "Plan": [
+          "TableReader_30 8000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint"
+        ]
+      },
+      {
+        "SQL": "EXPLAIN select /*+ HASH_JOIN_BUILD(t@sel_1) */  * from t where t.a not in (select s.a from s where t.c > s.c); -- 10. anti semi join, one join key + other condition + hint",
+        "Plan": [
+          "TableReader_30 8000.00 root  MppVersion: 2, data:ExchangeSender_29",
+          "└─ExchangeSender_29 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─HashJoin_28 8000.00 mpp[tiflash]  Null-aware anti semi join, left side:TableFullScan_12, equal:[eq(test.t.a, test.s.a)], other cond:gt(test.t.c, test.s.c)",
+          "    ├─ExchangeReceiver_15(Build) 10000.00 mpp[tiflash]  ",
+          "    │ └─ExchangeSender_14 10000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "    │   └─TableFullScan_13 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo",
+          "    └─TableFullScan_12(Probe) 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints",
+          "[planner:1815]We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for anti semi join, please check the hint",
+          "[planner:1815]Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"
+        ]
       }
     ]
   },

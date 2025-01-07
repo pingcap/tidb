@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -491,7 +491,7 @@ func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*
 	}
 }
 
-func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+func partitionPruning(ctx base.PlanContext, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []ast.CIStr,
 	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
 	idxArr, err := PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
 	if err != nil {

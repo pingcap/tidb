@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -76,17 +75,20 @@ func (e *DDLExec) toErr(err error) error {
 	return err
 }
 
-func (e *DDLExec) getLocalTemporaryTable(schema pmodel.CIStr, table pmodel.CIStr) (table.Table, bool) {
+func (e *DDLExec) getLocalTemporaryTable(schema ast.CIStr, table ast.CIStr) (table.Table, bool, error) {
 	tbl, err := e.Ctx().GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), schema, table)
 	if infoschema.ErrTableNotExists.Equal(err) {
-		return nil, false
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, errors.Trace(err)
 	}
 
 	if tbl.Meta().TempTableType != model.TempTableLocal {
-		return nil, false
+		return nil, false, nil
 	}
 
-	return tbl, true
+	return tbl, true, nil
 }
 
 // Next implements the Executor Next interface.
@@ -111,7 +113,11 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		}
 
 		for tbIdx := len(s.Tables) - 1; tbIdx >= 0; tbIdx-- {
-			if _, ok := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name); ok {
+			_, ok, err := e.getLocalTemporaryTable(s.Tables[tbIdx].Schema, s.Tables[tbIdx].Name)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
 				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
 			}
@@ -241,16 +247,24 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
-	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
+	_, exist, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
-	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
+	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
 
 func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	for _, tables := range s.TableToTables {
-		if _, ok := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
 		}
 	}
@@ -279,7 +293,10 @@ func (e *DDLExec) createSessionTemporaryTable(s *ast.CreateTableStmt) error {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(s.Table.Schema.O)
 	}
 
-	_, exists := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	_, exists, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if exists {
 		err := infoschema.ErrTableExists.FastGenByArgs(ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name})
 		if s.IfNotExists {
@@ -319,7 +336,11 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
@@ -379,7 +400,11 @@ func (e *DDLExec) dropLocalTemporaryTables(localTempTables []*ast.TableName) err
 }
 
 func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
@@ -387,7 +412,11 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
-	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
+	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
 	}
 
@@ -572,7 +601,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 		return err
 	}
 	if len(s.NewName) != 0 {
-		tblInfo.Name = pmodel.NewCIStr(s.NewName)
+		tblInfo.Name = ast.NewCIStr(s.NewName)
 	}
 	// Check the table ID was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -607,7 +636,7 @@ func (e *DDLExec) executeFlashbackTable(s *ast.FlashBackTableStmt) error {
 func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	dbName := s.DBName
 	if len(s.NewName) > 0 {
-		dbName = pmodel.NewCIStr(s.NewName)
+		dbName = ast.NewCIStr(s.NewName)
 	}
 	// Check the Schema Name was not exists.
 	is := domain.GetDomain(e.Ctx()).InfoSchema()
@@ -628,7 +657,7 @@ func (e *DDLExec) executeFlashbackDatabase(s *ast.FlashBackDatabaseStmt) error {
 	return err
 }
 
-func (e *DDLExec) getRecoverDBByName(schemaName pmodel.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
+func (e *DDLExec) getRecoverDBByName(schemaName ast.CIStr) (recoverSchemaInfo *model.RecoverSchemaInfo, err error) {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return nil, err
@@ -693,7 +722,11 @@ func (e *DDLExec) executeLockTables(s *ast.LockTablesStmt) error {
 	}
 
 	for _, tb := range s.TableLocks {
-		if _, ok := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tb.Table.Schema, tb.Table.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("LOCK TABLES")
 		}
 	}
@@ -712,7 +745,11 @@ func (e *DDLExec) executeUnlockTables(_ *ast.UnlockTablesStmt) error {
 
 func (e *DDLExec) executeCleanupTableLock(s *ast.CleanupTableLockStmt) error {
 	for _, tb := range s.Tables {
-		if _, ok := e.getLocalTemporaryTable(tb.Schema, tb.Name); ok {
+		_, ok, err := e.getLocalTemporaryTable(tb.Schema, tb.Name)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ADMIN CLEANUP TABLE LOCK")
 		}
 	}

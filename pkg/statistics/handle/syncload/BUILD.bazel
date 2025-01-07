@@ -40,7 +40,7 @@ go_test(
         ":syncload",
         "//pkg/config",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics/handle/ddl/testutil",

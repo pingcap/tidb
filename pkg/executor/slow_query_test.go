@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,7 +65,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 		return nil, err
 	}
 	is := newISBuilder.Build(math.MaxUint64)
-	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, model.NewCIStr(infoschema.TableSlowQuery))
+	tbl, err := is.TableByName(context.Background(), util.InformationSchemaName, ast.NewCIStr(infoschema.TableSlowQuery))
 	if err != nil {
 		return nil, err
 	}

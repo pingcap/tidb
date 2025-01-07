@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
@@ -66,7 +65,8 @@ var (
 type Context struct {
 	planctx.EmptyPlanContextExtended
 	*sessionexpr.ExprContext
-	txn           wrapTxn    // mock global variable
+	txn           wrapTxn // mock global variable
+	dom           any
 	Store         kv.Storage // mock global variable
 	ctx           context.Context
 	sm            util.SessionManager
@@ -518,8 +518,8 @@ func (*Context) ReleaseTableLockByTableIDs(_ []int64) {
 }
 
 // CheckTableLocked implements the sessionctx.Context interface.
-func (*Context) CheckTableLocked(_ int64) (bool, pmodel.TableLockType) {
-	return false, pmodel.TableLockNone
+func (*Context) CheckTableLocked(_ int64) (bool, ast.TableLockType) {
+	return false, ast.TableLockNone
 }
 
 // GetAllTableLocks implements the sessionctx.Context interface.
@@ -637,6 +637,16 @@ func (*Context) GetCursorTracker() cursor.Tracker {
 // GetCommitWaitGroup implements the sessionctx.Context interface
 func (*Context) GetCommitWaitGroup() *sync.WaitGroup {
 	return nil
+}
+
+// BindDomain bind domain into ctx.
+func (c *Context) BindDomain(dom any) {
+	c.dom = dom
+}
+
+// GetDomain get domain from ctx.
+func (c *Context) GetDomain() any {
+	return c.dom
 }
 
 // NewContextDeprecated creates a new mocked sessionctx.Context.

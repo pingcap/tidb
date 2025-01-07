@@ -67,7 +67,6 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID = row.GetInt64(1)
 		maxPhysicalID = max(physicalID, maxPhysicalID)
-		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
 		// which ensures that we don't duplicate the auto-analyze of a particular type of table.
 		// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
@@ -77,6 +76,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
 		// But in the future, we maybe will create some records for _row_id, see:
 		// https://github.com/pingcap/tidb/issues/51098
+		newHistColl := *statistics.NewHistColl(physicalID, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		snapshot := row.GetUint64(4)
 		lastAnalyzeVersion, lastStatsFullUpdateVersion := snapshot, snapshot
 		if !row.IsNull(5) {

@@ -11,7 +11,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -38,7 +37,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 func produceDBInfoValue(dbName string, dbID int64) ([]byte, error) {
 	dbInfo := model.DBInfo{
 		ID:   dbID,
-		Name: pmodel.NewCIStr(dbName),
+		Name: ast.NewCIStr(dbName),
 	}
 	return json.Marshal(&dbInfo)
 }
@@ -46,7 +45,7 @@ func produceDBInfoValue(dbName string, dbID int64) ([]byte, error) {
 func produceTableInfoValue(tableName string, tableID int64) ([]byte, error) {
 	tableInfo := model.TableInfo{
 		ID:   tableID,
-		Name: pmodel.NewCIStr(tableName),
+		Name: ast.NewCIStr(tableName),
 	}
 
 	return json.Marshal(&tableInfo)
@@ -260,11 +259,11 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 	// create tableinfo.
 	pt1 := model.PartitionDefinition{
 		ID:   pt1ID,
-		Name: pmodel.NewCIStr(pt1Name),
+		Name: ast.NewCIStr(pt1Name),
 	}
 	pt2 := model.PartitionDefinition{
 		ID:   pt2ID,
-		Name: pmodel.NewCIStr(pt2Name),
+		Name: ast.NewCIStr(pt2Name),
 	}
 
 	pi := model.PartitionInfo{
@@ -276,7 +275,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 
 	tbl := model.TableInfo{
 		ID:        tableID,
-		Name:      pmodel.NewCIStr(tableName),
+		Name:      ast.NewCIStr(tableName),
 		Partition: &pi,
 	}
 	value, err := json.Marshal(&tbl)
@@ -366,11 +365,11 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// construct table t1 with the partition pi(pt1, pt2).
 	pt1 := model.PartitionDefinition{
 		ID:   pt1ID,
-		Name: pmodel.NewCIStr(pt1Name),
+		Name: ast.NewCIStr(pt1Name),
 	}
 	pt2 := model.PartitionDefinition{
 		ID:   pt2ID,
-		Name: pmodel.NewCIStr(pt2Name),
+		Name: ast.NewCIStr(pt2Name),
 	}
 
 	pi := model.PartitionInfo{
@@ -380,7 +379,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	pi.Definitions = append(pi.Definitions, pt1, pt2)
 	t1 := model.TableInfo{
 		ID:        tableID1,
-		Name:      pmodel.NewCIStr(tableName1),
+		Name:      ast.NewCIStr(tableName1),
 		Partition: &pi,
 	}
 	db1 := model.DBInfo{}
@@ -388,7 +387,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 	// construct table t2 without partition.
 	t2 := model.TableInfo{
 		ID:   tableID2,
-		Name: pmodel.NewCIStr(tableName2),
+		Name: ast.NewCIStr(tableName2),
 	}
 	db2 := model.DBInfo{}
 
@@ -457,16 +456,16 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 
 	tbl := model.TableInfo{
 		ID:   tableID,
-		Name: pmodel.NewCIStr(tableName),
+		Name: ast.NewCIStr(tableName),
 		Columns: []*model.ColumnInfo{
 			{
 				ID:        colID,
-				Name:      pmodel.NewCIStr(colName),
+				Name:      ast.NewCIStr(colName),
 				FieldType: *types.NewFieldType(mysql.TypeTimestamp),
 			},
 		},
 		TTLInfo: &model.TTLInfo{
-			ColumnName:       pmodel.NewCIStr(colName),
+			ColumnName:       ast.NewCIStr(colName),
 			IntervalExprStr:  "1",
 			IntervalTimeUnit: int(ast.TimeUnitDay),
 			Enable:           true,

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -616,7 +615,7 @@ func selectShardColumn(stmt *ast.NonTransactionalDMLStmt, se sessiontypes.Sessio
 
 			// the specified table must be in the join
 			tableInJoin := false
-			var chosenTableName pmodel.CIStr
+			var chosenTableName ast.CIStr
 			for _, tableSource := range tableSources {
 				tableSourceName := tableSource.Source.(*ast.TableName)
 				tableSourceFinalTableName := tableSource.AsName // precedence: alias name, then table name
@@ -688,7 +687,7 @@ func collectTableSourcesInJoin(node ast.ResultSetNode, tableSources []*ast.Table
 // it attempts to auto-select a shard column from handle if not specified, and fills back the corresponding info in the stmt,
 // making it transparent to following steps
 func selectShardColumnFromTheOnlyTable(stmt *ast.NonTransactionalDMLStmt, tableName *ast.TableName,
-	tableAsName pmodel.CIStr, tbl table.Table) (
+	tableAsName ast.CIStr, tbl table.Table) (
 	indexed bool, shardColumnInfo *model.ColumnInfo, err error) {
 	if stmt.ShardColumn == nil {
 		return selectShardColumnAutomatically(stmt, tbl, tableName, tableAsName)
@@ -733,7 +732,7 @@ func selectShardColumnByGivenName(shardColumnName string, tbl table.Table) (
 }
 
 func selectShardColumnAutomatically(stmt *ast.NonTransactionalDMLStmt, tbl table.Table,
-	tableName *ast.TableName, tableAsName pmodel.CIStr) (bool, *model.ColumnInfo, error) {
+	tableName *ast.TableName, tableAsName ast.CIStr) (bool, *model.ColumnInfo, error) {
 	// auto-detect shard column
 	var shardColumnInfo *model.ColumnInfo
 	tableInfo := tbl.Meta()
@@ -767,7 +766,7 @@ func selectShardColumnAutomatically(stmt *ast.NonTransactionalDMLStmt, tbl table
 	stmt.ShardColumn = &ast.ColumnName{
 		Schema: tableName.Schema,
 		Table:  outputTableName, // so that table alias works
-		Name:   pmodel.NewCIStr(shardColumnName),
+		Name:   ast.NewCIStr(shardColumnName),
 	}
 	return true, shardColumnInfo, nil
 }
@@ -784,7 +783,7 @@ func buildDryRunResults(dryRunOption int, results []string, maxChunkSize int) (s
 		Column: &model.ColumnInfo{
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
-		ColumnAsName: pmodel.NewCIStr(fieldName),
+		ColumnAsName: ast.NewCIStr(fieldName),
 	}}
 	rows := make([][]any, 0, len(results))
 	for _, result := range results {
@@ -812,13 +811,13 @@ func buildExecuteResults(ctx context.Context, jobs []job, maxChunkSize int, reda
 				Column: &model.ColumnInfo{
 					FieldType: *types.NewFieldType(mysql.TypeLong),
 				},
-				ColumnAsName: pmodel.NewCIStr("number of jobs"),
+				ColumnAsName: ast.NewCIStr("number of jobs"),
 			},
 			{
 				Column: &model.ColumnInfo{
 					FieldType: *types.NewFieldType(mysql.TypeString),
 				},
-				ColumnAsName: pmodel.NewCIStr("job status"),
+				ColumnAsName: ast.NewCIStr("job status"),
 			},
 		}
 		rows := make([][]any, 1)

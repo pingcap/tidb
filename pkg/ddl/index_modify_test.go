@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -1096,12 +1096,12 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	checkCreateTableWithVectorIdx := func(replicaCnt uint64) {
 		tk.MustExec("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW, vector index((VEC_L2_DISTANCE(b))));")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
 		indexes := tbl.Meta().Indices
 		require.Equal(t, 2, len(indexes))
-		require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+		require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1220,16 +1220,16 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("insert into t values (1, '[1,2.1,3.3]');")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes := tbl.Meta().Indices
 	require.Equal(t, 0, len(indexes))
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
@@ -1266,7 +1266,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test rename index
 	tk.MustExec("alter table t rename index idx to vecIdx")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes1 := tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes1))
@@ -1275,7 +1275,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test drop a vector index
 	tk.MustExec("alter table t drop index vecIdx;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 0, len(indexes))
@@ -1289,11 +1289,11 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test create a vector index with same name
 	tk.MustExec("create vector index idx on t ((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1314,16 +1314,16 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test anonymous index
 	tk.MustExec("alter table t add vector index ((vec_l2_distance(b))) USING HNSW;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tbl.Meta().Indices))
 	idx := tbl.Meta().Indices[0]
 	require.Equal(t, "vector_index", idx.Name.O)
-	require.Equal(t, pmodel.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, ast.IndexTypeHNSW, idx.Tp)
 	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
 	tk.MustExec("alter table t add key vector_index_2(a);")
 	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 3, len(tbl.Meta().Indices))
 	require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
