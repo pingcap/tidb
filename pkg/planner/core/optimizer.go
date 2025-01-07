@@ -21,7 +21,6 @@ import (
 	"math"
 	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -290,9 +289,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		physical base.PhysicalPlan
 		cost     = math.MaxFloat64
 	)
-	if strings.Contains(logic.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select 1") {
-		fmt.Println(1)
-	}
 	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
 		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 		if planCounter == 0 {
@@ -313,7 +309,6 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
-
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}

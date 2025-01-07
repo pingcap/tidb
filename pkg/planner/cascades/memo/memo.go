@@ -72,7 +72,7 @@ func NewMemo(caps ...uint64) *Memo {
 
 // Destroy indicates that when stack itself is useless like in the end of optimizing phase, we can destroy ourselves.
 func (mm *Memo) Destroy() {
-	// when a TaskStack itself is useless, we can destroy itself actively.
+	// when a memo itself is useless, we can clean itself actively.
 	mm.groupIDGen.id = 0
 	mm.rootGroup = nil
 	mm.groups.Init()
