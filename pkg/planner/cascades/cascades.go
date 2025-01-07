@@ -84,7 +84,7 @@ func NewContext(pctx base2.PlanContext) *Context {
 // Destroy the memo context, which will clean the resource allocated during this phase.
 func (c *Context) Destroy() {
 	// when a memo optimizing phase is done for a session,
-	// we should put the stack and memo back to the pool management for reuse.
+	// we should put the stack back and clean the memo.
 	c.mm.Destroy()
 	c.scheduler.Destroy()
 }
