@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1536,8 +1537,9 @@ func buildSchemaFromFields(
 					return nil, nil
 				}
 				for _, col := range tbl.Columns {
+					uniqueDBName := unique.Make(dbName)
 					names = append(names, &types.FieldName{
-						DBName:      dbName,
+						DBName:      &uniqueDBName,
 						OrigTblName: tbl.Name,
 						TblName:     tblName,
 						ColName:     col.Name,
@@ -1566,8 +1568,9 @@ func buildSchemaFromFields(
 			if field.AsName.L != "" {
 				asName = field.AsName
 			}
+			uniqueDBName := unique.Make(dbName)
 			names = append(names, &types.FieldName{
-				DBName:      dbName,
+				DBName:      &uniqueDBName,
 				OrigTblName: tbl.Name,
 				TblName:     tblName,
 				OrigColName: col.Name,
@@ -1579,8 +1582,9 @@ func buildSchemaFromFields(
 	}
 	// fields len is 0 for update and delete.
 	for _, col := range tbl.Columns {
+		uniqueDBName := unique.Make(dbName)
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
+			DBName:      &uniqueDBName,
 			OrigTblName: tbl.Name,
 			TblName:     tblName,
 			ColName:     col.Name,
@@ -2134,8 +2138,9 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 	if schema.Len() > 0 {
 		tableAliasName = pointget.OutputNames()[0].TblName
 	}
+	uniqueDBName := unique.Make(pmodel.NewCIStr(dbName))
 	newOutputNames = append(newOutputNames, &types.FieldName{
-		DBName:      pmodel.NewCIStr(dbName),
+		DBName:      &uniqueDBName,
 		TblName:     tableAliasName,
 		OrigTblName: tbl.Name,
 		ColName:     model.ExtraHandleName,

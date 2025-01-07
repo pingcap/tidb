@@ -17,6 +17,7 @@ package expression
 import (
 	"fmt"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -1080,10 +1081,11 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName pmodel.CIStr,
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
+		dbNameUnique := unique.Make(dbName)
 		names = append(names, &types.FieldName{
 			OrigTblName: tblName,
 			OrigColName: col.Name,
-			DBName:      dbName,
+			DBName:      &dbNameUnique,
 			TblName:     tblName,
 			ColName:     col.Name,
 		})
