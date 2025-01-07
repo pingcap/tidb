@@ -36,7 +36,9 @@ const (
 	defRententionDays   = 7
 
 	// WorkloadSchema is the name of database for workloadrepo worker.
-	WorkloadSchema     = "WORKLOAD_SCHEMA"
+	WorkloadSchema = "WORKLOAD_SCHEMA"
+	// WorkloadSchemaL is the name of database in lower case.
+	WorkloadSchemaL    = "workload_schema"
 	histSnapshotsTable = "HIST_SNAPSHOTS"
 )
 

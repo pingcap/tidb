@@ -755,7 +755,7 @@ func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *SnapClient) HasBackedUpSysDB() bool {
-	sysDBs := []string{"mysql", "sys"}
+	sysDBs := []string{"mysql", "sys", "workload_schema"}
 	for _, db := range sysDBs {
 		temporaryDB := utils.TemporaryDBName(db)
 		_, backedUp := rc.databases[temporaryDB.O]
