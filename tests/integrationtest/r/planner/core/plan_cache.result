@@ -1024,9 +1024,9 @@ select @@last_plan_from_cache;
 0
 explain format = 'plan_cache' select * from t where a=1.1;
 id	estRows	task	access object	operator info
-IndexReader_10	8000.00	root		index:Selection_9
-└─Selection_9	8000.00	cop[tikv]		eq(cast(planner__core__plan_cache.t.a, decimal(10,0) BINARY), 1.1)
-  └─IndexFullScan_8	10000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+IndexReader_7	8000.00	root		index:Selection_6
+└─Selection_6	8000.00	cop[tikv]		eq(cast(planner__core__plan_cache.t.a, decimal(10,0) BINARY), 1.1)
+  └─IndexFullScan_5	10000.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: '1.1' may be converted to INT
 select * from t where a='1';
