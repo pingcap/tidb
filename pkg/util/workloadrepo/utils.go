@@ -41,7 +41,7 @@ func parsePartitionName(part string) (time.Time, error) {
 }
 
 func generatePartitionRanges(sb *strings.Builder, tbInfo *model.TableInfo, now time.Time) (bool, error) {
-	// Set lastPart to the lastest partition found in table or the date for
+	// Set lastPart to the latest partition found in table or the date for
 	// yesterday's partition if none is found. Note: The partition named for
 	// today's date holds yesterday's data.
 	lastPart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
