@@ -330,6 +330,11 @@ func onCreateView(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 	}
+	if oldTableID > 0 && !orReplace {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	ver, err = updateSchemaVersion(jobCtx, job)
 	if err != nil {
 		return ver, errors.Trace(err)
