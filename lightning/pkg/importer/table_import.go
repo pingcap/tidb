@@ -793,17 +793,23 @@ ChunkLoop:
 			setError(err)
 			break
 		}
-		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
-		if err != nil {
-			setError(err)
-			break
-		}
 
+		var memoryUsage int
 		// Limit the concurrency of parquet reader using estimated memory usage.
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
-			memoryUsage := tr.tableMeta.DataFiles[0].FileMeta.MemoryUsage
 			arenaSize := mydump.GetArenaSize()
-			memoryUsage = (memoryUsage + arenaSize - 1) / arenaSize * arenaSize
+
+			memQuota := memLimit / rc.cfg.App.RegionConcurrency / arenaSize * arenaSize
+			memoryUsageFull := (chunk.FileMeta.ParquetMeta.MemoryUsageFull + arenaSize - 1) / arenaSize * arenaSize
+			if memQuota > memoryUsageFull {
+				memoryUsage = memoryUsageFull
+				chunk.FileMeta.ParquetMeta.UseStreaming = false
+			} else {
+				memoryUsage = chunk.FileMeta.ParquetMeta.MemoryUsage
+				memoryUsage = (memoryUsage + arenaSize - 1) / arenaSize * arenaSize
+				chunk.FileMeta.ParquetMeta.UseStreaming = true
+			}
+			chunk.FileMeta.ParquetMeta.UseSampleAllocator = false
 
 			// If memory usage is larger than memory limit, set memory usage
 			// to limit to block other file import.
@@ -812,6 +818,7 @@ ChunkLoop:
 					zap.String("file", chunk.FileMeta.Path),
 					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+					zap.Bool("streaming mode", chunk.FileMeta.ParquetMeta.UseStreaming),
 				)
 				memoryUsage = memLimit
 			} else {
@@ -819,9 +826,18 @@ ChunkLoop:
 					zap.String("file", chunk.FileMeta.Path),
 					zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
 					zap.String("memory limit", fmt.Sprintf("%d MB", memLimit>>20)),
+					zap.Bool("streaming mode", chunk.FileMeta.ParquetMeta.UseStreaming),
 				)
 			}
+		}
 
+		cr, err := newChunkProcessor(ctx, chunkIndex, rc.cfg, chunk, rc.ioWorkers, rc.store, tr.tableInfo.Core)
+		if err != nil {
+			setError(err)
+			break
+		}
+
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			memLimiter.Acquire(memoryUsage)
 			cr.memLimiter = memLimiter
 			cr.memoryUsage = memoryUsage

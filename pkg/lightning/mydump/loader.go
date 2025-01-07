@@ -86,6 +86,15 @@ type MDTableMeta struct {
 	IsRowOrdered bool
 }
 
+// ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
+type ParquetFileMeta struct {
+	Rows               int64 // row count
+	MemoryUsage        int   // memory usage for streaming mode
+	MemoryUsageFull    int   // memory usage for non-streaming mode
+	UseStreaming       bool  // whether use streaming mode
+	UseSampleAllocator bool  // whether use sample allocator
+}
+
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
 type SourceFileMeta struct {
 	Path        string
@@ -100,10 +109,9 @@ type SourceFileMeta struct {
 	// If the file is compressed, RealSize is the estimated uncompressed size.
 	// If the file is parquet, RealSize is the estimated data size after convert
 	// to row oriented storage.
-	RealSize        int64
-	Rows            int64 // only for parquet
-	MemoryUsage     int   // only for parquet
-	MemoryUsageFull int   // only for parquet
+	RealSize int64
+
+	ParquetMeta ParquetFileMeta // only for parquet
 }
 
 // NewMDTableMeta creates an Mydumper table meta with specified character set.
@@ -549,8 +557,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			s.sampledParquetRowSizes[tableName],
 				s.sampledParquetMemoryUsage[tableName],
 				s.sampledParquetMemoryUsageFull[tableName],
-				err =
-				SampleParquetFileProperty(ctx, info.FileMeta, s.loader.GetStore())
+				err = SampleParquetFileProperty(ctx, info.FileMeta, s.loader.GetStore())
 			if err != nil {
 				logger.Error("fail to sample parquet row size", zap.String("category", "loader"),
 					zap.String("schema", res.Schema), zap.String("table", res.Name),
@@ -567,12 +574,14 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 				return errors.Trace(err)
 			}
 			info.FileMeta.RealSize = int64(float64(totalRowCount) * s.sampledParquetRowSizes[tableName])
-			info.FileMeta.Rows = totalRowCount
+			info.FileMeta.ParquetMeta.Rows = totalRowCount
 			if m, ok := metric.FromContext(ctx); ok {
 				m.RowsCounter.WithLabelValues(metric.StateTotalRestore, tableName).Add(float64(totalRowCount))
 			}
-			info.FileMeta.MemoryUsage = s.sampledParquetMemoryUsage[tableName]
-			info.FileMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
+			info.FileMeta.ParquetMeta.MemoryUsage = s.sampledParquetMemoryUsage[tableName]
+			info.FileMeta.ParquetMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
+			info.FileMeta.ParquetMeta.UseStreaming = true
+			info.FileMeta.ParquetMeta.UseSampleAllocator = false
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
@@ -878,7 +887,11 @@ func SampleParquetFileProperty(
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	parser, err := NewParquetParserForSampling(ctx, store, reader, fileMeta.Path)
+
+	parquetMeta := fileMeta.ParquetMeta
+	parquetMeta.UseStreaming = true
+	parquetMeta.UseSampleAllocator = true
+	parser, err := NewParquetParserWithMeta(ctx, store, reader, fileMeta.Path, parquetMeta)
 	if err != nil {
 		//nolint: errcheck
 		reader.Close()

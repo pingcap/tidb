@@ -115,6 +115,8 @@ func (ap *arenaPool) adjustGCPercent() {
 		}
 		percent := int(memTotal)*90/(ap.allocated*arenaDefaultSize) - 100
 		percent = min(percent, 100) / 10 * 10
+		percent = max(percent, 5)
+
 		old := debug.SetGCPercent(percent)
 		runtime.GC()
 		log.L().Debug("set gc percentage",

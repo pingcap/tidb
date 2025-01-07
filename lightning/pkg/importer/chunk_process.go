@@ -85,7 +85,6 @@ func openParser(
 	ioWorkers *worker.Pool,
 	store storage.ExternalStorage,
 	tblInfo *model.TableInfo,
-
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
 	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
@@ -111,7 +110,7 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+		parser, err = mydump.NewParquetParserWithMeta(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
 		if err != nil {
 			return nil, err
 		}

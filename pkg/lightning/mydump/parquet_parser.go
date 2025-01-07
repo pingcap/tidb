@@ -1004,13 +1004,13 @@ func roundToPower2(n int) int {
 	return max(int(v+1), 256<<10)
 }
 
-// NewParquetParserForSampling generates a parquet parser used in sampling.
-// The only difference is that we use a special allocator to track the memory allocation.
-func NewParquetParserForSampling(
+// NewParquetParserWithMeta generates a parquet parser.
+func NewParquetParserWithMeta(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	r storage.ReadSeekCloser,
 	path string,
+	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
 	wrapper, ok := r.(*parquetFileWrapper)
 	if !ok {
@@ -1023,9 +1023,17 @@ func NewParquetParserForSampling(
 		wrapper.InitBuffer(defaultBufSize)
 	}
 
-	alloc := &sampleAllocator{}
-	prop := parquet.NewReaderProperties(alloc)
-	prop.BufferedStreamEnabled = true
+	var allocator memory.Allocator
+	if meta.UseSampleAllocator {
+		allocator = &sampleAllocator{}
+	} else {
+		alloc := &buddyAllocator{}
+		alloc.Init(0)
+		allocator = alloc
+	}
+
+	prop := parquet.NewReaderProperties(allocator)
+	prop.BufferedStreamEnabled = meta.UseStreaming
 
 	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
@@ -1053,15 +1061,16 @@ func NewParquetParserForSampling(
 	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
 	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
-		newWrapper, err := wrapper.Open("")
-		if err != nil {
-			return nil, errors.Trace(err)
+		var newWrapper parquet.ReaderAtSeeker
+		if meta.UseStreaming {
+			newWrapper, err = wrapper.Open("")
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			newWrapper = wrapper
 		}
-
-		prop := parquet.NewReaderProperties(nil)
-		prop.BufferedStreamEnabled = true
 		reader, err := file.NewParquetReader(newWrapper, file.WithReadProps(prop), file.WithMetadata(reader.MetaData()))
-
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1072,7 +1081,7 @@ func NewParquetParserForSampling(
 		readers:     subreaders,
 		colMetas:    columnMetas,
 		columnNames: columnNames,
-		alloc:       alloc,
+		alloc:       allocator,
 		logger:      log.FromContext(ctx),
 	}
 	parser.Init()
