@@ -176,7 +176,7 @@ func (s *jobScheduler) start() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := reorgWorkerCnt * 3
+	reorgCnt := reorgWorkerCnt * 2
 	s.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), jobTypeReorg)
 	s.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), jobTypeGeneral)
 	s.wg.RunWithLog(s.scheduleLoop)

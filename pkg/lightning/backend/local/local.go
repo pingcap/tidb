@@ -1718,7 +1718,7 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec t
 	// this can help save about 3% of CPU.
 	var preAllocWriteBatch []common.KvPair
 	if !cfg.Local.IsKVSorted {
-		preAllocWriteBatch = make([]common.KvPair, units.MiB)
+		preAllocWriteBatch = make([]common.KvPair, units.KiB)
 		// we want to keep the cacheSize as the whole limit of this local writer, but the
 		// main memory usage comes from two member: kvBuffer and writeBatch, so we split
 		// ~10% to writeBatch for !IsKVSorted, which means we estimate the average length
