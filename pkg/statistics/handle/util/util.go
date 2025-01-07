@@ -23,7 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/ast"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+>>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739))
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -82,7 +87,12 @@ var (
 )
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
+<<<<<<< HEAD
 func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+=======
+func CallWithSCtx(pool util.SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
+>>>>>>> 23ed0dfd6ed (statistics: add recover to protect background task (#58739))
 	se, err := pool.Get()
 	if err != nil {
 		return err
