@@ -3447,6 +3447,14 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+	{Scope: ScopeGlobal, Name: TiDBCircuitBreakerPDMetadataErrorRateThresholdPct, Value: strconv.Itoa(DefTiDBCircuitBreakerPDMetaErrorRatePct), Type: TypeUnsigned, MinValue: 0, MaxValue: 100,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			if ChangePDMetadataCircuitBreakerErrorRateThresholdPct != nil {
+				ChangePDMetadataCircuitBreakerErrorRateThresholdPct(uint32(tidbOptPositiveInt32(val, DefTiDBCircuitBreakerPDMetaErrorRatePct)))
+			}
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
