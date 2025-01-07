@@ -30,7 +30,7 @@ type TableIdentifier struct {
 // GenerateTableNameSuffix generates a unique suffix for checkpoint table names based on restore parameters
 func (t *TableIdentifier) GenerateTableNameSuffix() string {
 	// combine all parameters into a unique string
-	uniqueStr := fmt.Sprintf("%d-%d-%s-%s-%d-%s",
+	uniqueStr := fmt.Sprintf("%d-%d-%s-%d-%s",
 		t.StartTS,
 		t.EndTS,
 		t.Filter,

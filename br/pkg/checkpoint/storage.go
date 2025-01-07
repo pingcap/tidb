@@ -249,7 +249,8 @@ func selectCheckpointChecksum(
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	var pastDureTime time.Duration = 0
 	checkpointChecksum := make(map[int64]*ChecksumItem)
-	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName, GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix))
+	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName,
+		GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix))
 	if err != nil {
 		return checkpointChecksum, pastDureTime, errors.Trace(err)
 	}
