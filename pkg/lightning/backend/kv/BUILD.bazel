@@ -78,7 +78,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/sessionctx/stmtctx",

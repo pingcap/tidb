@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
@@ -41,7 +41,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -56,7 +56,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 
@@ -73,7 +73,7 @@ func TestDDLTable(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -85,7 +85,7 @@ func TestDDLTable(t *testing.T) {
 
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -98,7 +98,7 @@ func TestDDLTable(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/53652
 	testKit.MustExec("create table t_parent (id int primary key)")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_parent"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_parent"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -109,7 +109,7 @@ func TestDDLTable(t *testing.T) {
 
 	testKit.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade);")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_child"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_child"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -162,7 +162,7 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -192,7 +192,7 @@ func TestTruncateTable(t *testing.T) {
 
 	// Get new table info.
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableInfo := tbl.Meta()
 	// Get new added table's stats meta.
@@ -232,7 +232,7 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -265,7 +265,7 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 
 	// Get new table info.
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableInfo := tbl.Meta()
 	// Get all new added partitions ID.
@@ -305,7 +305,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is := do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
@@ -320,7 +320,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -340,7 +340,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -353,7 +353,7 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -367,20 +367,20 @@ func TestDDLHistogram(t *testing.T) {
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create index i on t(c2, c1)")
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, true))
 	testKit.MustExec("analyze table t")
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -415,7 +415,7 @@ PARTITION BY RANGE ( a ) (
 )`
 		testKit.MustExec(createTable)
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -434,7 +434,7 @@ PARTITION BY RANGE ( a ) (
 		require.NoError(t, err)
 		is = do.InfoSchema()
 		require.Nil(t, h.Update(context.Background(), is))
-		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		pi = tableInfo.GetPartitionInfo()
@@ -447,7 +447,7 @@ PARTITION BY RANGE ( a ) (
 		addPartition := "alter table t add partition (partition p4 values less than (26))"
 		testKit.MustExec(addPartition)
 		is = do.InfoSchema()
-		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		err = statstestutil.HandleNextDDLEventWithTxn(h)
@@ -485,7 +485,7 @@ func TestReorgPartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -542,7 +542,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -576,7 +576,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	// Check new partitions are added.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -610,7 +610,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -650,7 +650,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	// Check new partitions are added.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -699,7 +699,7 @@ func TestTruncateAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -761,7 +761,7 @@ func TestTruncateAHashPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -829,7 +829,7 @@ func TestTruncatePartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -900,7 +900,7 @@ func TestDropAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -967,7 +967,7 @@ func TestDropPartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1045,7 +1045,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1065,7 +1065,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"),
+		ast.NewCIStr("test"), ast.NewCIStr("t1"),
 	)
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
@@ -1101,7 +1101,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"),
+		ast.NewCIStr("test"), ast.NewCIStr("t2"),
 	)
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
@@ -1145,7 +1145,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t3")
 	is = do.InfoSchema()
 	tbl3, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"),
+		ast.NewCIStr("test"), ast.NewCIStr("t3"),
 	)
 	require.NoError(t, err)
 	tableInfo3 := tbl3.Meta()
@@ -1197,7 +1197,7 @@ func TestRemovePartitioning(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1233,7 +1233,7 @@ func TestRemovePartitioning(t *testing.T) {
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -1275,7 +1275,7 @@ func TestAddPartitioning(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1296,7 +1296,7 @@ func TestAddPartitioning(t *testing.T) {
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -1318,7 +1318,7 @@ func TestDropSchema(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	// Check the current stats meta version.
@@ -1362,7 +1362,7 @@ func TestExchangePartition(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int)")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 20; i++ {

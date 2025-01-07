@@ -31,7 +31,6 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -91,7 +90,7 @@ type tableNameExtractor struct {
 	ctx      context.Context
 	executor sqlexec.RestrictedSQLExecutor
 	is       infoschema.InfoSchema
-	curDB    model.CIStr
+	curDB    ast.CIStr
 	names    map[tableNamePair]struct{}
 	cteNames map[string]struct{}
 	err      error
@@ -119,7 +118,7 @@ func (tne *tableNameExtractor) getTablesAndViews() (map[tableNamePair]struct{}, 
 }
 
 func findFK(is infoschema.InfoSchema, dbName, tableName string, tableMap map[tableNamePair]struct{}) error {
-	tblInfo, err := is.TableByName(context.Background(), model.NewCIStr(dbName), model.NewCIStr(tableName))
+	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tableName))
 	if err != nil {
 		return err
 	}
@@ -301,7 +300,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 	// Retrieve current DB
-	dbName := model.NewCIStr(sessionVars.CurrentDB)
+	dbName := ast.NewCIStr(sessionVars.CurrentDB)
 	do := GetDomain(sctx)
 
 	// Retrieve all tables
@@ -473,8 +472,8 @@ func dumpTiFlashReplica(sctx sessionctx.Context, zw *zip.Writer, pairs map[table
 	is := GetDomain(sctx).InfoSchema()
 	ctx := infoschema.WithRefillOption(context.Background(), false)
 	for pair := range pairs {
-		dbName := model.NewCIStr(pair.DBName)
-		tableName := model.NewCIStr(pair.TableName)
+		dbName := ast.NewCIStr(pair.DBName)
+		tableName := ast.NewCIStr(pair.TableName)
 		t, err := is.TableByName(ctx, dbName, tableName)
 		if err != nil {
 			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
@@ -527,7 +526,7 @@ func dumpStatsMemStatus(zw *zip.Writer, pairs map[tableNamePair]struct{}, do *Do
 		if pair.IsView {
 			continue
 		}
-		tbl, err := is.TableByName(ctx, model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+		tbl, err := is.TableByName(ctx, ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 		if err != nil {
 			return err
 		}
@@ -786,7 +785,7 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 
 // extractTableNames extracts table names from the given stmts.
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB ast.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: sctx.GetRestrictedSQLExecutor(),
@@ -807,7 +806,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 func getStatsForTable(do *Domain, pair tableNamePair, historyStatsTS uint64) (*util.JSONTable, []string, error) {
 	is := do.InfoSchema()
 	h := do.StatsHandle()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr(pair.DBName), model.NewCIStr(pair.TableName))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(pair.DBName), ast.NewCIStr(pair.TableName))
 	if err != nil {
 		return nil, nil, err
 	}

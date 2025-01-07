@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -64,17 +64,17 @@ func TestSignedAutoid(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: pmodel.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: pmodel.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -269,17 +269,17 @@ func TestUnsignedAutoid(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: pmodel.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: pmodel.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -433,9 +433,9 @@ func TestConcurrentAlloc(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -519,9 +519,9 @@ func TestRollbackAlloc(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -569,11 +569,11 @@ func TestAllocComputationIssue(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -620,9 +620,9 @@ func TestIssue40584(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})

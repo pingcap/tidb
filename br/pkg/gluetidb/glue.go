@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -250,7 +250,7 @@ func (gs *tidbSession) CreateTables(_ context.Context,
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(_ context.Context, dbName pmodel.CIStr,
+func (gs *tidbSession) CreateTable(_ context.Context, dbName ast.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
 }
