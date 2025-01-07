@@ -64,10 +64,14 @@ const taskGCTemplate = `DELETE task FROM
 	WHERE job.table_id IS NULL`
 
 const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE create_time < CURDATE() - INTERVAL 90 DAY`
-const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE current_job_status IS NULL`
-const ttlTableStatusGCWithIDTemplate = ttlTableStatusGCWithoutIDTemplate + ` AND table_id NOT IN (%s)`
+const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE (current_job_status IS NULL OR current_job_owner_hb_time < %?)`
 
 const timeFormat = time.DateTime
+
+// don't remove the rows for non-exist tables directly. Instead, set them to cancelled. In some special situations, the TTL job may still be able
+// to finish correctly. If that happen, the status will be updated from 'cancelled' to 'finished' in `(*ttlJob).finish`
+const ttlJobHistoryGCNonExistTableTemplate = `UPDATE mysql.tidb_ttl_job_history SET status = 'cancelled'
+	WHERE table_id NOT IN (SELECT table_id FROM mysql.tidb_ttl_table_status) AND status = 'running'`
 
 func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []any) {
 	return insertNewTableIntoStatusTemplate, []any{tableID, parentTableID}
@@ -81,15 +85,18 @@ func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []any)
 	return updateHeartBeatTemplate, []any{now.Format(timeFormat), tableID, id}
 }
 
-func gcTTLTableStatusGCSQL(existIDs []int64) string {
+func gcTTLTableStatusGCSQL(existIDs []int64, now time.Time) (string, []any) {
 	existIDStrs := make([]string, 0, len(existIDs))
 	for _, id := range existIDs {
 		existIDStrs = append(existIDStrs, strconv.Itoa(int(id)))
 	}
+
+	hbExpireTime := now.Add(-jobManagerLoopTickerInterval * 2)
+	args := []any{hbExpireTime.Format(timeFormat)}
 	if len(existIDStrs) > 0 {
-		return fmt.Sprintf(ttlTableStatusGCWithIDTemplate, strings.Join(existIDStrs, ","))
+		return ttlTableStatusGCWithoutIDTemplate + fmt.Sprintf(` AND table_id NOT IN (%s)`, strings.Join(existIDStrs, ",")), args
 	}
-	return ttlTableStatusGCWithoutIDTemplate
+	return ttlTableStatusGCWithoutIDTemplate, args
 }
 
 // JobManager schedules and manages the ttl jobs on this instance
@@ -219,7 +226,7 @@ func (m *JobManager) jobLoop() error {
 			}
 		case <-gcTicker:
 			gcCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
-			m.DoGC(gcCtx, se)
+			m.DoGC(gcCtx, se, now)
 			cancel()
 		// Job Schedule loop:
 		case <-updateJobHeartBeatTicker:
@@ -362,13 +369,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		responseErr(err)
-		return
-	}
-
-	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now().In(tz)) {
+	if !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), se.Now()) {
 		responseErr(errors.New("not in TTL job window"))
 		return
 	}
@@ -571,13 +572,6 @@ j:
 }
 
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
-	tz, err := se.GlobalTimeZone(m.ctx)
-	if err != nil {
-		terror.Log(err)
-	} else {
-		now = now.In(tz)
-	}
-
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
 	jobTables := m.readyForLockHBTimeoutJobTables(now)
@@ -1036,7 +1030,7 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 }
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
-func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
+func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time) {
 	// Remove the table not exist in info schema cache.
 	// Delete the table status before deleting the tasks. Therefore the related tasks
 	if err := m.updateInfoSchemaCache(se); err == nil {
@@ -1045,7 +1039,8 @@ func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
 		for id := range m.infoSchemaCache.Tables {
 			existIDs = append(existIDs, id)
 		}
-		if _, err := se.ExecuteSQL(ctx, gcTTLTableStatusGCSQL(existIDs)); err != nil {
+		sql, args := gcTTLTableStatusGCSQL(existIDs, now)
+		if _, err := se.ExecuteSQL(ctx, sql, args...); err != nil {
 			logutil.Logger(ctx).Warn("fail to gc ttl table status", zap.Error(err))
 		}
 	} else {
@@ -1058,6 +1053,10 @@ func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
 
 	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCTemplate); err != nil {
 		logutil.Logger(ctx).Warn("fail to gc ttl job history", zap.Error(err))
+	}
+
+	if _, err := se.ExecuteSQL(ctx, ttlJobHistoryGCNonExistTableTemplate); err != nil {
+		logutil.Logger(ctx).Warn("fail to gc ttl job history for non-exist table", zap.Error(err))
 	}
 }
 
