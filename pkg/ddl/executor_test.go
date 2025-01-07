@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -315,4 +316,138 @@ func TestHandleLockTable(t *testing.T) {
 		require.Len(t, se.GetAllTableLocks(), 1)
 		checkTableLocked(1, pmodel.TableLockRead)
 	})
+}
+
+func TestResolveCharsetCollation(t *testing.T) {
+	cases := []struct {
+		chs        string
+		coll       string
+		err        bool
+		opts       []ast.CharsetOpt
+		utf8mb4def string
+	}{
+		{"utf8mb4", "utf8mb4_bin", false, []ast.CharsetOpt{}, ""},
+		{"utf8mb4", "utf8mb4_general_ci", false, []ast.CharsetOpt{
+			{Chs: "utf8mb4", Col: "utf8mb4_general_ci"},
+		}, ""},
+		{"utf8", "utf8_general_ci", false, []ast.CharsetOpt{
+			{Chs: "utf8"},
+			{Chs: "utf8", Col: "utf8_general_ci"}}, ""},
+		{"latin1", "latin1_bin", false, []ast.CharsetOpt{
+			{Chs: "latin1"},
+		}, ""},
+		{"latin1", "latin1_bin", false, []ast.CharsetOpt{
+			{Col: "latin1_bin"},
+		}, ""},
+		{"latin1", "latin1_bin", false, []ast.CharsetOpt{
+			{Col: "latin1_bin"},
+			{Chs: "utf8", Col: "utf8_unicode_ci"},
+		}, ""},
+		{"latin1", "latin1_bin", false, []ast.CharsetOpt{
+			{Chs: "latin1"},
+			{Chs: "utf8", Col: "utf8_unicode_ci"},
+		}, ""},
+		{"utf8mb4", "utf8mb4_bin", false, []ast.CharsetOpt{
+			{Chs: "", Col: ""},
+		}, ""},
+		{"utf8mb4", "utf8mb4_unicode_ci", false, []ast.CharsetOpt{
+			{Chs: "", Col: ""},
+		}, "utf8mb4_unicode_ci"},
+		{"utf8mb4", "utf8mb4_general_ci", false, []ast.CharsetOpt{
+			{Chs: "utf8mb4", Col: ""},
+			{Chs: "utf8mb4", Col: "utf8mb4_bin"},
+		}, "utf8mb4_general_ci"},
+
+		// Test for utf8 and utf8mb3 alias
+		{"utf8", "utf8_bin", false, []ast.CharsetOpt{
+			{Chs: "utf8mb3", Col: "utf8mb3_bin"},
+		}, ""},
+		{"utf8", "utf8_bin", false, []ast.CharsetOpt{
+			{Chs: "utf8mb3", Col: "utf8_bin"},
+		}, ""},
+		{"utf8", "utf8_bin", false, []ast.CharsetOpt{
+			{Chs: "utf8", Col: "utf8mb3_bin"},
+		}, ""},
+
+		// Error cases
+		{"", "", true, []ast.CharsetOpt{
+			{Chs: "utf8mb4", Col: "utf7_nonexistent_ci"},
+		}, ""},
+		{"", "", true, []ast.CharsetOpt{
+			{Chs: "utf7", Col: "utf8_bin"},
+		}, ""},
+		{"", "", true, []ast.CharsetOpt{
+			{Chs: "latin1", Col: "utf8_bin"},
+		}, ""},
+	}
+
+	for _, tc := range cases {
+		chs, coll, err := ddl.ResolveCharsetCollation(tc.opts, tc.utf8mb4def)
+		if tc.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tc.chs, chs, tc)
+			require.Equal(t, tc.coll, coll, tc)
+		}
+	}
+}
+
+func TestGetCharsetAndCollateInTableOption(t *testing.T) {
+	cases := []struct {
+		chs  string
+		coll string
+		err  bool
+		opts []*ast.TableOption
+	}{
+		{"utf8mb4", "utf8mb4_bin", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+		}},
+		{"", "utf8mb4_bin", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+		}},
+		{"utf8mb4", "", false, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_bin"},
+			{Tp: ast.TableOptionCollate, StrValue: "utf8mb4_general_ci"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCollate, StrValue: "ascii_bin"},
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCharset, StrValue: "latin1"},
+		}},
+		{"", "", true, []*ast.TableOption{
+			{Tp: ast.TableOptionCharset, StrValue: "utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "latin1_bin"},
+		}},
+		{"utf8mb4", "utf8mb4_bin", false, []*ast.TableOption{
+			// Test for case insensitive comparison
+			{Tp: ast.TableOptionCharset, StrValue: "Utf8mb4"},
+			{Tp: ast.TableOptionCollate, StrValue: "uTf8mb4_bin"},
+		}},
+	}
+
+	for _, tc := range cases {
+		chs, coll, err := ddl.GetCharsetAndCollateInTableOption(tc.opts)
+		if tc.err {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+			require.Equal(t, tc.chs, chs, tc.opts)
+			require.Equal(t, tc.coll, coll, tc.opts)
+		}
+	}
 }

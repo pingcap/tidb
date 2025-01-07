@@ -79,3 +79,50 @@ set global collation_server = 'utf8_roman_ci';
 set global collation_database = 'utf8_roman_ci';
 -- error 1273
 set global collation_connection = 'utf8_roman_ci';
+
+# TestCreateTableInvalidCharColl
+# Test invalid charsets, invalid collations and invalid combinations in CREATE TABLE
+-- error 1115
+CREATE TABLE t100 (id INT PRIMARY KEY) CHARACTER SET utf7;
+-- error 1273
+CREATE TABLE t100 (id INT PRIMARY KEY) COLLATE utf7_modified_ci;
+-- error 1253
+CREATE TABLE t100 (id INT PRIMARY KEY) CHARACTER SET utf8mb4 COLLATE utf8_general_ci;
+
+# TestTableCollation
+# Table collation and charset should follow the schema collation and charset
+# https://github.com/pingcap/tidb/issues/58446
+CREATE SCHEMA s1 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci;
+USE s1;
+CREATE TABLE t11 (id INT PRIMARY KEY);
+CREATE TABLE t12 (id INT PRIMARY KEY) CHARACTER SET utf8;
+CREATE TABLE t13 (id INT PRIMARY KEY) CHARACTER SET utf8 COLLATE utf8_general_ci;
+CREATE TABLE t14 (id INT PRIMARY KEY) COLLATE utf8_general_ci;
+SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.tables WHERE TABLE_SCHEMA='s1';
+DROP SCHEMA s1;
+
+# TestSchemaCharsetAndCollation
+CREATE SCHEMA s2;
+SHOW CREATE SCHEMA s2;
+DROP SCHEMA s2;
+
+CREATE SCHEMA s3 DEFAULT CHARACTER SET ascii;
+SHOW CREATE SCHEMA s3;
+DROP SCHEMA s3;
+
+CREATE SCHEMA s4 DEFAULT COLLATE ascii_bin;
+SHOW CREATE SCHEMA s4;
+DROP SCHEMA s4;
+
+CREATE SCHEMA s5 DEFAULT COLLATE utf8mb4_general_ci;
+SHOW CREATE SCHEMA s5;
+DROP SCHEMA s5;
+
+# TestDefaultUTF8MB4Coll
+CREATE SCHEMA s6 COLLATE utf8_unicode_ci;
+USE s6;
+SET SESSION default_collation_for_utf8mb4='utf8mb4_general_ci';
+CREATE TABLE s6t1 (id INT PRIMARY KEY) DEFAULT CHARSET utf8mb4;
+CREATE TABLE s6t2 (id INT PRIMARY KEY);
+SELECT TABLE_NAME, TABLE_COLLATION FROM information_schema.tables WHERE TABLE_SCHEMA='s6';
+DROP SCHEMA s6;

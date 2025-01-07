@@ -198,28 +198,25 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 	sessionVars := ctx.GetSessionVars()
 
 	// If no charset and/or collation is specified use collation_server and character_set_server
-	charsetOpt := ast.CharsetOpt{}
+	charsetOptServer := ast.CharsetOpt{}
 	if sessionVars.GlobalVarsAccessor != nil {
-		charsetOpt.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
+		charsetOptServer.Col, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CollationServer)
 		if err != nil {
 			return err
 		}
-		charsetOpt.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
+		charsetOptServer.Chs, err = sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.CharacterSetServer)
 		if err != nil {
 			return err
 		}
 	}
 
-	explicitCharset := false
-	explicitCollation := false
+	charsetOpt := ast.CharsetOpt{}
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
 			charsetOpt.Chs = val.Value
-			explicitCharset = true
 		case ast.DatabaseOptionCollate:
 			charsetOpt.Col = val.Value
-			explicitCollation = true
 		case ast.DatabaseOptionPlacementPolicy:
 			placementPolicyRef = &model.PolicyRefInfo{
 				Name: pmodel.NewCIStr(val.Value),
@@ -227,39 +224,16 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 		}
 	}
 
-	if charsetOpt.Col != "" {
-		coll, err := collate.GetCollationByName(charsetOpt.Col)
-		if err != nil {
-			return err
-		}
-
-		// The collation is not valid for the specified character set.
-		// Try to remove any of them, but not if they are explicitly defined.
-		if coll.CharsetName != charsetOpt.Chs {
-			if explicitCollation && !explicitCharset {
-				// Use the explicitly set collation, not the implicit charset.
-				charsetOpt.Chs = ""
-			}
-			if !explicitCollation && explicitCharset {
-				// Use the explicitly set charset, not the (session) collation.
-				charsetOpt.Col = ""
-			}
-		}
-	}
-	if !explicitCollation && explicitCharset {
-		coll := getDefaultCollationForUTF8MB4(charsetOpt.Chs, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
-		if len(coll) != 0 {
-			charsetOpt.Col = coll
-		}
-	}
-	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
+	chs, coll, err := ResolveCharsetCollation([]ast.CharsetOpt{charsetOpt, charsetOptServer}, ctx.GetSessionVars().DefaultCollationForUTF8MB4)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbInfo.Charset = chs
-	dbInfo.Collate = coll
-	dbInfo.PlacementPolicyRef = placementPolicyRef
+	dbInfo := &model.DBInfo{
+		Name:               stmt.Name,
+		Charset:            chs,
+		Collate:            coll,
+		PlacementPolicyRef: placementPolicyRef,
+	}
 
 	onExist := OnExistError
 	if stmt.IfNotExists {
@@ -886,34 +860,91 @@ func GetDefaultCollation(cs string, defaultUTF8MB4Collation string) (string, err
 }
 
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
-// * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
-// * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
+//
+// charsetOpts[0] == explicitly set charset/collation for the object (object can be a table, database, etc)
+// charsetOpts[1] == Template object charset/collation. For example a CREATE TABLE uses the charset/collation
+// of the schema as template.
 func ResolveCharsetCollation(charsetOpts []ast.CharsetOpt, utf8MB4DefaultColl string) (chs string, coll string, err error) {
-	for _, v := range charsetOpts {
-		if v.Col != "" {
-			collation, err := collate.GetCollationByName(v.Col)
+	if len(charsetOpts) == 0 {
+		chs, _ = charset.GetDefaultCharsetAndCollate()
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+		return
+	}
+
+	// Handle explicit collation and charset for the object
+	if len(charsetOpts) > 0 {
+		if charsetOpts[0].Chs != "" {
+			info, err := charset.GetCharsetInfo(charsetOpts[0].Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			if v.Chs != "" && collation.CharsetName != v.Chs {
-				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(v.Col, v.Chs)
-			}
-			return collation.CharsetName, v.Col, nil
+			chs = info.Name
 		}
-		if v.Chs != "" {
-			coll, err := GetDefaultCollation(v.Chs, utf8MB4DefaultColl)
+
+		if charsetOpts[0].Col != "" {
+			collation, err := collate.GetCollationByName(charsetOpts[0].Col)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.Chs, coll, nil
+			coll = collation.Name
+
+			if chs == "" {
+				chs = collation.CharsetName
+			} else if collation.CharsetName != chs {
+				return "", "", charset.ErrCollationCharsetMismatch.GenWithStackByArgs(coll, chs)
+			}
+		} else if chs == charset.CharsetUTF8MB4 {
+			coll = getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
 		}
 	}
-	chs, coll = charset.GetDefaultCharsetAndCollate()
-	utf8mb4Coll := getDefaultCollationForUTF8MB4(chs, utf8MB4DefaultColl)
-	if utf8mb4Coll != "" {
-		return chs, utf8mb4Coll, nil
+
+	// Handle implicit options for the object, e.g. use the schema charset for a
+	// new table if none is specified
+	if len(charsetOpts) > 1 {
+		if charsetOpts[1].Col != "" && coll == "" {
+			collation, err := collate.GetCollationByName(charsetOpts[1].Col)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+
+			// 1. Explicit charset for object, use the collation of the template object
+			// for the collation if it matches.
+			//
+			// 2. If no charset is set explicitly, set the collation.
+			if collation.CharsetName == chs || chs == "" {
+				coll = collation.Name
+			}
+		}
+		if charsetOpts[1].Chs != "" && chs == "" {
+			info, err := charset.GetCharsetInfo(charsetOpts[1].Chs)
+			if err != nil {
+				return "", "", errors.Trace(err)
+			}
+			chs = info.Name
+		}
 	}
-	return chs, coll, nil
+
+	// Set the collation if it is not set and when the charset is set.
+	if coll == "" && chs != "" {
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+
+	// This happens with {Chs: "", Col: ""}
+	if chs == "" {
+		chs, _ = charset.GetDefaultCharsetAndCollate()
+		coll, err = GetDefaultCollation(chs, utf8MB4DefaultColl)
+		if err != nil {
+			return "", "", errors.Trace(err)
+		}
+	}
+
+	return
 }
 
 // IsAutoRandomColumnID returns true if the given column ID belongs to an auto_random column.
@@ -1565,43 +1596,37 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 }
 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
-// and returns the last charset and collate in options. If there is no charset in the options,
-// the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption, defaultUTF8MB4Coll string) (chs, coll string, err error) {
-	for i := startIdx; i < len(options); i++ {
-		opt := options[i]
-		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
-		// the charset will be utf8, collate will be utf8_bin
+// and returns the last charset (chs) and collation (coll) in options.
+// Use ResolveCharsetCollation() on the result to resolve implicit charset and collation.
+func GetCharsetAndCollateInTableOption(options []*ast.TableOption) (chs, coll string, err error) {
+	var collChs string
+	for _, opt := range options {
+		// we set the charset to the last option. example:
+		// `alter table t collate utf8mb4_general_ci charset utf8mb4 collate utf8mb4_bin`
+		// the charset will be utf8mb4, collate will be utf8mb4_bin
 		switch opt.Tp {
 		case ast.TableOptionCharset:
-			info, err := charset.GetCharsetInfo(opt.StrValue)
-			if err != nil {
-				return "", "", err
+			chs = strings.ToLower(opt.StrValue)
+			if collChs != "" && collChs != chs {
+				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(collChs, chs)
 			}
-			if len(chs) == 0 {
-				chs = info.Name
-			} else if chs != info.Name {
-				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
-			}
-			if len(coll) == 0 {
-				defaultColl := getDefaultCollationForUTF8MB4(chs, defaultUTF8MB4Coll)
-				if len(defaultColl) == 0 {
-					coll = info.DefaultCollation
-				} else {
-					coll = defaultColl
-				}
-			}
+			collChs = chs
 		case ast.TableOptionCollate:
-			info, err := collate.GetCollationByName(opt.StrValue)
-			if err != nil {
-				return "", "", err
+			if len(options) > 1 {
+				// ALTER TABLE .. COLLATE aaa_bin COLLATE bbb_bin COLLATE ccc_bin
+				// The character set of the first collation (aaa_bin) is compared
+				// with the character set of the second collation and an error is
+				// returned if it doesn't match
+				collation, err := collate.GetCollationByName(opt.StrValue)
+				if err != nil {
+					return "", "", err
+				}
+				if collChs != "" && collation.CharsetName != collChs {
+					return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(collation.Name, collChs)
+				}
+				collChs = collation.CharsetName
 			}
-			if len(chs) == 0 {
-				chs = info.CharsetName
-			} else if chs != info.CharsetName {
-				return "", "", dbterror.ErrCollationCharsetMismatch.GenWithStackByArgs(info.Name, chs)
-			}
-			coll = info.Name
+			coll = strings.ToLower(opt.StrValue)
 		}
 	}
 	return
@@ -1865,7 +1890,13 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(spec.Options[i:])
+					if err != nil {
+						return err
+					}
+					toCharset, toCollate, err = ResolveCharsetCollation([]ast.CharsetOpt{
+						{Chs: toCharset, Col: toCollate},
+					}, sctx.GetSessionVars().DefaultCollationForUTF8MB4)
 					if err != nil {
 						return err
 					}
