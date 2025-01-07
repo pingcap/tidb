@@ -221,16 +221,11 @@ func NewWriteIndexToExternalStoragePipeline(
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-<<<<<<< HEAD
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
-=======
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
 		onClose, memSizePerIndex, reorgMeta,
 	)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, nil, rowCntListener)
->>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -409,22 +404,12 @@ func NewTableScanOperator(
 		concurrency,
 		func() workerpool.Worker[TableScanTask, IndexRecordChunk] {
 			return &tableScanWorker{
-<<<<<<< HEAD
 				ctx:        ctx,
 				copCtx:     copCtx,
 				sessPool:   sessPool,
 				se:         nil,
 				srcChkPool: srcChkPool,
-=======
-				ctx:           ctx,
-				copCtx:        copCtx,
-				sessPool:      sessPool,
-				se:            nil,
-				srcChkPool:    srcChkPool,
-				cpMgr:         cpMgr,
-				hintBatchSize: hintBatchSize,
-				totalCount:    totalCount,
->>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
+				totalCount: totalCount,
 			}
 		})
 	return &TableScanOperator{
@@ -446,13 +431,7 @@ type tableScanWorker struct {
 	sessPool   opSessPool
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
-<<<<<<< HEAD
-=======
-
-	cpMgr         *ingest.CheckpointManager
-	hintBatchSize int
-	totalCount    *atomic.Int64
->>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
+	totalCount *atomic.Int64
 }
 
 func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecordChunk)) {
@@ -509,15 +488,8 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
-<<<<<<< HEAD
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
-=======
-			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done, ctx: w.ctx}
-			if w.cpMgr != nil {
-				w.cpMgr.UpdateTotalKeys(task.ID, srcChk.NumRows(), done)
-			}
 			w.totalCount.Add(int64(srcChk.NumRows()))
->>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
 			sender(idxResult)
 		}
 		return rs.Close()
@@ -564,20 +536,7 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
-<<<<<<< HEAD
-=======
-	// due to multi-schema-change, we may merge processing multiple indexes into one
-	// local backend.
-	hasUnique := false
-	for _, index := range indexes {
-		if index.Meta().Unique {
-			hasUnique = true
-			break
-		}
-	}
-
 	totalCount := new(atomic.Int64)
->>>>>>> 44f1c1408cc (disttask: print total count in log (#56759))
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
