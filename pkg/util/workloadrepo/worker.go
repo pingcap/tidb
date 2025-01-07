@@ -121,17 +121,26 @@ type worker struct {
 	samplingTicker   *time.Ticker
 	snapshotInterval int32
 	snapshotTicker   *time.Ticker
-	snapshotChan     chan struct{}
 	retentionDays    int32
 }
 
 var workerCtx = worker{}
 
-func takeSnapshot() error {
-	if workerCtx.snapshotChan == nil {
-		return errors.New("Workload repository is not enabled yet")
+func takeSnapshot(ctx context.Context) error {
+	workerCtx.Lock()
+	defer workerCtx.Unlock()
+
+	if !workerCtx.enabled {
+		return errWorkloadNotStarted.GenWithStackByArgs()
 	}
-	workerCtx.snapshotChan <- struct{}{}
+
+	if snapID, err := workerCtx.takeSnapshot(ctx); err != nil {
+		logutil.BgLogger().Info("workload repository manual snapshot failed", zap.String("owner", workerCtx.instanceID), zap.NamedError("err", err))
+		return errCouldNotStartSnapshot.GenWithStackByArgs()
+	} else {
+		logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))
+	}
+
 	return nil
 }
 
@@ -360,7 +369,6 @@ func (w *worker) start() error {
 	}
 
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
-	w.snapshotChan = make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel
 	w.wg.RunWithRecover(w.startRepository(ctx), func(err any) {
@@ -388,7 +396,6 @@ func (w *worker) stop() {
 	}
 
 	w.cancel = nil
-	w.snapshotChan = nil
 }
 
 // setRepositoryDest will change the dest of workload snapshot.
