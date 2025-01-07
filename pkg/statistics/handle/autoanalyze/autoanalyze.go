@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -117,7 +116,6 @@ func (sa *statsAnalyze) FinishAnalyzeJob(job *statistics.AnalyzeJob, failReason 
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
-	defer util.Recover(metrics.LabelAnalyze, "DeleteAnalyzeJobs", nil, false)
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
@@ -127,7 +125,6 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the potentially corrupted analyze job.
 // It only cleans up the jobs that are associated with the current instance.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error {
-	defer util.Recover(metrics.LabelAnalyze, "CleanupCorruptedAnalyzeJobsOnCurrentInstance", nil, false)
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnCurrentInstance(sctx, currentRunningProcessIDs)
 	}, statsutil.FlagWrapTxn)
@@ -136,7 +133,6 @@ func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunn
 // CleanupCorruptedAnalyzeJobsOnDeadInstances removes analyze jobs that may have been corrupted.
 // Specifically, it removes jobs associated with instances that no longer exist in the cluster.
 func (sa *statsAnalyze) CleanupCorruptedAnalyzeJobsOnDeadInstances() error {
-	defer util.Recover(metrics.LabelAnalyze, "CleanupCorruptedAnalyzeJobsOnDeadInstances", nil, false)
 	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return CleanupCorruptedAnalyzeJobsOnDeadInstances(sctx)
 	}, statsutil.FlagWrapTxn)
