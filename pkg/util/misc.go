@@ -208,7 +208,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSysDB checks whether dbLowerName is system database.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == "workload_schema"
 }
 
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
