@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"strings"
 	"sync"
 	"unsafe"
@@ -264,7 +265,7 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
+func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			rerr = errors.Errorf("panic when preparing hints for binding %v, panic: %v", binding.BindSQL, r)
@@ -286,9 +287,15 @@ func prepareHints(_ sessionctx.Context, binding *Binding) (rerr error) {
 		dbName = "*" // ues '*' for universal bindings
 	}
 
-	hintsSet, _, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
+	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
 	if err != nil {
 		return err
+	}
+	if !isCrossDB && !hasParam(stmt) {
+		// TODO: how to check cross-db binding and bindings with parameters?
+		if err = CheckBindingStmt(sctx, stmt); err != nil {
+			return err
+		}
 	}
 	hintsStr, err := hintsSet.Restore()
 	if err != nil {
@@ -460,3 +467,31 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 		stmt.SetText(nil, sql[:len(sql)-1])
 	}
 }
+
+type paramChecker struct {
+	hasParam bool
+}
+
+func (e *paramChecker) Enter(in ast.Node) (ast.Node, bool) {
+	if _, ok := in.(*driver.ParamMarkerExpr); ok {
+		e.hasParam = true
+		return in, true
+	}
+	return in, false
+}
+
+func (*paramChecker) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
+}
+
+// hasParam checks whether the statement contains any parameters.
+// For example, `create binding using select * from t where a=?` contains a parameter '?'.
+func hasParam(stmt ast.Node) bool {
+	p := new(paramChecker)
+	stmt.Accept(p)
+	return p.hasParam
+}
+
+// CheckBindingStmt is a function to check the binding statement.
+// It is used to avoid cyclic import.
+var CheckBindingStmt func(sctx sessionctx.Context, stmt ast.StmtNode) error

@@ -851,3 +851,34 @@ func TestBatchDropBindings(t *testing.T) {
 	removeAllBindings(tk, true)
 	removeAllBindings(tk, false)
 }
+
+func TestInvalidBindingCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	cases := []struct {
+		SQL string
+		Err string
+	}{
+		{"select * from t where c=1", "[planner:1054]Unknown column 'c' in 'where clause'"},
+		{"select * from t where a=1 and c=1", "[planner:1054]Unknown column 'c' in 'where clause'"},
+		{"select * from dbx.t", "[schema:1146]Table 'dbx.t' doesn't exist"},
+		{"select * from t1", "[schema:1146]Table 'test.t1' doesn't exist"},
+		{"select * from t1, t", "[schema:1146]Table 'test.t1' doesn't exist"},
+		{"select * from t use index(c)", "[planner:1176]Key 'c' doesn't exist in table 't'"},
+	}
+
+	for _, c := range cases {
+		for _, scope := range []string{"session", "global"} {
+			sql := fmt.Sprintf("create %v binding using %v", scope, c.SQL)
+			tk.MustGetErrMsg(sql, c.Err)
+		}
+	}
+
+	// cross-db bindings or bindings with parameters can bypass the check, which is expected.
+	// We'll optimize this check further in the future.
+	tk.MustExec("create binding using select * from *.t where c=1")
+	tk.MustExec("create binding using select * from t where c=?")
+}
