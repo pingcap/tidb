@@ -405,6 +405,8 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
 
+// IsFullTableRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
 func (path *AccessPath) IsFullTableRange(tableInfo *model.TableInfo) bool {
 	if path.IsTablePath() {
 		var unsignedIntHandle bool
@@ -415,9 +417,8 @@ func (path *AccessPath) IsFullTableRange(tableInfo *model.TableInfo) bool {
 		}
 		if !ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
 			return false
-		} else {
-			return true
 		}
+		return true
 	}
 	return false
 }
