@@ -1623,7 +1623,7 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
 
 	tk.MustExec("use test")

@@ -432,7 +432,7 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 	defer pool.AssertNoSessionInUse(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
-	sessionFactory := sessionFactory(t, store)
+	sessionFactory := sessionFactory(t, dom)
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 32")
 
