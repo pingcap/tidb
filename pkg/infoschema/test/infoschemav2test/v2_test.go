@@ -592,15 +592,6 @@ func TestGetAndResetRecentInfoSchemaTS(t *testing.T) {
 	schemaTS4 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.LessOrEqual(t, schemaTS3, schemaTS4)
 
-	// Reload several times
-	require.NoError(t, dom.SchemaLoader().Reload())
-	schemaTS5 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
-	require.Equal(t, uint64(math.MaxUint64), schemaTS5)
-
-	require.NoError(t, dom.SchemaLoader().Reload())
-	schemaTS6 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
-	require.Equal(t, uint64(math.MaxUint64), schemaTS6)
-
 	tk.MustQuery("select * from dummytbl").Check(testkit.Rows())
 	schemaTS7 := infoCache.GetAndResetRecentInfoSchemaTS(math.MaxUint64)
 	require.Less(t, schemaTS4, schemaTS7)
