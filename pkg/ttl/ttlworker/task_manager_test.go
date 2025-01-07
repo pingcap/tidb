@@ -101,6 +101,21 @@ func (t *runningScanTask) SetResult(err error) {
 	t.result = t.ttlScanTask.result(err)
 }
 
+// SetCancel sets the cancel function of the task
+func (t *runningScanTask) SetCancel(cancel func()) {
+	t.cancel = cancel
+}
+
+// CheckInvalidTask is an exported version of checkInvalidTask
+func (m *taskManager) CheckInvalidTask(se session.Session) {
+	m.checkInvalidTask(se)
+}
+
+// UpdateHeartBeat is an exported version of updateHeartBeat
+func (m *taskManager) UpdateHeartBeat(ctx context.Context, se session.Session, now time.Time) error {
+	return m.updateHeartBeat(ctx, se, now)
+}
+
 func TestResizeWorkers(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 
