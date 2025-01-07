@@ -142,6 +142,7 @@ func main() {
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
 	buildCmd := exec.CommandContext(ctx, "go", "build",
+		"-pgo=default.pgo",
 		"-tags=codes",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
