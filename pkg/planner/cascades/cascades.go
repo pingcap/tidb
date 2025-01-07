@@ -64,7 +64,7 @@ func (c *Cascades) GetMemo() *memo.Memo {
 type Context struct {
 	// pctx variable awareness.
 	pctx base2.PlanContext
-	// memo pool management.
+	// memo management.
 	mm *memo.Memo
 	// task pool management.
 	scheduler base.Scheduler
