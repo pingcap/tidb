@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -40,6 +41,9 @@ var (
 	taskStartCheckErrorRateCnt      = 10000
 	taskMaxErrorRate                = 0.4
 )
+
+// TTLScanPostScanHookForTest is used to hook the cancel of the TTL scan task. It's only used in tests.
+type TTLScanPostScanHookForTest struct{}
 
 type ttlStatistics struct {
 	TotalRows   atomic.Uint64
@@ -378,6 +382,10 @@ func (w *ttlScanWorker) handleScanTask(tracer *metrics.PhaseTracer, task *ttlSca
 	result := task.doScan(ctx, w.delCh, w.sessionPool)
 	if result == nil {
 		result = task.result(nil)
+	}
+
+	if intest.InTest && ctx.Value(TTLScanPostScanHookForTest{}) != nil {
+		ctx.Value(TTLScanPostScanHookForTest{}).(func())()
 	}
 
 	w.baseWorker.Lock()
