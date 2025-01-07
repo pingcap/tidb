@@ -143,7 +143,9 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			subtaskCtxCancel()
+			if subtaskCtxCancel != nil {
+				subtaskCtxCancel()
+			}
 			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
