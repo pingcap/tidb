@@ -1280,6 +1280,10 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
+	// generate checkpoint table suffix/hash to find the checkpoint specifically for this task
+	checkpointTableSuffix := getCheckpointTableSuffix(cfg, PointRestoreCmd)
+	cfg.CheckpointTableSuffix = checkpointTableSuffix
+
 	checkInfo, err := checkPiTRTaskInfo(ctx, mgr, g, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -1642,7 +1646,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	var err error
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg)
+	client := logclient.NewRestoreClient(mgr.GetPDClient(), mgr.GetPDHTTPClient(), mgr.GetTLSConfig(), keepaliveCfg, cfg.CheckpointTableSuffix)
 
 	err = client.Init(ctx, g, mgr.GetStorage())
 	if err != nil {
@@ -1943,9 +1947,8 @@ func checkPiTRTaskInfo(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
 		execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, mgr.GetDomain(), execCtx)
+		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, mgr.GetDomain(), execCtx, cfg.CheckpointTableSuffix)
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}
@@ -2010,4 +2013,15 @@ func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) err
 	}
 	log.Info("reloading schema finished", zap.Duration("timeTaken", time.Since(reloadStart)))
 	return nil
+}
+
+func getCheckpointTableSuffix(cfg *RestoreConfig, cmd string) string {
+	tableIdentifier := checkpoint.TableIdentifier{
+		StartTS:           cfg.StartTS,
+		EndTS:             cfg.RestoreTS,
+		Filter:            cfg.FilterStr,
+		UpstreamClusterID: cfg.upstreamClusterID,
+		TaskType:          cmd,
+	}
+	return tableIdentifier.GenerateTableNameSuffix()
 }

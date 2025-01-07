@@ -29,6 +29,7 @@ func NewLogSplitStrategy(
 	execCtx sqlexec.RestrictedSQLExecutor,
 	rules map[int64]*restoreutils.RewriteRules,
 	updateStatsFn func(uint64, uint64),
+	checkpointTableSuffix string,
 ) (*LogSplitStrategy, error) {
 	downstreamIdset := make(map[int64]struct{})
 	for _, rule := range rules {
@@ -46,7 +47,7 @@ func NewLogSplitStrategy(
 						}
 					}
 				}
-			})
+			}, checkpointTableSuffix)
 
 		if err != nil {
 			return nil, errors.Trace(err)

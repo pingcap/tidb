@@ -25,11 +25,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 type checkpointStorage interface {
@@ -52,12 +50,12 @@ const (
 	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 
 	// directory level table
-	checkpointDataTableName     string = "cpt_data"
-	checkpointChecksumTableName string = "cpt_checksum"
+	checkpointDataTableNamePrefix     string = "cpt_data"
+	checkpointChecksumTableNamePrefix string = "cpt_checksum"
 	// file level table
-	checkpointMetaTableName     string = "cpt_metadata"
-	checkpointProgressTableName string = "cpt_progress"
-	checkpointIngestTableName   string = "cpt_ingest"
+	checkpointMetaTablePrefix         string = "cpt_metadata"
+	checkpointProgressTableNamePrefix string = "cpt_progress"
+	checkpointIngestTableNamePrefix   string = "cpt_ingest"
 
 	// the primary key (uuid: uuid, segment_id:0) records the number of segment
 	createCheckpointTable string = `
@@ -145,7 +143,7 @@ func (s *tableCheckpointStorage) updateLock(ctx context.Context) error {
 }
 
 func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data []byte) error {
-	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableName, data)
+	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointDataTableNamePrefix, data)
 	for i, sql := range sqls {
 		args := argss[i]
 		if err := s.se.ExecuteInternal(ctx, sql, args...); err != nil {
@@ -156,7 +154,7 @@ func (s *tableCheckpointStorage) flushCheckpointData(ctx context.Context, data [
 }
 
 func (s *tableCheckpointStorage) flushCheckpointChecksum(ctx context.Context, data []byte) error {
-	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointChecksumTableName, data)
+	sqls, argss := chunkInsertCheckpointSQLs(s.checkpointDBName, checkpointChecksumTableNamePrefix, data)
 	for i, sql := range sqls {
 		args := argss[i]
 		if err := s.se.ExecuteInternal(ctx, sql, args...); err != nil {
@@ -227,10 +225,11 @@ func selectCheckpointData[K KeyType, V ValueType](
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
 	fn func(groupKey K, value V),
+	tableName string,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
-	checkpointDatas, err := mergeSelectCheckpoint(ctx, execCtx, dbName, checkpointDataTableName)
+	checkpointDatas, err := mergeSelectCheckpoint(ctx, execCtx, dbName, tableName)
 	if err != nil {
 		return pastDureTime, errors.Trace(err)
 	}
@@ -246,10 +245,12 @@ func selectCheckpointChecksum(
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
+	tableSuffix string,
 ) (map[int64]*ChecksumItem, time.Duration, error) {
 	var pastDureTime time.Duration = 0
 	checkpointChecksum := make(map[int64]*ChecksumItem)
-	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName, checkpointChecksumTableName)
+	checkpointChecksums, err := mergeSelectCheckpoint(ctx, execCtx, dbName,
+		GetCheckpointTableName(checkpointChecksumTableNamePrefix, tableSuffix))
 	if err != nil {
 		return checkpointChecksum, pastDureTime, errors.Trace(err)
 	}
@@ -323,7 +324,6 @@ func selectCheckpointMeta(
 
 func dropCheckpointTables(
 	ctx context.Context,
-	dom *domain.Domain,
 	se glue.Session,
 	dbName string, tableNames []string,
 ) error {
@@ -332,18 +332,6 @@ func dropCheckpointTables(
 			return errors.Trace(err)
 		}
 	}
-	// check if any user table is created in the checkpoint database
-	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, pmodel.NewCIStr(dbName))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(tables) > 0 {
-		log.Warn("user tables in the checkpoint database, skip drop the database",
-			zap.String("db", dbName), zap.String("table", tables[0].Name.L))
-		return nil
-	}
-	if err := se.ExecuteInternal(ctx, "DROP DATABASE %n;", dbName); err != nil {
-		return errors.Trace(err)
-	}
+	// don't remove checkpoint db as other restore might still be using it
 	return nil
 }

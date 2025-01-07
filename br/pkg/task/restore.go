@@ -241,7 +241,7 @@ type RestoreConfig struct {
 	WithPlacementPolicy string `json:"with-tidb-placement-mode" toml:"with-tidb-placement-mode"`
 
 	// FullBackupStorage is used to  run `restore full` before `restore log`.
-	// if it is empty, directly take restoring log justly.
+	// if it is empty, just restore from log.
 	FullBackupStorage string `json:"full-backup-storage" toml:"full-backup-storage"`
 
 	// AllowPITRFromIncremental indicates whether this restore should enter a compatibility mode for incremental restore.
@@ -715,32 +715,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 	// Clear the checkpoint data
 	if cfg.UseCheckpoint {
-		se, err := g.CreateSession(mgr.GetStorage())
-		if err != nil {
-			log.Warn("failed to remove checkpoint data", zap.Error(err))
-		} else {
-			if IsStreamRestore(cmdName) {
-				log.Info("start to remove checkpoint data for PITR restore")
-				err = checkpoint.RemoveCheckpointDataForLogRestore(c, mgr.GetDomain(), se)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
-				}
-				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.CustomSSTRestoreCheckpointDatabaseName)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
-				}
-				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
-				}
-			} else {
-				err = checkpoint.RemoveCheckpointDataForSstRestore(c, mgr.GetDomain(), se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
-				}
-			}
-			log.Info("all the checkpoint data is removed.")
-		}
+		cleanupCheckpoints(c, mgr, g, IsStreamRestore(cmdName), cfg.CheckpointTableSuffix)
 	}
 	return nil
 }
@@ -817,6 +792,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err = client.LoadSchemaIfNeededAndInitClient(c, backupMeta, u, reader, cfg.LoadStats, nil, nil); err != nil {
 		return errors.Trace(err)
 	}
+	// build checkpoint table suffix if not exist
+	if cfg.CheckpointTableSuffix == "" {
+		cfg.CheckpointTableSuffix = getCheckpointTableSuffix(cfg, cmdName)
+	}
 
 	if client.IsRawKvMode() {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw kv data")
@@ -830,7 +809,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		// if the checkpoint metadata exists in the checkpoint storage, the restore is not
 		// for the first time.
-		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(ctx, mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName)
+		existsCheckpointMetadata := checkpoint.ExistsSstRestoreCheckpoint(mgr.GetDomain(), checkpoint.SnapshotRestoreCheckpointDatabaseName, cfg.CheckpointTableSuffix)
 		checkpointFirstRun = !existsCheckpointMetadata
 	}
 	if err = CheckRestoreDBAndTable(client.GetDatabases(), cfg); err != nil {
@@ -857,7 +836,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// for full + log restore. should check the cluster is empty.
-	if client.IsFull() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
+	if client.IsNotIncremental() && checkInfo != nil && checkInfo.FullRestoreCheckErr != nil {
 		return checkInfo.FullRestoreCheckErr
 	}
 
@@ -894,7 +873,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
 		}
-	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+	} else if client.IsNotIncremental() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
 			schedulersRemovable = true
 			return errors.Trace(err)
@@ -916,7 +895,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// reload or register the checkpoint
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, g, mgr.GetStorage(), schedulersConfig, checkpointFirstRun)
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, g, mgr.GetStorage(), schedulersConfig, checkpointFirstRun, cfg.CheckpointTableSuffix)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1654,4 +1633,30 @@ func afterTableRestoredCh(ctx context.Context, createdTables []*snapclient.Creat
 		}
 	}()
 	return outCh
+}
+
+// cleanupCheckpoints removes checkpoint data based on the restore type
+func cleanupCheckpoints(c context.Context, mgr *conn.Mgr, g glue.Glue, isStreamRestore bool, checkpointTableSuffix string) {
+	se, err := g.CreateSession(mgr.GetStorage())
+	if err != nil {
+		log.Warn("failed to remove checkpoint data", zap.Error(err))
+		return
+	}
+
+	if isStreamRestore {
+		log.Info("start to remove checkpoint data for PITR restore")
+		err = checkpoint.RemoveCheckpointDataForLogRestore(c, se, checkpointTableSuffix)
+		if err != nil {
+			log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
+		}
+		err = checkpoint.RemoveCheckpointDataForSstRestore(c, se, checkpoint.CustomSSTRestoreCheckpointDatabaseName, checkpointTableSuffix)
+		if err != nil {
+			log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
+		}
+	}
+	err = checkpoint.RemoveCheckpointDataForSstRestore(c, se, checkpoint.SnapshotRestoreCheckpointDatabaseName, checkpointTableSuffix)
+	if err != nil {
+		log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+	}
+	log.Info("all the checkpoint data is removed.")
 }
