@@ -1904,7 +1904,7 @@ func TestCheckPasswordExpired(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
 	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	record := privileges.NewUserRecord("%", "root")
-	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(nil), nil)
+	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(nil, nil), nil)
 
 	record.PasswordExpired = true
 	_, err := userPrivilege.CheckPasswordExpired(sessionVars, &record)

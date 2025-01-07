@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -838,7 +838,7 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   pmodel.NewCIStr(columnNames[i]),
+			Name:   ast.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}

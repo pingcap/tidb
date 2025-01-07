@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
@@ -45,9 +45,9 @@ import (
 
 // tableItem is the btree item sorted by name or by id.
 type tableItem struct {
-	dbName        pmodel.CIStr
+	dbName        ast.CIStr
 	dbID          int64
-	tableName     pmodel.CIStr
+	tableName     ast.CIStr
 	tableID       int64
 	schemaVersion int64
 	tomb          bool
@@ -62,7 +62,7 @@ type schemaItem struct {
 type schemaIDName struct {
 	schemaVersion int64
 	id            int64
-	name          pmodel.CIStr
+	name          ast.CIStr
 	tomb          bool
 }
 
@@ -142,7 +142,7 @@ type Data struct {
 }
 
 type tableInfoItem struct {
-	dbName        pmodel.CIStr
+	dbName        ast.CIStr
 	tableID       int64
 	schemaVersion int64
 	tableInfo     *model.TableInfo
@@ -722,7 +722,7 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
+func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName ast.CIStr, ok bool) {
 	if !tableIDIsValid(tableID) {
 		return
 	}
@@ -737,8 +737,8 @@ func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CI
 
 // TableItem is exported from tableItem.
 type TableItem struct {
-	DBName    pmodel.CIStr
-	TableName pmodel.CIStr
+	DBName    ast.CIStr
+	TableName ast.CIStr
 }
 
 // IterateAllTableItems is used for special performance optimization.
@@ -800,7 +800,7 @@ func IsSpecialDB(dbName string) bool {
 }
 
 // EvictTable is exported for testing only.
-func (is *infoschemaV2) EvictTable(schema, tbl pmodel.CIStr) {
+func (is *infoschemaV2) EvictTable(schema, tbl ast.CIStr) {
 	eq := func(a, b *tableItem) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.byName.Load(), is.infoSchema.schemaMetaVersion, tableItem{dbName: schema, tableName: tbl, schemaVersion: math.MaxInt64}, eq)
 	if !ok {
@@ -834,7 +834,7 @@ func (h *tableByNameHelper) onItem(item *tableItem) bool {
 
 // TableByName implements the InfoSchema interface.
 // When schema cache miss, it will fetch the TableInfo from TikV and refill cache.
-func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CIStr) (t table.Table, err error) {
+func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) (t table.Table, err error) {
 	if IsSpecialDB(schema.L) {
 		if raw, ok := is.specials.Load(schema.L); ok {
 			tbNames := raw.(*schemaTables)
@@ -884,7 +884,7 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl pmodel.CISt
 }
 
 // TableInfoByName implements InfoSchema.TableInfoByName
-func (is *infoschemaV2) TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error) {
+func (is *infoschemaV2) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
 	tbl, err := is.TableByName(context.Background(), schema, table)
 	return getTableInfo(tbl), err
 }
@@ -912,7 +912,7 @@ func (is *infoschemaV2) keepAlive() {
 }
 
 // SchemaTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableInfo, error) {
+func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -959,7 +959,7 @@ retry:
 }
 
 // SchemaSimpleTableInfos implements MetaOnlyInfoSchema.
-func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema pmodel.CIStr) ([]*model.TableNameInfo, error) {
+func (is *infoschemaV2) SchemaSimpleTableInfos(ctx context.Context, schema ast.CIStr) ([]*model.TableNameInfo, error) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if ok {
@@ -1016,7 +1016,7 @@ func (is *infoschemaV2) FindTableInfoByPartitionID(
 	return getTableInfo(tbl), db, partDef
 }
 
-func (is *infoschemaV2) SchemaByName(schema pmodel.CIStr) (val *model.DBInfo, ok bool) {
+func (is *infoschemaV2) SchemaByName(schema ast.CIStr) (val *model.DBInfo, ok bool) {
 	if IsSpecialDB(schema.L) {
 		raw, ok := is.Data.specials.Load(schema.L)
 		if !ok {
@@ -1081,15 +1081,15 @@ func (is *infoschemaV2) AllSchemas() (schemas []*model.DBInfo) {
 	return
 }
 
-func (is *infoschemaV2) AllSchemaNames() []pmodel.CIStr {
-	rs := make([]pmodel.CIStr, 0, is.Data.schemaMap.Load().Len())
+func (is *infoschemaV2) AllSchemaNames() []ast.CIStr {
+	rs := make([]ast.CIStr, 0, is.Data.schemaMap.Load().Len())
 	is.allSchemas(func(di *model.DBInfo) {
 		rs = append(rs, di.Name)
 	})
 	return rs
 }
 
-func (is *infoschemaV2) SchemaExists(schema pmodel.CIStr) bool {
+func (is *infoschemaV2) SchemaExists(schema ast.CIStr) bool {
 	_, ok := is.SchemaByName(schema)
 	return ok
 }
@@ -1143,7 +1143,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 	return tbl, dbInfo, def
 }
 
-func (is *infoschemaV2) TableExists(schema, table pmodel.CIStr) bool {
+func (is *infoschemaV2) TableExists(schema, table ast.CIStr) bool {
 	_, err := is.TableByName(context.Background(), schema, table)
 	return err == nil
 }
@@ -1165,7 +1165,7 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return st.dbInfo, true
 	}
 	var ok bool
-	var name pmodel.CIStr
+	var name ast.CIStr
 	is.Data.schemaID2Name.Load().DescendLessOrEqual(schemaIDName{
 		id:            id,
 		schemaVersion: math.MaxInt64,

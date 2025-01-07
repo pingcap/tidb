@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -166,7 +165,7 @@ func (p *PhysicalTableReader) LoadTableStats(ctx sessionctx.Context) {
 // PhysPlanPartInfo indicates partition helper info in physical plan.
 type PhysPlanPartInfo struct {
 	PruningConds   []expression.Expression
-	PartitionNames []pmodel.CIStr
+	PartitionNames []ast.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
 }
@@ -737,9 +736,9 @@ type PhysicalIndexScan struct {
 	IdxColLens []int
 	Ranges     []*ranger.Range     `plan-cache-clone:"shallow"`
 	Columns    []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName     pmodel.CIStr        `plan-cache-clone:"shallow"`
+	DBName     ast.CIStr           `plan-cache-clone:"shallow"`
 
-	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *ast.CIStr `plan-cache-clone:"shallow"`
 
 	// dataSourceSchema is the original schema of DataSource. The schema of index scan in KV and index reader in TiDB
 	// will be different. The schema of index scan will decode all columns of index but the TiDB only need some of them.
@@ -878,7 +877,7 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 type PhysicalMemTable struct {
 	physicalSchemaProducer
 
-	DBName         pmodel.CIStr
+	DBName         ast.CIStr
 	Table          *model.TableInfo
 	Columns        []*model.ColumnInfo
 	Extractor      base.MemTablePredicateExtractor
@@ -910,10 +909,10 @@ type PhysicalTableScan struct {
 
 	Table   *model.TableInfo    `plan-cache-clone:"shallow"`
 	Columns []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	DBName  pmodel.CIStr        `plan-cache-clone:"shallow"`
+	DBName  ast.CIStr           `plan-cache-clone:"shallow"`
 	Ranges  []*ranger.Range     `plan-cache-clone:"shallow"`
 
-	TableAsName *pmodel.CIStr `plan-cache-clone:"shallow"`
+	TableAsName *ast.CIStr `plan-cache-clone:"shallow"`
 
 	physicalTableID int64
 
@@ -1196,7 +1195,7 @@ func (p *PhysicalProjection) MemoryUsage() (sum int64) {
 
 // PhysicalTopN is the physical operator of topN.
 type PhysicalTopN struct {
-	physicalop.BasePhysicalPlan
+	physicalSchemaProducer
 
 	ByItems     []*util.ByItems
 	PartitionBy []property.SortItem
@@ -1214,11 +1213,11 @@ func (lt *PhysicalTopN) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned := new(PhysicalTopN)
 	*cloned = *lt
 	cloned.SetSCtx(newCtx)
-	base, err := lt.BasePhysicalPlan.CloneWithSelf(newCtx, cloned)
+	base, err := lt.physicalSchemaProducer.cloneWithSelf(newCtx, cloned)
 	if err != nil {
 		return nil, err
 	}
-	cloned.BasePhysicalPlan = *base
+	cloned.physicalSchemaProducer = *base
 	cloned.ByItems = make([]*util.ByItems, 0, len(lt.ByItems))
 	for _, it := range lt.ByItems {
 		cloned.ByItems = append(cloned.ByItems, it.Clone())
@@ -2700,8 +2699,8 @@ type PhysicalCTE struct {
 	SeedPlan  base.PhysicalPlan
 	RecurPlan base.PhysicalPlan
 	CTE       *logicalop.CTEClass
-	cteAsName pmodel.CIStr
-	cteName   pmodel.CIStr
+	cteAsName ast.CIStr
+	cteName   ast.CIStr
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender

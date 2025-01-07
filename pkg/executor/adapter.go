@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner"
@@ -114,7 +113,7 @@ func (a *recordSet) Fields() []*resolve.ResultField {
 
 func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, defaultDB string) []*resolve.ResultField {
 	rfs := make([]*resolve.ResultField, 0, schema.Len())
-	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
+	defaultDBCIStr := ast.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
 		if dbName.L == "" && names[i].TblName.L != "" {

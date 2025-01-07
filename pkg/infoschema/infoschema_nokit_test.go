@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,11 +32,11 @@ func (is *infoschemaV2) HasCache(tableID int64, schemaVersion int64) bool {
 func TestInfoSchemaAddDel(t *testing.T) {
 	is := newInfoSchema()
 	is.addSchema(&schemaTables{
-		dbInfo: &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")},
+		dbInfo: &model.DBInfo{ID: 1, Name: ast.NewCIStr("test")},
 	})
 	require.Contains(t, is.schemaMap, "test")
 	require.Contains(t, is.schemaID2Name, int64(1))
-	is.delSchema(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("test")})
+	is.delSchema(&model.DBInfo{ID: 1, Name: ast.NewCIStr("test")})
 	require.Empty(t, is.schemaMap)
 	require.Empty(t, is.schemaID2Name)
 }

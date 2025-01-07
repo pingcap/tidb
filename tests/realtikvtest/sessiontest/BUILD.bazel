@@ -15,7 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/infoschema",
         "//pkg/meta",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/store/helper",

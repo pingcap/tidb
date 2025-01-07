@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -75,7 +75,7 @@ func TestMultiRegionGetTableEndHandle(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// Split the table.
@@ -100,7 +100,7 @@ func TestGetTableEndHandle(t *testing.T) {
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// test empty table
@@ -130,7 +130,7 @@ func TestGetTableEndHandle(t *testing.T) {
 	tk.MustExec(sql[:len(sql)-1])
 
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	checkTableMaxHandle(t, tbl, store, false, kv.IntHandle(999))
 
@@ -138,7 +138,7 @@ func TestGetTableEndHandle(t *testing.T) {
 	tk.MustExec("create table t2(a varchar(255))")
 
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	checkTableMaxHandle(t, tbl, store, true, nil)
 
@@ -202,7 +202,7 @@ func TestMultiRegionGetTableEndCommonHandle(t *testing.T) {
 	// Get table ID for split.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// Split the table.
@@ -227,7 +227,7 @@ func TestGetTableEndCommonHandle(t *testing.T) {
 	tk.MustExec("create table t1(a varchar(15), b bigint, c int, primary key (a(2), b))")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	// test empty table
@@ -243,7 +243,7 @@ func TestGetTableEndCommonHandle(t *testing.T) {
 	checkTableMaxHandle(t, tbl, store, false, testutil.MustNewCommonHandle(t, "abchzzzzzzzz", 1))
 
 	// Test MaxTableRowID with prefixed primary key.
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	checkTableMaxHandle(t, tbl, store, true, nil)
 	tk.MustExec("insert into t1 values('abccccc', 1, 10)")
@@ -262,44 +262,44 @@ func TestCreateClusteredIndex(t *testing.T) {
 	tk.MustExec("CREATE TABLE t3 (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("CREATE TABLE t4 (a int, b int, c int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t1"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().PKIsHandle)
 	require.False(t, tbl.Meta().IsCommonHandle)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t2"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().IsCommonHandle)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t3"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().IsCommonHandle)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t4"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().IsCommonHandle)
 
 	tk.MustExec("CREATE TABLE t5 (a varchar(255) primary key nonclustered, b int)")
 	tk.MustExec("CREATE TABLE t6 (a int, b int, c int, primary key (a, b) nonclustered)")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t5"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t5"))
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().IsCommonHandle)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t6"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t6"))
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().IsCommonHandle)
 
 	tk.MustExec("CREATE TABLE t21 like t2")
 	tk.MustExec("CREATE TABLE t31 like t3")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t21"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t21"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().IsCommonHandle)
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t31"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t31"))
 	require.NoError(t, err)
 	require.True(t, tbl.Meta().IsCommonHandle)
 
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("CREATE TABLE t7 (a varchar(255) primary key, b int)")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t7"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t7"))
 	require.NoError(t, err)
 	require.False(t, tbl.Meta().IsCommonHandle)
 }

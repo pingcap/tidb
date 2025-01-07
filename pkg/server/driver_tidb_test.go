@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/server/internal/column"
@@ -48,15 +48,15 @@ func TestConvertColumnInfo(t *testing.T) {
 	ftb.SetType(mysql.TypeBit).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField := resolve.ResultField{
 		Column: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("a"),
+			Name:      ast.NewCIStr("a"),
 			ID:        0,
 			Offset:    0,
 			FieldType: ftb.Build(),
 			Comment:   "column a is the first column in table dual",
 		},
-		ColumnAsName: pmodel.NewCIStr("a"),
-		TableAsName:  pmodel.NewCIStr("dual"),
-		DBName:       pmodel.NewCIStr("test"),
+		ColumnAsName: ast.NewCIStr("a"),
+		TableAsName:  ast.NewCIStr("dual"),
+		DBName:       ast.NewCIStr("test"),
 	}
 	colInfo := column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeBit, 1), colInfo)
@@ -66,15 +66,15 @@ func TestConvertColumnInfo(t *testing.T) {
 	ftpb.SetType(mysql.TypeTiny).SetFlag(mysql.UnsignedFlag).SetFlen(1).SetCharset(charset.CharsetUTF8).SetCollate(charset.CollationUTF8)
 	resultField = resolve.ResultField{
 		Column: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("a"),
+			Name:      ast.NewCIStr("a"),
 			ID:        0,
 			Offset:    0,
 			FieldType: ftpb.Build(),
 			Comment:   "column a is the first column in table dual",
 		},
-		ColumnAsName: pmodel.NewCIStr("a"),
-		TableAsName:  pmodel.NewCIStr("dual"),
-		DBName:       pmodel.NewCIStr("test"),
+		ColumnAsName: ast.NewCIStr("a"),
+		TableAsName:  ast.NewCIStr("dual"),
+		DBName:       ast.NewCIStr("test"),
 	}
 	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, createColumnByTypeAndLen(mysql.TypeTiny, 1), colInfo)
@@ -83,15 +83,15 @@ func TestConvertColumnInfo(t *testing.T) {
 	ftpb1.SetType(mysql.TypeYear).SetFlag(mysql.ZerofillFlag).SetFlen(4).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin)
 	resultField = resolve.ResultField{
 		Column: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("a"),
+			Name:      ast.NewCIStr("a"),
 			ID:        0,
 			Offset:    0,
 			FieldType: ftpb1.Build(),
 			Comment:   "column a is the first column in table dual",
 		},
-		ColumnAsName: pmodel.NewCIStr("a"),
-		TableAsName:  pmodel.NewCIStr("dual"),
-		DBName:       pmodel.NewCIStr("test"),
+		ColumnAsName: ast.NewCIStr("a"),
+		TableAsName:  ast.NewCIStr("dual"),
+		DBName:       ast.NewCIStr("test"),
 	}
 	colInfo = column.ConvertColumnInfo(&resultField)
 	require.Equal(t, uint32(4), colInfo.ColumnLength)
