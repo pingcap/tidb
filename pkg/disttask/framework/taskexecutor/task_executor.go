@@ -113,7 +113,7 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 //     `pending` state, to make sure subtasks can be balanced later when node scale out.
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
-func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
+func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCancel context.CancelFunc) {
 	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
 	for {
@@ -133,7 +133,10 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		if len(subtasks) == 0 {
 			e.logger.Info("subtask is scheduled away, cancel running")
 			// cancels runStep, but leave the subtask state unchanged.
-			e.cancelRunStepWith(nil)
+			if subtaskCtxCancel != nil {
+				subtaskCtxCancel()
+			}
+			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
 
@@ -234,7 +237,28 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 		}
 		// reset it when we get a subtask
 		checkInterval, noSubtaskCheckCnt = SubtaskCheckInterval, 0
+<<<<<<< HEAD
 		err = e.RunStep(resource)
+=======
+
+		if e.stepExec != nil && e.stepExec.GetStep() != subtask.Step {
+			e.cleanStepExecutor()
+		}
+		if e.stepExec == nil {
+			if err2 := e.createStepExecutor(); err2 != nil {
+				e.logger.Error("create step executor failed",
+					zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Error(err2))
+				continue
+			}
+		}
+		if err := e.stepCtx.Err(); err != nil {
+			e.logger.Error("step executor context is done, the task should have been reverted",
+				zap.String("step", proto.Step2Str(task.Type, task.Step)),
+				zap.Error(err))
+			continue
+		}
+		err = e.runSubtask(subtask)
+>>>>>>> c199ddfcdf9 (disttask: cancel subtask context if scheduled away (#58615))
 		if err != nil {
 			e.logger.Error("failed to handle task", zap.Error(err))
 		}
@@ -323,6 +347,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		}
 	}()
 
+<<<<<<< HEAD
 	for {
 		// check if any error occurs.
 		if err := e.getError(); err != nil {
@@ -373,6 +398,42 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		})
 
 		e.runSubtask(runStepCtx, stepExecutor, subtask)
+=======
+	logger := e.logger.With(zap.Int64("subtaskID", subtask.ID), zap.String("step", proto.Step2Str(subtask.Type, subtask.Step)))
+	logTask := llog.BeginTask(logger, "run subtask")
+	subtaskErr := func() error {
+		e.currSubtaskID.Store(subtask.ID)
+		subtaskCtx, subtaskCtxCancel := context.WithCancel(e.stepCtx)
+
+		var wg util.WaitGroupWrapper
+		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
+		wg.RunWithLog(func() {
+			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
+		})
+
+		if e.hasRealtimeSummary(e.stepExec) {
+			wg.RunWithLog(func() {
+				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
+			})
+		}
+		defer func() {
+			checkCancel()
+			wg.Wait()
+			subtaskCtxCancel()
+		}()
+		return e.stepExec.RunSubtask(subtaskCtx, subtask)
+	}()
+	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
+	logTask.End2(zap.InfoLevel, subtaskErr)
+
+	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
+
+	if subtaskErr != nil {
+		if err := e.markSubTaskCanceledOrFailed(e.stepCtx, subtask, subtaskErr); err != nil {
+			logger.Error("failed to handle subtask error", zap.Error(err))
+		}
+		return subtaskErr
+>>>>>>> c199ddfcdf9 (disttask: cancel subtask context if scheduled away (#58615))
 	}
 	return e.getError()
 }
