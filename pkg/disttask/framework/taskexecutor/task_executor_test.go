@@ -279,7 +279,7 @@ func TestTaskExecutorRun(t *testing.T) {
 		// mock for checkBalanceSubtask, returns empty subtask list
 		e.taskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
 			e.task1.ID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
-		// this subtask is scheduled awsy during running
+		// this subtask is scheduled away during running
 		e.taskTable.EXPECT().GetTaskByID(gomock.Any(), e.task1.ID).Return(e.task1, nil)
 		e.taskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", e.task1.ID, proto.StepOne,
 			unfinishedNormalSubtaskStates...).Return(e.pendingSubtask1, nil)
@@ -290,6 +290,7 @@ func TestTaskExecutorRun(t *testing.T) {
 			<-ctx.Done()
 			return ctx.Err()
 		})
+		e.taskExecExt.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 		// keep running next subtask
 		nextSubtask := &proto.Subtask{SubtaskBase: proto.SubtaskBase{
 			ID: 2, Type: e.task1.Type, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}
@@ -631,7 +632,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		// context canceled
 		canceledCtx, cancel := context.WithCancel(ctx)
 		cancel()
-		taskExecutor.checkBalanceSubtask(canceledCtx)
+		taskExecutor.checkBalanceSubtask(canceledCtx, nil)
 	})
 
 	t.Run("subtask scheduled away", func(t *testing.T) {
@@ -639,10 +640,9 @@ func TestCheckBalanceSubtask(t *testing.T) {
 			task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, errors.New("error"))
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
-		runCtx, cancelCause := context.WithCancelCause(ctx)
-		taskExecutor.mu.runtimeCancel = cancelCause
+		runCtx, cancel := context.WithCancel(ctx)
 		require.NoError(t, runCtx.Err())
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, cancel)
 		require.ErrorIs(t, runCtx.Err(), context.Canceled)
 		require.True(t, ctrl.Satisfied())
 	})
@@ -655,7 +655,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockExtension.EXPECT().IsIdempotent(subtasks[0]).Return(false)
 		mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "tidb1",
 			subtasks[0].ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 
 		// if we failed to change state of non-idempotent subtask, will retry
@@ -672,7 +672,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		mockExtension.EXPECT().IsIdempotent(subtasks[0]).Return(false)
 		mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "tidb1",
 			subtasks[0].ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -687,7 +687,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 		// used to break the loop
 		mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 			task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, nil)
-		taskExecutor.checkBalanceSubtask(ctx)
+		taskExecutor.checkBalanceSubtask(ctx, nil)
 		require.True(t, ctrl.Satisfied())
 	})
 }
