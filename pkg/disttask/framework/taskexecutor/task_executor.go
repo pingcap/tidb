@@ -122,7 +122,7 @@ func NewBaseTaskExecutor(ctx context.Context, task *proto.Task, param Param) *Ba
 //     `pending` state, to make sure subtasks can be balanced later when node scale out.
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
-func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
+func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCancel context.CancelFunc) {
 	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
 	for {
@@ -143,7 +143,10 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Info("subtask is scheduled away, cancel running",
 				zap.Int64("subtaskID", e.currSubtaskID.Load()))
 			// cancels runStep, but leave the subtask state unchanged.
-			e.cancelRunStepWith(nil)
+			if subtaskCtxCancel != nil {
+				subtaskCtxCancel()
+			}
+			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
 
@@ -317,6 +320,12 @@ func (e *BaseTaskExecutor) Run() {
 				continue
 			}
 		}
+		if err := e.stepCtx.Err(); err != nil {
+			e.logger.Error("step executor context is done, the task should have been reverted",
+				zap.String("step", proto.Step2Str(task.Type, task.Step)),
+				zap.Error(err))
+			continue
+		}
 		err = e.runSubtask(subtask)
 		if err != nil {
 			// task executor keeps running its subtasks even though some subtask
@@ -418,23 +427,25 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	logTask := llog.BeginTask(logger, "run subtask")
 	subtaskErr := func() error {
 		e.currSubtaskID.Store(subtask.ID)
+		subtaskCtx, subtaskCtxCancel := context.WithCancel(e.stepCtx)
 
 		var wg util.WaitGroupWrapper
-		checkCtx, checkCancel := context.WithCancel(e.stepCtx)
+		checkCtx, checkCancel := context.WithCancel(subtaskCtx)
 		wg.RunWithLog(func() {
-			e.checkBalanceSubtask(checkCtx)
+			e.checkBalanceSubtask(checkCtx, subtaskCtxCancel)
 		})
 
 		if e.hasRealtimeSummary(e.stepExec) {
 			wg.RunWithLog(func() {
-				e.updateSubtaskSummaryLoop(checkCtx, e.stepCtx, e.stepExec)
+				e.updateSubtaskSummaryLoop(checkCtx, subtaskCtx, e.stepExec)
 			})
 		}
 		defer func() {
 			checkCancel()
 			wg.Wait()
+			subtaskCtxCancel()
 		}()
-		return e.stepExec.RunSubtask(e.stepCtx, subtask)
+		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
 	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr)
 	logTask.End2(zap.InfoLevel, subtaskErr)

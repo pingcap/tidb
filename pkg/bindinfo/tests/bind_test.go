@@ -348,12 +348,10 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
-	tk.MustGetErrMsg(
-		"create global binding for select * from t using select * from t use index(idx_b) ",
-		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
 
 	// Create bind using index
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_b)")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
 
 	tk.MustQuery("select * from t")
 	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])

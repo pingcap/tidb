@@ -326,21 +326,21 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 		// table was already analyzed but auto analyze is disabled
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed but modify count is small
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 0, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 0, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: false,
 			reason: "",
 		},
 		// table was already analyzed
 		{
-			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, false, 1, 1, columns, nil), LastAnalyzeVersion: 1},
+			tbl:    &statistics.Table{HistColl: *statistics.NewHistCollWithColsAndIdxs(0, 1, 1, columns, nil), LastAnalyzeVersion: 1},
 			ratio:  0.3,
 			result: true,
 			reason: "too many modifications",
@@ -358,6 +358,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
 	tk.MustExec("select * from t where a = 1 and b = 1 and c = '1'")
 	h := dom.StatsHandle()
@@ -430,6 +431,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
