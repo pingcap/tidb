@@ -6399,7 +6399,7 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 }
 
 func checkCacheTableSize(store kv.Storage, tableID int64) (bool, error) {
-	const cacheTableSizeLimit = 64 * (1 << 20) // 64M
+	const cacheTableSizeLimit = 64 * (1 << 20) // 64MiB
 	succ := true
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
 	err := kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
