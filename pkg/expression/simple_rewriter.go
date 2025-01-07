@@ -68,13 +68,13 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 
 	for i, name := range names {
 		// Early continue if not usable or column name doesn't match
-		if name.NotExplicitUsable || name.ColName.L != colName {
+		if name.NotExplicitUsable || name.ColName.Value().L != colName {
 			continue
 		}
 
 		// Check database and table name match
-		if (dbName == "" || dbName == name.DBName.L) &&
-			(tblName == "" || tblName == name.TblName.L) {
+		if (dbName == "" || dbName == name.DBName.Value().L) &&
+			(tblName == "" || tblName == name.TblName.Value().L) {
 			if idx != -1 {
 				// Do not allow multiple non-redundant columns with the same name.
 				if names[idx].Redundant || name.Redundant {
@@ -95,7 +95,7 @@ func FindFieldName(names types.NameSlice, astCol *ast.ColumnName) (int, error) {
 // FindFieldNameIdxByColName finds the index of corresponding name in the given slice. -1 for not found.
 func FindFieldNameIdxByColName(names []*types.FieldName, colName string) int {
 	for i, name := range names {
-		if name.ColName.L == colName {
+		if name.ColName.Value().L == colName {
 			return i
 		}
 	}

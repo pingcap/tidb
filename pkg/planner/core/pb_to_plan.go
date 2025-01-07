@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -285,10 +286,10 @@ func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predic
 		names := make([]*types.FieldName, 0, len(memTable.Columns))
 		for _, col := range memTable.Columns {
 			names = append(names, &types.FieldName{
-				TblName:     memTable.Table.Name,
-				ColName:     col.Name,
-				OrigTblName: memTable.Table.Name,
-				OrigColName: col.Name,
+				TblName:     unique.Make(memTable.Table.Name),
+				ColName:     unique.Make(col.Name),
+				OrigTblName: unique.Make(memTable.Table.Name),
+				OrigColName: unique.Make(col.Name),
 			})
 		}
 		// Set the expression column unique ID.

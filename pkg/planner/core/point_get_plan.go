@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unique"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1537,10 +1538,10 @@ func buildSchemaFromFields(
 				}
 				for _, col := range tbl.Columns {
 					names = append(names, &types.FieldName{
-						DBName:      dbName,
-						OrigTblName: tbl.Name,
-						TblName:     tblName,
-						ColName:     col.Name,
+						DBName:      unique.Make(dbName),
+						OrigTblName: unique.Make(tbl.Name),
+						TblName:     unique.Make(tblName),
+						ColName:     unique.Make(col.Name),
 					})
 					columns = append(columns, colInfoToColumn(col, len(columns)))
 				}
@@ -1567,11 +1568,11 @@ func buildSchemaFromFields(
 				asName = field.AsName
 			}
 			names = append(names, &types.FieldName{
-				DBName:      dbName,
-				OrigTblName: tbl.Name,
-				TblName:     tblName,
-				OrigColName: col.Name,
-				ColName:     asName,
+				DBName:      unique.Make(dbName),
+				OrigTblName: unique.Make(tbl.Name),
+				TblName:     unique.Make(tblName),
+				OrigColName: unique.Make(col.Name),
+				ColName:     unique.Make(asName),
 			})
 			columns = append(columns, colInfoToColumn(col, len(columns)))
 		}
@@ -1580,10 +1581,10 @@ func buildSchemaFromFields(
 	// fields len is 0 for update and delete.
 	for _, col := range tbl.Columns {
 		names = append(names, &types.FieldName{
-			DBName:      dbName,
-			OrigTblName: tbl.Name,
-			TblName:     tblName,
-			ColName:     col.Name,
+			DBName:      unique.Make(dbName),
+			OrigTblName: unique.Make(tbl.Name),
+			TblName:     unique.Make(tblName),
+			ColName:     unique.Make(col.Name),
 		})
 		column := colInfoToColumn(col, len(columns))
 		columns = append(columns, column)
@@ -1611,8 +1612,8 @@ func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldN
 	ftype.SetFlen(mysql.MaxBlobWidth)
 	ftype.SetDecimal(0)
 	name := &types.FieldName{
-		OrigColName: origName,
-		ColName:     asName,
+		OrigColName: unique.Make(origName),
+		ColName:     unique.Make(asName),
 	}
 	column := &expression.Column{
 		RetType:  ftype,
@@ -1997,7 +1998,7 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		col := plan.Schema().Columns[idx]
 		newAssign := &expression.Assignment{
 			Col:     col,
-			ColName: plan.OutputNames()[idx].ColName,
+			ColName: plan.OutputNames()[idx].ColName.Value(),
 		}
 		defaultExpr := extractDefaultExpr(assign.Expr)
 		if defaultExpr != nil {
@@ -2132,13 +2133,13 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 	newOutputNames := pointget.OutputNames().Shallow()
 	tableAliasName := tbl.Name
 	if schema.Len() > 0 {
-		tableAliasName = pointget.OutputNames()[0].TblName
+		tableAliasName = pointget.OutputNames()[0].TblName.Value()
 	}
 	newOutputNames = append(newOutputNames, &types.FieldName{
-		DBName:      pmodel.NewCIStr(dbName),
-		TblName:     tableAliasName,
-		OrigTblName: tbl.Name,
-		ColName:     model.ExtraHandleName,
+		DBName:      unique.Make(pmodel.NewCIStr(dbName)),
+		TblName:     unique.Make(tableAliasName),
+		OrigTblName: unique.Make(tbl.Name),
+		ColName:     unique.Make(model.ExtraHandleName),
 	})
 	pointget.SetOutputNames(newOutputNames)
 	return util.NewIntHandleCols(handleCol)

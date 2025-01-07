@@ -25,6 +25,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -117,22 +118,22 @@ func colNames2ResultFields(schema *expression.Schema, names []*types.FieldName, 
 	defaultDBCIStr := pmodel.NewCIStr(defaultDB)
 	for i := 0; i < schema.Len(); i++ {
 		dbName := names[i].DBName
-		if dbName.L == "" && names[i].TblName.L != "" {
-			dbName = defaultDBCIStr
+		if dbName.Value().L == "" && names[i].TblName.Value().L != "" {
+			dbName = unique.Make(defaultDBCIStr)
 		}
 		origColName := names[i].OrigColName
 		emptyOrgName := false
-		if origColName.L == "" {
+		if origColName.Value().L == "" {
 			origColName = names[i].ColName
 			emptyOrgName = true
 		}
 		rf := &resolve.ResultField{
-			Column:       &model.ColumnInfo{Name: origColName, FieldType: *schema.Columns[i].RetType},
-			ColumnAsName: names[i].ColName,
+			Column:       &model.ColumnInfo{Name: origColName.Value(), FieldType: *schema.Columns[i].RetType},
+			ColumnAsName: names[i].ColName.Value(),
 			EmptyOrgName: emptyOrgName,
-			Table:        &model.TableInfo{Name: names[i].OrigTblName},
-			TableAsName:  names[i].TblName,
-			DBName:       dbName,
+			Table:        &model.TableInfo{Name: names[i].OrigTblName.Value()},
+			TableAsName:  names[i].TblName.Value(),
+			DBName:       dbName.Value(),
 		}
 		// This is for compatibility.
 		// See issue https://github.com/pingcap/tidb/issues/10513 .

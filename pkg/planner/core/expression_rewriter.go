@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -131,11 +132,11 @@ func buildSimpleExpr(ctx expression.BuildContext, node ast.ExprNode, opts ...exp
 
 		dbName := options.InputNames[0].DBName
 		if options.SourceTableDB.L != "" {
-			intest.Assert(dbName.L == options.SourceTableDB.L)
+			intest.Assert(dbName.Value().L == options.SourceTableDB.L)
 		}
 
 		for _, name := range options.InputNames {
-			intest.Assert(name.DBName.L == dbName.L)
+			intest.Assert(name.DBName.Value().L == dbName.Value().L)
 		}
 		return true
 	})
@@ -2464,7 +2465,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 			return
 		}
 		er.ctxStackAppend(&expression.Column{RetType: &colInfo.FieldType, ID: colInfo.ID, UniqueID: colInfo.ID},
-			&types.FieldName{ColName: v.Name})
+			&types.FieldName{ColName: unique.Make(v.Name)})
 		return
 	}
 
@@ -2572,11 +2573,11 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	}
 
 	dbName := name.DBName
-	if dbName.O == "" {
+	if dbName.Value().O == "" {
 		// if database name is not specified, use current database name
-		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = unique.Make(pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB))
 	}
-	if name.OrigTblName.O == "" {
+	if name.OrigTblName.Value().O == "" {
 		// column is evaluated by some expressions, for example:
 		// `select default(c) from (select (a+1) as c from t) as t0`
 		// in such case, a 'no default' error is returned
@@ -2584,7 +2585,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 		return
 	}
 	var tbl table.Table
-	tbl, er.err = planCtx.builder.is.TableByName(context.Background(), dbName, name.OrigTblName)
+	tbl, er.err = planCtx.builder.is.TableByName(context.Background(), dbName.Value(), name.OrigTblName.Value())
 	if er.err != nil {
 		return
 	}
@@ -2592,10 +2593,10 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 }
 
 func (er *expressionRewriter) evalFieldDefaultValue(field *types.FieldName, tblInfo *model.TableInfo) {
-	colName := field.OrigColName.L
+	colName := field.OrigColName.Value().L
 	if colName == "" {
 		// in some cases, OrigColName is empty, use ColName instead
-		colName = field.ColName.L
+		colName = field.ColName.Value().L
 	}
 	col := tblInfo.FindPublicColumnByName(colName)
 	if col == nil {

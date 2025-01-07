@@ -86,7 +86,7 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		}
 		results = append(results, v)
 	}
-	return name.ColName.L, results
+	return name.ColName.Value().L, results
 }
 
 func (helper *extractHelper) setColumnPushedDownFn(
@@ -232,7 +232,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 			return "", nil
 		}
 	}
-	return name.ColName.L, []types.Datum{v}
+	return name.ColName.Value().L, []types.Datum{v}
 }
 
 // extract the OR expression, e.g:
@@ -476,7 +476,7 @@ func (helper extractHelper) extractLikePattern(
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
 	extractCols := make(map[int64]*types.FieldName)
 	for i, name := range names {
-		if name.ColName.L == colName {
+		if name.ColName.Value().L == colName {
 			extractCols[schema.Columns[i].UniqueID] = name
 		}
 	}
@@ -657,18 +657,18 @@ func (helper extractHelper) extractCols(
 	skipRequest := false
 	// Extract the label columns.
 	for _, name := range names {
-		if excludeCols.Exist(name.ColName.L) {
+		if excludeCols.Exist(name.ColName.Value().L) {
 			continue
 		}
 		var values set.StringSet
-		remained, skipRequest, values = helper.extractCol(ctx, schema, names, remained, name.ColName.L, valueToLower)
+		remained, skipRequest, values = helper.extractCol(ctx, schema, names, remained, name.ColName.Value().L, valueToLower)
 		if skipRequest {
 			return nil, true, nil
 		}
 		if len(values) == 0 {
 			continue
 		}
-		cols[name.ColName.L] = values
+		cols[name.ColName.Value().L] = values
 	}
 	return remained, skipRequest, cols
 }
